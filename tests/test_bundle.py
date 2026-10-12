@@ -44,6 +44,7 @@ class BundleTests(unittest.TestCase):
             "README.md": "Test fixture only\n",
             "config.example.yaml": "HTTPS_PORT: 8443\n",
             "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
+            "scripts/prepare-host.sh": "#!/bin/sh\nexit 0\n",
             "quadlet/myproduct.kube": "[Kube]\nYaml=myproduct.yaml\n",
             "quadlet/myproduct.network": "[Network]\nNetworkName=myproduct\n",
             "manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
@@ -103,6 +104,7 @@ class BundleTests(unittest.TestCase):
                     "README.md",
                     "config.example.yaml",
                     "scripts/generate-certificates.sh",
+                    "scripts/prepare-host.sh",
                     "quadlet/myproduct.kube",
                     "quadlet/myproduct.network",
                     "images/images.tar",
@@ -120,7 +122,11 @@ class BundleTests(unittest.TestCase):
                     (member.uid, member.gid, member.uname, member.gname),
                     (0, 0, "root", "root"),
                 )
-            for name in ("deploy", "scripts/generate-certificates.sh"):
+            for name in (
+                "deploy",
+                "scripts/generate-certificates.sh",
+                "scripts/prepare-host.sh",
+            ):
                 self.assertEqual(archive.getmember(prefix + name).mode, 0o755)
             self.assertEqual(
                 archive.getmember(prefix + "generated-certificates").mode, 0o700

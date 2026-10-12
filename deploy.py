@@ -3,7 +3,7 @@
 ./deploy prepare   Dev: write build/install.yaml (+ build/files/*.tar).
 
 Filer angis i config.yaml under SECRET_FILES og VOLUME_FILES (id -> filer).
-./deploy install   Prod (root): render, podman load, install Quadlet, restart.
+./deploy install   Prod (tjenestebruker): render, podman load, install Quadlet, restart.
 """
 
 import base64
@@ -22,7 +22,7 @@ MANIFESTS = ROOT / "manifests"
 CONFIG = ROOT / "config.yaml"
 
 QUADLET_TEMPLATE = ROOT / "quadlet" / "myproduct.kube"
-QUADLET_DIR = Path("/etc/containers/systemd")
+QUADLET_DIR = Path.home() / ".config/containers/systemd"
 QUADLET_TARGET = QUADLET_DIR / "myproduct.kube"
 QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml i .kube
 SERVICE = "myproduct.service"
@@ -34,8 +34,8 @@ SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
 
 # Tar-arkiver for VOLUME_FILES. Podman importerer dem i volumene ved hver
-# oppstart, så de må ligge fast og root-eid i produksjon.
-FILES_DIR = Path("/var/lib/myproduct/files")
+# oppstart, så de må ligge fast i tjenestebrukerens hjemmekatalog.
+FILES_DIR = Path.home() / "files"
 IMPORT_SOURCE = "volume.podman.io/import-source"
 
 ID = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
@@ -447,8 +447,16 @@ def find_images(documents):
 
 
 def install():
-    if os.geteuid() != 0:
-        raise DeployError("Produksjonsinstallasjon må kjøres som root (sudo)")
+    if os.geteuid() == 0:
+        raise DeployError("Kjør install som tjenestebrukeren, ikke som root")
+
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}")
+    if not runtime.is_dir():
+        raise DeployError(
+            f"Mangler runtime-katalog {runtime}. Aktiver linger for tjenestebrukeren "
+            "med loginctl enable-linger og kontroller at brukerinstansen kjører"
+        )
+    os.environ["XDG_RUNTIME_DIR"] = str(runtime)
 
     text = render(FILES_DIR, write_archives=False)
     archive = ROOT / "images" / "images.tar"
@@ -466,8 +474,7 @@ def install():
 
     render(FILES_DIR)  # Skriv importarkivene først etter vellykket image-sjekk.
 
-    # YAML-en ligger ved siden av .kube i en root-eid katalog, slik at den
-    # finnes etter reboot og ikke kan byttes ut av brukeren som pakket ut.
+    # YAML og Quadlet ligger fast i tjenestebrukerens hjem, også etter reboot.
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     write_private(QUADLET_YAML, text)
     for suffix in (".kube", ".network"):
@@ -478,9 +485,9 @@ def install():
         )
         target.chmod(0o644)
 
-    run("systemctl", "daemon-reload")
-    run("systemctl", "restart", SERVICE)
-    run("systemctl", "is-active", "--quiet", SERVICE)
+    run("systemctl", "--user", "daemon-reload")
+    run("systemctl", "--user", "restart", SERVICE)
+    run("systemctl", "--user", "is-active", "--quiet", SERVICE)
     run("podman", "ps", "--all", "--pod")
 
     print(f"[OK] {SERVICE} kjører. Sjekk at containerne over er 'Up'.")
@@ -500,8 +507,8 @@ def main():
         print(f"ERROR: {error}", file=sys.stderr)
         if args[0] == "install":
             print(
-                f"Feilsøk: journalctl -u {SERVICE} og "
-                "/usr/lib/systemd/system-generators/podman-system-generator --dryrun",
+                f"Feilsøk: journalctl --user -u {SERVICE} og "
+                "/usr/lib/systemd/user-generators/podman-user-generator --dryrun",
                 file=sys.stderr,
             )
         return 1

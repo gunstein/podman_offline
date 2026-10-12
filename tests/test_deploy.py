@@ -4,6 +4,7 @@ import base64
 import contextlib
 import io
 import os
+import runpy
 import stat
 import subprocess
 import tarfile
@@ -34,16 +35,23 @@ class DeployFixture(unittest.TestCase):
             "MANIFESTS": self.root / "manifests",
             "BUILD": self.root / "build",
             "QUADLET_TEMPLATE": self.root / "quadlet/myproduct.kube",
-            "QUADLET_DIR": self.root / "etc/containers/systemd",
-            "QUADLET_TARGET": self.root / "etc/containers/systemd/myproduct.kube",
-            "QUADLET_YAML": self.root / "etc/containers/systemd/myproduct.yaml",
-            "FILES_DIR": self.root / "var/lib/myproduct/files",
+            "QUADLET_DIR": self.root / "home/.config/containers/systemd",
+            "QUADLET_TARGET": self.root
+            / "home/.config/containers/systemd/myproduct.kube",
+            "QUADLET_YAML": self.root
+            / "home/.config/containers/systemd/myproduct.yaml",
+            "FILES_DIR": self.root / "home/files",
         }
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(deploy, name, path))
         self.process = self.stack.enter_context(mock.patch.object(subprocess, "run"))
         self.euid = self.stack.enter_context(
-            mock.patch.object(os, "geteuid", return_value=0)
+            mock.patch.object(os, "geteuid", return_value=1000)
+        )
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        self.stack.enter_context(
+            mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime)})
         )
         self.stdout = self.stack.enter_context(
             contextlib.redirect_stdout(io.StringIO())
@@ -558,7 +566,7 @@ class CommandTests(DeployFixture):
         self.assertEqual(self.mode(output), 0o600)
 
     def test_root_check_precedes_reads_writes_and_commands(self):
-        self.euid.return_value = 1000
+        self.euid.return_value = 0
         render = self.stack.enter_context(mock.patch.object(deploy, "render"))
         load = self.stack.enter_context(mock.patch.object(deploy, "find_images"))
         with self.assertRaisesRegex(deploy.DeployError, "root"):
@@ -568,6 +576,56 @@ class CommandTests(DeployFixture):
         self.process.assert_not_called()
         self.assertFalse(deploy.QUADLET_DIR.exists())
         self.assertFalse(deploy.FILES_DIR.exists())
+
+    def test_paths_follow_home(self):
+        home = self.root / "other-service-user"
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            module = runpy.run_path(deploy.__file__, run_name="rootless_paths_test")
+        self.assertEqual(module["QUADLET_DIR"], home / ".config/containers/systemd")
+        self.assertEqual(
+            module["QUADLET_YAML"], home / ".config/containers/systemd/myproduct.yaml"
+        )
+        self.assertEqual(module["FILES_DIR"], home / "files")
+
+    def test_runtime_fallback_reaches_subprocesses(self):
+        self.install_fixture()
+        os.environ.pop("XDG_RUNTIME_DIR", None)
+        original = Path.is_dir
+        seen = []
+
+        def is_dir(path):
+            return True if path == Path("/run/user/1000") else original(path)
+
+        def command(*args, **kwargs):
+            seen.append(os.environ.get("XDG_RUNTIME_DIR"))
+
+        self.process.side_effect = command
+        with mock.patch.object(Path, "is_dir", is_dir):
+            deploy.install()
+        self.assertEqual(seen, ["/run/user/1000"] * 7)
+
+    def test_existing_runtime_is_preserved(self):
+        self.install_fixture()
+        runtime = os.environ["XDG_RUNTIME_DIR"]
+        self.process.side_effect = lambda *a, **k: self.assertEqual(
+            os.environ["XDG_RUNTIME_DIR"], runtime
+        )
+        deploy.install()
+
+    def test_missing_runtime_stops_before_render_and_commands(self):
+        for configured in ("", str(self.root / "missing-runtime")):
+            with self.subTest(runtime=configured):
+                os.environ["XDG_RUNTIME_DIR"] = configured
+                directory = mock.patch.object(Path, "is_dir", return_value=False)
+                renderer = mock.patch.object(deploy, "render")
+                with directory, renderer as render:
+                    with self.assertRaisesRegex(
+                        deploy.DeployError, "runtime-katalog.*linger"
+                    ):
+                        deploy.install()
+                    render.assert_not_called()
+                self.process.assert_not_called()
+                self.assertFalse(deploy.QUADLET_DIR.exists())
 
     def test_install_order_files_and_permissions(self):
         self.install_fixture()
@@ -599,9 +657,9 @@ class CommandTests(DeployFixture):
                 ["podman", "load", "-i", str(self.root / "images/images.tar")],
                 ["podman", "image", "exists", "localhost/app:1"],
                 ["podman", "image", "exists", "localhost/init:1"],
-                ["systemctl", "daemon-reload"],
-                ["systemctl", "restart", "myproduct.service"],
-                ["systemctl", "is-active", "--quiet", "myproduct.service"],
+                ["systemctl", "--user", "daemon-reload"],
+                ["systemctl", "--user", "restart", "myproduct.service"],
+                ["systemctl", "--user", "is-active", "--quiet", "myproduct.service"],
                 ["podman", "ps", "--all", "--pod"],
             ],
         )
@@ -632,10 +690,10 @@ class CommandTests(DeployFixture):
                 with mock.patch.object(deploy.sys, "argv", ["deploy", "install"]):
                     self.assertEqual(deploy.main(), 1)
                 self.assertEqual(self.process.call_count, failing + 1)
-                self.assertIn("journalctl -u myproduct.service", self.stderr.getvalue())
                 self.assertIn(
-                    "podman-system-generator --dryrun", self.stderr.getvalue()
+                    "journalctl --user -u myproduct.service", self.stderr.getvalue()
                 )
+                self.assertIn("podman-user-generator --dryrun", self.stderr.getvalue())
                 self.assertNotIn("Traceback", self.stderr.getvalue())
 
     def test_invalid_arguments_return_two_without_side_effects(self):

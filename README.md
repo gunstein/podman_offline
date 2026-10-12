@@ -113,10 +113,10 @@ Se også de små [Podman-eksemplene](examples/README.md).
 Verifisert 2026-10-12 med ekte rootless Podman 5.7.0: alle seks pods starter,
 og hele HTTP-integrasjonstesten passerer gjennom nginx. De 65 enhetstestene
 passerer med både PyYAML 5.4.1 og 6.0.3. Ruff, Pyright og kontroll av Python
-3.6-kompatibilitet for deploy/bundle/testene er rene. Rootful Quadlet og reboot
-er ikke kjørt.
+3.6-kompatibilitet for deploy/bundle/testene var rene ved denne dev-kjøringen.
+Dette dokumenterer ikke prod-Quadlet eller reboot.
 
-## Offline-bundle og rootful Quadlet
+## Offline-bundle og rootless Quadlet
 
 Manifestene er eneste kilde for images. Byggingen leser `containers` og
 `initContainers` fra alle `manifests/*.yaml`, fjerner duplikater og sorterer navnene.
@@ -138,59 +138,168 @@ checksums. `images/images.tar` er ett arkiv med alle imagene og deres fulle navn
 og tagger. `images/images.txt` lister navnene, ett per linje. Begge filene inngår
 i checksums. Private nøkler, lokal config og PKI blir ikke pakket med.
 
-På målmaskinen: verifiser checksums, generer lokale testsertifikater med
-`./scripts/generate-certificates.sh`, kopier og tilpass `config.example.yaml`.
-I produksjon utstedes sertifikatene utenfor målmaskinen og leveres til stiene i
-config. CA-ens private nøkkel skal ikke kopieres dit; sertifikatscriptet er for
-demo/test. Installer deretter:
+På målmaskinen brukes en egen systembruker `myproduct`, med hjem
+`/var/lib/myproduct` (0700), rootless Podman og linger. Forutsetninger på verten:
+Podman 5.x med bruker-Quadlet, Python 3.6+/PyYAML, OpenSSL, `newuidmap`/`newgidmap`,
+`semanage`, `restorecon`, aktiv firewalld og SELinux Enforcing. På OL9 leveres
+`semanage` av `policycoreutils-python-utils`; klargjør dette før maskinen isoleres.
+Ingen pakker installeres av produktet.
+
+Følgende kjøres som vanlig operatør med sudo, fra katalogen med arkivet og
+checksum-filen. Tilpass versjon, IP, vertsnavn og port. Vertsnavnet må stemme med
+DNS, sertifikatet og `PUBLIC_ORIGIN`; `HTTPS_PORT` og porten i `PUBLIC_ORIGIN`
+må endres sammen. Demoens interne OIDC-navn er `myproduct-proxy`.
 
 ```sh
-sudo ./deploy install
+version=0.1.0
+hostname=myproduct-proxy
+ip_address=192.168.0.108
+https_port=8443
+archive="myproduct-$version-offline.tar.gz"
+release="/var/lib/myproduct/releases/myproduct-$version"
+sha256sum -c "$archive.sha256"
+stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
+tar xzf "$archive" -C "$stage"
+python3 - "$stage/myproduct-$version" "$https_port" <<'PY'
+import pathlib, sys, yaml
+root = pathlib.Path(sys.argv[1])
+config = yaml.safe_load((root / "config.example.yaml").read_text())
+config["HTTPS_PORT"] = int(sys.argv[2])
+(root / "config.yaml").write_text(yaml.safe_dump(config))
+PY
+sudo bash "$stage/myproduct-$version/scripts/prepare-host.sh"
+sudo -H -u myproduct mkdir -p /var/lib/myproduct/releases
+# Operatøren åpner arkivet: myproduct trenger ikke tilgang til operatørens hjem.
+sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
+rm -rf -- "$stage"
+sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
+sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
+sudo fapolicyd-cli --update
+sudo -H -u myproduct bash "$release/scripts/generate-certificates.sh" "$hostname"
+sudo -H -u myproduct cp "$release/config.example.yaml" "$release/config.yaml"
+sudo -H -u myproduct python3 - "$release/config.yaml" "$ip_address" "$hostname" "$https_port" <<'PY'
+import os, sys, yaml
+with open(sys.argv[1]) as stream:
+    config = yaml.safe_load(stream)
+config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
+os.chmod(sys.argv[1], 0o600)
+with open(sys.argv[1], "w") as stream:
+    yaml.safe_dump(config, stream)
+PY
+sudo -H -u myproduct python3 "$release/deploy.py" install
+sudo systemctl --user -M myproduct@ status myproduct.service
 ```
 
-`install` sjekker først root, rendrer YAML og kjører
-`podman load -i images/images.tar`. Deretter kontrolleres hvert image fra den
-rendrede YAML-en med `podman image exists`. Manglende arkiv eller image stopper
-installasjonen før Quadlet-filene skrives og tjenesten restartes. Ved vellykket
-kontroll installeres `/etc/containers/systemd/myproduct.*` og Quadlet-tjenesten
-startes. `myproduct.network` oppretter nettverket automatisk via Quadlet og
-gir hovedtjenesten en oppstartsavhengighet til `myproduct-network.service`.
-Filarkiver plasseres i `/var/lib/myproduct/files` først etter image-kontrollen.
-Alle produktpods bruker `restartPolicy: Always` for å starte containere på nytt
-etter prosessfeil, også hvis databasen bruker lang tid ved oppstart.
-`prepare` rendrer som før, uten å laste eller kontrollere images hos Podman.
-Dette demonstrasjonsoppsettet er ikke produksjonsverifisert; rootful/systemd/reboot
-kontrolleres manuelt etter [VM-sjekklisten](examples/VM-CHECKLIST.md).
+Operatøren trenger ikke `cd` inn i tjenestebrukerens private hjem. `sudo -H`
+setter riktig HOME; bash og Python får eksplisitte filstier. `sudo bash` leser
+klargjøringsscriptet fra `/tmp`; scriptet startes ikke direkte, så `noexec` på
+`/tmp` hindrer ikke denne kjøreformen. En eventuell policyavvisning skal fortsatt
+undersøkes, ikke omgås med endrede tillatelser eller bred trust.
+
+`prepare-host.sh` er idempotent. Det oppretter kontoen med nologin, tildeler
+minst 65536 subuid/subgid uten overlapp, setter hjemmets mode, legger til
+SELinux-ekvivalensen `/var/lib/myproduct = /home`, kjører restorecon og aktiverer
+linger. HTTPS-porten leses fra config (eller eksempelconfig hvis config mangler),
+åpnes permanent i firewalld og brannmuren lastes på nytt. Rootless bruker en
+vanlig vertssocket; velg port 1024 eller høyere. I lab avgrenser nettisolasjonen
+innkommende trafikk ytterligere til lab-subnettet. Scriptet endrer ikke SELinux
+eller fapolicyd sin enforcing-tilstand. Kontroller faktisk SELinux-merking og
+nettverk på målversjonen med akseptansetesten.
+
+Sertifikatgenereringen ovenfor er for demo/test. I ekte produksjon utstedes
+sertifikatene utenfor målmaskinen og leveres til stiene i config. CA-ens private
+nøkkel skal ikke kopieres dit.
+
+`install` avviser root, kontrollerer runtime-katalogen og rendrer YAML. Hvis
+`XDG_RUNTIME_DIR` mangler, brukes `/run/user/<uid>`; manglende katalog gir en
+feil med hint om linger. Deretter kjøres `podman load -i images/images.tar`
+og `podman image exists` i tjenestebrukerens lager. Først etter vellykket
+image-kontroll skrives filarkiver og Quadlet-filer, og `systemctl --user`
+kjører daemon-reload, restart og is-active. `prepare` er uendret.
+
+```text
+/var/lib/myproduct/                         0700, eid av myproduct
+├── .config/containers/systemd/
+│   ├── myproduct.kube                     0644
+│   ├── myproduct.network                  0644
+│   └── myproduct.yaml                     0600 (inkluderer secrets)
+├── .local/share/containers/storage/        images, volumer og databaser
+├── files/                                 0700; tar-arkiver 0600
+└── releases/myproduct-<versjon>/            utpakket bundle og lokal config/PKI
+```
+
+`myproduct.network` oppretter nettverket automatisk og gir hovedtjenesten en
+avhengighet til `myproduct-network.service`. Alle pods beholder
+`restartPolicy: Always`. Bruker-Quadlet bruker `WantedBy=default.target` og
+linger for oppstart uten innlogging. Podman 5.x legger til
+`podman-user-wait-network-online.service`; kontroller generatoren som brukeren:
+
+```sh
+sudo -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" \
+  /usr/lib/systemd/user-generators/podman-user-generator --dryrun
+```
+
+### fapolicyd og rootless
+
+Checksum-kontrollen inne i bundlen kjøres som root: labens policy tillater
+root med et betrodd RPM-program å lese også Python-filer. Deretter legges bare
+den verifiserte `deploy.py` til i trust-databasen, slik at Python kjørt som
+`myproduct` kan lese den. Gjenta checksum og trust for hver ny utpakket versjon.
+Ingen kataloger, container-runtime eller private nøkler legges til i trust.
+
+På OL9.8-laben feiler selv `sudo crun --version` med fapolicyd regel 5.
+Audit viser cruns `open_tree` på `/proc/self/exe`, `mount_setattr` og `execveat`,
+deretter `exe=/` og avvisninger ved åpning av biblioteker. Dette støtter
+forklaringen om kjøring fra en løsrevet mount som fapolicyd ikke har observert,
+slik at prosessen klassifiseres som direkte startet dynamisk laster.
+[Red Hat beskriver samme symptom](https://access.redhat.com/solutions/7072618).
+
+Rootless-modellen bruker et eget mount-namespace. Med labens
+`allow_filesystem_mark = 0` forventes containerne å være utenfor fapolicyds
+observasjon; dette er ikke en godkjenning av innholdet fra fapolicyd.
+SELinux forblir Enforcing. Denne forklaringen må skilles fra faktisk
+prod-verifikasjon: akseptansetest og audit skal dokumentere hva som virker på
+målmaskinen. Ingen crun-regler, brede trust-regler eller binærendringer brukes.
 
 ## Secrets på disk og avinstallering
 
-Podman kube play skriver Secret-innhold til navngitte volumer. Ved rootful drift
-ligger disse normalt under `/var/lib/containers/storage/volumes/<secret-navn>/_data/`.
-Vertens lagringskatalog er root-beskyttet, men private nøkler og passord blir
-liggende etter `kube down` eller stopp av tjenesten, selv om Secret-objektene
-fjernes fra Podmans secret-lager. Filer som fjernes fra Secret-definisjonen,
-kan fortsatt ligge i volumet; filer som fortsatt er definert, skrives over.
-Secret-, PVC- og ConfigMap-navn må derfor også være unike på tvers av typene.
+Podman kube play skriver Secret-innhold til navngitte volumer under
+`/var/lib/myproduct/.local/share/containers/storage/volumes/<secret-navn>/_data/`.
+Hjemmet er 0700, men private nøkler og passord blir liggende etter `kube down`
+eller stopp. Filer fjernet fra Secret-definisjonen kan fortsatt ligge i volumet;
+definerte filer overskrives. Secret-, PVC- og ConfigMap-navn må være unike.
+`defaultMode: 0400` beskytter private nøkler inne i containeren, men sletter ikke
+data fra vertens disk.
 
-Private signerings- og TLS-nøkler monteres med `defaultMode: 0400`.
-Dette beskytter filene i containeren, men fjerner ikke data fra vertens disk.
-Ved fjerning av Secret-nøkler må berørt Secret-volum slettes mens appen er stoppet,
-før tjenesten startes igjen. Ved avinstallering:
+Stopp tjenesten før et Secret-volum slettes. Kommandoene nedenfor utføres av
+operatøren. Gjenta trust-sletting for hver installert release som skal fjernes:
 
 ```sh
-sudo systemctl stop myproduct.service
-sudo podman volume ls
-# Eksempel: slett bare det identifiserte Secret-volumet, gjenta for relevante Secrets.
-sudo podman volume rm identity-signing
+sudo systemctl --user -M myproduct@ stop myproduct.service
+sudo -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" podman volume ls
+# Eksempel; slett bare identifiserte volumer som ikke skal bevares.
+sudo -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" podman volume rm identity-signing
+sudo fapolicyd-cli --file delete "$release/deploy.py" --trust-file myproduct
+sudo fapolicyd-cli --update
+sudo -H -u myproduct rm /var/lib/myproduct/.config/containers/systemd/myproduct.{kube,network,yaml}
+sudo systemctl --user -M myproduct@ daemon-reload
+sudo loginctl disable-linger myproduct
 ```
 
-Secret-volumene i dette oppsettet heter `identity-signing`,
-`identity-client-certificate`, `identity-database-password`,
-`identity-demo-users`, `todo-database-password` og `web-tls`.
-Behold appdata-/databasevolumene med mindre disse bevisst skal slettes.
+Secret-volumene er `identity-signing`, `identity-client-certificate`,
+`identity-database-password`, `identity-demo-users`, `todo-database-password`
+og `web-tls`. Behold database-/appdatavolumer med mindre de bevisst skal slettes.
 Ikke slå på `KubeDownForce`: det kan også slette databasevolumene.
-Ved full avinstallering fjernes i tillegg `myproduct.kube`, `myproduct.network`
-og `myproduct.yaml` fra `/etc/containers/systemd/`, etterfulgt av
-`sudo systemctl daemon-reload`. Rydd deretter lokale nøkkelfiler, config og
-`/var/lib/myproduct/files/` etter ønsket policy for bevaring og sikker sletting.
-Volumsletting alene garanterer ikke fysisk sletting fra disk eller sikkerhetskopier.
+Når alle data bevisst skal fjernes, kan administrator stoppe brukerinstansen,
+slette brukeren/hjemmet og fjerne SELinux-ekvivalensen:
+
+```sh
+sudo systemctl stop "user@$(id -u myproduct).service"
+sudo userdel -r myproduct
+sudo semanage fcontext -d /var/lib/myproduct
+```
+
+Volumsletting eller `userdel` garanterer ikke fysisk sletting fra disk eller
+sikkerhetskopier. Eldre rootful installasjoner migreres ikke automatisk; denne
+flyten forutsetter en ren prod-vert. Bruk [akseptansetesten](acceptance/README.md)
+for prod-verifikasjon med systemd og reboot.

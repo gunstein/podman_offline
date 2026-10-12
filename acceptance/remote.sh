@@ -12,8 +12,13 @@ role=$8
 run_started=$9
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
-product="$base/product"
+product="/var/lib/myproduct/releases/myproduct-RELEASE"
+if [[ -f $base/version ]]; then product="/var/lib/myproduct/releases/myproduct-$(cat "$base/version")"; fi
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
+as_product() {
+    sudo -n -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" "$@"
+}
+user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
 profile() {
     selinux=$(getenforce)
     firewall=$(systemctl show firewalld -p ActiveState --value)
@@ -74,9 +79,9 @@ PY
     fi
 }
 healthy() {
-    sudo -n systemctl is-active myproduct.service
-    sudo -n podman ps --all --pod
-    sudo -n podman ps -a --format json | python3 -c '
+    user_service is-active myproduct.service
+    as_product podman ps --all --pod
+    as_product podman ps -a --format json | python3 -c '
 import json, sys
 rows = json.load(sys.stdin)
 names = ("myproduct-identity-postgres-db", "myproduct-todo-postgres-db",
@@ -106,6 +111,10 @@ clean)
         $prefix podman images --format '{{.Repository}}:{{.Tag}}'
     done
     test -z "$(sudo -n find /etc/containers/systemd -maxdepth 1 -name 'myproduct.*' -print)"
+    if [[ $role == PROD ]]; then
+        if getent passwd myproduct; then echo 'FAIL: myproduct user already exists'; exit 1; fi
+        sudo -n test ! -e /var/lib/myproduct
+    fi
     test ! -e "$base"
     ;;
 isolate)
@@ -153,8 +162,6 @@ WantedBy=multi-user.target
 UNIT
     sudo -n systemctl daemon-reload
     sudo -n systemctl enable --now podman-offline-isolation.service
-    sudo -n firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=$lab port port=$port protocol=tcp accept"
-    sudo -n firewall-cmd --add-rich-rule="rule family=ipv4 source address=$lab port port=$port protocol=tcp accept"
     offline
     ;;
 offline) offline;;
@@ -200,52 +207,81 @@ bundle)
 unpack)
     cd "$base"
     sha256sum -c ./*.sha256
-    mkdir product
-    tar -xzf ./*.tar.gz --strip-components=1 -C product
-    cd product
-    sha256sum -c --quiet checksums.sha256
-    cat VERSION
+    # Final unpack/checksums run under the product identities in step 06.
+    tar -xOf ./*.tar.gz --wildcards 'myproduct-*/VERSION' > version
+    [[ $(cat version) =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
+    cat version
     ;;
 install)
-    cd "$product"
-    ./scripts/generate-certificates.sh "$prod_host"
-    python3 - "$prod_ip" "$prod_host" "$port" <<'PY'
+    cd "$base"
+    archive="myproduct-$(cat version)-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
+    tar xzf "$archive" -C "$stage"
+    # Prepare-host reads HTTPS_PORT from config; no secrets in this staging config.
+    python3 - "$stage/myproduct-$(cat version)" "$port" <<'CONFIG'
+import pathlib, sys, yaml
+root = pathlib.Path(sys.argv[1])
+config = yaml.safe_load((root / "config.example.yaml").read_text())
+config["HTTPS_PORT"] = int(sys.argv[2])
+(root / "config.yaml").write_text(yaml.safe_dump(config))
+CONFIG
+    sudo -n bash "$stage/myproduct-$(cat version)/scripts/prepare-host.sh"
+    sudo -n -H -u myproduct mkdir -p /var/lib/myproduct/releases
+    # Operatøren åpner arkivet; myproduct trenger ikke lesetilgang til operatørens hjem.
+    # shellcheck disable=SC2024
+    sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
+    rm -rf -- "$stage"
+    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+    sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
+    sudo -n fapolicyd-cli --update
+    sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" "$prod_host"
+    sudo -n -H -u myproduct cp "$product/config.example.yaml" "$product/config.yaml"
+    sudo -n -H -u myproduct python3 - "$product/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import os, sys, yaml
-with open("config.example.yaml") as stream:
+with open(sys.argv[1]) as stream:
     config = yaml.safe_load(stream)
-config.update(IP_ADDRESS=sys.argv[1], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[2], sys.argv[3]), HTTPS_PORT=int(sys.argv[3]))
-with open(os.open("config.yaml", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
+config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
+os.chmod(sys.argv[1], 0o600)
+with open(sys.argv[1], "w") as stream:
     yaml.safe_dump(config, stream)
-PY
-    # Network is installed by the product's .network Quadlet in this revision.
+CONFIG
     date +%s > "$base/install-start"
-    sudo -n ./deploy install
-    sudo -n podman images
-    while read -r image; do sudo -n podman image exists "$image"; done < images/images.txt
+    sudo -n -H -u myproduct python3 "$product/deploy.py" install
+    user_service status --no-pager myproduct.service
+    as_product podman images
+    sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
 check)
     profile
     healthy
-    sudo -n systemctl is-active myproduct-network.service
-    sudo -n /usr/lib/systemd/system-generators/podman-system-generator --dryrun
+    user_service is-active myproduct-network.service
+    generated=$(as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun 2>&1)
+    printf '%s\n' "$generated"
+    grep -q 'podman-user-wait-network-online.service' <<< "$generated"
+    test -z "$(sudo -n podman ps -aq)"
+    sudo -n podman ps -a
+    sudo -n ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
     sudo -n python3 - <<'PY'
-import pathlib, stat
+import pathlib, pwd, stat
+account = pwd.getpwnam("myproduct")
 paths = {
- "/etc/containers/systemd/myproduct.yaml": 0o600,
- "/etc/containers/systemd/myproduct.kube": 0o644,
- "/etc/containers/systemd/myproduct.network": 0o644,
+ "/var/lib/myproduct": 0o700,
+ "/var/lib/myproduct/.config/containers/systemd/myproduct.yaml": 0o600,
+ "/var/lib/myproduct/.config/containers/systemd/myproduct.kube": 0o644,
+ "/var/lib/myproduct/.config/containers/systemd/myproduct.network": 0o644,
  "/var/lib/myproduct/files": 0o700,
 }
 paths.update({str(p): 0o600 for p in pathlib.Path("/var/lib/myproduct/files").glob("*.tar")})
 for name, mode in paths.items():
     item = pathlib.Path(name).stat()
-    assert item.st_uid == item.st_gid == 0 and stat.S_IMODE(item.st_mode) == mode, name
-    print("PASS: root:root {:04o} {}".format(mode, name))
+    assert item.st_uid == account.pw_uid and item.st_gid == account.pw_gid and stat.S_IMODE(item.st_mode) == mode, name
+    print("PASS: myproduct:myproduct {:04o} {}".format(mode, name))
 PY
-    sudo -n podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
-    sudo -n podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
+    as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
+    as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
-    if sudo -n journalctl -u myproduct.service --since "@$(cat "$base/install-start")" --no-pager | grep -Ei 'Trying to pull|Pulling image|pull access denied'; then
+    if sudo -n journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$(id -u myproduct)" --since "@$(cat "$base/install-start")" --no-pager | grep -Ei 'Trying to pull|Pulling image|pull access denied'; then
         echo 'FAIL: install attempted a pull'; exit 1
     fi
     echo 'PASS: journal contains no pull attempts'
@@ -261,26 +297,26 @@ prod-e2e|markers-create|markers-check)
     fi
     ;;
 stop)
-    sudo -n systemctl stop myproduct.service
-    if sudo -n systemctl is-active --quiet myproduct.service; then exit 1; fi
-    sudo -n podman ps --all --pod
-    test -z "$(sudo -n podman ps -q)"
-    sudo -n podman secret ls
-    sudo -n podman volume ls
+    user_service stop myproduct.service
+    if user_service is-active --quiet myproduct.service; then exit 1; fi
+    as_product podman ps --all --pod
+    test -z "$(as_product podman ps -q)"
+    as_product podman secret ls
+    as_product podman volume ls
     ;;
 start|restart)
-    sudo -n systemctl "$action" myproduct.service
+    user_service "$action" myproduct.service
     healthy
     ;;
 kill)
-    sudo -n podman kill myproduct-todo-backend
-    for attempt in {1..30}; do
-        if [[ $(sudo -n podman inspect --format '{{.State.Running}}' myproduct-todo-backend) == true ]]; then
+    as_product podman kill myproduct-todo-backend
+    for _ in {1..30}; do
+        if [[ $(as_product podman inspect --format '{{.State.Running}}' myproduct-todo-backend) == true ]]; then
             healthy; exit 0
         fi
         sleep 2
     done
-    sudo -n podman inspect --format '{{.State.Status}} restart_count={{.RestartCount}} policy={{.HostConfig.RestartPolicy.Name}}' myproduct-todo-backend
+    as_product podman inspect --format '{{.State.Status}} restart_count={{.RestartCount}} policy={{.HostConfig.RestartPolicy.Name}}' myproduct-todo-backend
     echo 'FAIL: container did not return after podman kill within 60s'
     exit 1
     ;;
@@ -291,11 +327,11 @@ reboot)
 boot) cat /proc/sys/kernel/random/boot_id;;
 audit)
     # Use VM local time for ausearch, derived from the recorded controller epoch.
-    start_date=$(date -d "@$run_started" +%m/%d/%Y)
+    start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
-    printf 'FANOTIFY evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
+    printf 'FANOTIFY/AVC evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
     sudo -n systemctl is-active auditd
-    if events=$(sudo -n env LC_ALL=C ausearch -m FANOTIFY --input-logs -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
+    if events=$(sudo -n env LC_ALL=C ausearch -m FANOTIFY,AVC,USER_AVC --input-logs -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
         printf '%s\n' "$events"
     else
         status=$?
@@ -303,7 +339,7 @@ audit)
         if [[ $status != 1 || $events != '<no matches>' ]]; then
             exit "$status"
         fi
-        echo 'PASS: no FANOTIFY events in this run interval'
+        echo 'PASS: no FANOTIFY/AVC events in this run interval'
     fi
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;

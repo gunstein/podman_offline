@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-1 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-3 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -24,16 +24,16 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
 2. Installer forutsetningene **før snapshot**, på begge VM-er:
 
    ```sh
-   sudo dnf install -y podman python3 python3-pyyaml openssl curl git tar gzip nftables firewalld fapolicyd
+   sudo dnf install -y podman python3 python3-pyyaml openssl curl git tar gzip nftables firewalld fapolicyd policycoreutils-python-utils
    sudo systemctl enable --now firewalld
    python3 -c 'import yaml, venv'
    podman --version
-   test -x /usr/lib/systemd/system-generators/podman-system-generator
+   test -x /usr/lib/systemd/user-generators/podman-user-generator
    ```
 
    VM-1 må kunne bygge rootless og laste ned Python-pakker. Systemets Python på
    VM-2 med PyYAML er tilstrekkelig; ingen pip-installering der. Bruk Podman med
-   Quadlet og multi-image-save (4.4+); faktiske versjoner registreres i rapporten.
+   bruker-Quadlet og multi-image-save (Podman 5.x); faktiske versjoner registreres i rapporten.
    Ingen app-images skal forhåndslastes for å skjule mangler i bundlen.
 3. Legg laptopens SSH-nøkkel i brukerens authorized_keys og bekreft SSH-hostnøkler
    på laptop. Testen bruker `StrictHostKeyChecking=yes`. Aktiver lingering for
@@ -67,7 +67,9 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
    fravikes, som i inspirasjonsrepoets klient. Tokenet sendes bare i HTTP-header.
 5. Kontroller at begge VM-er er rene: ingen pods, containere, volumer eller
    Secrets i verken rootless eller rootful lager; ingen
-   `/etc/containers/systemd/myproduct.*`. Ikke ha lab-VM-ene under Proxmox HA.
+   `/etc/containers/systemd/myproduct.*`; ingen bruker `myproduct` eller
+   `/var/lib/myproduct`. Disse tilstandskravene kontrolleres etter rollback,
+   før isolasjon/installasjon (eksisterende feilet kjøring kan ligge før rollback). Ikke ha lab-VM-ene under Proxmox HA.
    Slå av VM-ene ryddig, ta snapshot `clean-agent` og start dem igjen. Snapshotet
    skal inneholde SSH/sudo, pakker og nett, men ingen applikasjonstilstand.
    Dette tilsvarer forberedelsen i `podman_test` sitt
@@ -166,7 +168,7 @@ Revisjonen etter review bruker allerede Always, network-Quadlet, navnekontroll
 og utsatt arkivskriving. Testen oppretter derfor ikke produktnettverket manuelt.
 Den sjekker også hjelp-appen og alle sju appcontainere i seks pods.
 
-Oppgavens `sudo podman kill myproduct-todo-backend` beholdes bokstavelig.
+Oppgavens `sudo -u myproduct podman kill myproduct-todo-backend` beholdes bokstavelig.
 Podman dokumenterer at eksplisitt kill/stop ikke aktiverer restart-policyen:
 https://docs.podman.io/en/v5.7.0/markdown/podman-run.1.html . Dette steget kan derfor
 stoppe selv med Always. Det erstattes ikke med direkte prosessignal for å få
@@ -189,16 +191,32 @@ opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN 
 
 ## Prod-operatør og audit-bevis
 
-Prod kjøres som labbrukeren, med sudo bare der produktets README eller
-kontrollene krever det. Inner-checksums og sertifikatscriptet kjøres uten sudo;
-install kjøres med sudo. Ingen filer legges til i fapolicyd trust og ingen
-produktkommando forhåndskjøres som root. En avvisning stopper steget og blir
-et funn, selv om en annen kjøreform kunne kommet videre.
+Prod kjøres som labbrukeren med sudo akkurat som i produktets [README](../README.md):
+midlertidig utpakking, prepare-host, release under /var/lib/myproduct, indre
+checksums som root og trust av bare deploy.py, sertifikat/config som myproduct,
+og install som myproduct. Brukerens HOME settes med sudo -H. Ingen rootful
+produktressurser skal opprettes. Steg 07 sjekker eierskap/mode, SELinux-labels,
+bruker-generatorens nettavhengighet og at rootful containerlager er tomt.
+Prepare-host åpner HTTPS i firewalld; nft-filteret avgrenser til lab-subnettet.
 
-Når PROD har blitt rullet tilbake og SSH er tilgjengelig, hentes FANOTIFY-bevis
-til slutt, både ved suksess og ved feil. Kommandoen er
-`sudo ausearch -m FANOTIFY --input-logs -ts <dato> <tid> -i`, med starttid for
-kjøringen konvertert til VM-ens lokale tid og stdin lukket. Hele audit-utdraget
-tas med i EVIDENCE.md, også avvisninger som ikke ga et feilet produktsteg.
-Ingen treff er et gyldig resultat; utilgjengelig audit gir NOT CLEAN.
-Originalfeilen beholdes selv om audit-innsamlingen feiler.
+CA og passord leses via sudo som myproduct direkte til private filer på
+kontrolleren, aldri til logg; deretter scp til VM-1 sin private runtime-katalog.
+Livssyklus bruker systemctl --user -M myproduct@, og Podman som myproduct med
+brukerens XDG_RUNTIME_DIR. Reboot skal virke uten innlogging som myproduct.
+
+Når PROD har blitt rullet tilbake og SSH er tilgjengelig, hentes FANOTIFY,
+AVC og USER_AVC til slutt, både ved suksess og ved feil. Starttid lagres som epoch.
+VM-ens ausearch forventer dato i lokalens %x-format og tid som et eget argument:
+
+```sh
+start_date=$(LC_ALL=C date -d "@$run_started" +%x)
+start_time=$(date -d "@$run_started" +%H:%M:%S)
+sudo env LC_ALL=C ausearch --input-logs -m FANOTIFY,AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null
+```
+
+På OL9-laben betyr dette MM/DD/YY. Fire sifre i årstallet eller dato og tid i
+ett argument blir avvist; dette ble kontrollert lesende før ny kjøring.
+Hele audit-utdraget tas med i EVIDENCE.md, også avvisninger som ikke stoppet et
+produktsteg. Ingen treff er gyldig; utilgjengelig audit gir NOT CLEAN.
+Originalfeilen beholdes selv om audit-innsamlingen feiler. Gamle runs og
+separate diagnoselogger endres aldri.

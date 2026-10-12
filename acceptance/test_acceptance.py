@@ -155,6 +155,63 @@ class HarnessTests(unittest.TestCase):
         self.harness.cleanup.assert_called_once()
         self.assertFalse(self.harness.report())
 
+    def test_audit_uses_locale_date_separate_time_and_both_denial_types(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        action = remote[
+            remote.index("audit)\n") + len("audit)\n") : remote.index("cleanup)")
+        ]
+        action = action.rsplit(";;", 1)[0]
+        stubs = """
+run_started=1791821932
+date() { if [[ $3 == +%x ]]; then echo 10/12/26; else echo 18:18:52; fi; }
+sudo() {
+    if [[ $2 == systemctl ]]; then echo active; return 0; fi
+    [[ $* == '-n env LC_ALL=C ausearch -m FANOTIFY,AVC,USER_AVC --input-logs -ts 10/12/26 18:18:52 -i' ]] || return 99
+    echo 'type=FANOTIFY resp=deny'
+    echo 'type=AVC denied'
+}
+"""
+        result = subprocess.run(
+            ["bash", "-eu", "-c", stubs + action],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("type=FANOTIFY resp=deny", result.stdout)
+        self.assertIn("type=AVC denied", result.stdout)
+
+    def test_credentials_stream_to_private_files_without_logging_content(self):
+        self.harness.private = self.root / "private"
+        self.harness.private.mkdir(mode=0o700)
+        self.harness.meta["version"] = "0.1.0"
+        self.harness.cfg = {
+            "SSH_USER": "operator",
+            "PROD_IP": "192.0.2.2",
+            "DEV_IP": "192.0.2.1",
+        }
+        self.harness.ssh = mock.Mock(side_effect=["/run/user/1000", ""])
+        self.harness.command = mock.Mock()
+
+        def transfer(args, stdout, **kwargs):
+            self.assertIn(
+                "sudo -n -H -u myproduct cat /var/lib/myproduct/releases/myproduct-0.1.0/",
+                args[-1],
+            )
+            stdout.write(b"synthetic-private-content")
+            return subprocess.CompletedProcess(args, 0)
+
+        with mock.patch.object(runner.subprocess, "run", side_effect=transfer):
+            self.harness.step("credentials", self.harness.credentials)
+        self.assertNotIn(
+            "synthetic-private-content",
+            (self.harness.folder / "logs/credentials.log").read_text(),
+        )
+        self.assertEqual(
+            (self.harness.private / "alice-password").read_bytes(),
+            b"synthetic-private-content",
+        )
+
     def test_guest_security_profile_checks(self):
         remote = Path(__file__).with_name("remote.sh").read_text()
         function = remote[remote.index("profile() {") : remote.index("facts() {")]

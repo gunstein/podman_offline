@@ -314,7 +314,7 @@ class Run:
             raise RuntimeError("Unexpected VM runtime path")
         self.dev_private = runtime + "/podman-offline-" + self.id
         self.ssh("DEV", "mkdir -m 700 " + shlex.quote(self.dev_private))
-        base = "podman-offline-acceptance/" + self.id + "/product/"
+        base = "/var/lib/myproduct/releases/myproduct-" + self.meta["version"] + "/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
             "alice-password": "generated-certificates/users/alice-password",
@@ -322,7 +322,19 @@ class Run:
         }
         for name, relative in files.items():
             local = self.private / name
-            self.command(SCP + [self.host("PROD") + ":" + base + relative, local])
+            # Secret bytes go straight to a private file, never through command logs.
+            args = SSH + [
+                self.host("PROD"),
+                "sudo -n -H -u myproduct cat " + shlex.quote(base + relative),
+            ]
+            self.write("$ " + shlex.join(args) + " > [private runtime file]\n")
+            with local.open("xb") as stream:
+                result = subprocess.run(
+                    args, check=False, stdout=stream, stderr=subprocess.PIPE, timeout=30
+                )
+            self.write(f"secret transfer exit={result.returncode}\n")
+            if result.returncode:
+                raise RuntimeError("Unable to read product credentials")
             local.chmod(0o600)
             if name.endswith("-password"):
                 self.redactions.append(local.read_text().strip())

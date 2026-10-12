@@ -1,7 +1,5 @@
 [Unit]
 Description=MyProduct Todo and Duende
-Wants=network-online.target
-After=network-online.target
 
 [Kube]
 Yaml=myproduct.yaml
@@ -12,4 +10,4 @@ Restart=on-failure
 TimeoutStartSec=180
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
