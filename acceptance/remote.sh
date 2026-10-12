@@ -57,6 +57,31 @@ def collect():
 collect()
 AUDIT
 }
+# Vent lesende på eksakte trust-stier etter daemonens asynkrone oppdatering.
+wait_trust() {
+    local wanted=$1 removed=${2:-} dump status attempt
+    for attempt in {1..30}; do
+        dump=$(timeout 10 sudo -n fapolicyd-cli --dump-db) || {
+            echo 'FAIL: could not read trust database' >&2; return 1;
+        }
+        status=0
+        awk -v wanted="$wanted" -v removed="$removed" '
+            NF != 4 || $2 !~ /^\// || $3 !~ /^[0-9]+$/ ||
+            length($4) != 64 || $4 !~ /^[[:xdigit:]]+$/ { invalid=1 }
+            $2 == wanted { found=1 }
+            removed != "" && $2 == removed { old=1 }
+            END { if (NR == 0 || invalid) exit 2; if (!found || old) exit 1 }
+        ' <<< "$dump" || status=$?
+        case "$status" in
+            0) printf 'PASS: trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
+            1) printf 'WAIT: trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
+            *) echo 'FAIL: invalid or empty trust database output' >&2; return 1;;
+        esac
+        if [[ $attempt != 30 ]]; then sleep 1; fi
+    done
+    echo 'FAIL: trust update did not finish within 30 checks' >&2
+    return 1
+}
 # Valider VM-rollens fapolicyd-, SELinux- og firewalld-profil.
 profile() {
     selinux=$(getenforce)
@@ -318,15 +343,12 @@ upgrade)
     sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
     old_release="/var/lib/myproduct/releases/myproduct-$old_version"
     sudo -n fapolicyd-cli --update
+    wait_trust "$product/deploy.py"
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     healthy
     sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file myproduct
     sudo -n fapolicyd-cli --update
-    trust=$(sudo -n fapolicyd-cli --dump-db)
-    if grep -Fq " $old_release/deploy.py " <<< "$trust"; then
-        echo 'FAIL: old release still trusted'; exit 1
-    fi
-    grep -F " $product/deploy.py " <<< "$trust"
+    wait_trust "$product/deploy.py" "$old_release/deploy.py"
     echo 'PASS: old deploy.py trust removed, new deploy.py trusted'
     ;;
 persistent-state)
@@ -367,6 +389,7 @@ install)
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
     sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
     sudo -n fapolicyd-cli --update
+    wait_trust "$product/deploy.py"
     sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" --root "$state" "$prod_host"
     sudo -n install -o myproduct -g myproduct -m 0600 "$product/config.example.yaml" "$state/config.yaml"
     sudo -n -H -u myproduct python3 - "$state/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'

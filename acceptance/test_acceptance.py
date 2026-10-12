@@ -521,6 +521,92 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
             with self.assertRaises(RuntimeError):
                 self.harness.boot_id(output)
 
+    def trust_helper(self):
+        """Hent ventefunksjonen som deles av VM-prosedyren og README."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        return (
+            remote.split("# Vent lesende på eksakte trust-stier", 1)[1]
+            .split("# Valider VM-rollens", 1)[0]
+            .split("\n", 1)[1]
+        )
+
+    def run_trust_wait(self, outputs, exit_code=0):
+        """Kjør lesende trust-venting mot sekvensielle databasefixtures uten ventetid."""
+        fixtures = self.root / "trust-fixtures"
+        fixtures.mkdir(exist_ok=True)
+        for index, output in enumerate(outputs, 1):
+            (fixtures / str(index)).write_text(output)
+        counter = fixtures / "counter"
+        counter.write_text("0")
+        script = r"""
+# Les neste databasefixture og behold advarsler på stderr.
+sudo() {
+    printf 'Warning: fixture warning\n' >&2
+    count=$(cat "$fixtures/counter")
+    count=$((count + 1))
+    printf '%s' "$count" > "$fixtures/counter"
+    if [[ $count -gt $last ]]; then count=$last; fi
+    cat "$fixtures/$count"
+    return "$fixture_status"
+}
+# Unngå virkelig venting eller eksterne kommandoer i regresjonstesten.
+sleep() { :; }
+# Kjør den stubbede lesingen med samme argumenter som produksjonskallet.
+timeout() { shift; "$@"; }
+wait_trust /new/deploy.py /old/deploy.py
+"""
+        prefix = "set -eu\nfixtures=" + shlex.quote(str(fixtures))
+        prefix += (
+            "\nlast=" + str(len(outputs)) + "\nfixture_status=" + str(exit_code) + "\n"
+        )
+        result = subprocess.run(
+            ["bash", "-se"],
+            input=prefix + self.trust_helper() + script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, int(counter.read_text())
+
+    def test_trust_wait_accepts_delayed_update_without_mutations(self):
+        """Vent på ny oppføring og slettet gammel uten å skrive hashverdier."""
+        digest = "a" * 64
+        new = "file /new/deploy.py 123 " + digest + "\n"
+        old = "file /old/deploy.py 123 " + digest + "\n"
+        result, calls = self.run_trust_wait([old, old + new, new])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, 3)
+        self.assertIn("Warning: fixture warning", result.stderr)
+        self.assertNotIn(digest, result.stdout + result.stderr)
+        self.assertNotIn("--update", self.trust_helper())
+        self.assertNotIn("--file", self.trust_helper())
+
+    def test_trust_wait_times_out_with_stale_database(self):
+        """Avvis gammel database etter grensen selv om lesingene lykkes."""
+        result, calls = self.run_trust_wait(
+            ["file /old/deploy.py 123 " + "b" * 64 + "\n"]
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, 30)
+        self.assertIn("30 checks", result.stderr)
+
+    def test_trust_wait_rejects_failed_empty_or_invalid_read(self):
+        """Stopp straks på kommandofeil eller ubrukelig stdout, også med advarsler."""
+        valid = "file /new/deploy.py 123 " + "c" * 64 + "\n"
+        for output, status in ((valid, 1), ("", 0), ("invalid\n", 0)):
+            with self.subTest(output=output[:10], status=status):
+                result, calls = self.run_trust_wait([output], status)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, 1)
+                self.assertIn("Warning: fixture warning", result.stderr)
+
+    def test_readme_uses_same_trust_wait_as_remote(self):
+        """Bekreft at den dokumenterte funksjonen utfører samme lesende kontroll."""
+        readme = (
+            Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
+        )
+        self.assertIn(self.trust_helper().strip(), readme)
+
     def trust_procedure(self, source, install_status=0, health_status=0):
         """Kjør README- eller VM-prosedyren med stubbede trust- og installasjonskall."""
         if source == "remote":
@@ -546,10 +632,12 @@ sudo() {
         *'--file delete'*) echo delete >> "$calls";;
         *'--update'*) echo update >> "$calls";;
         *'deploy.py install'*) echo install >> "$calls"; return "$install_status";;
-        *'--dump-db'*) echo "fake $product/deploy.py digest";;
+        *'--dump-db'*) printf "file %s 123 %064d\n" "$product/deploy.py" 0;;
         *'systemctl --user'*) healthy;;
     esac
 }
+# Kjør bare stubbede kommandoer under timeout i testen.
+timeout() { shift; "$@"; }
 # Simuler bestått checksum uten å lese et virkelig arkiv.
 sha256sum() { :; }
 # Simuler helsekontroll etter installasjon.
@@ -568,7 +656,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         )
         result = subprocess.run(
             ["bash", "-se"],
-            input=prefix + stubs + code,
+            input=prefix + stubs + self.trust_helper() + code,
             cwd=self.root,
             capture_output=True,
             text=True,

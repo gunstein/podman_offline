@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-12 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-13 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 67 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 71 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -326,3 +326,8 @@ containere; et image-lag med samme label godtas ikke.
 Alle registrerte stderr-linjer som begynner med `WARNING`, `** WARNING` eller
 `Warning:` navngis som «stderr warning» i rapporten. Kilden kan være SSH-klienten
 eller fjernkommandoen; den utledes ikke fra teksten. Kjente hemmeligheter maskeres.
+
+Trust-oppdateringer kontrolleres med avgrenset, lesende venting: `--update`
+varsler daemonen uten å vente på ferdig database. Før installasjon kreves den
+nye stien, og etter oppgradering kreves også at den gamle stien er fjernet.
+Databaseinnhold og hashverdier skrives ikke til loggen.

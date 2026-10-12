@@ -154,6 +154,39 @@ må endres sammen. Demoens interne OIDC-navn er `myproduct-proxy`.
 Rediger `IP_ADDRESS`, `PUBLIC_ORIGIN` og `HTTPS_PORT` i config med sudoedit.
 Porten må være identisk i `--port`, `HTTPS_PORT` og `PUBLIC_ORIGIN`.
 
+`fapolicyd-cli --update` varsler daemonen og venter ikke på ferdig oppdatering.
+Definer denne funksjonen i operatørens shell før installasjon eller oppgradering.
+Den leser databasen inntil nye og eventuelt fjernede stier stemmer, og stopper
+ved feil eller tidsavbrudd. Bare stier og status skrives ut.
+
+```sh
+# Vent lesende på eksakte trust-stier etter daemonens asynkrone oppdatering.
+wait_trust() {
+    local wanted=$1 removed=${2:-} dump status attempt
+    for attempt in {1..30}; do
+        dump=$(timeout 10 sudo -n fapolicyd-cli --dump-db) || {
+            echo 'FAIL: could not read trust database' >&2; return 1;
+        }
+        status=0
+        awk -v wanted="$wanted" -v removed="$removed" '
+            NF != 4 || $2 !~ /^\// || $3 !~ /^[0-9]+$/ ||
+            length($4) != 64 || $4 !~ /^[[:xdigit:]]+$/ { invalid=1 }
+            $2 == wanted { found=1 }
+            removed != "" && $2 == removed { old=1 }
+            END { if (NR == 0 || invalid) exit 2; if (!found || old) exit 1 }
+        ' <<< "$dump" || status=$?
+        case "$status" in
+            0) printf 'PASS: trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
+            1) printf 'WAIT: trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
+            *) echo 'FAIL: invalid or empty trust database output' >&2; return 1;;
+        esac
+        if [[ $attempt != 30 ]]; then sleep 1; fi
+    done
+    echo 'FAIL: trust update did not finish within 30 checks' >&2
+    return 1
+}
+```
+
 ```sh
 version=0.1.0
 hostname=myproduct-proxy
@@ -171,6 +204,7 @@ rm -rf -- "$stage"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
+wait_trust "$release/deploy.py"
 sudo -H -u myproduct bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$hostname"
 sudo install -o myproduct -g myproduct -m 0600 "$release/config.example.yaml" /var/lib/myproduct/config.yaml
 sudoedit /var/lib/myproduct/config.yaml
@@ -295,6 +329,7 @@ sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
+wait_trust "$release/deploy.py"
 sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
 sudo systemctl --user -M myproduct@ is-active myproduct.service
 ```
@@ -306,6 +341,7 @@ vellykket installasjon og kontroll fjernes trust for den gamle releasen:
 ```sh
 sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
+wait_trust "$release/deploy.py" "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py"
 ```
 
 Etter vellykket oppgradering kan gamle release-kataloger slettes når deres
