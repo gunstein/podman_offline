@@ -333,6 +333,7 @@ PY
 import os
 import pathlib
 import re
+import stat
 import subprocess
 
 try:
@@ -353,8 +354,12 @@ def context_type(context):
 
 
 def policy_type(path):
-    """Hent forventet type med matchpathcon og avvis mislykket oppslag."""
-    status, context = selinux.matchpathcon(str(path), 0)
+    """Hent policytypen med stiens lstat-filtype; avvis feil uten reserveoppslag."""
+    try:
+        mode = stat.S_IFMT(os.lstat(str(path)).st_mode)
+    except OSError as error:
+        raise RuntimeError("lstat feilet for {}: {}".format(path, error)) from None
+    status, context = selinux.matchpathcon(str(path), mode)
     if status != 0:
         raise RuntimeError("matchpathcon feilet: " + str(path))
     return context_type(context)
@@ -365,7 +370,10 @@ def check_equivalence():
     probes = ((STORAGE / "overlay-layers", "container_ro_file_t"),
               (STORAGE / "volumes/x/_data/y", "container_file_t"))
     for path, expected in probes:
-        actual = policy_type(path)
+        status, context = selinux.matchpathcon(str(path), 0)
+        if status != 0:
+            raise RuntimeError("matchpathcon feilet for policy-probe: " + str(path))
+        actual = context_type(context)
         print("POLICY {} type={} expected={}".format(path, actual, expected))
         if actual != expected:
             raise RuntimeError("Container-ekvivalensen mangler eller gir feil type: " + str(path))

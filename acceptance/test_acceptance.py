@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import types
@@ -529,6 +530,14 @@ class SelinuxTests(unittest.TestCase):
         with mock.patch.dict("sys.modules", {"selinux": self.policy}):
             exec(compile(self.code, "remote.sh:LABELS", "exec"), self.namespace)  # noqa: S102 - trusted repo heredoc under test
         self.storage = self.namespace["STORAGE"]
+        self.filesystem = types.SimpleNamespace(
+            lstat=mock.Mock(
+                return_value=types.SimpleNamespace(st_mode=stat.S_IFREG | 0o600)
+            ),
+            getxattr=mock.Mock(),
+            walk=os.walk,
+        )
+        self.namespace["os"] = self.filesystem
         self.lines = (
             Path(__file__)
             .with_name("fixtures")
@@ -539,7 +548,17 @@ class SelinuxTests(unittest.TestCase):
 
     def matchpathcon(self, path, mode):
         """Returner syntetiske policytyper for lagerets kjente stiprofiler."""
-        self.assertEqual(mode, 0)
+        probes = {
+            str(self.storage / "overlay-layers"),
+            str(self.storage / "volumes/x/_data/y"),
+        }
+        if mode == 0:
+            self.assertIn(path, probes)
+        else:
+            self.assertIn(
+                mode,
+                (stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK, stat.S_IFSOCK, stat.S_IFIFO),
+            )
         if "/volumes/" in path:
             kind = "container_file_t"
         elif (
@@ -551,6 +570,70 @@ class SelinuxTests(unittest.TestCase):
         else:
             kind = "container_var_lib_t"
         return 0, "system_u:object_r:" + kind + ":s0"
+
+    def test_policy_probes_use_zero_without_lstat(self):
+        """Bekreft at bare de eksplisitte policy-probene bruker modus 0."""
+        self.filesystem.lstat.side_effect = AssertionError("Prober skal ikke stat-es")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.namespace["check_equivalence"]()
+        self.assertEqual(
+            self.policy.matchpathcon.call_args_list,
+            [
+                mock.call(str(self.storage / "overlay-layers"), 0),
+                mock.call(str(self.storage / "volumes/x/_data/y"), 0),
+            ],
+        )
+        self.filesystem.getxattr.assert_not_called()
+
+    def test_existing_file_types_are_passed_without_permission_bits(self):
+        """Bekreft policyoppslag med filtypen for katalog, fil, socket og FIFO."""
+        path = self.storage / "overlay/sample"
+        self.filesystem.getxattr.return_value = b"u:r:container_ro_file_t:s0"
+        for kind in (stat.S_IFDIR, stat.S_IFREG, stat.S_IFSOCK, stat.S_IFIFO):
+            with self.subTest(kind=kind), contextlib.redirect_stdout(io.StringIO()):
+                self.filesystem.lstat.return_value = types.SimpleNamespace(
+                    st_mode=kind | 0o755
+                )
+                self.namespace["check_label"](path)
+                self.policy.matchpathcon.assert_called_with(str(path), kind)
+                self.filesystem.getxattr.assert_called_with(
+                    str(path), "security.selinux", follow_symlinks=False
+                )
+
+    def test_mtab_and_dangling_link_use_link_type_without_following_target(self):
+        """Bekreft S_IFLNK for mtab og hengende lenke uten oppslag av målet."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "etc").mkdir()
+            mtab = root / "etc/mtab"
+            mtab.symlink_to("/proc/mounts")
+            dangling = root / "dangling"
+            dangling.symlink_to(root / "absent-target")
+            self.filesystem.lstat.side_effect = os.lstat
+            self.filesystem.getxattr.return_value = b"u:r:container_ro_file_t:s0"
+            self.policy.matchpathcon.side_effect = None
+            self.policy.matchpathcon.return_value = (0, "u:r:container_ro_file_t:s0")
+            for path in (mtab, dangling):
+                with self.subTest(path=path), contextlib.redirect_stdout(io.StringIO()):
+                    self.namespace["check_label"](path)
+                self.policy.matchpathcon.assert_called_with(str(path), stat.S_IFLNK)
+                self.filesystem.lstat.assert_called_with(str(path))
+                self.filesystem.getxattr.assert_called_with(
+                    str(path), "security.selinux", follow_symlinks=False
+                )
+
+    def test_lstat_failure_has_no_zero_mode_fallback(self):
+        """Bekreft FAIL ved lstat-feil før policyoppslag uten modus-0-reserve."""
+        path = self.storage / "overlay/disappeared"
+        for error in (FileNotFoundError("missing"), PermissionError("denied")):
+            with self.subTest(error=error):
+                self.filesystem.lstat.side_effect = error
+                with self.assertRaisesRegex(
+                    RuntimeError, "lstat feilet for"
+                ) as failure:
+                    self.namespace["policy_type"](path)
+                self.assertIn(str(path), str(failure.exception))
+                self.policy.matchpathcon.assert_not_called()
 
     def test_actual_run6_storage_lines_have_named_rules(self):
         """Bekreft at kjente lagerlinjer får en navngitt regel."""
@@ -603,7 +686,9 @@ class SelinuxTests(unittest.TestCase):
         ):
             with (
                 mock.patch.object(
-                    os, "getxattr", return_value=("u:r:" + actual + ":s0").encode()
+                    self.filesystem,
+                    "getxattr",
+                    return_value=("u:r:" + actual + ":s0").encode(),
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
                 self.assertRaisesRegex(RuntimeError, "avviker fra policyen"),

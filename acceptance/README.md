@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-7 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-9 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -186,7 +186,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 35 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 39 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -203,7 +203,9 @@ bruker-generatorens nettavhengighet og at rootful containerlager er tomt.
 Steg 07 bruker samme Python-heredoc på stdin til sudo python3 som før.
 Modulen selinux er påkrevd (policycoreutils-python-utils); fravær gir tydelig FAIL.
 Policy-prober bekrefter ekvivalensen; faktiske typer sammenlignes med
-selinux.matchpathcon. Overlay, overlay-layers og overlay-images er ro, men
+selinux.matchpathcon med stat.S_IFMT(os.lstat(sti).st_mode) for eksisterende
+stier. Bare de to eksplisitte policy-probene bruker modus 0. Lstat-feil gir
+FAIL uten reserveoppslag; lenkemålet følges ikke. Overlay, overlay-layers og overlay-images er ro, men
 overlay-containers er container_var_lib_t og voluminnhold container_file_t.
 Utenfor storage kreves tom restorecon -n -v -R -e <storage> /var/lib/myproduct.
 Storage dry-run logges separat og alle linjer må klassifiseres med [reglene og
