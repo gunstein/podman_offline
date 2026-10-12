@@ -51,9 +51,14 @@ finnes i [akseptansetesten](../acceptance/README.md).
 
    Forvent myproduct:myproduct, hjem/filkatalog 0700, YAML/arkiver 0600 og
    kube/network 0644. SELinux skal være Enforcing og fapolicyd aktiv.
-   Overlay-kataloger skal ha container_ro_file_t og voluminnhold container_file_t.
-   Kjør `sudo restorecon -n -v -R /var/lib/myproduct`; ingen endringer skal
-   foreslås. Kontroller at audit ikke har AVC-avvisninger siden teststart.
+   Overlay, overlay-layers og overlay-images skal ha container_ro_file_t;
+   overlay-containers skal ha container_var_lib_t og voluminnhold container_file_t.
+   Kontroller faktiske typer mot selinux.matchpathcon, som steg 07 gjør.
+   Kjør `sudo restorecon -n -v -R -e /var/lib/myproduct/.local/share/containers/storage /var/lib/myproduct`;
+   output utenfor lageret skal være tom. Logg separat dry-run av storage og
+   klassifiser hver linje etter [reglene](../acceptance/SELINUX-DIAGNOSIS.md).
+   Ukjente linjer og AVC/USER_AVC/FANOTIFY siden teststart gir FAIL.
+   Kjør aldri restorecon -R eller -F på et fylt lager.
    Registrer faktiske labels; ikke slå av sikkerhetsmekanismer ved avvisninger.
 4. Kontroller generator, nettavhengigheter og DNS:
 

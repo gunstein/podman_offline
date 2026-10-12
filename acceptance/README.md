@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-6 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-7 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -181,27 +181,37 @@ beholdes i databasen for inspeksjon. HTTP-testene kjører ikke JavaScript i nett
 ```sh
 python3 -m unittest discover -s acceptance -p 'test_*.py'
 bash -n acceptance/remote.sh
-ruff check acceptance/ scripts/smoke-test.py
-ruff format --check acceptance/ scripts/smoke-test.py
-pyright acceptance/ scripts/smoke-test.py
+ruff check acceptance/ dev/smoke-test.py
+ruff format --check acceptance/ dev/smoke-test.py
+pyright acceptance/ dev/smoke-test.py
 ```
 
-Testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 35 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
 
 Prod kjøres som labbrukeren med sudo akkurat som i produktets [README](../README.md):
 midlertidig utpakking, prepare-host, release under /var/lib/myproduct, indre
-checksums som root og trust av bare deploy.py, sertifikat/config som myproduct,
+checksums som root og trust av bare deploy.py, sertifikater som myproduct,
+config med install -o myproduct -g myproduct -m 0600,
 og install som myproduct. Brukerens HOME settes med sudo -H, og bash bytter arbeidskatalog som
 tjenestebrukeren før install og Podman. Dette er nødvendig når operatørens
 hjem er 0700; sudo -H alene beholder den utilgjengelige arbeidskatalogen. Ingen rootful
 produktressurser skal opprettes. Steg 07 sjekker eierskap/mode, SELinux-labels,
 bruker-generatorens nettavhengighet og at rootful containerlager er tomt.
-Overlay-kataloger skal ha container_ro_file_t, voluminnhold container_file_t.
-En lesende restorecon -n -v -R skal foreslå null endringer, og AVC/USER_AVC
-siden kjøringens start gir stopp. Ingen labels repareres i teststegene.
+Steg 07 bruker samme Python-heredoc på stdin til sudo python3 som før.
+Modulen selinux er påkrevd (policycoreutils-python-utils); fravær gir tydelig FAIL.
+Policy-prober bekrefter ekvivalensen; faktiske typer sammenlignes med
+selinux.matchpathcon. Overlay, overlay-layers og overlay-images er ro, men
+overlay-containers er container_var_lib_t og voluminnhold container_file_t.
+Utenfor storage kreves tom restorecon -n -v -R -e <storage> /var/lib/myproduct.
+Storage dry-run logges separat og alle linjer må klassifiseres med [reglene og
+run-6-tabellen](SELINUX-DIAGNOSIS.md). Ukjente linjer gir FAIL.
+Ingen AVC/USER_AVC/FANOTIFY siden start tillates. Ingen labels repareres i
+kontrollstegene, og ingen restorecon uten -n, -F eller chcon brukes der.
+Klargjøringen ekskluderer storage fra rekursiv relabeling, også ved gjentakelse;
+kjør aldri restorecon -R eller -F på et fylt lager.
 Prepare-host åpner HTTPS i firewalld; nft-filteret avgrenser til lab-subnettet.
 
 CA og passord leses via sudo som myproduct direkte til private filer på
@@ -242,3 +252,7 @@ eller config-kopiering. Testen krever uendrede filhashverdier og CA, full e2e
 med de opprinnelig overførte passordene, bevarte todo-markører og at gammel
 trust er borte. Steg 11 samler audit og rydder overførte hemmeligheter.
 Hvis et tidligere steg stopper, er oppgraderingen ikke testet.
+
+Kontroll A–E kjøres på nytt etter reboot og oppgradering. Hashsammenligningen
+omfatter config, generated-certificates, PKI/private og files/. Begge e2e- og
+markørkontrollene bruker de opprinnelige passordene.

@@ -245,7 +245,7 @@ persistent-state)
 import hashlib, json, pathlib, ssl
 root = pathlib.Path.home()
 paths = [root / "config.yaml"]
-for directory in ("generated-certificates", "PKI/private"):
+for directory in ("generated-certificates", "PKI/private", "files"):
     paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
 assert len(paths) > 1
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
@@ -326,38 +326,134 @@ for name, mode in paths.items():
 PY
     # Lesende SELinux-kontroll; aldri relabel under en akseptansekjøring.
     sudo -n python3 - <<'LABELS'
-import os, pathlib
-storage = pathlib.Path("/var/lib/myproduct/.local/share/containers/storage")
-overlays = sorted(storage.glob("overlay*"))
-volumes = sorted((storage / "volumes").glob("*/_data"))
-assert overlays and volumes, "Missing overlay or volume storage"
-for paths, expected in ((overlays, "container_ro_file_t"), (volumes, "container_file_t")):
-    count = 0
-    for root in paths:
-        items = [root]
-        if expected == "container_file_t":
-            for directory, dirs, files in os.walk(str(root)):
-                items.extend(pathlib.Path(directory) / name for name in dirs + files)
-        for path in items:
-            label = os.getxattr(str(path), "security.selinux", follow_symlinks=False).decode().strip("\x00")
-            assert label.split(":")[2] == expected, "{}: {} (expected {})".format(path, label, expected)
-            count += 1
-    print("PASS: {} paths labeled {}".format(count, expected))
+import os
+import pathlib
+import re
+import subprocess
+
+try:
+    import selinux
+except ImportError:
+    raise SystemExit("FAIL: Python-modulen selinux mangler; installer vertens policycoreutils-python-utils før snapshot")
+
+STORAGE = pathlib.Path("/var/lib/myproduct/.local/share/containers/storage")
+CUSTOMIZABLE = pathlib.Path("/etc/selinux/targeted/contexts/customizable_types")
+
+
+def context_type(context):
+    parts = context.rstrip("\x00").split(":")
+    if len(parts) < 4:
+        raise RuntimeError("Ugyldig SELinux-context: " + context)
+    return parts[2]
+
+
+def policy_type(path):
+    status, context = selinux.matchpathcon(str(path), 0)
+    if status != 0:
+        raise RuntimeError("matchpathcon feilet: " + str(path))
+    return context_type(context)
+
+
+def check_equivalence():
+    probes = ((STORAGE / "overlay-layers", "container_ro_file_t"),
+              (STORAGE / "volumes/x/_data/y", "container_file_t"))
+    for path, expected in probes:
+        actual = policy_type(path)
+        print("POLICY {} type={} expected={}".format(path, actual, expected))
+        if actual != expected:
+            raise RuntimeError("Container-ekvivalensen mangler eller gir feil type: " + str(path))
+
+
+def check_label(path):
+    actual = context_type(os.getxattr(str(path), "security.selinux", follow_symlinks=False).decode())
+    expected = policy_type(path)
+    print("LABEL {} actual={} expected={}".format(path, actual, expected))
+    if actual != expected:
+        raise RuntimeError("SELinux-type avviker fra policyen: " + str(path))
+
+
+def classify_line(line, customizable):
+    proposal = re.fullmatch(r"Would relabel (.+) from (\S+) to (\S+)", line)
+    preserved = re.fullmatch(r"(.+) not reset as customized by admin to (\S+)", line)
+    if proposal:
+        path, before, after = proposal.groups()
+        before, after = context_type(before), context_type(after)
+    elif preserved:
+        path, context = preserved.groups()
+        before, after = context_type(context), policy_type(path)
+    else:
+        raise RuntimeError("Uklassifisert restorecon-linje: " + line)
+    prefix = str(STORAGE) + "/"
+    if not path.startswith(prefix) or ".." in pathlib.Path(path).parts:
+        raise RuntimeError("restorecon-linje utenfor lageret: " + line)
+    relative = path[len(prefix):]
+    # R1: container.if named transition for 'artifacts'; container.fc path default.
+    if (proposal and re.fullmatch(r"overlay-containers/[0-9a-f]{64}/userdata/artifacts", relative)
+            and before == "container_ro_file_t" and after == "container_var_lib_t"
+            and policy_type(path) == after):
+        return "ARTIFACT_DIRECTORY_TRANSITION"
+    # R2/R3: container_file_t is customizable; preserve Podman's writable labels.
+    if preserved and before == "container_file_t" and before in customizable:
+        if re.fullmatch(r"volumes/[^/]+/_data(?:/.*)?", relative) and after == "container_file_t":
+            return "CUSTOM_VOLUME_CONTENT"
+        if re.fullmatch(r"overlay/[0-9a-f]{64}/diff(?:/.*)?", relative) and after == "container_ro_file_t":
+            return "CUSTOM_WRITABLE_LAYER"
+        if re.fullmatch(r"overlay-containers/[0-9a-f]{64}/rootfs/upper(?:/.*)?", relative) and after == "container_var_lib_t":
+            return "CUSTOM_WRITABLE_ROOTFS"
+    raise RuntimeError("Uklassifisert restorecon-linje: " + line)
+
+
+def dryrun(arguments):
+    result = subprocess.run(["restorecon", "-n", "-v", "-R"] + arguments,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            universal_newlines=True, check=False)
+    print("$ restorecon -n -v -R " + " ".join(arguments))
+    print(result.stdout, end="")
+    if result.returncode:
+        raise RuntimeError("restorecon dry-run feilet: exit " + str(result.returncode))
+    return result.stdout
+
+
+def main():
+    check_equivalence()
+    for name in ("", "overlay", "overlay-layers", "overlay-images", "overlay-containers", "volumes"):
+        check_label(STORAGE / name)
+    volumes = sorted((STORAGE / "volumes").glob("*/_data"))
+    if not volumes:
+        raise RuntimeError("Ingen volumdata funnet")
+    for root in volumes:
+        check_label(root)
+        for directory, dirs, files in os.walk(str(root)):
+            for name in sorted(dirs + files):
+                check_label(pathlib.Path(directory) / name)
+    outside = dryrun(["-e", str(STORAGE), "/var/lib/myproduct"])
+    inside = dryrun([str(STORAGE)])  # Always log storage output, even if C fails.
+    if outside:
+        raise RuntimeError("restorecon foreslår endringer utenfor lageret")
+    customizable = set(CUSTOMIZABLE.read_text().splitlines())
+    for line in inside.splitlines():
+        rule = classify_line(line, customizable)
+        print("RULE {}: {}".format(rule, line))
+    print("PASS: policy, faktiske labels og klassifisert restorecon dry-run")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError) as error:
+        raise SystemExit("FAIL: " + str(error))
 LABELS
-    proposed=$(sudo -n restorecon -n -v -R /var/lib/myproduct 2>&1)
-    printf '%s\n' "$proposed"
-    test -z "$proposed"
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
-    if avcs=$(sudo -n env LC_ALL=C ausearch --input-logs -m AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
+    if avcs=$(sudo -n env LC_ALL=C ausearch --input-logs -m FANOTIFY,AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
         printf '%s\n' "$avcs"
-        echo 'FAIL: AVC events recorded since run start'; exit 1
+        echo 'FAIL: FANOTIFY/AVC events recorded since run start'; exit 1
     else
         status=$?
         printf '%s\n' "$avcs"
         test "$status" = 1 && test "$avcs" = '<no matches>'
     fi
-    echo 'PASS: labels match policy; no relabel proposed; no AVC events'
+    echo 'PASS: no FANOTIFY/AVC events since run start'
     as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
     as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.

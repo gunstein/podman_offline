@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -182,30 +183,27 @@ sudo() {
         self.assertIn("type=FANOTIFY resp=deny", result.stdout)
         self.assertIn("type=AVC denied", result.stdout)
 
-    def test_selinux_check_rejects_relabel_avc_and_audit_errors(self):
+    def test_denial_check_rejects_fanotify_avc_and_audit_errors(self):
         remote = Path(__file__).with_name("remote.sh").read_text()
+        a = remote.index(
+            "LABELS\n", remote.index("    sudo -n python3 - <<'LABELS'")
+        ) + len("LABELS\n")
         block = remote[
-            remote.index("    proposed=$(sudo -n restorecon") : remote.index(
-                "    as_product podman exec myproduct-todo-backend"
-            )
+            a : remote.index("    as_product podman exec myproduct-todo-backend")
         ]
         stubs = r"""
 run_started=1791821932
 date() { echo 10/12/26; }
 sudo() {
-    if [[ $2 == restorecon ]]; then
-        [[ $* == '-n restorecon -n -v -R /var/lib/myproduct' ]] || return 99
-        [[ $mode != relabel ]] || echo 'Would relabel storage'
-        return 0
-    fi
     case "$mode" in
-      clean|relabel) echo '<no matches>'; return 1;;
+      clean) echo '<no matches>'; return 1;;
       avc) echo 'type=AVC denied'; return 0;;
+      fanotify) echo 'type=FANOTIFY resp=deny'; return 0;;
       error) echo 'Invalid start date'; return 1;;
     esac
 }
 """
-        for mode in ("clean", "relabel", "avc", "error"):
+        for mode in ("clean", "avc", "fanotify", "error"):
             with self.subTest(mode=mode):
                 result = subprocess.run(
                     ["bash", "-eu", "-c", "mode=" + mode + "\n" + stubs + block],
@@ -258,6 +256,75 @@ sudo() {
             self.harness.upgrade()
         self.assertEqual(self.harness.guest.call_count, 2)
         self.assertFalse(self.harness.finished)
+
+    def test_full_run_rechecks_after_reboot_and_upgrade(self):
+        self.harness.meta["version"] = "0.1.0"
+        self.harness.readiness = mock.Mock()
+        self.harness.reset = mock.Mock()
+        self.harness.source = mock.Mock()
+        self.harness.transfer = mock.Mock()
+        self.harness.credentials = mock.Mock()
+        self.harness.reboot = mock.Mock()
+        self.harness.guest = mock.Mock(
+            return_value='{"files_sha256": {"files/volume.tar": "unchanged"}}'
+        )
+        self.harness.execute()
+        self.harness.reboot.assert_called_once()
+        self.assertTrue(self.harness.finished)
+        records = [
+            json.loads(line)["step"]
+            for line in (self.harness.folder / "record.jsonl").read_text().splitlines()
+        ]
+        expected = [
+            "09-reboot",
+            "09-offline-after-reboot",
+            "09-check-after-reboot",
+            "09-e2e-after-reboot",
+            "09-markers-after-reboot",
+            "10-build-upgrade",
+            "10-transfer-upgrade",
+            "10-install-upgrade",
+            "10-check-upgrade",
+            "10-persistent-after",
+            "10-e2e-upgrade",
+            "10-markers-upgrade",
+        ]
+        self.assertEqual(records[records.index("09-reboot") :], expected)
+        self.assertEqual(
+            self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 3
+        )
+
+    def test_persistent_snapshot_hashes_config_pki_and_files_without_content(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        code = remote.split("    as_product python3 - <<'HASHES'\n", 1)[1].split(
+            "\nHASHES\n", 1
+        )[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            private = b"synthetic-secret-that-must-not-be-printed"
+            for name in (
+                "config.yaml",
+                "generated-certificates/key",
+                "PKI/private/key",
+                "files/volume.tar",
+            ):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(private)
+            (root / "PKI/private/ca.crt").write_text(
+                "-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n"
+            )
+            result = subprocess.run(
+                ["python3", "-c", code],
+                env=dict(os.environ, HOME=temporary),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            state = json.loads(result.stdout)
+            self.assertEqual(len(state["files_sha256"]), 5)
+            self.assertIn("files/volume.tar", state["files_sha256"])
+            self.assertNotIn(private.decode(), result.stdout)
 
     def test_credentials_stream_to_private_files_without_logging_content(self):
         self.harness.private = self.root / "private"
@@ -415,6 +482,137 @@ systemctl() {
                 self.assertEqual(
                     result.returncode, expected, result.stdout + result.stderr
                 )
+
+
+class SelinuxTests(unittest.TestCase):
+    def setUp(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        self.code = remote.split("    sudo -n python3 - <<'LABELS'\n", 1)[1].split(
+            "\nLABELS\n", 1
+        )[0]
+        self.policy = types.SimpleNamespace(
+            matchpathcon=mock.Mock(side_effect=self.matchpathcon)
+        )
+        self.namespace: dict = {"__name__": "fixture"}
+        with mock.patch.dict("sys.modules", {"selinux": self.policy}):
+            exec(compile(self.code, "remote.sh:LABELS", "exec"), self.namespace)  # noqa: S102 - trusted repo heredoc under test
+        self.storage = self.namespace["STORAGE"]
+        self.lines = (
+            Path(__file__)
+            .with_name("fixtures")
+            .joinpath("run-6-restorecon.log")
+            .read_text()
+            .splitlines()
+        )
+
+    def matchpathcon(self, path, mode):
+        self.assertEqual(mode, 0)
+        if "/volumes/" in path:
+            kind = "container_file_t"
+        elif (
+            any("/" + name in path for name in ("overlay-layers", "overlay-images"))
+            or path.endswith("/overlay")
+            or "/overlay/" in path
+        ):
+            kind = "container_ro_file_t"
+        else:
+            kind = "container_var_lib_t"
+        return 0, "system_u:object_r:" + kind + ":s0"
+
+    def test_actual_run6_storage_lines_have_named_rules(self):
+        storage = str(self.storage) + "/"
+        lines = [line for line in self.lines if storage in line]
+        self.assertEqual(len(lines), 157)
+        for line in lines:
+            rule = self.namespace["classify_line"](line, {"container_file_t"})
+            self.assertIn(
+                rule,
+                (
+                    "ARTIFACT_DIRECTORY_TRANSITION",
+                    "CUSTOM_VOLUME_CONTENT",
+                    "CUSTOM_WRITABLE_LAYER",
+                    "CUSTOM_WRITABLE_ROOTFS",
+                ),
+            )
+
+    def test_run6_outside_storage_lines_fail(self):
+        lines = [
+            line
+            for line in self.lines
+            if line.startswith("Would relabel /var/lib/myproduct/.config")
+        ]
+        self.assertEqual(len(lines), 9)
+        for line in lines:
+            with self.assertRaisesRegex(RuntimeError, "utenfor lageret"):
+                self.namespace["classify_line"](line, {"container_file_t"})
+
+    def test_unknown_line_and_unknown_storage_path_fail(self):
+        for line in (
+            "unexpected diagnostic",
+            "Would relabel "
+            + str(self.storage / "unknown")
+            + " from u:r:container_ro_file_t:s0 to u:r:container_var_lib_t:s0",
+        ):
+            with (
+                self.subTest(line=line),
+                self.assertRaisesRegex(RuntimeError, "Uklassifisert"),
+            ):
+                self.namespace["classify_line"](line, {"container_file_t"})
+
+    def test_wrong_overlay_and_container_metadata_types_fail(self):
+        for name, actual in (
+            ("overlay-layers", "container_var_lib_t"),
+            ("overlay-containers", "container_ro_file_t"),
+        ):
+            with (
+                mock.patch.object(
+                    os, "getxattr", return_value=("u:r:" + actual + ":s0").encode()
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(RuntimeError, "avviker fra policyen"),
+            ):
+                self.namespace["check_label"](self.storage / name)
+
+    def test_missing_equivalence_fails(self):
+        self.policy.matchpathcon.return_value = (0, "u:r:var_lib_t:s0")
+        self.policy.matchpathcon.side_effect = None
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(RuntimeError, "ekvivalensen"),
+        ):
+            self.namespace["check_equivalence"]()
+
+    def test_missing_selinux_module_fails_clearly(self):
+        with (
+            mock.patch.dict("sys.modules", {"selinux": None}),
+            self.assertRaisesRegex(SystemExit, "selinux mangler"),
+        ):
+            exec(  # noqa: S102 - trusted repo heredoc under test
+                compile(self.code, "remote.sh:LABELS", "exec"),
+                {"__name__": "fixture"},
+            )
+
+    def test_customized_label_requires_customizable_policy(self):
+        line = next(line for line in self.lines if " not reset " in line)
+        with self.assertRaisesRegex(RuntimeError, "Uklassifisert"):
+            self.namespace["classify_line"](line, set())
+
+    def test_storage_dryrun_is_logged_even_when_outside_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "volumes/app/_data").mkdir(parents=True)
+            self.namespace.update(
+                STORAGE=root,
+                check_equivalence=lambda: None,
+                check_label=lambda path: None,
+            )
+            dryrun = mock.Mock(
+                side_effect=["Would relabel outside", "storage diagnostic"]
+            )
+            self.namespace["dryrun"] = dryrun
+            with self.assertRaisesRegex(RuntimeError, "utenfor lageret"):
+                self.namespace["main"]()
+            self.assertEqual(dryrun.call_count, 2)
 
 
 class SnapshotTests(unittest.TestCase):

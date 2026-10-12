@@ -25,14 +25,9 @@ python3.11 -m venv .venv54
 
 Lint/type/vermin er utviklingsverktøy, ikke nye runtime-avhengigheter.
 Testene bruker Python 3.6-kompatibel syntaks og standardbibliotek-API-er.
-Originalfilen `tests/test_deploy.py` med 21 tester fantes ikke i det leverte
-arbeidsområdet. Ved omorganiseringen fikk de nye testfilene navnene ovenfor;
-ingen originaltester ble overskrevet. Eventuelle originaltester må legges til
-uten å overskrive de nye testene.
-
 ## Images fra manifestene
 
-65 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
+84 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
 Image-testene dekker Pod/Deployment, init-containere, flere filer/dokumenter,
 flow-maps, duplikater, fulle navn og forventede valideringsfeil. Bundle-testene
 kontrollerer én sortert multi-image-save, navnelisten, tar-innhold og checksums.
@@ -76,7 +71,7 @@ manuelle VM-tester, ikke verifisert av denne kjøringen.
 
 ## Rootless prod
 
-Install-testene avviser root før rendering/kommandoer, kontrollerer HOME-baserte
+Install-testene avviser root før rendering/kommandoer, kontrollerer brukerdatabase-baserte
 Quadlet-/arkivstier, systemctl --user i riktig rekkefølge, runtime-fallback og
 feil ved manglende runtime-katalog, samt filrettigheter. Ingen produktfiler
 skrives i systeminstansens Quadlet-katalog. Bundle-testen inkluderer prepare-host.
@@ -90,3 +85,8 @@ og at gjentatt generering avvises uten å endre noen filer.
 
 Prod-stiene testes med mock av pwd.getpwuid, også med feil HOME. Install
 avviser avvik før rendering og kommandoer; fraværende HOME bruker pw_dir.
+
+Vertsscripttestene kontrollerer påkrevd port, avvisning av gammel ekvivalens,
+idempotent regel og at rekursiv restorecon alltid ekskluderer storage.
+Runtime-testene avviser alle XDG_RUNTIME_DIR-verdier utenom /run/user/<euid>.
+Bundle-testen inkluderer de to prod-scriptene og utelukker dev/-katalogen.
