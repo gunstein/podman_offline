@@ -16,7 +16,11 @@ product="/var/lib/myproduct/releases/myproduct-RELEASE"
 if [[ -f $base/version ]]; then product="/var/lib/myproduct/releases/myproduct-$(cat "$base/version")"; fi
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
 as_product() {
-    sudo -n -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" "$@"
+    sudo -n -H -u myproduct bash -c '
+        cd "$HOME" || exit
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        exec "$@"
+    ' bash "$@"
 }
 user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
 profile() {
@@ -247,7 +251,7 @@ with open(sys.argv[1], "w") as stream:
     yaml.safe_dump(config, stream)
 CONFIG
     date +%s > "$base/install-start"
-    sudo -n -H -u myproduct python3 "$product/deploy.py" install
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     user_service status --no-pager myproduct.service
     as_product podman images
     sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done

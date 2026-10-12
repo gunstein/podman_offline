@@ -1,123 +1,110 @@
 # Manuell prod-test på en VM
 
-Denne sjekklisten skal utføres manuelt. Den er ikke kjørt av eksempelrunneren.
 Bruk en disponibel VM med samme Podman-versjon, OS/systemd og sikkerhetsoppsett
-som målnettet. Alle Podman-kommandoer nedenfor kjøres rootful med `sudo`.
-Eksempelrunnerens rootless-resultater erstatter ikke denne prøven.
+som målnettet. Prod bruker rootless Podman som `myproduct`, med hjem
+`/var/lib/myproduct`. Denne sjekklisten er manuell; automatisert kjøring og bevis
+finnes i [akseptansetesten](../acceptance/README.md).
 
-1. Skaff en komplett produkt-bundle (inkludert images, prod-manifester og
-   Quadlet). Verifiser ytre `.sha256`, pakk ut og kjør `sha256sum -c checksums.sha256`
-   fra bundle-roten. Registrer `podman --version`, `systemctl --version` og OS.
-2. Kopier `config.example.yaml` til `config.yaml`, tilpass vert/IP/port og
-   generer lokale testsertifikater med produktets medfølgende script. Bruk
-   bare syntetiske testdata. Ikke legg private nøkler eller sertifikater i git.
-3. Koble VM-en fra internett og kjør fra bundle-roten:
+1. Følg klargjøringen i [prod-flyten i README](../README.md#offline-bundle-og-rootless-quadlet):
+   ytre checksum, midlertidig utpakking, prepare-host, utpakking som myproduct,
+   indre checksums, trust av kun deploy.py og demo-sertifikater/config. Vent med
+   install til steg 2 nedenfor. Ingen
+   private nøkler eller passord skal i Git eller logger. VM-en skal være uten
+   internett før bundlen overføres. Registrer OS, Podman og systemd-versjon.
+2. Som operatør med sudo, definer kommandohjelperen og installer fra releasen.
+   HOME og arbeidskatalog må begge tilhøre tjenestebrukeren; `sudo -H` alene
+   bytter ikke arbeidskatalog. Shell-script kjøres med bash.
 
    ```sh
-   sudo ./deploy install
-   sudo systemctl status myproduct.service --no-pager
-   sudo systemctl is-active myproduct.service
-   sudo systemctl status myproduct-network.service --no-pager
-   sudo podman network inspect myproduct
-   sudo podman ps --all --pod
-   sudo podman secret ls
-   sudo podman volume ls
+   as_product() {
+       sudo -H -u myproduct bash -c '
+           cd "$HOME" || exit
+           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+           exec "$@"
+       ' bash "$@"
+   }
+   release=/var/lib/myproduct/releases/myproduct-0.1.0
+   sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+   sudo systemctl --user -M myproduct@ status myproduct.service --no-pager
+   sudo systemctl --user -M myproduct@ status myproduct-network.service --no-pager
+   as_product podman network inspect myproduct
+   as_product podman ps --all --pod
+   as_product podman secret ls
+   as_product podman volume ls
    ```
 
-   Forvent aktiv tjeneste og kjørende appcontainere. Verifiser appens faktiske
-   HTTPS-endepunkt med riktig test-CA, port og vertsnavn, samt at filene er
-   tilgjengelige inne i containerne.
-4. Kontroller installerte filer og eiere:
+   Forvent aktiv tjeneste og sju kjørende appcontainere. Test Todo, innlogging og
+   hjelpesidene over HTTPS fra en annen maskin med korrekt CA/navn. Bruk smoke og
+   markørtesten i acceptance for å kontrollere data for både Alice og Bob.
+3. Kontroller filrettigheter, SELinux og linger:
 
    ```sh
-   sudo stat -c '%U:%G %a %n' /etc/containers/systemd/myproduct.yaml
-   sudo stat -c '%U:%G %a %n' /etc/containers/systemd/myproduct.kube
-   sudo stat -c '%U:%G %a %n' /etc/containers/systemd/myproduct.network
+   sudo stat -c '%U:%G %a %n' /var/lib/myproduct
+   sudo stat -c '%U:%G %a %n' /var/lib/myproduct/.config/containers/systemd/myproduct.{yaml,kube,network}
    sudo stat -c '%U:%G %a %n' /var/lib/myproduct/files
    sudo find /var/lib/myproduct/files -maxdepth 1 -type f -exec stat -c '%U:%G %a %n' {} \;
+   sudo ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
+   sudo loginctl show-user myproduct -p Linger -p State -p RuntimePath
+   getenforce
+   systemctl is-active fapolicyd
    ```
 
-   Forvent root:root, YAML/arkiver 0600, kube/network 0644 og filkatalog 0700.
-   Filkatalog/arkiver finnes bare når config faktisk bruker `VOLUME_FILES`.
-5. Kontroller generatoren og den genererte tjenesten:
+   Forvent myproduct:myproduct, hjem/filkatalog 0700, YAML/arkiver 0600 og
+   kube/network 0644. SELinux skal være Enforcing og fapolicyd aktiv.
+   Registrer faktiske labels; ikke slå av sikkerhetsmekanismer ved avvisninger.
+4. Kontroller generator, nettavhengigheter og DNS:
 
    ```sh
-   sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun
-   sudo systemctl cat myproduct.service
-   sudo systemctl cat myproduct-network.service
-   sudo journalctl -u myproduct.service --no-pager
+   as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
+   sudo systemctl --user -M myproduct@ cat myproduct.service
+   sudo systemctl --user -M myproduct@ cat myproduct-network.service
+   as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
+   as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
    ```
 
-   Forvent ingen generatorfeil og at tjenesten peker på den installerte YAML-en.
-   Kontroller `Requires=` og `After=` mot `myproduct-network.service`, og at
-   nettverket ble opprettet uten manuell `podman network create`.
-   Verifiser at den medfølgende Quadletens `[Install]`-oppsett gir oppstart ved boot.
-6. Opprett en markørfil i appdatavolumet via `sudo podman exec` med det faktiske
-   containernavnet og appdatastien. Endre også en importert fil i containeren.
-   Test deretter hver overgang, og sjekk status, apprespons, secrets og volumer:
+   Forvent nettavhengighet mot myproduct-network.service og
+   podman-user-wait-network-online.service, samt WantedBy=default.target.
+5. Opprett Todo-markører for begge brukerne. Etter hver overgang skal tjenesten
+   være aktiv, alle appcontainere kjøre og markørene fortsatt finnes:
 
    ```sh
-   sudo systemctl stop myproduct.service
-   sudo podman ps --all --pod
-   sudo podman secret ls
-   sudo podman volume ls
-   sudo systemctl start myproduct.service
-   sudo systemctl status myproduct.service --no-pager
-   sudo systemctl restart myproduct.service
-   sudo systemctl status myproduct.service --no-pager
+   sudo systemctl --user -M myproduct@ stop myproduct.service
+   as_product podman ps --all --pod
+   as_product podman secret ls
+   as_product podman volume ls
+   sudo systemctl --user -M myproduct@ start myproduct.service
+   # Kontroller status, HTTPS og markører før neste overgang.
+   sudo systemctl --user -M myproduct@ restart myproduct.service
+   # Kontroller igjen før kill.
+   as_product podman kill myproduct-todo-backend
    ```
 
-   Forvent at appdata/markøren beholdes, at importerte filer gjenopprettes fra
-   arkivene ved oppstart. Secret-objektene fjernes ved stopp, men Secret-volumene
-   og filene deres blir liggende. Test med syntetiske data at en utelatt nøkkel
-   fortsatt kan ligge i volumet, og følg oppryddingen i README.
-   Kontroller mode 0400 for `identity.key` og `web.key` inne i containerne.
-7. Utfør en **ekte reboot** manuelt:
+   Secret-volumene blir liggende på disk etter stopp. Følg README for sletting.
+   Akseptansekravet er automatisk retur etter `podman kill` innen 60 sekunder.
+   Registrer et avvik dersom containeren forblir stoppet: Podman dokumenterer
+   at eksplisitt kill/stop ikke aktiverer restart-policyen. Ikke erstatt denne
+   kommandoen med en annen krasjtest for å få PASS, og ikke reparer underveis.
+6. Hvis foregående steg passerer, registrer boot-ID og utfør ekte reboot:
 
    ```sh
+   cat /proc/sys/kernel/random/boot_id
    sudo reboot
    ```
 
-   Etter ny innlogging, uten å kjøre install/start først:
+   Etter ny SSH-innlogging som operatør, uten innlogging som myproduct og uten
+   install/start først: kontroller ny boot-ID, brukerens tjeneste, containere,
+   markører, full e2e og at internett fortsatt er blokkert. Definer as_product
+   på nytt i den nye skallsesjonen. Linger skal gi oppstart uten brukerinnlogging.
+7. Registrer alle avvik og hent lesende journal/audit. Ikke logg nøkkel- eller
+   passordinnhold og ikke slett data for å få testen til å passere.
 
    ```sh
-   sudo systemctl status myproduct.service --no-pager
-   sudo journalctl -b -u myproduct.service --no-pager
-   sudo podman ps --all --pod
-   sudo podman secret ls
-   sudo podman volume ls
+   sudo journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$(id -u myproduct)" --no-pager
+   # Sett start til epoch registrert før kjøringen.
+   start_date=$(LC_ALL=C date -d "@$start" +%x)
+   start_time=$(date -d "@$start" +%H:%M:%S)
+   sudo env LC_ALL=C ausearch --input-logs -m FANOTIFY,AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null
    ```
 
-   Kontroller apprespons, markørfil og importerte filer igjen. Arkivene må
-   være tilgjengelige i `/var/lib/myproduct/files` uavhengig av bundle-katalogen.
-8. Registrer versjoner, alle avvik og forventet/faktisk oppførsel. Ved feil:
-   bruk journalen og generatorens `--dryrun`. Ikke slett appdatavolumer for å
-   få testen til å passere; det ville skjule problemer med persistens.
-
-## DNS og automatisk restart på målversjonen
-
-Kontroller fra kjørende containere at pod-navn løses og tjenestene kan nås:
-
-```sh
-sudo podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres", 5432), timeout=5).close()'
-sudo podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
-```
-
-Simuler deretter et krasj i Todo-backend på denne disponible VM-en. Drep
-vertsprosessen direkte; `podman kill` og `podman stop` deaktiverer
-restart-policyen for den eksplisitte stoppen, se
-[Podmans restart-dokumentasjon](https://docs.podman.io/en/v5.7.0/markdown/podman-run.1.html).
-
-```sh
-sudo podman inspect --format '{{.RestartCount}} {{.State.Pid}}' myproduct-todo-backend
-backend_pid=$(sudo podman inspect --format '{{.State.Pid}}' myproduct-todo-backend)
-test "$backend_pid" -gt 1 && sudo kill -KILL "$backend_pid"
-# Etter noen sekunder:
-sudo podman inspect --format '{{.RestartCount}} {{.State.Pid}} {{.State.Running}}' myproduct-todo-backend
-sudo systemctl is-active myproduct.service
-```
-
-Forvent økt restart-teller, ny PID, running=true og at Todo virker gjennom nginx
-uten manuell restart. Kontroller også oppstart med database utilgjengelig i mer
-enn 60 sekunder, deretter tilgjengelig igjen: appen skal starte på nytt og komme opp.
-Gjenta app-, DNS- og nettverkskontrollene etter reboot.
+   Dato og tid er separate argumenter. `%x` under C-lokalen gir formatet som
+   VM-ens ausearch krever. Ta med avvisninger også når funksjonstestene passerer.

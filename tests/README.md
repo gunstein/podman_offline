@@ -53,7 +53,7 @@ docker.io/library/busybox:1.37.0 30ecbe150909
 
 Fulle navn og tagger ble bevart, også to navn for samme image-ID.
 Testlageret ble fjernet etterpå. Dette var en separat save/load-test med små
-testimages; full produktbundle og rootful Quadlet-installasjon ble ikke kjørt
+testimages; full produktbundle og prod-Quadlet-installasjon ble ikke kjørt
 som del av denne endringen.
 
 Review-regresjoner dekker navnekollisjoner mellom Secret/PVC/ConfigMap,
@@ -72,3 +72,12 @@ Ved kube down kom fortsatt det tidligere dokumenterte rootless-netns-avviket,
 men kommandoen returnerte 0 og ny oppstart fungerte.
 Rootful systemd/reboot og database utilgjengelig i over 60 sekunder er fortsatt
 manuelle VM-tester, ikke verifisert av denne kjøringen.
+
+## Rootless prod
+
+Install-testene avviser root før rendering/kommandoer, kontrollerer HOME-baserte
+Quadlet-/arkivstier, systemctl --user i riktig rekkefølge, runtime-fallback og
+feil ved manglende runtime-katalog, samt filrettigheter. Ingen produktfiler
+skrives i systeminstansens Quadlet-katalog. Bundle-testen inkluderer prepare-host.
+Akseptanserammens lokale tester kontrollerer også at sudo-kommandoene bytter
+arbeidskatalog før install/Podman, uten root, Podman eller nett.

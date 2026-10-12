@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-3 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-4 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -194,7 +194,9 @@ opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN 
 Prod kjøres som labbrukeren med sudo akkurat som i produktets [README](../README.md):
 midlertidig utpakking, prepare-host, release under /var/lib/myproduct, indre
 checksums som root og trust av bare deploy.py, sertifikat/config som myproduct,
-og install som myproduct. Brukerens HOME settes med sudo -H. Ingen rootful
+og install som myproduct. Brukerens HOME settes med sudo -H, og bash bytter arbeidskatalog som
+tjenestebrukeren før install og Podman. Dette er nødvendig når operatørens
+hjem er 0700; sudo -H alene beholder den utilgjengelige arbeidskatalogen. Ingen rootful
 produktressurser skal opprettes. Steg 07 sjekker eierskap/mode, SELinux-labels,
 bruker-generatorens nettavhengighet og at rootful containerlager er tomt.
 Prepare-host åpner HTTPS i firewalld; nft-filteret avgrenser til lab-subnettet.

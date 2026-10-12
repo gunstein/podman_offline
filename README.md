@@ -186,12 +186,15 @@ os.chmod(sys.argv[1], 0o600)
 with open(sys.argv[1], "w") as stream:
     yaml.safe_dump(config, stream)
 PY
-sudo -H -u myproduct python3 "$release/deploy.py" install
+sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
 sudo systemctl --user -M myproduct@ status myproduct.service
 ```
 
 Operatøren trenger ikke `cd` inn i tjenestebrukerens private hjem. `sudo -H`
-setter riktig HOME; bash og Python får eksplisitte filstier. `sudo bash` leser
+setter riktig HOME, men endrer ikke arbeidskatalogen. Derfor gjør bash et
+uttrykkelig `cd` som tjenestebrukeren før install: rootless Podman må kunne åpne
+arbeidskatalogen igjen når prosessen startes i brukerens navnerom. Operatørens
+private hjem er ikke tilgjengelig for tjenestebrukeren. `sudo bash` leser
 klargjøringsscriptet fra `/tmp`; scriptet startes ikke direkte, så `noexec` på
 `/tmp` hindrer ikke denne kjøreformen. En eventuell policyavvisning skal fortsatt
 undersøkes, ikke omgås med endrede tillatelser eller bred trust.
@@ -235,8 +238,15 @@ linger for oppstart uten innlogging. Podman 5.x legger til
 `podman-user-wait-network-online.service`; kontroller generatoren som brukeren:
 
 ```sh
-sudo -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" \
-  /usr/lib/systemd/user-generators/podman-user-generator --dryrun
+# Bruk denne funksjonen også til Podman-kommandoene ved drift/avinstallering.
+as_product() {
+    sudo -H -u myproduct bash -c '
+        cd "$HOME" || exit
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        exec "$@"
+    ' bash "$@"
+}
+as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
 
 ### fapolicyd og rootless
@@ -245,6 +255,7 @@ Checksum-kontrollen inne i bundlen kjøres som root: labens policy tillater
 root med et betrodd RPM-program å lese også Python-filer. Deretter legges bare
 den verifiserte `deploy.py` til i trust-databasen, slik at Python kjørt som
 `myproduct` kan lese den. Gjenta checksum og trust for hver ny utpakket versjon.
+Shell-script kjøres med `bash`, som leser filene uten direkte scriptkjøring.
 Ingen kataloger, container-runtime eller private nøkler legges til i trust.
 
 På OL9.8-laben feiler selv `sudo crun --version` med fapolicyd regel 5.
@@ -276,9 +287,9 @@ operatøren. Gjenta trust-sletting for hver installert release som skal fjernes:
 
 ```sh
 sudo systemctl --user -M myproduct@ stop myproduct.service
-sudo -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" podman volume ls
+as_product podman volume ls
 # Eksempel; slett bare identifiserte volumer som ikke skal bevares.
-sudo -H -u myproduct env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct)" podman volume rm identity-signing
+as_product podman volume rm identity-signing
 sudo fapolicyd-cli --file delete "$release/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
 sudo -H -u myproduct rm /var/lib/myproduct/.config/containers/systemd/myproduct.{kube,network,yaml}
@@ -300,6 +311,5 @@ sudo semanage fcontext -d /var/lib/myproduct
 ```
 
 Volumsletting eller `userdel` garanterer ikke fysisk sletting fra disk eller
-sikkerhetskopier. Eldre rootful installasjoner migreres ikke automatisk; denne
-flyten forutsetter en ren prod-vert. Bruk [akseptansetesten](acceptance/README.md)
+sikkerhetskopier. Installasjonsflyten forutsetter en ren prod-vert. Bruk [akseptansetesten](acceptance/README.md)
 for prod-verifikasjon med systemd og reboot.

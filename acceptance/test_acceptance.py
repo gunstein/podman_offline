@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -211,6 +212,95 @@ sudo() {
             (self.harness.private / "alice-password").read_bytes(),
             b"synthetic-private-content",
         )
+
+    def test_product_commands_enter_service_home_and_set_runtime(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        function = remote[
+            remote.index("as_product() {") : remote.index("user_service() {")
+        ]
+        home = self.root / "service home"
+        home.mkdir(mode=0o700)
+        operator = self.root / "operator-private"
+        operator.mkdir(mode=0o700)
+        probe = "import json,os,sys; print(json.dumps([os.getcwd(), os.environ['HOME'], os.environ['XDG_RUNTIME_DIR'], sys.argv[1:]]))"
+        # Simulate sudo changing identity/HOME while retaining the caller's cwd.
+        stub = 'sudo() { shift 4; "$@"; }\n'
+        script = (
+            stub
+            + function
+            + "as_product python3 -c "
+            + runner.shlex.quote(probe)
+            + " 'argument with spaces'"
+        )
+        result = subprocess.run(
+            ["bash", "-eu", "-c", script],
+            cwd=operator,
+            env=dict(
+                os.environ, HOME=str(home), XDG_RUNTIME_DIR="/wrong/operator/runtime"
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                str(home),
+                str(home),
+                "/run/user/" + str(os.getuid()),
+                ["argument with spaces"],
+            ],
+        )
+
+    def test_missing_service_home_stops_before_command(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        function = remote[
+            remote.index("as_product() {") : remote.index("user_service() {")
+        ]
+        script = (
+            'sudo() { shift 4; "$@"; }\n' + function + "as_product echo SHOULD_NOT_RUN"
+        )
+        result = subprocess.run(
+            ["bash", "-eu", "-c", script],
+            cwd=self.root,
+            env=dict(os.environ, HOME=str(self.root / "missing-home")),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("SHOULD_NOT_RUN", result.stdout)
+
+    def test_documented_install_enters_release_from_operator_directory(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        command = next(
+            line.strip()
+            for line in remote.splitlines()
+            if "exec python3 deploy.py install" in line
+        )
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        self.assertIn(
+            command.replace("sudo -n ", "sudo ").replace('"$product"', '"$release"'),
+            readme,
+        )
+        release = self.root / "service home/releases/myproduct-test"
+        release.mkdir(parents=True)
+        (release / "deploy.py").write_text(
+            "import os,sys; print(os.getcwd()); print(sys.argv[1])\n"
+        )
+        operator = self.root / "operator-private"
+        operator.mkdir(mode=0o700)
+        script = 'sudo() { shift 4; "$@"; }\nproduct=$1\n' + command
+        result = subprocess.run(
+            ["bash", "-eu", "-c", script, "bash", str(release)],
+            cwd=operator,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [str(release), "install"])
 
     def test_guest_security_profile_checks(self):
         remote = Path(__file__).with_name("remote.sh").read_text()
