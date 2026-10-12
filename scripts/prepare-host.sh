@@ -2,36 +2,25 @@
 # Engangsoppsett for rootless prod. Gjentatt kjøring beholder bruker og ID-områder.
 set -euo pipefail
 umask 077
-if [[ $EUID != 0 ]]; then
-    echo 'ERROR: Kjør sudo bash scripts/prepare-host.sh [config.yaml]' >&2
-    exit 1
-fi
-root=$(cd "$(dirname "$0")/.." && pwd)
-config=${1:-$root/config.yaml}
-[[ -f $config ]] || config="$root/config.example.yaml"
-for command in python3 useradd usermod semanage restorecon loginctl firewall-cmd newuidmap newgidmap; do
-    command -v "$command" >/dev/null || { echo "ERROR: Mangler $command" >&2; exit 1; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+[[ $EUID == 0 ]] || die "Kjør sudo bash scripts/prepare-host.sh --port <1024-65535>"
+# Påkrevd port; ingen config-fallback eller YAML-lesing.
+[[ $# == 2 && ${1:-} == --port && ${2:-} =~ ^[0-9]{1,5}$ ]] || die "Bruk --port <heltall 1024-65535>"
+port=$((10#$2))
+[[ $port -ge 1024 && $port -le 65535 ]] || die "Porten må være 1024-65535"
+for command in python3 useradd usermod semanage restorecon loginctl firewall-cmd newuidmap newgidmap install; do
+    command -v "$command" >/dev/null || die "Mangler $command"
 done
-# Les config som root før vi endrer verten. Ingen produktkode importeres/trustes.
-port=$(python3 - "$config" <<'PY'
-import sys, yaml
-with open(sys.argv[1]) as stream:
-    port = yaml.safe_load(stream).get("HTTPS_PORT")
-if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
-    raise SystemExit("ERROR: Rootless HTTPS_PORT må være et heltall 1024-65535")
-print(port)
-PY
-)
-[[ $(getenforce) == Enforcing ]]
-firewall-cmd --state
+[[ $(getenforce) == Enforcing ]] || die "SELinux må være Enforcing"
+firewall-cmd --state || die "firewalld må kjøre"
 service_home=/var/lib/myproduct
 if ! getent passwd myproduct >/dev/null; then
     useradd --system --create-home --home-dir "$service_home" --shell /sbin/nologin myproduct
 fi
 # Avvis en annen eksisterende konto; ikke endre hjem/shell/eierskap rekursivt.
-[[ $(getent passwd myproduct | cut -d: -f6) == "$service_home" ]]
-[[ $(getent passwd myproduct | cut -d: -f7) == /sbin/nologin ]]
-[[ $(stat -c %u "$service_home") == "$(id -u myproduct)" ]]
+[[ $(getent passwd myproduct | cut -d: -f6) == "$service_home" ]] || die "myproduct må ha hjem $service_home"
+[[ $(getent passwd myproduct | cut -d: -f7) == /sbin/nologin ]] || die "myproduct må ha shell /sbin/nologin"
+[[ $(stat -c %u "$service_home") == "$(id -u myproduct)" ]] || die "Hjemmet $service_home må være eid av myproduct"
 chmod 0700 "$service_home"
 # Behold gyldige eksisterende områder. Velg ett ledig område i begge navnerom.
 # Kun manglende tildelinger skrives; overlapp eller for små områder gir stopp.
@@ -69,18 +58,30 @@ PY
 [[ $gid_range == existing ]] || usermod --add-subgids "$gid_range" myproduct
 # SELinux: lageret følger container-policyen, også for systembrukere.
 equivalences=$(semanage fcontext -l -C)
-if grep -Fqx "$service_home = /home" <<< "$equivalences"; then
-    semanage fcontext -d "$service_home"
-fi
 container_home="$service_home/.local/share/containers"
-if ! grep -Fqx "$container_home = /var/lib/containers" <<< "$equivalences"; then
+expected="$container_home = /var/lib/containers"
+while IFS= read -r equivalence; do
+    if [[ $equivalence == "$service_home"*' = '* && $equivalence != "$expected" ]]; then
+        die "Uventet SELinux-ekvivalens: $equivalence. Fjern den manuelt før klargjøring"
+    fi
+done <<< "$equivalences"
+if ! grep -Fqx "$expected" <<< "$equivalences"; then
     semanage fcontext -a -e /var/lib/containers "$container_home"
 fi
 # Opprett lagerets foreldre før restorecon, så nye filer arver riktige labels.
-for directory in .local .local/share .local/share/containers .local/share/containers/storage; do
+for directory in .local .local/share .local/share/containers .local/share/containers/storage \
+    .config .config/cni .config/cni/net.d .config/containers .config/containers/systemd; do
     install -d -m 0700 -o myproduct -g "$(id -gn myproduct)" "$service_home/$directory"
 done
-restorecon -R "$service_home"
+# CNI-låsen åpnes også ved backend-initialisering. Preopprett uten å avkorte
+# en eksisterende lås, så Podman ikke oppretter den med runtime-type.
+if [[ ! -e $service_home/.config/cni/net.d/cni.lock ]]; then
+    install -m 0600 -o myproduct -g "$(id -gn myproduct)" /dev/null "$service_home/.config/cni/net.d/cni.lock"
+fi
+# Preopprettet .config hindrer Podman i å opprette den med runtime-type.
+# Et fylt lager skal aldri relabeles rekursivt ved gjentatt klargjøring.
+restorecon -R -e "$container_home/storage" "$service_home"
+restorecon "$container_home/storage"
 loginctl enable-linger myproduct
 firewall-cmd --permanent --add-port="$port/tcp"
 firewall-cmd --reload

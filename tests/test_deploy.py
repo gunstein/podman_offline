@@ -49,8 +49,15 @@ class DeployFixture(unittest.TestCase):
         self.euid = self.stack.enter_context(
             mock.patch.object(os, "geteuid", return_value=1000)
         )
-        runtime = self.root / "runtime"
-        runtime.mkdir()
+        runtime = Path("/run/user/1000")
+        original_is_dir = Path.is_dir
+        self.stack.enter_context(
+            mock.patch.object(
+                Path,
+                "is_dir",
+                lambda path: True if path == runtime else original_is_dir(path),
+            )
+        )
         self.stack.enter_context(
             mock.patch.dict(
                 os.environ,
@@ -714,19 +721,34 @@ class CommandTests(DeployFixture):
         deploy.install()
 
     def test_missing_runtime_stops_before_render_and_commands(self):
-        for configured in ("", str(self.root / "missing-runtime")):
+        os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
+        directory = mock.patch.object(Path, "is_dir", return_value=False)
+        renderer = mock.patch.object(deploy, "render")
+        with directory, renderer as render:
+            with self.assertRaisesRegex(deploy.DeployError, "runtime-katalog.*linger"):
+                deploy.install()
+            render.assert_not_called()
+        self.process.assert_not_called()
+        self.assertFalse(deploy.QUADLET_DIR.exists())
+
+    def test_foreign_runtime_is_rejected_before_any_action(self):
+        for configured in (
+            "/run/user/0",
+            "/run/user/2000",
+            "",
+            str(self.root / "runtime"),
+        ):
             with self.subTest(runtime=configured):
                 os.environ["XDG_RUNTIME_DIR"] = configured
-                directory = mock.patch.object(Path, "is_dir", return_value=False)
                 renderer = mock.patch.object(deploy, "render")
-                with directory, renderer as render:
+                with renderer as render:
                     with self.assertRaisesRegex(
-                        deploy.DeployError, "runtime-katalog.*linger"
-                    ):
+                        deploy.DeployError, "XDG_RUNTIME_DIR=.*forventet /run/user/1000"
+                    ) as error:
                         deploy.install()
+                    self.assertIn(repr(configured), str(error.exception))
                     render.assert_not_called()
                 self.process.assert_not_called()
-                self.assertFalse(deploy.QUADLET_DIR.exists())
 
     def test_install_order_files_and_permissions(self):
         self.install_fixture()

@@ -460,7 +460,13 @@ def install():
             "brukerdatabasen. Kjør install med tjenestebrukerens HOME"
         )
 
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}")
+    runtime = Path(f"/run/user/{os.geteuid()}")
+    configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if configured_runtime is not None and configured_runtime != str(runtime):
+        raise DeployError(
+            f"XDG_RUNTIME_DIR={configured_runtime!r} avviker fra forventet {runtime} "
+            "for tjenestebrukeren"
+        )
     if not runtime.is_dir():
         raise DeployError(
             f"Mangler runtime-katalog {runtime}. Aktiver linger for tjenestebrukeren "

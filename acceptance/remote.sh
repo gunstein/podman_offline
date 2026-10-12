@@ -269,15 +269,7 @@ install)
     sha256sum -c "$archive.sha256"
     stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
     tar xzf "$archive" -C "$stage"
-    # Prepare-host reads HTTPS_PORT from config; no secrets in this staging config.
-    python3 - "$stage/myproduct-$(cat version)" "$port" <<'CONFIG'
-import pathlib, sys, yaml
-root = pathlib.Path(sys.argv[1])
-config = yaml.safe_load((root / "config.example.yaml").read_text())
-config["HTTPS_PORT"] = int(sys.argv[2])
-(root / "config.yaml").write_text(yaml.safe_dump(config))
-CONFIG
-    sudo -n bash "$stage/myproduct-$(cat version)/scripts/prepare-host.sh"
+    sudo -n bash "$stage/myproduct-$(cat version)/scripts/prepare-host.sh" --port "$port"
     sudo -n -H -u myproduct mkdir -p /var/lib/myproduct/releases
     # Operatøren åpner arkivet; myproduct trenger ikke lesetilgang til operatørens hjem.
     # shellcheck disable=SC2024
@@ -287,7 +279,7 @@ CONFIG
     sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
     sudo -n fapolicyd-cli --update
     sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" --root "$state" "$prod_host"
-    sudo -n -H -u myproduct cp "$product/config.example.yaml" "$state/config.yaml"
+    sudo -n install -o myproduct -g myproduct -m 0600 "$product/config.example.yaml" "$state/config.yaml"
     sudo -n -H -u myproduct python3 - "$state/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import os, sys, yaml
 with open(sys.argv[1]) as stream:

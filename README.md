@@ -111,7 +111,7 @@ De isolerte renderer-/bundle-testene kjøres med `python3 -m unittest discover -
 Se også de små [Podman-eksemplene](examples/README.md).
 
 Verifisert 2026-10-12 med ekte rootless Podman 5.7.0: alle seks pods starter,
-og hele HTTP-integrasjonstesten passerer gjennom nginx. De 65 enhetstestene
+og hele HTTP-integrasjonstesten passerer gjennom nginx. De 84 enhetstestene
 passerer med både PyYAML 5.4.1 og 6.0.3. Ruff, Pyright og kontroll av Python
 3.6-kompatibilitet for deploy/bundle/testene var rene ved denne dev-kjøringen.
 Dette dokumenterer ikke prod-Quadlet eller reboot.
@@ -151,25 +151,19 @@ Følgende kjøres som vanlig operatør med sudo, fra katalogen med arkivet og
 checksum-filen. Tilpass versjon, IP, vertsnavn og port. Vertsnavnet må stemme med
 DNS, sertifikatet og `PUBLIC_ORIGIN`; `HTTPS_PORT` og porten i `PUBLIC_ORIGIN`
 må endres sammen. Demoens interne OIDC-navn er `myproduct-proxy`.
+Rediger `IP_ADDRESS`, `PUBLIC_ORIGIN` og `HTTPS_PORT` i config med sudoedit.
+Porten må være identisk i `--port`, `HTTPS_PORT` og `PUBLIC_ORIGIN`.
 
 ```sh
 version=0.1.0
 hostname=myproduct-proxy
-ip_address=192.168.0.108
 https_port=8443
 archive="myproduct-$version-offline.tar.gz"
 release="/var/lib/myproduct/releases/myproduct-$version"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
 tar xzf "$archive" -C "$stage"
-python3 - "$stage/myproduct-$version" "$https_port" <<'PY'
-import pathlib, sys, yaml
-root = pathlib.Path(sys.argv[1])
-config = yaml.safe_load((root / "config.example.yaml").read_text())
-config["HTTPS_PORT"] = int(sys.argv[2])
-(root / "config.yaml").write_text(yaml.safe_dump(config))
-PY
-sudo bash "$stage/myproduct-$version/scripts/prepare-host.sh"
+sudo bash "$stage/myproduct-$version/scripts/prepare-host.sh" --port "$https_port"
 sudo -H -u myproduct mkdir -p /var/lib/myproduct/releases
 # Operatøren åpner arkivet: myproduct trenger ikke tilgang til operatørens hjem.
 sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
@@ -178,16 +172,8 @@ sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
 sudo -H -u myproduct bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$hostname"
-sudo -H -u myproduct cp "$release/config.example.yaml" /var/lib/myproduct/config.yaml
-sudo -H -u myproduct python3 - /var/lib/myproduct/config.yaml "$ip_address" "$hostname" "$https_port" <<'PY'
-import os, sys, yaml
-with open(sys.argv[1]) as stream:
-    config = yaml.safe_load(stream)
-config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
-os.chmod(sys.argv[1], 0o600)
-with open(sys.argv[1], "w") as stream:
-    yaml.safe_dump(config, stream)
-PY
+sudo install -o myproduct -g myproduct -m 0600 "$release/config.example.yaml" /var/lib/myproduct/config.yaml
+sudoedit /var/lib/myproduct/config.yaml
 sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
 sudo systemctl --user -M myproduct@ status myproduct.service
 ```
@@ -201,25 +187,32 @@ klargjøringsscriptet fra `/tmp`; scriptet startes ikke direkte, så `noexec` p�
 `/tmp` hindrer ikke denne kjøreformen. En eventuell policyavvisning skal fortsatt
 undersøkes, ikke omgås med endrede tillatelser eller bred trust.
 
-`prepare-host.sh` er idempotent. Det oppretter kontoen med nologin, tildeler
-minst 65536 subuid/subgid uten overlapp, setter hjemmets mode, legger til
-SELinux-ekvivalensen
-`/var/lib/myproduct/.local/share/containers = /var/lib/containers`, oppretter
-lagerkatalogene, kjører restorecon og aktiverer linger. En eventuell gammel
-`/var/lib/myproduct = /home`-regel slettes først. HTTPS-porten leses fra config (eller eksempelconfig hvis config mangler),
-åpnes permanent i firewalld og brannmuren lastes på nytt. Rootless bruker en
-vanlig vertssocket; velg port 1024 eller høyere. I lab avgrenser nettisolasjonen
-innkommende trafikk ytterligere til lab-subnettet. Scriptet endrer ikke SELinux
-eller fapolicyd sin enforcing-tilstand. Kontroller faktisk SELinux-merking og
-nettverk på målversjonen med akseptansetesten.
+`prepare-host.sh --port <port>` er idempotent og krever heltall 1024–65535.
+Det leser ingen config og har ingen eksempel-fallback. Scriptet oppretter
+kontoen med nologin, tildeler minst 65536 subuid/subgid uten overlapp, setter
+hjemmets mode, aktiverer linger og åpner porten permanent i firewalld.
+Alle kontroller gir tydelige feil. En uventet ekvivalens som begynner med
+`/var/lib/myproduct` gir stopp og må fjernes manuelt før klargjøring.
 
 Systembrukeren får ikke de vanlige HOME_DIR-reglene fra container-selinux.
-Derfor peker ekvivalensen til `/var/lib/containers`, slik at overlay-lag får
-`container_ro_file_t` og voluminnhold får `container_file_t`. Dette følger
-[Podmans feilsøkingsguide, punkt 11](https://github.com/containers/podman/blob/main/troubleshooting.md#11-changing-the-location-of-the-graphroot-leads-to-permission-denied).
-Ingen generell container-label legges på hjemmet eller andre kataloger.
-Akseptansesteg 07 kontrollerer labels, at `restorecon -n -v -R` ikke foreslår
-endringer og at det ikke finnes AVC-avvisninger siden teststart.
+Lageret bruker derfor ekvivalensen
+`/var/lib/myproduct/.local/share/containers = /var/lib/containers`, som beskrevet
+[i Podmans feilsøkingsguide punkt 11](https://github.com/containers/podman/blob/main/troubleshooting.md#11-changing-the-location-of-the-graphroot-leads-to-permission-denied).
+Overlay, overlay-layers og overlay-images har container_ro_file_t;
+overlay-containers har container_var_lib_t; voluminnhold har container_file_t.
+
+Scriptet preoppretter `.config/cni/net.d`, cni.lock og brukerens Quadlet-katalog
+før første Podman-kall. Dette forebygger runtime-typen på config-stiene som ble
+observert i run-6. Det merker hjemmet med storage ekskludert, og bare selve
+storage-katalogen uten rekursjon. **Kjør aldri restorecon -R eller -F på et fylt
+lager.** Scriptet endrer ikke SELinux/fapolicyd sin enforcing-tilstand.
+
+Akseptansesteg 07 sammenligner faktiske typer mot selinux.matchpathcon. Utenfor
+storage skal `restorecon -n -v -R -e <storage> /var/lib/myproduct` gi tom output.
+Lagerets separate dry-run logges alltid og hver linje må passe en begrunnet,
+navngitt regel; ukjente linjer gir FAIL. Se [SELinux-diagnosen](acceptance/SELINUX-DIAGNOSIS.md).
+Ingen AVC/USER_AVC/FANOTIFY-avvisninger tillates. Rootless bruker en vanlig
+vertssocket på port 1024 eller høyere; lab-filteret avgrenser til lab-subnettet.
 
 Sertifikatgenereringen ovenfor er for demo/test. I ekte produksjon utstedes
 sertifikatene utenfor målmaskinen og leveres til stiene i config. CA-ens private
@@ -233,7 +226,8 @@ katalog. Absolutte stier og `~` virker som før. Dermed kan eksempelconfigens
 stier brukes uendret både i dev og prod.
 
 `install` avviser root, kontrollerer runtime-katalogen og rendrer YAML. Hvis
-`XDG_RUNTIME_DIR` mangler, brukes `/run/user/<uid>`; manglende katalog gir en
+`XDG_RUNTIME_DIR` mangler, brukes `/run/user/<euid>`. En satt variabel må være
+nøyaktig denne stien; avvik avvises før rendering. Manglende katalog gir en
 feil med hint om linger. Deretter kjøres `podman load -i images/images.tar`
 og `podman image exists` i tjenestebrukerens lager. Først etter vellykket
 image-kontroll skrives filarkiver og Quadlet-filer, og `systemctl --user`
