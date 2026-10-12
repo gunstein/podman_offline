@@ -27,7 +27,7 @@ Lint/type/vermin er utviklingsverktøy, ikke nye runtime-avhengigheter.
 Testene bruker Python 3.6-kompatibel syntaks og standardbibliotek-API-er.
 ## Images fra manifestene
 
-84 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
+87 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
 Image-testene dekker Pod/Deployment, init-containere, flere filer/dokumenter,
 flow-maps, duplikater, fulle navn og forventede valideringsfeil. Bundle-testene
 kontrollerer én sortert multi-image-save, navnelisten, tar-innhold og checksums.
@@ -52,22 +52,10 @@ Testlageret ble fjernet etterpå. Dette var en separat save/load-test med små
 testimages; full produktbundle og prod-Quadlet-installasjon ble ikke kjørt
 som del av denne endringen.
 
-Review-regresjoner dekker navnekollisjoner mellom Secret/PVC/ConfigMap,
+Regresjonstestene dekker navnekollisjoner mellom Secret/PVC/ConfigMap,
 validering uten arkivskriving, bevaring av gamle arkiver ved load/exists-feil,
-installasjon av network-Quadlet før daemon-reload og avvisning av dupliserte
-manifestnøkler under bygging. Testene for kollisjoner, arkivbevaring og
-dupliserte nøkler feilet før rettingene.
-
-Review-rettingene ble også prøvd med ekte rootless Podman 5.7.0:
-backendens vertsprosess fikk SIGKILL, restart-telleren gikk fra 0 til 1 og
-HTTP-ende-til-ende-testen passerte etter automatisk restart. Begge private nøklene
-i Secret-mountene (Duende-signering og nginx TLS) hadde mode 0400.
-Den ekte Quadlet-generatorens dryrun viste myproduct-network.service,
-network create --ignore og Requires/After fra hovedtjenesten.
-Ved kube down kom fortsatt det tidligere dokumenterte rootless-netns-avviket,
-men kommandoen returnerte 0 og ny oppstart fungerte.
-Prod-systemd/reboot og database utilgjengelig i over 60 sekunder er fortsatt
-manuelle VM-tester, ikke verifisert av denne kjøringen.
+network-Quadlet og avvisning av dupliserte manifestnøkler under bygging.
+Ekte systemd, reboot og oppgradering kontrolleres av [akseptansetesten](../acceptance/README.md).
 
 ## Rootless prod
 
@@ -78,7 +66,7 @@ skrives i systeminstansens Quadlet-katalog. Bundle-testen inkluderer prepare-hos
 Akseptanserammens lokale tester kontrollerer også at sudo-kommandoene bytter
 arbeidskatalog før install/Podman, uten root, Podman eller nett.
 
-Varig config testes separat fra release-config: install bruker HOME, prepare
+Varig config testes separat fra release-config: install bruker hjemmet fra brukerdatabasen, prepare
 bruker repo-roten, og relative secret-/volumstier følger config-katalogen.
 Sertifikattestene kontrollerer --root, standardroten, filmoduser, vertsnavn
 og at gjentatt generering avvises uten å endre noen filer.
@@ -90,3 +78,7 @@ Vertsscripttestene kontrollerer påkrevd port, avvisning av gammel ekvivalens,
 idempotent regel og at rekursiv restorecon alltid ekskluderer storage.
 Runtime-testene avviser alle XDG_RUNTIME_DIR-verdier utenom /run/user/<euid>.
 Bundle-testen inkluderer de to prod-scriptene og utelukker dev/-katalogen.
+
+Manifestfeil testes med filsti og image-feil med containernavn. En separat
+test rendrer de faktiske produktmanifestene med eksempelconfig og dummyfiler,
+uten Podman, og kontrollerer ressurser og image-navn.

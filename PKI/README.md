@@ -1,8 +1,8 @@
 # Lokal test-PKI
 
 Kjør `./PKI/generate.sh` eller `./scripts/generate-certificates.sh` fra repo-roten.
-Wrapperen i `scripts/` følger også med offline-bundlen og oppretter PKI-katalogen
-der ved behov. Standard TLS-navn er `myproduct-proxy`; valgfritt første
+`PKI/generate.sh` er en wrapper rundt `scripts/generate-certificates.sh`.
+Scriptet i `scripts/` følger med offline-bundlen og oppretter PKI-katalogen ved behov. Standard TLS-navn er `myproduct-proxy`; valgfritt første
 argument angir et annet DNS-navn.
 
 I prod brukes `bash scripts/generate-certificates.sh --root /var/lib/myproduct

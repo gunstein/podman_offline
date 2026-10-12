@@ -51,15 +51,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cp "$root/deploy" "$root/deploy.py" "$work/"
-# prepare does not read images/quadlet. Allow the supplied partial checkout too.
-for dir in images quadlet; do
-    if [[ -d "$root/$dir" ]]; then
-        cp -R "$root/$dir" "$work/"
-    else
-        echo "Note: $root/$dir is missing; prepare does not use it." >&2
-        mkdir "$work/$dir"
-    fi
-done
 copy_example() {
     local source=$1
     cp "$source/config.yaml" "$work/"

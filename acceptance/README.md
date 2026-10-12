@@ -122,7 +122,8 @@ ren checkout. Ingen push trengs: en Git-bundle av nøyaktig HEAD sendes til VM-1
 og klones der. Dermed er både lokale commits og offline Git-tilgang støttet.
 Produktets offline-bundle bygges deretter med det uendrede byggescriptet.
 
-Stegene utføres i oppgavens rekkefølge. VM-2 isoleres **før overføring**, med
+Stegene utføres i fast rekkefølge: ren start, isolasjon, dev, bundle, installasjon,
+kontroller, livssyklus, reboot og oppgradering. VM-2 isoleres **før overføring**, med
 et separat nftables-filter og en aktivert systemd oneshot-enhet før nettstart.
 Bare innkommende SSH/HTTPS fra lab-subnettet tillates, i tillegg til etablert
 trafikk og Podmans interne DNS. Utgående trafikk utenfor lab-nettet blokkeres,
@@ -164,11 +165,10 @@ Produktets egne Secret-volumer på VM-2 blir liggende som bevis etter stopp.
 
 ## Hva testen faktisk krever
 
-Revisjonen etter review bruker allerede Always, network-Quadlet, navnekontroll
-og utsatt arkivskriving. Testen oppretter derfor ikke produktnettverket manuelt.
+Produktet bruker Always, network-Quadlet, navnekontroll og utsatt arkivskriving. Testen oppretter derfor ikke produktnettverket manuelt.
 Den sjekker også hjelp-appen og alle sju appcontainere i seks pods.
 
-Etter godkjent endring av akseptansekravet tester `09-crash` et uventet
+`09-crash` tester et uventet
 prosesskrasj. Steget leser PID, starttid og restart-teller fra inspect-JSON og
 sender ett `sudo -n kill -KILL <verts-PID>`. Innen 60 sekunder kreves Running,
 restart-teller økt med nøyaktig én, ny PID, ny starttid og ingen StoppedByUser.
@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 71 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 72 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis

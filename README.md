@@ -87,8 +87,9 @@ Dette er et lite demooppsett: Duendes brukere ligger i PostgreSQL, mens klient- 
 scope-konfigurasjon er i kode og kortlivede OAuth-grants ligger i minnet.
 Pågående innlogging må derfor startes på nytt etter restart av Duende.
 Utlogging avslutter Todo-sesjonen; neste innlogging ber alltid om passord på nytt.
-Databasene bruker én rolle per app, uten egne migreringsroller. Automatisk
-skjemaoppretting er kun for dette enkle eksempelet. Duende krever en passende
+Databasene bruker én rolle per app, uten egne migreringsroller. PostgreSQL-imagets
+`POSTGRES_USER` oppretter en superbruker i appens separate klynge; appene lager
+og eier tabellene selv. Automatisk skjemaoppretting er kun for dette enkle eksempelet. Duende krever en passende
 [lisens for produksjon](https://docs.duendesoftware.com/identityserver/overview/licensing/).
 
 ## Kontroll av hele flyten
@@ -116,6 +117,28 @@ passerer med både PyYAML 5.4.1 og 6.0.3. Ruff, Pyright og kontroll av Python
 3.6-kompatibilitet for deploy/bundle/testene var rene ved denne dev-kjøringen.
 Dette dokumenterer ikke prod-Quadlet eller reboot.
 
+## Legge til en app
+
+Et manifest i `manifests/` gjør appens image synlig for bundle-byggingen.
+Det finnes ikke et appregister. Gå gjennom punktene under når du legger til en app;
+database og OIDC trengs bare for apper som bruker dem.
+
+| Behov | Filer og endringer |
+| --- | --- |
+| Kode og image | `apps/<app>/Containerfile`; legg app og riktig tagg til i `dev/build-images.sh`, eller bygg/pull imaget manuelt. |
+| Pod | `manifests/NN-<app>.yaml`: fullt image-navn, `imagePullPolicy: Never`, `restartPolicy: Always`. |
+| Proxy-rute | Ny `location` i `apps/proxy/default.conf`; bygg proxy-imaget på nytt. |
+| Database | Egen postgres-pod etter mønster fra `30-identity-postgres.yaml`/`40-todo-postgres.yaml`, PVC i `20-storage.yaml`, passordfil og `SECRET_FILES` i config. For nye installasjoner oppdateres også `scripts/generate-certificates.sh`. |
+| OIDC | Klient, redirect-URI og scope i `apps/identity/Program.cs`; klientsertifikat og Secret/PVC i config og manifest. Bygg identity-imaget på nytt. |
+| E2E | Ny kontroll i `dev/smoke-test.py`, kalt fra `main`; prøv frontend-JavaScript i nettleser. |
+| Akseptanse | Oppdater containernavn og antall i `healthy()` i `acceptance/remote.sh`, og legg til nødvendige DB-/OIDC-kontroller. |
+| Dokumentasjon | Oppdater appoversikt, Secret-volumer ved avinstallering, `acceptance/README.md` og `examples/VM-CHECKLIST.md`. |
+
+Kjør enhetstester, `./deploy prepare` og dev-e2e før du bygger bundlen.
+Ny tagg i manifestet krever at nøyaktig det navnet er bygget eller hentet lokalt.
+Ved utvidelse av en eksisterende installasjon opprettes bare nye hemmeligheter,
+som beskrevet under oppgradering; behold alle eksisterende filer.
+
 ## Offline-bundle og rootless Quadlet
 
 Manifestene er eneste kilde for images. Byggingen leser `containers` og
@@ -128,8 +151,10 @@ Bruk helst fulle originalnavn, for eksempel `registry.firma.no/team/app:1.2.3`,
 og `imagePullPolicy: Never`. Også `localhost/myapp:1.0.0` og navn med registry-port
 godtas. Korte navn som `postgres:16` og `team/app:1` avvises. Placeholders i
 image-navn støttes ikke ved bygging, og manifestene må inneholde minst ett image.
-For en ny image-versjon endrer du taggen i manifestet; ingen separat image-liste
-må oppdateres. Det nye imaget må være tilgjengelig lokalt før bundle-byggingen.
+Bundlen trenger ingen separat image-liste: ved en ny image-versjon endres taggen
+i manifestet, og det nye imaget må finnes lokalt før bygging. Demoens
+`dev/build-images.sh` har derimot en fast appliste og tagg som også må oppdateres
+hvis du bruker scriptet til å bygge en ny app eller versjon.
 
 Kjør `./build-bundle.sh` med Podman 4.4 eller nyere. `bundle.py` bruker
 `podman save -m` med standardformatet docker-archive og lager
@@ -321,6 +346,26 @@ ny eksempelconfig over eksisterende config. PostgreSQL setter passordet bare
 ved første initialisering, demobrukerne beholder sine gamle passordhasher,
 og klientene må fortsatt stole på samme CA. Scriptets sperre mot eksisterende
 nøkler beholdes også når `--root` brukes.
+
+Hvis en ny app krever et nytt databasepassord, opprett bare den nye filen før
+installasjonen. Eksempel for en ny `new-app-db`-id (bytt navn i både config og manifest):
+
+```sh
+sudo -H -u myproduct bash -c '
+    set -euC
+    umask 077
+    mkdir -p "$HOME/generated-certificates/new-app-db"
+    openssl rand -hex 32 > "$HOME/generated-certificates/new-app-db/password"
+'
+sudoedit /var/lib/myproduct/config.yaml
+```
+
+`set -C` nekter å overskrive en eksisterende passordfil. Legg den nye stien til
+under `SECRET_FILES`, og oppdater andre config-verdier den nye appen trenger.
+Nye signerings-/klientsertifikater utstedes separat, i ekte prod av ekstern CA,
+og leveres som tjenestebrukeren med `umask 077` til nye stier. Oppdater også
+Duendes offentlige klientsertifikat/klientkonfigurasjon ved behov. Ikke erstatt
+eksisterende CA, DB-passord, demopassord eller nøkler ved å kjøre hele generatoren.
 
 Kjør fra katalogen med det nye arkivet og checksum-filen:
 

@@ -58,13 +58,6 @@ Secret-volumer og eventuelle gjenstående Secrets. Volumtesten beholder volumet
 mellom sine to kjøringer, og fjerner det først ved endelig opprydding.
 Testimaget beholdes for neste kjøring. SIGKILL/strømbrudd kan avbryte trapen.
 
-**Delvis repo:** Ved levering av denne oppgaven manglet `images/`, `quadlet/`,
-prod-manifestene, README og de oppgitte originaltestene i arbeidsområdet.
-Hvis `images/` eller `quadlet/` mangler, varsler scriptet og lager tomme
-kataloger i tempområdet. `prepare` leser ingen av dem. I et komplett repo
-kopieres begge katalogene som vanlig. Dette er ikke en erstatning for en
-komplett prod-bundle.
-
 Se [testresultater](RESULTS.md) og [manuell VM-sjekkliste](VM-CHECKLIST.md).
 Podmans støtte varierer mellom versjoner; kjør eksemplene på samme versjon
 som i målnettet. Feltene er beskrevet i
