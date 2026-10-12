@@ -85,7 +85,7 @@ def check_help(session):
 def client():
     result = requests.Session()
     result.trust_env = False
-    result.verify = str(ROOT / "PKI/private/ca.crt")
+    result.verify = os.getenv("SMOKE_CA_FILE", str(ROOT / "PKI/private/ca.crt"))
     return result
 
 
@@ -103,7 +103,14 @@ def login(username):
     assert "__RequestVerificationToken" in form.fields
     form.fields.update(
         username=username,
-        password=(ROOT / "generated-certificates/users" / (username + "-password"))
+        password=(
+            Path(
+                os.getenv(
+                    "SMOKE_PASSWORD_DIR", str(ROOT / "generated-certificates/users")
+                )
+            )
+            / (username + "-password")
+        )
         .read_text()
         .strip(),
     )

@@ -10,3 +10,6 @@ __pycache__/
 .ruff_cache/
 **/bin/
 **/obj/
+
+/acceptance/lab.env
+/acceptance/pve.env
