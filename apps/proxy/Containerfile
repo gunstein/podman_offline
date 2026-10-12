@@ -1,0 +1,2 @@
+FROM docker.io/library/nginx:1.28-alpine
+COPY default.conf /etc/nginx/templates/default.conf.template

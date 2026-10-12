@@ -1,0 +1,12 @@
+/config.yaml
+/generated-certificates/
+/PKI/private/
+/build/
+/dist/
+/images/*.tar
+.venv*/
+__pycache__/
+*.pyc
+.ruff_cache/
+**/bin/
+**/obj/

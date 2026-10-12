@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myproduct-proxy
+spec:
+  restartPolicy: Never
+  containers:
+  - name: nginx
+    image: localhost/myproduct-proxy:0.1.0
+    imagePullPolicy: Never
+    envFrom:
+    - configMapRef:
+        name: myproduct-settings
+    ports:
+    - containerPort: '@@HTTPS_PORT@@'
+      hostPort: '@@HTTPS_PORT@@'
+      hostIP: '@@IP_ADDRESS@@'
+      protocol: TCP
+    volumeMounts:
+    - name: tls
+      mountPath: /run/secrets/web
+      readOnly: true
+  volumes:
+  - name: tls
+    secret:
+      secretName: web-tls
+      items:
+      - key: web.crt
+        path: web.crt
+      - key: web.key
+        path: web.key

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="nb">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Todo</title>
+<body>
+<h1>Todo</h1>
+<p id="user">Sjekker innlogging …</p>
+<p><a id="login" href="/auth/login">Logg inn med Duende</a>
+<button id="logout" hidden>Logg ut</button></p>
+<form id="form" hidden>
+  <input id="title" aria-label="Ny oppgave" maxlength="200" required>
+  <button>Legg til</button>
+</form>
+<ul id="todos"></ul>
+<p id="error" role="alert"></p>
+<script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+HTTPS_PORT: 18080
+HOST_IP: 127.0.0.1
+GREETING: hello from config
+NUMBER: 42
