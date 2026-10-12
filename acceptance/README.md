@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-4 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-5 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -156,7 +156,7 @@ Ikke reparer VM-er eller endre kode midt i en kjøring. Ingen automatiske nye ru
 CA-sertifikat og demo-passord overføres med scp til 0700-kataloger under
 `$XDG_RUNTIME_DIR` på kontroller og VM-1. Ingen private signerings-/CA-nøkler
 flyttes. Passord logges ikke; kjente token/passord maskeres også i loggskriveren.
-`10-cleanup` fjerner overførte filer, også etter feil. Hvis SSH til VM-1 er nede,
+`11-cleanup` fjerner overførte filer, også etter feil. Hvis SSH til VM-1 er nede,
 blir oppryddingen feil og dommen kan ikke bli CLEAN PASS; den fjernliggende
 runtime-katalogen må da fjernes ved gjenopprettet tilgang/reboot. SIGKILL/strømtap
 kan avbryte cleanup; behold run-mappen og bruk en ny run-id ved neste forsøk.
@@ -222,3 +222,20 @@ Hele audit-utdraget tas med i EVIDENCE.md, også avvisninger som ikke stoppet et
 produktsteg. Ingen treff er gyldig; utilgjengelig audit gir NOT CLEAN.
 Originalfeilen beholdes selv om audit-innsamlingen feiler. Gamle runs og
 separate diagnoselogger endres aldri.
+
+## Varig tilstand og oppgradering
+
+Første installasjon skriver config, generated-certificates og PKI direkte i
+`/var/lib/myproduct`, utenfor releases. Steg 07 registrerer CA-sertifikatets
+SHA256-fingeravtrykk (DER) og filhashene for config, sertifikater, passord og CA.
+Ingen filinnhold skrives ut.
+
+Etter livssyklus/reboot øker steg 10 patch-delen i VERSION bare i VM-1 sin
+arbeidskopi. Git-diffen og ny versjon registreres; ingen commit eller andre
+kodeendringer gjøres. Ny bundle bygges og overføres med separat SHA256 i
+rapporten. Oppgraderingen følger README: checksums, trust av ny deploy.py,
+fjerning av gammel trust og install som tjenestebrukeren. Ingen generering
+eller config-kopiering. Testen krever uendrede filhashverdier og CA, full e2e
+med de opprinnelig overførte passordene, bevarte todo-markører og at gammel
+trust er borte. Steg 11 samler audit og rydder overførte hemmeligheter.
+Hvis et tidligere steg stopper, er oppgraderingen ikke testet.

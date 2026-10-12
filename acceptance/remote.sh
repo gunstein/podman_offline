@@ -10,6 +10,8 @@ port=$6
 revision=$7
 role=$8
 run_started=$9
+requested_version=${10:-}
+state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
 product="/var/lib/myproduct/releases/myproduct-RELEASE"
@@ -208,11 +210,56 @@ bundle)
     cd ..
     cat build/bundle/myproduct-*/images/images.txt
     ;;
+upgrade-bundle)
+    cd "$src"
+    test -z "$(git status --porcelain)"
+    [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    printf '%s\n' "$requested_version" > VERSION
+    test "$(git diff --name-only)" = VERSION
+    git diff -- VERSION
+    ./build-bundle.sh
+    (cd dist && sha256sum -c "myproduct-$requested_version-offline.tar.gz.sha256")
+    cat "build/bundle/myproduct-$requested_version/images/images.txt"
+    ;;
+upgrade)
+    cd "$base"
+    archive="myproduct-$(cat version)-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    # shellcheck disable=SC2024
+    sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
+    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+    sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
+    old_release="/var/lib/myproduct/releases/myproduct-$requested_version"
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file myproduct
+    sudo -n fapolicyd-cli --update
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    trust=$(sudo -n fapolicyd-cli --dump-db)
+    if grep -Fq " $old_release/deploy.py " <<< "$trust"; then
+        echo 'FAIL: old release still trusted'; exit 1
+    fi
+    grep -F " $product/deploy.py " <<< "$trust"
+    echo 'PASS: old deploy.py trust removed, new deploy.py trusted'
+    ;;
+persistent-state)
+    as_product python3 - <<'HASHES'
+import hashlib, json, pathlib, ssl
+root = pathlib.Path.home()
+paths = [root / "config.yaml"]
+for directory in ("generated-certificates", "PKI/private"):
+    paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
+assert len(paths) > 1
+hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
+ca = ssl.PEM_cert_to_DER_cert((root / "PKI/private/ca.crt").read_text())
+print(json.dumps({"files_sha256": hashes, "ca_der_sha256": hashlib.sha256(ca).hexdigest()}, sort_keys=True))
+HASHES
+    ;;
 unpack)
     cd "$base"
-    sha256sum -c ./*.sha256
-    # Final unpack/checksums run under the product identities in step 06.
-    tar -xOf ./*.tar.gz --wildcards 'myproduct-*/VERSION' > version
+    archive="myproduct-$requested_version-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    # Final unpack/checksums run under the product identities in step 06/10.
+    tar -xOf "$archive" "myproduct-$requested_version/VERSION" > version
+    test "$(cat version)" = "$requested_version"
     [[ $(cat version) =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
     cat version
     ;;
@@ -239,9 +286,9 @@ CONFIG
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
     sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
     sudo -n fapolicyd-cli --update
-    sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" "$prod_host"
-    sudo -n -H -u myproduct cp "$product/config.example.yaml" "$product/config.yaml"
-    sudo -n -H -u myproduct python3 - "$product/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
+    sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" --root "$state" "$prod_host"
+    sudo -n -H -u myproduct cp "$product/config.example.yaml" "$state/config.yaml"
+    sudo -n -H -u myproduct python3 - "$state/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import os, sys, yaml
 with open(sys.argv[1]) as stream:
     config = yaml.safe_load(stream)
@@ -271,6 +318,9 @@ import pathlib, pwd, stat
 account = pwd.getpwnam("myproduct")
 paths = {
  "/var/lib/myproduct": 0o700,
+ "/var/lib/myproduct/config.yaml": 0o600,
+ "/var/lib/myproduct/generated-certificates": 0o700,
+ "/var/lib/myproduct/PKI/private": 0o700,
  "/var/lib/myproduct/.config/containers/systemd/myproduct.yaml": 0o600,
  "/var/lib/myproduct/.config/containers/systemd/myproduct.kube": 0o644,
  "/var/lib/myproduct/.config/containers/systemd/myproduct.network": 0o644,

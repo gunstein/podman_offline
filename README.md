@@ -145,6 +145,8 @@ Podman 5.x med bruker-Quadlet, Python 3.6+/PyYAML, OpenSSL, `newuidmap`/`newgidm
 `semanage` av `policycoreutils-python-utils`; klargjør dette før maskinen isoleres.
 Ingen pakker installeres av produktet.
 
+### Første installasjon
+
 Følgende kjøres som vanlig operatør med sudo, fra katalogen med arkivet og
 checksum-filen. Tilpass versjon, IP, vertsnavn og port. Vertsnavnet må stemme med
 DNS, sertifikatet og `PUBLIC_ORIGIN`; `HTTPS_PORT` og porten i `PUBLIC_ORIGIN`
@@ -175,9 +177,9 @@ rm -rf -- "$stage"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
-sudo -H -u myproduct bash "$release/scripts/generate-certificates.sh" "$hostname"
-sudo -H -u myproduct cp "$release/config.example.yaml" "$release/config.yaml"
-sudo -H -u myproduct python3 - "$release/config.yaml" "$ip_address" "$hostname" "$https_port" <<'PY'
+sudo -H -u myproduct bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$hostname"
+sudo -H -u myproduct cp "$release/config.example.yaml" /var/lib/myproduct/config.yaml
+sudo -H -u myproduct python3 - /var/lib/myproduct/config.yaml "$ip_address" "$hostname" "$https_port" <<'PY'
 import os, sys, yaml
 with open(sys.argv[1]) as stream:
     config = yaml.safe_load(stream)
@@ -213,6 +215,11 @@ Sertifikatgenereringen ovenfor er for demo/test. I ekte produksjon utstedes
 sertifikatene utenfor målmaskinen og leveres til stiene i config. CA-ens private
 nøkkel skal ikke kopieres dit.
 
+`install` leser `$HOME/config.yaml`; `prepare` leser fortsatt config i repo-roten.
+Relative stier i `SECRET_FILES` og `VOLUME_FILES` regnes fra config-filens
+katalog. Absolutte stier og `~` virker som før. Dermed kan eksempelconfigens
+stier brukes uendret både i dev og prod.
+
 `install` avviser root, kontrollerer runtime-katalogen og rendrer YAML. Hvis
 `XDG_RUNTIME_DIR` mangler, brukes `/run/user/<uid>`; manglende katalog gir en
 feil med hint om linger. Deretter kjøres `podman load -i images/images.tar`
@@ -222,13 +229,16 @@ kjører daemon-reload, restart og is-active. `prepare` er uendret.
 
 ```text
 /var/lib/myproduct/                         0700, eid av myproduct
+├── config.yaml                            0600, brukes av alle versjoner
+├── generated-certificates/                 0700, varige nøkler og passord
+├── PKI/private/                            0700, demo-CA
 ├── .config/containers/systemd/
 │   ├── myproduct.kube                     0644
 │   ├── myproduct.network                  0644
 │   └── myproduct.yaml                     0600 (inkluderer secrets)
 ├── .local/share/containers/storage/        images, volumer og databaser
 ├── files/                                 0700; tar-arkiver 0600
-└── releases/myproduct-<versjon>/            utpakket bundle og lokal config/PKI
+└── releases/myproduct-<versjon>/            kode, manifester og images; kan slettes
 ```
 
 `myproduct.network` oppretter nettverket automatisk og gir hovedtjenesten en
@@ -248,6 +258,38 @@ as_product() {
 }
 as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
+
+### Oppgradering
+
+Config, nøkler, passord, CA og Podman-lageret tilhører installasjonen, ikke en
+release. **Ikke kjør generate-certificates.sh ved oppgradering**, og ikke kopier
+ny eksempelconfig over eksisterende config. PostgreSQL setter passordet bare
+ved første initialisering, demobrukerne beholder sine gamle passordhasher,
+og klientene må fortsatt stole på samme CA. Scriptets sperre mot eksisterende
+nøkler beholdes også når `--root` brukes.
+
+Kjør fra katalogen med det nye arkivet og checksum-filen:
+
+```sh
+old_version=0.1.0
+version=0.1.1
+archive="myproduct-$version-offline.tar.gz"
+release="/var/lib/myproduct/releases/myproduct-$version"
+sha256sum -c "$archive.sha256"
+sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
+sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
+sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
+sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py" --trust-file myproduct
+sudo fapolicyd-cli --update
+sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+```
+
+Etter vellykket oppgradering kan gamle release-kataloger slettes når deres
+trust er fjernet. Behold `/var/lib/myproduct/config.yaml`,
+`generated-certificates/`, `PKI/`, `files/` og Podman-lageret, også ved sletting
+av releaser. Ta sikkerhetskopi av varig tilstand, inkludert databasene.
+`PKI/private/ca.key` på verten er bare for demo; i ekte prod utstedes
+sertifikatene eksternt og leveres til `generated-certificates/` uten CA-nøkkelen.
 
 ### fapolicyd og rootless
 

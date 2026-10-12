@@ -127,7 +127,7 @@ class HarnessTests(unittest.TestCase):
         self.harness.finished = True
         with self.assertRaises(RuntimeError):
             self.harness.step(
-                "10-cleanup", lambda: (_ for _ in ()).throw(RuntimeError("cleanup"))
+                "11-cleanup", lambda: (_ for _ in ()).throw(RuntimeError("cleanup"))
             )
         self.assertFalse(self.harness.report())
 
@@ -182,6 +182,50 @@ sudo() {
         self.assertIn("type=FANOTIFY resp=deny", result.stdout)
         self.assertIn("type=AVC denied", result.stdout)
 
+    def test_upgrade_preserves_credentials_and_orders_checks(self):
+        self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["persistent_before"] = {"ca_der_sha256": "unchanged"}
+        self.harness.guest = mock.Mock(return_value='{"ca_der_sha256": "unchanged"}')
+        self.harness.transfer = mock.Mock()
+        self.harness.credentials = mock.Mock()
+        self.harness.upgrade()
+        self.harness.credentials.assert_not_called()
+        self.harness.transfer.assert_called_once_with("0.1.1")
+        self.assertEqual(
+            self.harness.guest.call_args_list,
+            [
+                mock.call("DEV", "upgrade-bundle", "0.1.1"),
+                mock.call("PROD", "upgrade", "0.1.0"),
+                mock.call("PROD", "check"),
+                mock.call("PROD", "persistent-state"),
+                mock.call("DEV", "prod-e2e"),
+                mock.call("DEV", "markers-check"),
+            ],
+        )
+
+    def test_upgrade_hash_change_stops_before_e2e(self):
+        self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["persistent_before"] = {"ca_der_sha256": "old"}
+        self.harness.guest = mock.Mock(return_value='{"ca_der_sha256": "new"}')
+        self.harness.transfer = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, "10-persistent-after"):
+            self.harness.upgrade()
+        self.assertNotIn(
+            mock.call("DEV", "prod-e2e"), self.harness.guest.call_args_list
+        )
+        self.assertFalse(self.harness.report())
+
+    def test_failed_upgrade_install_stops_before_other_checks(self):
+        self.harness.meta["version"] = "0.1.0"
+        self.harness.transfer = mock.Mock()
+        self.harness.guest = mock.Mock(
+            side_effect=["built", RuntimeError("install failed")]
+        )
+        with self.assertRaisesRegex(RuntimeError, "10-install-upgrade"):
+            self.harness.upgrade()
+        self.assertEqual(self.harness.guest.call_count, 2)
+        self.assertFalse(self.harness.finished)
+
     def test_credentials_stream_to_private_files_without_logging_content(self):
         self.harness.private = self.root / "private"
         self.harness.private.mkdir(mode=0o700)
@@ -196,7 +240,7 @@ sudo() {
 
         def transfer(args, stdout, **kwargs):
             self.assertIn(
-                "sudo -n -H -u myproduct cat /var/lib/myproduct/releases/myproduct-0.1.0/",
+                "sudo -n -H -u myproduct cat /var/lib/myproduct/",
                 args[-1],
             )
             stdout.write(b"synthetic-private-content")

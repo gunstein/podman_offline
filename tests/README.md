@@ -1,7 +1,8 @@
 # Enhetstester
 
 `test_deploy.py` og `test_bundle.py` bruker bare standardbiblioteket
-og PyYAML. Alle stier peker inn i `TemporaryDirectory`; subprocess og root-sjekk
+og PyYAML. `test_certificates.py` bruker også bash og OpenSSL når de finnes,
+med alt nøkkelmateriale i en midlertidig katalog. Alle stier peker inn i `TemporaryDirectory`; Podman-/systemd-kall og brukersjekk
 stubbes. Ingen nettverk, Podman, systemd eller root kreves. Bundle-testene skriver
 og leser ekte tar-arkiver og verifiserer alle SHA-256-linjene, men stubber image-save.
 
@@ -70,7 +71,7 @@ Den ekte Quadlet-generatorens dryrun viste myproduct-network.service,
 network create --ignore og Requires/After fra hovedtjenesten.
 Ved kube down kom fortsatt det tidligere dokumenterte rootless-netns-avviket,
 men kommandoen returnerte 0 og ny oppstart fungerte.
-Rootful systemd/reboot og database utilgjengelig i over 60 sekunder er fortsatt
+Prod-systemd/reboot og database utilgjengelig i over 60 sekunder er fortsatt
 manuelle VM-tester, ikke verifisert av denne kjøringen.
 
 ## Rootless prod
@@ -81,3 +82,8 @@ feil ved manglende runtime-katalog, samt filrettigheter. Ingen produktfiler
 skrives i systeminstansens Quadlet-katalog. Bundle-testen inkluderer prepare-host.
 Akseptanserammens lokale tester kontrollerer også at sudo-kommandoene bytter
 arbeidskatalog før install/Podman, uten root, Podman eller nett.
+
+Varig config testes separat fra release-config: install bruker HOME, prepare
+bruker repo-roten, og relative secret-/volumstier følger config-katalogen.
+Sertifikattestene kontrollerer --root, standardroten, filmoduser, vertsnavn
+og at gjentatt generering avvises uten å endre noen filer.

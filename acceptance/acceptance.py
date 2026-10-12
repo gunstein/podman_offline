@@ -129,7 +129,7 @@ class Run:
     def ssh(self, role, script, timeout=3600):
         return self.command(SSH + [self.host(role), "bash -se"], script, timeout)
 
-    def guest(self, role, action):
+    def guest(self, role, action, version=""):
         args = [
             action,
             self.id,
@@ -140,6 +140,7 @@ class Run:
             self.revision,
             role,
             self.started_epoch,
+            version,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
@@ -282,9 +283,10 @@ class Run:
         self.command(SCP + [source, self.host("DEV") + ":" + base + "/source.bundle"])
         self.guest("DEV", "clone")
 
-    def transfer(self):
+    def transfer(self, version=None):
         base = "podman-offline-acceptance/" + self.id
-        archive = "myproduct-" + self.meta["version"] + "-offline.tar.gz"
+        version = version or self.meta["version"]
+        archive = "myproduct-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
             local = self.folder / (archive + suffix)
@@ -302,9 +304,35 @@ class Run:
             digest = hashlib.sha256()
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        self.meta["bundle_sha256"] = digest.hexdigest()
+        self.meta.setdefault("bundles", {})[version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
-        self.guest("PROD", "unpack")
+        self.guest("PROD", "unpack", version)
+
+    def persistent_state(self, phase):
+        state = json.loads(self.guest("PROD", "persistent-state"))
+        self.meta["persistent_" + phase] = state
+        if phase == "after" and state != self.meta["persistent_before"]:
+            raise RuntimeError(
+                "Persistent config, certificates or CA changed during upgrade"
+            )
+
+    def upgrade(self):
+        version = self.meta["version"]
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            raise RuntimeError("Upgrade test requires a three-part numeric VERSION")
+        parts = version.split(".")
+        parts[-1] = str(int(parts[-1]) + 1)
+        new_version = ".".join(parts)
+        self.meta["upgrade_version"] = new_version
+        self.step(
+            "10-build-upgrade", lambda: self.guest("DEV", "upgrade-bundle", new_version)
+        )
+        self.step("10-transfer-upgrade", lambda: self.transfer(new_version))
+        self.step("10-install-upgrade", lambda: self.guest("PROD", "upgrade", version))
+        self.step("10-check-upgrade", lambda: self.guest("PROD", "check"))
+        self.step("10-persistent-after", lambda: self.persistent_state("after"))
+        self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
 
     def credentials(self):
         assert self.private is not None
@@ -314,7 +342,7 @@ class Run:
             raise RuntimeError("Unexpected VM runtime path")
         self.dev_private = runtime + "/podman-offline-" + self.id
         self.ssh("DEV", "mkdir -m 700 " + shlex.quote(self.dev_private))
-        base = "/var/lib/myproduct/releases/myproduct-" + self.meta["version"] + "/"
+        base = "/var/lib/myproduct/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
             "alice-password": "generated-certificates/users/alice-password",
@@ -355,11 +383,11 @@ class Run:
         # Read-only audit evidence is required even after a failed prod step.
         if self.prod_ready:
             try:
-                self.step("10-prod-audit", lambda: self.guest("PROD", "audit"))
+                self.step("11-prod-audit", lambda: self.guest("PROD", "audit"))
             except Exception as error:  # noqa: BLE001 - preserve original failure and still clean up
                 print(str(error), file=sys.stderr)
         try:
-            self.step("10-cleanup", self.cleanup)
+            self.step("11-cleanup", self.cleanup)
         except Exception as error:  # noqa: BLE001 - cleanup failure must affect verdict
             print(str(error), file=sys.stderr)
 
@@ -401,6 +429,7 @@ class Run:
         self.step("05-transfer", self.transfer)
         self.step("06-install", lambda: self.guest("PROD", "install"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
+        self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)
         self.step("08-e2e", lambda: self.guest("DEV", "prod-e2e"))
         self.step("08-markers", lambda: self.guest("DEV", "markers-create"))
@@ -415,6 +444,7 @@ class Run:
         self.step("09-check-after-reboot", lambda: self.guest("PROD", "check"))
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
+        self.upgrade()
         self.finished = True
 
     def report(self):
@@ -462,7 +492,7 @@ class Run:
                 "Log SHA256: " + hashlib.sha256(data).hexdigest(),
                 fence + "text",
                 data.decode()
-                if record["step"] == "10-prod-audit"
+                if record["step"] == "11-prod-audit"
                 else "\n".join(data.decode().splitlines()[-65:]),
                 fence,
             ]

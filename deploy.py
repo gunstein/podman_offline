@@ -133,13 +133,13 @@ def write_private(path, text):
         f.write(text)
 
 
-def resolve_path(value):
-    """Relativ sti regnes fra prosjekt-/bundle-roten. ~ er tillatt."""
+def resolve_path(value, base_dir=None):
+    """Relativ sti regnes fra config-katalogen. ~ er tillatt."""
     path = Path(value).expanduser()
-    return path if path.is_absolute() else ROOT / path
+    return path if path.is_absolute() else (base_dir or CONFIG.parent) / path
 
 
-def load_file_group(config, group):
+def load_file_group(config, group, base_dir=None):
     """Les SECRET_FILES eller VOLUME_FILES: {id: [fil eller katalog, ...]}.
 
     Returner {id: [Path, ...]} med det som skal ligge på toppnivå:
@@ -169,7 +169,7 @@ def load_file_group(config, group):
 
         items = []
 
-        for path in (resolve_path(entry) for entry in entries):
+        for path in (resolve_path(entry, base_dir) for entry in entries):
             if not path.exists():
                 raise DeployError(f"Mangler {path} ({where})")
             items += sorted(path.iterdir()) if path.is_dir() else [path]
@@ -342,20 +342,21 @@ def check_links(docs, from_config):
             )
 
 
-def render(files_dir=None, write_archives=True):
+def render(files_dir=None, write_archives=True, config_path=None):
     """Returner ferdig install-YAML som tekst.
 
     Skriver bare tar-arkivene for VOLUME_FILES (til files_dir, standard
     build/files), og først når alt annet er validert. Med write_archives=False
     valideres og rendres YAML uten å skrive arkiver.
     """
-    if not CONFIG.exists():
-        raise DeployError(f"Mangler {CONFIG}")
+    config_path = config_path or CONFIG
+    if not config_path.exists():
+        raise DeployError(f"Mangler {config_path}")
 
     files_dir = files_dir or BUILD / "files"
-    config = load_config(CONFIG)
-    secrets = load_file_group(config, SECRET_FILES)
-    volumes = load_file_group(config, VOLUME_FILES)
+    config = load_config(config_path)
+    secrets = load_file_group(config, SECRET_FILES, config_path.parent)
+    volumes = load_file_group(config, VOLUME_FILES, config_path.parent)
 
     docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
 
@@ -458,7 +459,8 @@ def install():
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
 
-    text = render(FILES_DIR, write_archives=False)
+    config_path = Path.home() / "config.yaml"
+    text = render(FILES_DIR, write_archives=False, config_path=config_path)
     archive = ROOT / "images" / "images.tar"
     if not archive.is_file():
         raise DeployError(f"Mangler image-arkivet {archive}")
@@ -472,7 +474,8 @@ def install():
                 f"(podman image exists ga exit {error.returncode})"
             ) from None
 
-    render(FILES_DIR)  # Skriv importarkivene først etter vellykket image-sjekk.
+    # Skriv importarkivene først etter vellykket image-sjekk.
+    render(FILES_DIR, config_path=config_path)
 
     # YAML og Quadlet ligger fast i tjenestebrukerens hjem, også etter reboot.
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # Development CA and separate TLS, IdentityServer signing and Todo client keys.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+root=$(cd "$(dirname "$0")/.." && pwd)
 umask 077
-hostname=${1:-myproduct-proxy}
-if [[ ! $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]; then
-    echo 'Usage: PKI/generate.sh [DNS hostname]' >&2; exit 2
+if [[ ${1:-} == --root ]]; then
+    if [[ $# -lt 2 || -z $2 ]]; then
+        echo 'Usage: scripts/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
+        exit 2
+    fi
+    root=$2
+    shift 2
 fi
+hostname=${1:-myproduct-proxy}
+if [[ $# -gt 1 || ! $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]; then
+    echo 'Usage: scripts/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
+    exit 2
+fi
+mkdir -p "$root"
+cd "$root"
 if [[ -e PKI/private/ca.key || -e generated-certificates/identity/identity.key ]]; then
     echo 'PKI already exists. Keeping existing keys; see PKI/README.md.' >&2
     exit 1

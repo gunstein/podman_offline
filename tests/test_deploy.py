@@ -75,6 +75,8 @@ class DeployFixture(unittest.TestCase):
 
     def write_config(self):
         self.write("config.yaml", yaml.safe_dump(self.config))
+        if getattr(self, "production_config", False):
+            self.write("home/config.yaml", yaml.safe_dump(self.config), 0o600)
 
     def manifest(self, docs, name="10-pod.yaml"):
         return self.write("manifests/" + name, yaml.safe_dump_all(docs))
@@ -106,6 +108,11 @@ class DeployFixture(unittest.TestCase):
 
     def install_fixture(self):
         self.volume_fixture()
+        self.production_config = True
+        self.stack.enter_context(
+            mock.patch.dict(os.environ, {"HOME": str(self.root / "home")})
+        )
+        self.config["VOLUME_FILES"] = {"uploads": ["../files/message.txt"]}
         self.write("quadlet/myproduct.kube", "[Kube]\nYaml=myproduct.yaml\n")
         self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
         self.write("images/images.tar")
@@ -576,6 +583,68 @@ class CommandTests(DeployFixture):
         self.process.assert_not_called()
         self.assertFalse(deploy.QUADLET_DIR.exists())
         self.assertFalse(deploy.FILES_DIR.exists())
+
+    def test_install_uses_persistent_config_not_release_config(self):
+        self.install_fixture()
+        self.write("config.yaml", "invalid release config")
+        deploy.install()
+        self.assertIn("localhost/app:1", deploy.QUADLET_YAML.read_text())
+
+    def test_install_missing_persistent_config_names_expected_path(self):
+        self.install_fixture()
+        path = self.root / "home/config.yaml"
+        path.unlink()
+        with self.assertRaises(deploy.DeployError) as failure:
+            deploy.install()
+        self.assertIn(str(path), str(failure.exception))
+        self.process.assert_not_called()
+
+    def test_prepare_uses_release_config_even_when_home_config_exists(self):
+        self.volume_fixture()
+        self.write("home/config.yaml", "invalid prod config")
+        with mock.patch.dict(os.environ, {"HOME": str(self.root / "home")}):
+            deploy.prepare()
+        self.assertTrue((deploy.BUILD / "install.yaml").is_file())
+        self.process.assert_not_called()
+
+    def test_separate_config_directory_resolves_secrets_and_volumes(self):
+        for directory in ("dev", "home"):
+            with self.subTest(directory=directory):
+                config_path = self.write(
+                    directory + "/config.yaml",
+                    yaml.safe_dump(
+                        {
+                            "HTTPS_PORT": 8443,
+                            "SECRET_FILES": {"secret": ["generated/key"]},
+                            "VOLUME_FILES": {"uploads": ["generated/message"]},
+                        }
+                    ),
+                )
+                self.write(directory + "/generated/key", b"persistent secret")
+                self.write(directory + "/generated/message", b"persistent volume")
+                self.manifest(
+                    [
+                        document(
+                            "Pod",
+                            "test",
+                            spec={
+                                "volumes": [
+                                    {"secret": {"secretName": "secret"}},
+                                    {"persistentVolumeClaim": {"claimName": "uploads"}},
+                                ]
+                            },
+                        )
+                    ]
+                )
+                docs = list(yaml.safe_load_all(deploy.render(config_path=config_path)))
+                self.assertEqual(
+                    base64.b64decode(docs[0]["data"]["key"]), b"persistent secret"
+                )
+                with tarfile.open(str(deploy.BUILD / "files/uploads.tar")) as archive:
+                    content = archive.extractfile("message")
+                    assert content is not None
+                    with content:
+                        self.assertEqual(content.read(), b"persistent volume")
 
     def test_paths_follow_home(self):
         home = self.root / "other-service-user"

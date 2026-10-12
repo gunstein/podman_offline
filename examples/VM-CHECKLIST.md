@@ -95,7 +95,12 @@ finnes i [akseptansetesten](../acceptance/README.md).
    install/start først: kontroller ny boot-ID, brukerens tjeneste, containere,
    markører, full e2e og at internett fortsatt er blokkert. Definer as_product
    på nytt i den nye skallsesjonen. Linger skal gi oppstart uten brukerinnlogging.
-7. Registrer alle avvik og hent lesende journal/audit. Ikke logg nøkkel- eller
+7. Følg README sin oppgraderingsflyt med ny VERSION. Bruk de samme passordene
+   til full e2e og kontroller markørene fra steg 5. Sammenlign CA-fingeravtrykk
+   og SHA256 for generated-certificates før/etter; ingen fil skal endres.
+   Kontroller at gammel deploy.py er fjernet fra trust-databasen.
+   Ikke generer sertifikater eller erstatt config ved oppgradering.
+8. Registrer alle avvik og hent lesende journal/audit. Ikke logg nøkkel- eller
    passordinnhold og ikke slett data for å få testen til å passere.
 
    ```sh

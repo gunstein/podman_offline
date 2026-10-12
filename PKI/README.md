@@ -5,6 +5,13 @@ Wrapperen i `scripts/` følger også med offline-bundlen og oppretter PKI-katalo
 der ved behov. Standard TLS-navn er `myproduct-proxy`; valgfritt første
 argument angir et annet DNS-navn.
 
+I prod brukes `bash scripts/generate-certificates.sh --root /var/lib/myproduct
+myproduct-proxy` (på én linje, som tjenestebrukeren). Da ligger nøkler,
+passord og CA utenfor release-katalogen. Standard uten `--root` er fortsatt
+prosjektroten. Generer bare ved første installasjon, aldri ved oppgradering;
+databaser og demobrukere beholder sine opprinnelige passord. CA på målverten
+er kun for demo; i ekte prod utstedes sertifikater eksternt.
+
 CA-nøkkel og CA-sertifikat genereres i `PKI/private/`. Tre separate nøkkelpar
 signeres av CA-en:
 
