@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 def env_file(path):
+    """Les en privat KEY=VALUE-fil og avvis ugyldige eller dupliserte nøkler."""
     path = Path(path).expanduser()
     if path.stat().st_mode & 0o077:
         raise RuntimeError("Local lab/token configuration must have mode 0600")
@@ -24,7 +25,10 @@ def env_file(path):
 
 
 class Proxmox:
+    """Kall Proxmox med verifisert TLS uten å logge API-tokenet."""
+
     def __init__(self, filename):
+        """Les privat tokenconfig og opprett en TLS-verifiserende HTTP-klient."""
         self.config = env_file(filename)
         context = ssl.create_default_context(cafile=self.config["PVE_CA"])
         # Proxmox's generated CA lacks Key Usage; retain chain/hostname verification.
@@ -35,6 +39,7 @@ class Proxmox:
         )
 
     def request(self, method, path, form=None):
+        """Kall API-et og returner data eller en feil uten tokeninnhold."""
         cfg = self.config
         path = path.replace("{node}", cfg["PVE_NODE"])
         url = "https://" + cfg["PVE_HOST"] + ":8006/api2/json" + path
@@ -56,6 +61,7 @@ class Proxmox:
             raise RuntimeError(f"Proxmox {method} {path}: HTTP {error.code}") from None
 
     def task(self, path, form=None):
+        """Start en API-operasjon og vent på OK eller timeout."""
         task = self.request("POST", path, form)
         endpoint = (
             "/nodes/{node}/tasks/" + urllib.parse.quote(task, safe="") + "/status"

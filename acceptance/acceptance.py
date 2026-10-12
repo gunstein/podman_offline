@@ -41,10 +41,12 @@ SCP = [
 
 
 def stamp():
+    """Returner nåværende UTC-tid i ISO-format for loggene."""
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def validate(config):
+    """Valider labens VM-er, adresser, subnett, navn og HTTPS-port."""
     for role in ("DEV", "PROD"):
         ipaddress.IPv4Address(config[role + "_IP"])
         if not re.fullmatch(r"[1-9][0-9]*", config[role + "_VMID"]):
@@ -72,7 +74,10 @@ def validate(config):
 
 
 class Run:
+    """Utfør én uforanderlig akseptansekjøring med logger og første-feil-stopp."""
+
     def __init__(self, run_id, config):
+        """Opprett en ny, privat run-mappe og initialiser kjøringens tilstand."""
         self.id = run_id
         self.config_file = config
         self.folder = RUNS / run_id
@@ -90,6 +95,7 @@ class Run:
         self.prod_ready = False
 
     def write(self, text):
+        """Skriv til stegets logg etter å ha maskert kjente hemmeligheter."""
         for value in self.redactions:
             text = text.replace(value, "[REDACTED]")
         if self.log:
@@ -97,6 +103,7 @@ class Run:
             self.log.flush()
 
     def command(self, args, script=None, timeout=3600):
+        """Logg en kommando og avvis feilstatus, timeout og rapporterte feil."""
         self.write("$ " + " ".join(shlex.quote(str(a)) for a in args) + "\n")
         if script:
             self.write("# stdin script:\n" + script + "\n")
@@ -124,12 +131,15 @@ class Run:
         return result.stdout
 
     def host(self, role):
+        """Returner SSH-bruker og adresse for den valgte VM-rollen."""
         return self.cfg["SSH_USER"] + "@" + self.cfg[role + "_IP"]
 
     def ssh(self, role, script, timeout=3600):
+        """Kjør et script via SSH og samle output i stegets logg."""
         return self.command(SSH + [self.host(role), "bash -se"], script, timeout)
 
     def guest(self, role, action, version=""):
+        """Kjør et fast VM-steg via SSH med parametre for denne kjøringen."""
         args = [
             action,
             self.id,
@@ -147,6 +157,7 @@ class Run:
         return self.ssh(role, prefix + script)
 
     def step(self, name, action):
+        """Kjør ett steg én gang, logg utfallet og stopp ved første feil."""
         print("START " + name, flush=True)
         started = stamp()
         clock = time.monotonic()
@@ -179,6 +190,7 @@ class Run:
             raise RuntimeError("STOP at " + name) from None
 
     def readiness(self):
+        """Kontroller ren checkout, labtilgang og profiler før VM-ene endres."""
         self.cfg = env_file(self.config_file)
         validate(self.cfg)
         for program in ("git", "ssh", "scp"):
@@ -241,6 +253,7 @@ class Run:
         )
 
     def wait_ssh(self, role, old_boot=None):
+        """Vent på SSH og eventuelt en boot-ID som avviker fra den forrige."""
         deadline = time.monotonic() + 240
         while time.monotonic() < deadline:
             args = SSH + [self.host(role), "cat /proc/sys/kernel/random/boot_id"]
@@ -260,6 +273,7 @@ class Run:
         raise RuntimeError("SSH/new boot did not become ready: " + role)
 
     def reset(self, role):
+        """Tilbakestill en VM til snapshot og registrer ren tilstand etter oppstart."""
         endpoint = "/nodes/{node}/qemu/" + self.cfg[role + "_VMID"]
         status = self.pve.request("GET", endpoint + "/status/current")["status"]
         if status != "stopped":
@@ -276,6 +290,7 @@ class Run:
         self.meta[role.lower() + "_facts"] = self.guest(role, "clean")
 
     def source(self):
+        """Send en Git-bundle av valgt HEAD til dev-VM-en og klon den der."""
         source = self.folder / "source.bundle"
         self.command(["git", "-C", ROOT, "bundle", "create", source, "HEAD"])
         base = "podman-offline-acceptance/" + self.id
@@ -284,6 +299,7 @@ class Run:
         self.guest("DEV", "clone")
 
     def transfer(self, version=None):
+        """Overfør valgt produktbundle via kontrolleren og registrer SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["version"]
         archive = "myproduct-" + version + "-offline.tar.gz"
@@ -309,6 +325,7 @@ class Run:
         self.guest("PROD", "unpack", version)
 
     def persistent_state(self, phase):
+        """Registrer varige filhashverdier og avvis endringer etter oppgradering."""
         state = json.loads(self.guest("PROD", "persistent-state"))
         self.meta["persistent_" + phase] = state
         if phase == "after" and state != self.meta["persistent_before"]:
@@ -317,6 +334,7 @@ class Run:
             )
 
     def upgrade(self):
+        """Bygg og installer ny versjon, og kontroller varig tilstand og e2e."""
         version = self.meta["version"]
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
             raise RuntimeError("Upgrade test requires a three-part numeric VERSION")
@@ -335,6 +353,7 @@ class Run:
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
 
     def credentials(self):
+        """Flytt CA og demo-passord via private runtime-filer uten å logge innhold."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
         runtime = output.splitlines()[-1]
@@ -371,6 +390,7 @@ class Run:
             )
 
     def cleanup(self):
+        """Slett overførte runtime-hemmeligheter, også når fjernoppryddingen feiler."""
         try:
             if self.dev_private:
                 self.guest("DEV", "cleanup")
@@ -381,6 +401,7 @@ class Run:
 
     def finalize(self):
         # Read-only audit evidence is required even after a failed prod step.
+        """Samle lesende prod-audit og rydd hemmeligheter, også etter første feil."""
         if self.prod_ready:
             try:
                 self.step("11-prod-audit", lambda: self.guest("PROD", "audit"))
@@ -392,12 +413,14 @@ class Run:
             print(str(error), file=sys.stderr)
 
     def reboot(self):
+        """Bestill prod-reboot og registrer at SSH kommer tilbake med ny boot-ID."""
         old = self.guest("PROD", "boot").splitlines()[-1]
         self.meta["prod_boot_before_reboot"] = old
         self.guest("PROD", "reboot")
         self.meta["prod_boot_after_reboot"] = self.wait_ssh("PROD", old)
 
     def execute(self):
+        """Kjør hele akseptanseløpet i fast rekkefølge uten å gjenta feilede steg."""
         self.step("00-readiness", self.readiness)
         for role in ("DEV", "PROD"):
             self.step("01-reset-" + role.lower(), lambda r=role: self.reset(r))
@@ -448,6 +471,7 @@ class Run:
         self.finished = True
 
     def report(self):
+        """Generer rapport og bevis; bare fullført, feilfri kjøring gir CLEAN PASS."""
         records = [
             json.loads(line)
             for line in (self.folder / "record.jsonl").read_text().splitlines()
@@ -502,6 +526,7 @@ class Run:
 
 
 def main():
+    """Start en ny run-id og produser rapport og opprydding også ved feil."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
     parser.add_argument(

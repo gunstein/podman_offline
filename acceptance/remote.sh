@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixed guest steps. No xtrace: commands that consume secrets must never echo them.
+# Kjør faste akseptansesteg på VM-ene uten å logge hemmeligheter.
 set -euo pipefail
 action=$1
 run=$2
@@ -17,6 +17,7 @@ src="$base/src"
 product="/var/lib/myproduct/releases/myproduct-RELEASE"
 if [[ -f $base/version ]]; then product="/var/lib/myproduct/releases/myproduct-$(cat "$base/version")"; fi
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
+# Kjør kommandoer som tjenestebrukeren fra hjemmet med riktig runtime.
 as_product() {
     sudo -n -H -u myproduct bash -c '
         cd "$HOME" || exit
@@ -24,7 +25,9 @@ as_product() {
         exec "$@"
     ' bash "$@"
 }
+# Styr produktets tjeneste i tjenestebrukerens systemd-instans.
 user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
+# Valider VM-rollens fapolicyd-, SELinux- og firewalld-profil.
 profile() {
     selinux=$(getenforce)
     firewall=$(systemctl show firewalld -p ActiveState --value)
@@ -41,6 +44,7 @@ profile() {
         test "$policy" = active
     fi
 }
+# Logg OS-, verktøy- og oppstartsdata etter profilkontroll.
 facts() {
     profile
     cat /etc/os-release
@@ -53,6 +57,7 @@ facts() {
     sudo -n systemctl is-active firewalld
     df -h "$HOME"
 }
+# Bekreft blokkert internett uten å godta manglende verktøy som nettbevis.
 offline() {
     sudo -n systemctl is-active podman-offline-isolation.service
     sudo -n nft list table inet podman_offline
@@ -84,6 +89,7 @@ PY
         echo "PASS: public pull failed (exit $status)"
     fi
 }
+# Kontroller aktiv tjeneste og alle forventede appcontainere.
 healthy() {
     user_service is-active myproduct.service
     as_product podman ps --all --pod
@@ -257,7 +263,6 @@ unpack)
     cd "$base"
     archive="myproduct-$requested_version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
-    # Final unpack/checksums run under the product identities in step 06/10.
     tar -xOf "$archive" "myproduct-$requested_version/VERSION" > version
     test "$(cat version)" = "$requested_version"
     [[ $(cat version) =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
@@ -324,7 +329,6 @@ for name, mode in paths.items():
     assert item.st_uid == account.pw_uid and item.st_gid == account.pw_gid and stat.S_IMODE(item.st_mode) == mode, name
     print("PASS: myproduct:myproduct {:04o} {}".format(mode, name))
 PY
-    # Lesende SELinux-kontroll; aldri relabel under en akseptansekjøring.
     sudo -n python3 - <<'LABELS'
 import os
 import pathlib
@@ -341,6 +345,7 @@ CUSTOMIZABLE = pathlib.Path("/etc/selinux/targeted/contexts/customizable_types")
 
 
 def context_type(context):
+    """Hent typen fra en SELinux-context og avvis ugyldig format."""
     parts = context.rstrip("\x00").split(":")
     if len(parts) < 4:
         raise RuntimeError("Ugyldig SELinux-context: " + context)
@@ -348,6 +353,7 @@ def context_type(context):
 
 
 def policy_type(path):
+    """Hent forventet type med matchpathcon og avvis mislykket oppslag."""
     status, context = selinux.matchpathcon(str(path), 0)
     if status != 0:
         raise RuntimeError("matchpathcon feilet: " + str(path))
@@ -355,6 +361,7 @@ def policy_type(path):
 
 
 def check_equivalence():
+    """Bekreft container-ekvivalensen med policy-prober uten filkrav."""
     probes = ((STORAGE / "overlay-layers", "container_ro_file_t"),
               (STORAGE / "volumes/x/_data/y", "container_file_t"))
     for path, expected in probes:
@@ -365,6 +372,7 @@ def check_equivalence():
 
 
 def check_label(path):
+    """Logg faktisk og forventet type og avvis avvik fra policyen."""
     actual = context_type(os.getxattr(str(path), "security.selinux", follow_symlinks=False).decode())
     expected = policy_type(path)
     print("LABEL {} actual={} expected={}".format(path, actual, expected))
@@ -373,6 +381,7 @@ def check_label(path):
 
 
 def classify_line(line, customizable):
+    """Klassifiser én dry-run-linje med smale regler eller avvis den."""
     proposal = re.fullmatch(r"Would relabel (.+) from (\S+) to (\S+)", line)
     preserved = re.fullmatch(r"(.+) not reset as customized by admin to (\S+)", line)
     if proposal:
@@ -404,6 +413,7 @@ def classify_line(line, customizable):
 
 
 def dryrun(arguments):
+    """Logg lesende restorecon-output og avvis kommandoens feilstatus."""
     result = subprocess.run(["restorecon", "-n", "-v", "-R"] + arguments,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             universal_newlines=True, check=False)
@@ -415,6 +425,7 @@ def dryrun(arguments):
 
 
 def main():
+    """Kontroller policy, faktiske labels og klassifisert dry-run uten relabeling."""
     check_equivalence()
     for name in ("", "overlay", "overlay-layers", "overlay-images", "overlay-containers", "volumes"):
         check_label(STORAGE / name)

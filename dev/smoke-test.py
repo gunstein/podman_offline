@@ -21,6 +21,7 @@ original_getaddrinfo = socket.getaddrinfo
 
 
 def local_dns(host, *args, **kwargs):
+    """Styr appens vertsnavn til test-IP-en og behold øvrige DNS-oppslag."""
     return original_getaddrinfo(
         CONNECT_IP if host == HOSTNAME else host, *args, **kwargs
     )
@@ -30,28 +31,37 @@ socket.getaddrinfo = local_dns
 
 
 class LoginForm(HTMLParser):
+    """Hent skjulte skjemafelt fra Duendes innloggingsside."""
+
     def __init__(self):
+        """Opprett parser og tom samling av skjulte skjemafelt."""
         super().__init__()
         self.fields = {}
 
     def handle_starttag(self, tag, attrs):
+        """Samle navn og verdi fra skjulte input-felt."""
         attrs = dict(attrs)
         if tag == "input" and attrs.get("type") == "hidden":
             self.fields[attrs["name"]] = attrs.get("value", "")
 
 
 class Links(HTMLParser):
+    """Hent lenkeadresser fra HTML for navigasjonskontroll."""
+
     def __init__(self):
+        """Opprett parser og en tom samling av lenkeadresser."""
         super().__init__()
         self.hrefs = set()
 
     def handle_starttag(self, tag, attrs):
+        """Samle adresser fra lenker som har href."""
         href = dict(attrs).get("href")
         if tag == "a" and href:
             self.hrefs.add(href)
 
 
 def check_help(session):
+    """Kontroller hjelpesider, Todo-lenker, navigasjon, CSS og HTTP-status."""
     expected = {
         "/help/": "Hjelp til Todo",
         "/help/innlogging.html": "Logge inn og ut",
@@ -83,6 +93,7 @@ def check_help(session):
 
 
 def client():
+    """Opprett en HTTPS-sesjon med testens CA og uten miljøstyrt proxy."""
     result = requests.Session()
     result.trust_env = False
     result.verify = os.getenv("SMOKE_CA_FILE", str(ROOT / "PKI/private/ca.crt"))
@@ -90,10 +101,12 @@ def client():
 
 
 def get(session, path):
+    """Hent en relativ appsti med testens sesjon og timeout."""
     return session.get(ORIGIN + path, timeout=10)
 
 
 def login(username):
+    """Logg inn med lokalt demopassord og returner en sesjon med CSRF-header."""
     session = client()
     response = get(session, "/auth/login")
     response.raise_for_status()
@@ -124,6 +137,7 @@ def login(username):
 
 
 def main():
+    """Test HTTPS, innlogging, Todo-isolasjon, CSRF, utlogging og hjelpesider."""
     anonymous = client()
     for attempt in range(60):
         try:

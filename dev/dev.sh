@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Start eller stopp dev-installasjonen med direkte podman kube play.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in

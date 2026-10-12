@@ -21,11 +21,13 @@ class BundleError(Exception):
 
 
 def run(*args):
+    """Vis og kjør en kommando; avbryt ved feilstatus."""
     print("+", " ".join(map(str, args)))
     subprocess.run(list(map(str, args)), check=True)
 
 
 def sha256(path):
+    """Beregn SHA256 for en fil uten å lese hele filen til minnet."""
     digest = hashlib.sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
@@ -34,6 +36,7 @@ def sha256(path):
 
 
 def owner_root(info):
+    """Sett tar-medlemmets eier til root uten å endre filmodusen."""
     info.uid = 0
     info.gid = 0
     info.uname = "root"
@@ -42,6 +45,7 @@ def owner_root(info):
 
 
 def manifest_images():
+    """Finn sorterte manifest-images og oversett image-feil til BundleError."""
     documents = []
     for path in sorted((ROOT / "manifests").glob("*.yaml")):
         documents.extend(deploy.load_yaml_all(path))
@@ -52,6 +56,7 @@ def manifest_images():
 
 
 def build():
+    """Bygg en checksummet offline-bundle fra manifester og lokale Podman-images."""
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     name = f"myproduct-{version}"
     target = STAGE / name
@@ -73,7 +78,7 @@ def build():
     for dirname in ["manifests", "scripts", "quadlet"]:
         shutil.copytree(ROOT / dirname, target / dirname)
 
-    # Filer som leveres med produktet og kan listes i FILES (valgfri katalog).
+    # Valgfri files/ leverer produktfiler til SECRET_FILES og VOLUME_FILES.
     if (ROOT / "files").is_dir():
         shutil.copytree(ROOT / "files", target / "files")
 
@@ -115,6 +120,7 @@ def build():
 
 
 def main():
+    """Bygg bundlen og returner exit-kode uten traceback for forventede feil."""
     try:
         build()
     except (

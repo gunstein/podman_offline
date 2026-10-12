@@ -29,9 +29,6 @@ QUADLET_TARGET = QUADLET_DIR / "myproduct.kube"
 QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml i .kube
 SERVICE = "myproduct.service"
 
-# Filer fra config.yaml (se config.example.yaml):
-#   SECRET_FILES: id -> filer som blir én Secret per id (én nøkkel per fil)
-#   VOLUME_FILES: id -> filer som lastes inn i ett Podman-volum per id
 SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
 
@@ -57,6 +54,7 @@ class UniqueKeyLoader(yaml.SafeLoader):
     """SafeLoader som avviser dupliserte nøkler i stedet for å ta siste verdi."""
 
     def construct_mapping(self, node, deep=False):
+        """Konstruer en YAML-mapping og avvis dupliserte nøkler med linjenummer."""
         seen = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
@@ -69,17 +67,20 @@ class UniqueKeyLoader(yaml.SafeLoader):
 
 
 def load_yaml(path):
+    """Les ett YAML-dokument sikkert og avvis dupliserte nøkler."""
     with path.open(encoding="utf-8") as f:
-        # UniqueKeyLoader arver SafeLoader, så dette er like trygt som safe_load.
+        # Egen SafeLoader avviser duplikater uten å tillate YAML-objektkonstruksjon.
         return yaml.load(f, Loader=UniqueKeyLoader)
 
 
 def load_yaml_all(path):
+    """Les alle YAML-dokumentene sikkert og avvis dupliserte nøkler."""
     with path.open(encoding="utf-8") as f:
         return list(yaml.load_all(f, Loader=UniqueKeyLoader))
 
 
 def load_config(path):
+    """Les config og valider nøkkeltyper, verdityper og HTTPS-port."""
     config = load_yaml(path)
 
     if not isinstance(config, dict):
@@ -109,6 +110,7 @@ def load_config(path):
 
 
 def replace(value, config):
+    """Erstatt hele placeholders rekursivt og behold config-verdiens type."""
     if isinstance(value, dict):
         return {key: replace(item, config) for key, item in value.items()}
 
@@ -142,11 +144,7 @@ def resolve_path(value, base_dir=None):
 
 
 def load_file_group(config, group, base_dir=None):
-    """Les SECRET_FILES eller VOLUME_FILES: {id: [fil eller katalog, ...]}.
-
-    Returner {id: [Path, ...]} med det som skal ligge på toppnivå:
-    en fil er seg selv, en katalog bidrar med innholdet sitt.
-    """
+    """Les filgrupper og ekspander katalogstier ett nivå fra config-katalogen."""
     spec = config.get(group) or {}
 
     if not isinstance(spec, dict):
@@ -200,7 +198,7 @@ def load_file_group(config, group, base_dir=None):
 
 
 def secret_documents(secrets):
-    """Én Secret per SECRET_FILES-id. Hver fil blir én fil i containeren."""
+    """Lag base64-kodede Secrets innenfor Podmans størrelsesgrense."""
     docs = []
 
     for secret_id, items in secrets.items():
@@ -228,7 +226,7 @@ def secret_documents(secrets):
 
 
 def normalize(info):
-    """Like rettigheter uansett hvordan filene ser ut på maskinen de kom fra."""
+    """Normaliser tar-eier til root og filmoduser til 0644 eller 0755."""
     info.uid = 0
     info.gid = 0
     info.uname = "root"
@@ -238,6 +236,7 @@ def normalize(info):
 
 
 def archive_path(files_dir, volume_id):
+    """Returner stien til importarkivet for en volum-id."""
     return files_dir / f"{volume_id}.tar"
 
 
@@ -255,14 +254,14 @@ def write_file_archives(volumes, files_dir):
 
         with os.fdopen(fd, "wb") as raw:
             os.fchmod(raw.fileno(), 0o600)
-            # dereference=True: en symlink lagres som filen den peker på.
+            # Offline-arkivet må inneholde målfiler, ikke lenker til byggemaskinen.
             with tarfile.open(fileobj=raw, mode="w", dereference=True) as tar:
                 for item in items:
                     tar.add(str(item), arcname=item.name, filter=normalize)
 
 
 def volume_claims(volumes, files_dir):
-    """Én PVC per VOLUME_FILES-id. Podman lager volumet og pakker ut arkivet."""
+    """Lag PVC-er som lar Podman importere hvert VOLUME_FILES-arkiv."""
     return [
         {
             "apiVersion": "v1",
@@ -308,10 +307,7 @@ def references(value, found):
 
 
 def check_links(docs, from_config):
-    """Sjekk at config-id-er og manifest-referanser passer sammen.
-
-    from_config: {(kind, navn): "SECRET_FILES.id" / "VOLUME_FILES.id"}
-    """
+    """Valider unike volumnavn og koblinger mellom config og manifester."""
     defined = [
         (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
         for doc in docs
@@ -345,12 +341,7 @@ def check_links(docs, from_config):
 
 
 def render(files_dir=None, write_archives=True, config_path=None):
-    """Returner ferdig install-YAML som tekst.
-
-    Skriver bare tar-arkivene for VOLUME_FILES (til files_dir, standard
-    build/files), og først når alt annet er validert. Med write_archives=False
-    valideres og rendres YAML uten å skrive arkiver.
-    """
+    """Rendr validert YAML og skriv importarkiver hvis write_archives er satt."""
     config_path = config_path or CONFIG
     if not config_path.exists():
         raise DeployError(f"Mangler {config_path}")
@@ -396,12 +387,14 @@ def render(files_dir=None, write_archives=True, config_path=None):
 
 
 def prepare():
+    """Skriv validert dev-YAML og importarkiver uten å kjøre Podman."""
     output = BUILD / "install.yaml"
     write_private(output, render())
     print(f"[OK] {output}")
 
 
 def run(*args):
+    """Vis og kjør en kommando; avbryt ved feilstatus."""
     print("+", " ".join(map(str, args)))
     subprocess.run(list(map(str, args)), check=True)
 
@@ -450,6 +443,7 @@ def find_images(documents):
 
 
 def install():
+    """Installer rootless Quadlet fra releasen med tjenestebrukerens varige config."""
     if os.geteuid() == 0:
         raise DeployError("Kjør install som tjenestebrukeren, ikke som root")
 
@@ -489,10 +483,9 @@ def install():
                 f"(podman image exists ga exit {error.returncode})"
             ) from None
 
-    # Skriv importarkivene først etter vellykket image-sjekk.
+    # Gammel YAML må ikke importere nye filer etter en mislykket image-kontroll.
     render(FILES_DIR, config_path=config_path)
 
-    # YAML og Quadlet ligger fast i tjenestebrukerens hjem, også etter reboot.
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     write_private(QUADLET_YAML, text)
     for suffix in (".kube", ".network"):
@@ -512,6 +505,7 @@ def install():
 
 
 def main():
+    """Kjør valgt deploy-kommando og returner exit-kode for forventede feil."""
     commands = {"prepare": prepare, "install": install}
     args = sys.argv[1:]
 

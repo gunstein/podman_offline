@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Bygg demoens app-images og hent PostgreSQL med lokale manifestnavn.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 for app in identity todo-backend todo-frontend help proxy; do

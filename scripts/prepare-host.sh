@@ -2,9 +2,10 @@
 # Engangsoppsett for rootless prod. Gjentatt kjøring beholder bruker og ID-områder.
 set -euo pipefail
 umask 077
+# Vis en forklarende vertsfeil og stopp klargjøringen.
 die() { echo "ERROR: $*" >&2; exit 1; }
 [[ $EUID == 0 ]] || die "Kjør sudo bash scripts/prepare-host.sh --port <1024-65535>"
-# Påkrevd port; ingen config-fallback eller YAML-lesing.
+# Påkrevd port må være identisk med HTTPS_PORT og PUBLIC_ORIGIN i config.
 [[ $# == 2 && ${1:-} == --port && ${2:-} =~ ^[0-9]{1,5}$ ]] || die "Bruk --port <heltall 1024-65535>"
 port=$((10#$2))
 [[ $port -ge 1024 && $port -le 65535 ]] || die "Porten må være 1024-65535"
@@ -17,13 +18,12 @@ service_home=/var/lib/myproduct
 if ! getent passwd myproduct >/dev/null; then
     useradd --system --create-home --home-dir "$service_home" --shell /sbin/nologin myproduct
 fi
-# Avvis en annen eksisterende konto; ikke endre hjem/shell/eierskap rekursivt.
+# En eksisterende konto skal ikke omdefineres eller få data flyttet.
 [[ $(getent passwd myproduct | cut -d: -f6) == "$service_home" ]] || die "myproduct må ha hjem $service_home"
 [[ $(getent passwd myproduct | cut -d: -f7) == /sbin/nologin ]] || die "myproduct må ha shell /sbin/nologin"
 [[ $(stat -c %u "$service_home") == "$(id -u myproduct)" ]] || die "Hjemmet $service_home må være eid av myproduct"
 chmod 0700 "$service_home"
-# Behold gyldige eksisterende områder. Velg ett ledig område i begge navnerom.
-# Kun manglende tildelinger skrives; overlapp eller for små områder gir stopp.
+# Bevar ID-mappinger for eksisterende volumer; brukere må ikke ha overlapp.
 read -r uid_range gid_range < <(python3 - <<'PY'
 from pathlib import Path
 rows = []
@@ -56,7 +56,7 @@ PY
 )
 [[ $uid_range == existing ]] || usermod --add-subuids "$uid_range" myproduct
 [[ $gid_range == existing ]] || usermod --add-subgids "$gid_range" myproduct
-# SELinux: lageret følger container-policyen, også for systembrukere.
+# SELinux: lageret trenger egen ekvivalens fordi systembrukere mangler HOME_DIR.
 equivalences=$(semanage fcontext -l -C)
 container_home="$service_home/.local/share/containers"
 expected="$container_home = /var/lib/containers"
@@ -68,7 +68,7 @@ done <<< "$equivalences"
 if ! grep -Fqx "$expected" <<< "$equivalences"; then
     semanage fcontext -a -e /var/lib/containers "$container_home"
 fi
-# Opprett lagerets foreldre før restorecon, så nye filer arver riktige labels.
+# Preoppretting hindrer at Podman lager config-kataloger med runtime-type.
 for directory in .local .local/share .local/share/containers .local/share/containers/storage \
     .config .config/cni .config/cni/net.d .config/containers .config/containers/systemd; do
     install -d -m 0700 -o myproduct -g "$(id -gn myproduct)" "$service_home/$directory"
@@ -78,8 +78,7 @@ done
 if [[ ! -e $service_home/.config/cni/net.d/cni.lock ]]; then
     install -m 0600 -o myproduct -g "$(id -gn myproduct)" /dev/null "$service_home/.config/cni/net.d/cni.lock"
 fi
-# Preopprettet .config hindrer Podman i å opprette den med runtime-type.
-# Et fylt lager skal aldri relabeles rekursivt ved gjentatt klargjøring.
+# Podmans runtime-labels i et fylt lager må bevares ved ny klargjøring.
 restorecon -R -e "$container_home/storage" "$service_home"
 restorecon "$container_home/storage"
 loginctl enable-linger myproduct
