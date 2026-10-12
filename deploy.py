@@ -8,6 +8,7 @@ Filer angis i config.yaml under SECRET_FILES og VOLUME_FILES (id -> filer).
 
 import base64
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -16,13 +17,14 @@ from pathlib import Path
 
 import yaml
 
+HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
 MANIFESTS = ROOT / "manifests"
 CONFIG = ROOT / "config.yaml"
 
 QUADLET_TEMPLATE = ROOT / "quadlet" / "myproduct.kube"
-QUADLET_DIR = Path.home() / ".config/containers/systemd"
+QUADLET_DIR = HOME / ".config/containers/systemd"
 QUADLET_TARGET = QUADLET_DIR / "myproduct.kube"
 QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml i .kube
 SERVICE = "myproduct.service"
@@ -35,7 +37,7 @@ VOLUME_FILES = "VOLUME_FILES"
 
 # Tar-arkiver for VOLUME_FILES. Podman importerer dem i volumene ved hver
 # oppstart, så de må ligge fast i tjenestebrukerens hjemmekatalog.
-FILES_DIR = Path.home() / "files"
+FILES_DIR = HOME / "files"
 IMPORT_SOURCE = "volume.podman.io/import-source"
 
 ID = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
@@ -451,6 +453,13 @@ def install():
     if os.geteuid() == 0:
         raise DeployError("Kjør install som tjenestebrukeren, ikke som root")
 
+    configured_home = os.environ.get("HOME")
+    if configured_home is not None and Path(configured_home) != HOME:
+        raise DeployError(
+            f"HOME={configured_home!r} avviker fra hjemmekatalogen {HOME} i "
+            "brukerdatabasen. Kjør install med tjenestebrukerens HOME"
+        )
+
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}")
     if not runtime.is_dir():
         raise DeployError(
@@ -459,7 +468,7 @@ def install():
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
 
-    config_path = Path.home() / "config.yaml"
+    config_path = HOME / "config.yaml"
     text = render(FILES_DIR, write_archives=False, config_path=config_path)
     archive = ROOT / "images" / "images.tar"
     if not archive.is_file():

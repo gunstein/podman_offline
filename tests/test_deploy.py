@@ -30,6 +30,7 @@ class DeployFixture(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         paths = {
+            "HOME": self.root / "home",
             "ROOT": self.root,
             "CONFIG": self.root / "config.yaml",
             "MANIFESTS": self.root / "manifests",
@@ -51,7 +52,10 @@ class DeployFixture(unittest.TestCase):
         runtime = self.root / "runtime"
         runtime.mkdir()
         self.stack.enter_context(
-            mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(runtime)})
+            mock.patch.dict(
+                os.environ,
+                {"XDG_RUNTIME_DIR": str(runtime), "HOME": str(self.root / "home")},
+            )
         )
         self.stdout = self.stack.enter_context(
             contextlib.redirect_stdout(io.StringIO())
@@ -646,15 +650,43 @@ class CommandTests(DeployFixture):
                     with content:
                         self.assertEqual(content.read(), b"persistent volume")
 
-    def test_paths_follow_home(self):
+    def test_paths_follow_user_database_even_when_home_differs(self):
         home = self.root / "other-service-user"
-        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+        environment = mock.patch.dict(os.environ, {"HOME": str(self.root / "operator")})
+        lookup = mock.patch.object(
+            deploy.pwd, "getpwuid", return_value=mock.Mock(pw_dir=str(home))
+        )
+        with environment, lookup as account:
             module = runpy.run_path(deploy.__file__, run_name="rootless_paths_test")
+        account.assert_called_once_with(os.getuid())
+        self.assertEqual(module["HOME"], home)
         self.assertEqual(module["QUADLET_DIR"], home / ".config/containers/systemd")
         self.assertEqual(
             module["QUADLET_YAML"], home / ".config/containers/systemd/myproduct.yaml"
         )
         self.assertEqual(module["FILES_DIR"], home / "files")
+
+    def test_install_rejects_mismatched_home_before_any_action(self):
+        self.install_fixture()
+        operator = self.root / "operator"
+        environment = mock.patch.dict(os.environ, {"HOME": str(operator)})
+        renderer = mock.patch.object(deploy, "render")
+        with environment, renderer as render:
+            with self.assertRaisesRegex(
+                deploy.DeployError, "HOME=.*avviker.*brukerdatabasen"
+            ) as failure:
+                deploy.install()
+            render.assert_not_called()
+        self.assertIn(str(deploy.HOME), str(failure.exception))
+        self.process.assert_not_called()
+        self.assertFalse(deploy.QUADLET_DIR.exists())
+        self.assertFalse(deploy.FILES_DIR.exists())
+
+    def test_install_accepts_absent_home_using_user_database(self):
+        self.install_fixture()
+        os.environ.pop("HOME", None)
+        deploy.install()
+        self.assertTrue(deploy.QUADLET_YAML.is_file())
 
     def test_runtime_fallback_reaches_subprocesses(self):
         self.install_fixture()

@@ -225,7 +225,9 @@ Sertifikatgenereringen ovenfor er for demo/test. I ekte produksjon utstedes
 sertifikatene utenfor målmaskinen og leveres til stiene i config. CA-ens private
 nøkkel skal ikke kopieres dit.
 
-`install` leser `$HOME/config.yaml`; `prepare` leser fortsatt config i repo-roten.
+`install` leser config.yaml i hjemmet fra brukerdatabasen (`pwd.getpwuid`).
+Alle prod-stier følger dette hjemmet; install avviser en satt `$HOME` som
+avviker, for eksempel ved feil sudo-konfigurasjon. `prepare` leser fortsatt config i repo-roten.
 Relative stier i `SECRET_FILES` og `VOLUME_FILES` regnes fra config-filens
 katalog. Absolutte stier og `~` virker som før. Dermed kan eksempelconfigens
 stier brukes uendret både i dev og prod.
@@ -268,6 +270,12 @@ as_product() {
 }
 as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
+
+`myproduct.kube` gir én tjeneste, `myproduct.service`, for alle pods. Hver
+installasjon, også en oppgradering, restarter alle pods og databasene.
+Tjenesten feiler hvis en pod feiler ved oppstart. Det er ingen startrekkefølge
+mellom pods; appene prøver å koble til databasen i 60 sekunder. Det er én
+installasjon per tjenestebruker, med faste navn på tjenesten og nettverket.
 
 ### Oppgradering
 

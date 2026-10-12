@@ -87,3 +87,6 @@ Varig config testes separat fra release-config: install bruker HOME, prepare
 bruker repo-roten, og relative secret-/volumstier følger config-katalogen.
 Sertifikattestene kontrollerer --root, standardroten, filmoduser, vertsnavn
 og at gjentatt generering avvises uten å endre noen filer.
+
+Prod-stiene testes med mock av pwd.getpwuid, også med feil HOME. Install
+avviser avvik før rendering og kommandoer; fraværende HOME bruker pw_dir.
