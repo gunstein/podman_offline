@@ -83,15 +83,21 @@ finnes i [akseptansetesten](../acceptance/README.md).
    sudo systemctl --user -M myproduct@ start myproduct.service
    # Kontroller status, HTTPS og markører før neste overgang.
    sudo systemctl --user -M myproduct@ restart myproduct.service
-   # Kontroller igjen før kill.
-   as_product podman kill myproduct-todo-backend
+   # Registrer PID, starttid og restart-teller før krasjet.
+   as_product podman inspect --format '{{.State.Pid}} {{json .State.StartedAt}} {{.RestartCount}}' myproduct-todo-backend
+   pid=$(as_product podman inspect --format '{{.State.Pid}}' myproduct-todo-backend)
+   [[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]] || exit 1
+   sudo -n kill -KILL "$pid"
    ```
 
    Secret-volumene blir liggende på disk etter stopp. Følg README for sletting.
-   Akseptansekravet er automatisk retur etter `podman kill` innen 60 sekunder.
-   Registrer et avvik dersom containeren forblir stoppet: Podman dokumenterer
-   at eksplisitt kill/stop ikke aktiverer restart-policyen. Ikke erstatt denne
-   kommandoen med en annen krasjtest for å få PASS, og ikke reparer underveis.
+   Etter det uventede prosesskrasjet kreves automatisk retur innen 60 sekunder:
+   Running=true, restart-teller økt med én, ny PID og starttid, StoppedByUser=false.
+   Kontroller deretter alle containere, `/api/health` via HTTPS-proxyen med CA
+   og markørene. Rammeverkets `09-crash` parser inspect-JSON og verifiserer alle
+   disse feltene automatisk. `podman kill` markerer eksplisitt brukerstopp og
+   brukes derfor ikke til denne krasjtesten. Ikke start eller reparer en
+   container som ikke kommer tilbake; registrer avviket og stopp testen.
 6. Hvis foregående steg passerer, registrer boot-ID og utfør ekte reboot:
 
    ```sh

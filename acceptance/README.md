@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-11 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-12 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -168,12 +168,18 @@ Revisjonen etter review bruker allerede Always, network-Quadlet, navnekontroll
 og utsatt arkivskriving. Testen oppretter derfor ikke produktnettverket manuelt.
 Den sjekker også hjelp-appen og alle sju appcontainere i seks pods.
 
-Oppgavens `sudo -u myproduct podman kill myproduct-todo-backend` beholdes bokstavelig.
-Podman dokumenterer at eksplisitt kill/stop ikke aktiverer restart-policyen:
-https://github.com/containers/podman/blob/v5.8.2/docs/source/markdown/options/restart.md . Dette steget kan derfor
-stoppe selv med Always. Det erstattes ikke med direkte prosessignal for å få
-PASS. Rapporten skiller dette akseptansekravet fra et faktisk applikasjonskrasj.
-Markører opprettes for Alice og Bob, sjekkes etter start/restart/kill/reboot og
+Etter godkjent endring av akseptansekravet tester `09-crash` et uventet
+prosesskrasj. Steget leser PID, starttid og restart-teller fra inspect-JSON og
+sender ett `sudo -n kill -KILL <verts-PID>`. Innen 60 sekunder kreves Running,
+restart-teller økt med nøyaktig én, ny PID, ny starttid og ingen StoppedByUser.
+Deretter kontrolleres alle containere og `/api/health` gjennom HTTPS-proxyen
+med installasjonens CA før markørene leses.
+
+`podman kill` brukes ikke til å simulere krasj: Podman merker dette som en
+[eksplisitt brukerstopp](https://github.com/containers/podman/blob/v5.8.2/docs/source/markdown/options/restart.md)
+og hindrer automatisk restart. Run-11 dokumenterer den tidligere testen;
+dens resultat og bevis er bevart.
+Markører opprettes for Alice og Bob, sjekkes etter start/restart/krasj/reboot og
 beholdes i databasen for inspeksjon. HTTP-testene kjører ikke JavaScript i nettleser.
 
 ## Lokale kontroller av testrammen
@@ -186,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 58 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 67 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -302,6 +308,9 @@ containere; et image-lag med samme label godtas ikke.
 
 - `acceptance.py`: `persistent_state` leser JSON; `credentials` validerer runtime-sti;
   `boot_id`, `wait_ssh` og `reboot` validerer boot-ID.
+- `09-crash` parser inspect-JSON til fem validerte tilstandsfelt og logger bare
+  disse. Starttiden behandles som én JSON-streng, også når den har mellomrom.
+  `wait_backend` kontrollerer curl-exit og HTTP-status fra proxyen.
 - `remote.sh`: `profile`/`facts` sammenligner getenforce og systemctl; `clean`,
   `check` og `stop` kontrollerer Podman-lister og find-output.
 - `clone`, `bundle` og `upgrade-bundle` kontrollerer Git-status/diff; release-stegene

@@ -160,6 +160,22 @@ for name in names:
     assert len(found) == 1 and found[0]["State"] == "running", name
 print("PASS: all seven application containers running")'
 }
+# Vent på backend gjennom HTTPS-proxyen før autentiserte markørkontroller.
+wait_backend() {
+    for _ in {1..30}; do
+        status=0
+        http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+            --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/api/health") || status=$?
+        printf 'backend-health HTTP=%s exit=%s\n' "$http" "$status"
+        if [[ $status == 0 && $http == 200 ]]; then
+            echo 'PASS: backend ready through HTTPS proxy'; return
+        fi
+        sleep 2
+    done
+    echo 'FAIL: backend did not become ready through HTTPS proxy'
+    return 1
+}
 case "$action" in
 readiness)
     profile
@@ -602,18 +618,88 @@ start|restart)
     user_service "$action" myproduct.service
     healthy
     ;;
-kill)
-    as_product podman kill myproduct-todo-backend
-    for _ in {1..30}; do
-        running=$(as_product podman inspect --format '{{.State.Running}}' myproduct-todo-backend)
-        if [[ $running == true ]]; then
-            healthy; exit 0
-        fi
-        sleep 2
-    done
-    as_product podman inspect --format '{{.State.Status}} restart_count={{.RestartCount}} policy={{.HostConfig.RestartPolicy.Name}}' myproduct-todo-backend
-    echo 'FAIL: container did not return after podman kill within 60s'
-    exit 1
+crash)
+    python3 - <<'CRASH'
+import json
+import shlex
+import subprocess
+import sys
+import time
+
+CONTAINER = "myproduct-todo-backend"
+
+
+def product_command(arguments):
+    """Bygg et Podman-kall som tjenestebrukeren fra riktig hjem og runtime."""
+    return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+            'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
+            "bash"] + arguments
+
+
+def command(arguments):
+    """Returner stdout uten å logge inspect-innhold og behold stderr også ved feil."""
+    print("$ " + " ".join(shlex.quote(arg) for arg in arguments))
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=10)
+    print(result.stderr or "", end="", file=sys.stderr)
+    if result.returncode:
+        raise RuntimeError("Krasjtest-kommando feilet: exit " + str(result.returncode))
+    return result.stdout
+
+
+def inspect_container():
+    """Parse inspect-JSON og valider bare feltene som brukes til krasjkontrollen."""
+    try:
+        rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise ValueError("Forventet én container")
+        state = rows[0]["State"]
+        result = {"Pid": state["Pid"], "Running": state["Running"],
+                  "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
+                  "StoppedByUser": state.get("StoppedByUser", False)}
+        if (type(result["Pid"]) is not int or result["Pid"] < 0
+                or type(result["Running"]) is not bool
+                or (result["Running"] and result["Pid"] <= 1)
+                or type(result["RestartCount"]) is not int or result["RestartCount"] < 0
+                or type(result["StoppedByUser"]) is not bool
+                or not isinstance(result["StartedAt"], str) or not result["StartedAt"].strip()):
+            raise ValueError("Ugyldige tilstandsfelt")
+    except (ValueError, KeyError, TypeError):
+        raise RuntimeError("Ugyldig eller tom container-tilstand fra inspect") from None
+    return result
+
+
+def main():
+    """Drep vertsprosessen én gang og krev én automatisk restart innen 60 sekunder."""
+    before = inspect_container()
+    if not before["Running"] or before["StoppedByUser"]:
+        raise RuntimeError("Containeren må kjøre og ikke være stoppet av bruker før krasjtesten")
+    print("BEFORE " + json.dumps(before, sort_keys=True))
+    command(["sudo", "-n", "kill", "-KILL", str(before["Pid"])])
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        after = inspect_container()
+        print("AFTER " + json.dumps(after, sort_keys=True))
+        if after["StoppedByUser"]:
+            raise RuntimeError("StoppedByUser ble satt under krasjtesten")
+        if after["RestartCount"] > before["RestartCount"] + 1:
+            raise RuntimeError("Containeren restartet mer enn én gang")
+        if (after["Running"] and after["RestartCount"] == before["RestartCount"] + 1
+                and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
+            print("PASS: én automatisk restart med ny PID og starttid etter prosesskrasj")
+            return
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+    raise RuntimeError("Ingen verifisert automatisk restart innen 60s")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+CRASH
+    healthy
+    wait_backend
     ;;
 reboot)
     cat /proc/sys/kernel/random/boot_id

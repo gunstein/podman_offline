@@ -877,6 +877,172 @@ systemctl() {
                 )
 
 
+class CrashTests(unittest.TestCase):
+    """Test uventet prosesskrasj med stubbet inspect, signal og klokke."""
+
+    def setUp(self):
+        """Last krasjstegets Python-kode uten å kjøre kommandoer på verten."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        code = remote.split("    python3 - <<'CRASH'\n", 1)[1].split("\nCRASH\n", 1)[0]
+        self.namespace: dict = {"__name__": "fixture"}
+        exec(compile(code, "remote.sh:CRASH", "exec"), self.namespace)  # noqa: S102 - repository-owned heredoc under test
+        self.now = 0
+        self.namespace["time"] = types.SimpleNamespace(
+            monotonic=lambda: self.now, sleep=self.advance
+        )
+        self.calls = []
+        self.output = io.StringIO()
+
+    def advance(self, seconds):
+        """Flytt testklokken uten faktisk venting."""
+        self.now += seconds
+
+    def state(
+        self,
+        pid: object = 1200,
+        count=0,
+        started="2026-10-12 21:00:00 +0200 CEST",
+        stopped=False,
+    ):
+        """Lag inspect-JSON med starttid som inneholder mellomrom og privat kontrollfelt."""
+        return {
+            "State": {
+                "Pid": pid,
+                "Running": True,
+                "StartedAt": started,
+                "StoppedByUser": stopped,
+            },
+            "RestartCount": count,
+            "Config": {"Env": ["PRIVATE=DO_NOT_LOG"]},
+        }
+
+    def run_crash(self, states, inspect_exit=0):
+        """Kjør hele krasjkontrollen med kontrollerte inspect-svar og signalstatus."""
+        pending = list(states)
+
+        def run(arguments, **kwargs):
+            """Returner neste inspect-svar og registrer signalet uten å sende det."""
+            self.calls.append(arguments)
+            if "inspect" in arguments:
+                row = pending.pop(0) if len(pending) > 1 else pending[0]
+                output = row if isinstance(row, str) else json.dumps([row])
+                return subprocess.CompletedProcess(arguments, inspect_exit, output, "")
+            self.assertEqual(arguments[:4], ["sudo", "-n", "kill", "-KILL"])
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+
+        with (
+            mock.patch.object(subprocess, "run", side_effect=run),
+            contextlib.redirect_stdout(self.output),
+        ):
+            self.namespace["main"]()
+
+    def test_valid_restart_passes_without_podman_kill_or_private_output(self):
+        """Krev ny PID, starttid og teller etter nøyaktig ett verts-SIGKILL."""
+        before = self.state()
+        after = self.state(pid=1300, count=1, started="2026-10-12 21:00:02 +0200 CEST")
+        self.run_crash([before, after])
+        self.assertEqual(
+            sum(call[:4] == ["sudo", "-n", "kill", "-KILL"] for call in self.calls), 1
+        )
+        self.assertIn(["sudo", "-n", "kill", "-KILL", "1200"], self.calls)
+        self.assertFalse(
+            any("podman" in call and "kill" in call for call in self.calls)
+        )
+        self.assertIn("PASS: én automatisk restart", self.output.getvalue())
+        self.assertNotIn("DO_NOT_LOG", self.output.getvalue())
+        self.assertIn("2026-10-12 21:00:02 +0200 CEST", self.output.getvalue())
+
+    def test_invalid_or_empty_pid_fails_before_signal(self):
+        """Avvis manglende, tom, negativ og farlig PID før signalet sendes."""
+        for pid in (None, "", 0, 1, -1, "1200", True):
+            with self.subTest(pid=pid), self.assertRaisesRegex(RuntimeError, "Ugyldig"):
+                self.run_crash([self.state(pid=pid)])
+        self.assertFalse(any("-KILL" in call for call in self.calls))
+
+    def test_empty_json_or_failed_inspect_prevents_signal(self):
+        """Avvis tom JSON og feilstatus selv om stdout ellers har gyldig JSON."""
+        for data, status in (("", 0), (self.state(), 7)):
+            with self.subTest(status=status), self.assertRaises(RuntimeError):
+                self.run_crash([data], inspect_exit=status)
+        self.assertFalse(any("-KILL" in call for call in self.calls))
+
+    def test_unchanged_restart_count_times_out(self):
+        """Avvis en ny prosess uten økt Podman-restartteller etter 60 sekunder."""
+        with self.assertRaisesRegex(RuntimeError, "innen 60s"):
+            self.run_crash([self.state(), self.state(pid=1300, started="later")])
+        self.assertEqual(self.now, 60)
+
+    def test_same_pid_times_out(self):
+        """Avvis økt teller når containerens PID ikke er ny."""
+        with self.assertRaisesRegex(RuntimeError, "innen 60s"):
+            self.run_crash([self.state(), self.state(count=1, started="later")])
+        self.assertEqual(self.now, 60)
+
+    def test_same_start_time_times_out(self):
+        """Avvis ny PID og teller når starttid ikke har endret seg."""
+        with self.assertRaisesRegex(RuntimeError, "innen 60s"):
+            self.run_crash([self.state(), self.state(pid=1300, count=1)])
+        self.assertEqual(self.now, 60)
+
+    def test_stopped_by_user_fails(self):
+        """Avvis brukerstopp selv om PID, starttid og teller ser nye ut."""
+        with self.assertRaisesRegex(RuntimeError, "StoppedByUser"):
+            self.run_crash(
+                [
+                    self.state(),
+                    self.state(pid=1300, count=1, started="later", stopped=True),
+                ]
+            )
+
+    def test_multiple_restarts_fail(self):
+        """Avvis ustabil restart med teller større enn baseline pluss én."""
+        with self.assertRaisesRegex(RuntimeError, "mer enn én"):
+            self.run_crash(
+                [self.state(), self.state(pid=1300, count=2, started="later")]
+            )
+
+    def test_crash_checks_containers_then_https_health(self):
+        """Kontroller at vellykket restart følges av container- og proxyhelse."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = remote.split("\ncrash)\n", 1)[1].split("\nreboot)", 1)[0]
+        self.assertNotIn("podman kill", block)
+        self.assertIn("CRASH\n    healthy\n    wait_backend\n", block)
+        function = remote[
+            remote.index("wait_backend() {") : remote.index('case "$action" in\n')
+        ]
+        script = """set -eu
+state=/var/lib/myproduct
+prod_host=myproduct-proxy
+prod_ip=192.0.2.2
+port=8443
+# Simuler et HTTP-svar som blir klart på andre forsøk.
+as_product() { if [[ -f $ready ]]; then printf 200; else touch "$ready"; printf 503; fi; }
+# Unngå faktisk venting i testen.
+sleep() { :; }
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            script = (
+                "ready="
+                + shlex.quote(temporary + "/ready")
+                + "\n"
+                + script
+                + function
+                + "\nwait_backend\n"
+            )
+            result = subprocess.run(
+                ["bash", "-se"],
+                input=script,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("HTTP=503", result.stdout)
+        self.assertIn("HTTP=200", result.stdout)
+        self.assertIn('"https://$prod_host:$port/api/health"', function)
+        self.assertIn('--cacert "$state/PKI/private/ca.crt"', function)
+
+
 class SelinuxTests(unittest.TestCase):
     """Test policyoppslag og smal klassifisering med run-6-fixtures."""
 
