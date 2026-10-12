@@ -16,12 +16,15 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
 
 1. Opprett to Oracle Linux 9-VM-er på lab-nettet. Bruk samme CPU-arkitektur,
    tilstrekkelig disk til .NET/Python/nginx-images og bundle, SELinux enforcing
-   og aktiv firewalld. Behold eventuelt fapolicyd; testen slår den ikke av.
+   og aktiv firewalld. VM-2 er det herdede produksjonsmålet og skal ha aktiv
+   fapolicyd. VM-1 er utviklermaskinen, tilsvarende laptopen i `podman_test`,
+   og skal ha fapolicyd inaktiv og deaktivert. Den forskjellen etableres bare
+   ved opprettelse av `clean-dev`, ikke under en akseptansekjøring.
    VM-1 skal ha internett. VM-2 trenger internett bare under denne forberedelsen.
 2. Installer forutsetningene **før snapshot**, på begge VM-er:
 
    ```sh
-   sudo dnf install -y podman python3 python3-pyyaml openssl curl git tar gzip nftables firewalld
+   sudo dnf install -y podman python3 python3-pyyaml openssl curl git tar gzip nftables firewalld fapolicyd
    sudo systemctl enable --now firewalld
    python3 -c 'import yaml, venv'
    podman --version
@@ -70,6 +73,10 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
    Dette tilsvarer forberedelsen i `podman_test` sitt
    `deploy/scripts/lab/prepare-agent-snapshots.sh`. Ikke kjør det scriptet blindt:
    det har labspesifikke VM-ID-er og overskriver gjestetilstand.
+   For VM-1 lages et separat snapshot fra `clean-agent` med scriptet nedenfor.
+   Det opprinnelige snapshotet beholdes for `podman_test`. Ingen pakker,
+   trust-regler, SELinux- eller brannmurinnstillinger endres.
+
 6. Proxmox VM-brannmur skal være deaktivert og NIC-er tilkoblet i baseline.
    Snapshot rollback nullstiller ikke nødvendigvis eksterne brannmurregler.
    Readiness avviser avvik; den endrer ikke node-/datacenterregler.
@@ -80,6 +87,31 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
    `PROD_HOST` er appens navn, ikke nødvendigvis VM-ens OS-vertsnavn. Nåværende
    produkt bruker `myproduct-proxy`, som også løses internt av Podman DNS.
    Ekstern HTTP-test bruker `CONNECT_IP` og trenger ikke endring i `/etc/hosts`.
+
+## Lag utviklerprofilen én gang
+
+Etter at konfigurasjonsfilen over er fylt ut, kjør på kontrolleren:
+
+```sh
+mkdir -p -m 700 ~/podman-offline-acceptance-runs/preparations
+# Bruk et nytt loggfilnavn og bevar loggen.
+(umask 077; python3 acceptance/prepare_dev_snapshot.py --create   > ~/podman-offline-acceptance-runs/preparations/clean-dev.log 2>&1)
+```
+
+Scriptet stopper VM-en som er konfigurert som DEV, ruller den tilbake til
+`clean-agent`, starter den, kontrollerer baseline og kjører nøyaktig
+`sudo systemctl disable --now fapolicyd`. Det kontrollerer fortsatt Enforcing
+og aktiv firewalld, stenger ned VM-en ryddig, oppretter `clean-dev` og starter
+igjen med ny profilkontroll. Det avviser et eksisterende `clean-dev`, kontrollerer
+at `clean-agent` sin snapshot-konfigurasjon er bevart og sender ingen operasjoner
+til PROD. Oppdater så lokal `lab.env` til `DEV_SNAPSHOT=clean-dev`;
+`PROD_SNAPSHOT=clean-agent` beholdes.
+
+Readiness krever DEV: fapolicyd inactive/disabled, PROD: fapolicyd active,
+og begge: SELinux Enforcing og firewalld active. Profilene registreres før
+rollback og kontrolleres igjen fra snapshotene etter rollback. Feil profil
+gir stopp, aldri automatisk endring. Begge VM-er må derfor være startet med
+riktig profil før readiness.
 
 ## Kjøring og bevis
 
@@ -113,8 +145,8 @@ Rapporter og artefakter ligger i
 - `EVIDENCE.md`: generert rapport pluss utdrag og SHA256 for hver full logg.
 - Kilde-Git-bundle og produktbundle/checksum når disse stegene er nådd.
 
-Første feil gir `NOT CLEAN` og stopper alle følgende teststeg. Bare opprydding
-av overførte hemmeligheter kjøres etter en feil. Også en Podman `Error:` med
+Første feil gir `NOT CLEAN` og stopper alle følgende teststeg. Etter en feil kjøres bare lesende
+innsamling av prod-audit og opprydding av overførte hemmeligheter. Også en Podman `Error:` med
 exit 0 regnes som feil. Run-id og steg kan aldri gjenbrukes. Readiness kan
 feile før rollback: da er ingen ren-start-test gjennomført, og rapporten sier det.
 Ikke reparer VM-er eller endre kode midt i en kjøring. Ingen automatiske nye runs.
@@ -152,5 +184,21 @@ ruff format --check acceptance/ scripts/smoke-test.py
 pyright acceptance/ scripts/smoke-test.py
 ```
 
-Testene stubber/simulerer feil og dekker stoppregler, redigering av hemmeligheter,
+Testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
+
+## Prod-operatør og audit-bevis
+
+Prod kjøres som labbrukeren, med sudo bare der produktets README eller
+kontrollene krever det. Inner-checksums og sertifikatscriptet kjøres uten sudo;
+install kjøres med sudo. Ingen filer legges til i fapolicyd trust og ingen
+produktkommando forhåndskjøres som root. En avvisning stopper steget og blir
+et funn, selv om en annen kjøreform kunne kommet videre.
+
+Når PROD har blitt rullet tilbake og SSH er tilgjengelig, hentes FANOTIFY-bevis
+til slutt, både ved suksess og ved feil. Kommandoen er
+`sudo ausearch -m FANOTIFY --input-logs -ts <dato> <tid> -i`, med starttid for
+kjøringen konvertert til VM-ens lokale tid og stdin lukket. Hele audit-utdraget
+tas med i EVIDENCE.md, også avvisninger som ikke ga et feilet produktsteg.
+Ingen treff er et gyldig resultat; utilgjengelig audit gir NOT CLEAN.
+Originalfeilen beholdes selv om audit-innsamlingen feiler.

@@ -86,6 +86,8 @@ class Run:
         self.finished = False
         self.revision = ""
         self.cfg = {}
+        self.started_epoch = str(int(time.time()))
+        self.prod_ready = False
 
     def write(self, text):
         for value in self.redactions:
@@ -136,6 +138,8 @@ class Run:
             self.cfg["PROD_HOST"],
             self.cfg["HTTPS_PORT"],
             self.revision,
+            role,
+            self.started_epoch,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
@@ -187,6 +191,9 @@ class Run:
             version=(ROOT / "VERSION").read_text().strip(),
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
+            start_epoch=self.started_epoch,
+            dev_snapshot=self.cfg["DEV_SNAPSHOT"],
+            prod_snapshot=self.cfg["PROD_SNAPSHOT"],
         )
         if not clean:
             raise RuntimeError(
@@ -225,7 +232,9 @@ class Run:
             self.write(
                 "{}: VM {} snapshots={}\n".format(role, self.cfg[role + "_VMID"], names)
             )
-            self.guest(role, "readiness")
+            self.meta[role.lower() + "_readiness_profile"] = self.guest(
+                role, "readiness"
+            )
         self.private = Path(
             tempfile.mkdtemp(prefix="podman-offline-", dir=str(runtime))
         )
@@ -261,6 +270,8 @@ class Run:
         self.write("Proxmox POST " + endpoint + "/status/start\n")
         self.pve.task(endpoint + "/status/start")
         self.meta[role.lower() + "_boot_before"] = self.wait_ssh(role)
+        if role == "PROD":
+            self.prod_ready = True
         self.meta[role.lower() + "_facts"] = self.guest(role, "clean")
 
     def source(self):
@@ -327,6 +338,18 @@ class Run:
             if self.private:
                 shutil.rmtree(str(self.private))
                 self.write("Controller runtime secrets removed\n")
+
+    def finalize(self):
+        # Read-only audit evidence is required even after a failed prod step.
+        if self.prod_ready:
+            try:
+                self.step("10-prod-audit", lambda: self.guest("PROD", "audit"))
+            except Exception as error:  # noqa: BLE001 - preserve original failure and still clean up
+                print(str(error), file=sys.stderr)
+        try:
+            self.step("10-cleanup", self.cleanup)
+        except Exception as error:  # noqa: BLE001 - cleanup failure must affect verdict
+            print(str(error), file=sys.stderr)
 
     def reboot(self):
         old = self.guest("PROD", "boot").splitlines()[-1]
@@ -413,7 +436,7 @@ class Run:
         lines += [
             "",
             "A failed step stops execution. Later steps were NOT TESTED.",
-            "Only final secret cleanup may run after a failure. No retries or repairs.",
+            "Only read-only prod audit collection and secret cleanup may run after failure. No retries or repairs.",
             "",
         ]
         report = "\n".join(lines)
@@ -426,7 +449,9 @@ class Run:
                 "\n## " + record["step"],
                 "Log SHA256: " + hashlib.sha256(data).hexdigest(),
                 fence + "text",
-                "\n".join(data.decode().splitlines()[-65:]),
+                data.decode()
+                if record["step"] == "10-prod-audit"
+                else "\n".join(data.decode().splitlines()[-65:]),
                 fence,
             ]
         (self.folder / "EVIDENCE.md").write_text("\n".join(evidence) + "\n")
@@ -451,10 +476,7 @@ def main():
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence
         print(str(error), file=sys.stderr)
     finally:
-        try:
-            run.step("10-cleanup", run.cleanup)
-        except Exception as error:  # noqa: BLE001 - cleanup failure must affect verdict
-            print(str(error), file=sys.stderr)
+        run.finalize()
     return 0 if run.report() else 1
 
 

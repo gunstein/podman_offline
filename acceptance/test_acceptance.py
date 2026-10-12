@@ -130,6 +130,130 @@ class HarnessTests(unittest.TestCase):
             )
         self.assertFalse(self.harness.report())
 
+    def test_prod_audit_is_collected_after_failure_and_preserved_in_full(self):
+        self.harness.prod_ready = True
+        with self.assertRaises(RuntimeError):
+            self.harness.step("05", lambda: (_ for _ in ()).throw(RuntimeError("fail")))
+        self.harness.guest = mock.Mock(
+            side_effect=lambda *args: self.harness.write(
+                "\n".join("audit-event-" + str(i) for i in range(100))
+            )
+        )
+        self.harness.finalize()
+        self.harness.guest.assert_called_once_with("PROD", "audit")
+        self.assertFalse(self.harness.report())
+        evidence = (self.harness.folder / "EVIDENCE.md").read_text()
+        self.assertIn("audit-event-0", evidence)
+        self.assertIn("audit-event-99", evidence)
+
+    def test_failed_audit_still_cleans_secrets_and_prevents_clean_pass(self):
+        self.harness.finished = True
+        self.harness.prod_ready = True
+        self.harness.guest = mock.Mock(side_effect=RuntimeError("audit unavailable"))
+        self.harness.cleanup = mock.Mock()
+        self.harness.finalize()
+        self.harness.cleanup.assert_called_once()
+        self.assertFalse(self.harness.report())
+
+    def test_guest_security_profile_checks(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        function = remote[remote.index("profile() {") : remote.index("facts() {")]
+        stubs = """
+getenforce() { echo "$selinux_value"; }
+systemctl() {
+    if [[ $2 == fapolicyd ]]; then
+        if [[ $4 == ActiveState ]]; then echo "$policy_value"; else echo "$enabled_value"; fi
+    else echo "$firewall_value"; fi
+}
+"""
+        for role, policy, enabled, selinux, firewall, expected in (
+            ("DEV", "inactive", "disabled", "Enforcing", "active", 0),
+            ("DEV", "active", "enabled", "Enforcing", "active", 1),
+            ("DEV", "inactive", "enabled", "Enforcing", "active", 1),
+            ("PROD", "active", "enabled", "Enforcing", "active", 0),
+            ("PROD", "inactive", "disabled", "Enforcing", "active", 1),
+            ("PROD", "active", "enabled", "Permissive", "active", 1),
+            ("DEV", "inactive", "disabled", "Enforcing", "inactive", 1),
+        ):
+            with self.subTest(
+                role=role, policy=policy, selinux=selinux, firewall=firewall
+            ):
+                settings = (
+                    f"role={role}; policy_value={policy}; enabled_value={enabled}; "
+                    f"selinux_value={selinux}; firewall_value={firewall}\n"
+                )
+                result = subprocess.run(
+                    ["bash", "-e", "-c", settings + stubs + function + "profile"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+
+
+class SnapshotTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location(
+            "prepare", Path(__file__).with_name("prepare_dev_snapshot.py")
+        )
+        assert spec is not None and spec.loader is not None
+        self.prepare = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.prepare)
+        self.config = {
+            "DEV_VMID": "107",
+            "PROD_VMID": "108",
+            "DEV_IP": "192.0.2.107",
+            "SSH_USER": "tester",
+        }
+        self.client = mock.Mock()
+        self.snapshots = [{"name": "clean-agent"}]
+
+        def request(method, path):
+            if path.endswith("/snapshot"):
+                return self.snapshots
+            if path.endswith("/config"):
+                return {"name": "unchanged source"}
+            if path.endswith("/status/current"):
+                return {"status": "running"}
+            if path == "/cluster/ha/resources":
+                return []
+            raise AssertionError(path)
+
+        self.client.request.side_effect = request
+
+    def test_existing_snapshot_is_never_replaced(self):
+        self.snapshots.append({"name": "clean-dev"})
+        with self.assertRaisesRegex(RuntimeError, "already exists"):
+            self.prepare.prepare(self.config, self.client)
+        self.client.task.assert_not_called()
+
+    def test_only_dev_mutated_and_source_snapshot_preserved(self):
+        ssh = mock.patch.object(self.prepare, "ssh")
+        wait = mock.patch.object(self.prepare, "wait_ssh")
+        with ssh as commands, wait, contextlib.redirect_stdout(io.StringIO()):
+            self.prepare.prepare(self.config, self.client)
+        paths = [call.args[0] for call in self.client.task.call_args_list]
+        base = "/nodes/{node}/qemu/107"
+        self.assertEqual(
+            paths,
+            [
+                base + "/status/stop",
+                base + "/snapshot/clean-agent/rollback",
+                base + "/status/start",
+                base + "/status/shutdown",
+                base + "/snapshot",
+                base + "/status/start",
+            ],
+        )
+        self.assertEqual(
+            self.client.task.call_args_list[4].args[1]["snapname"], "clean-dev"
+        )
+        self.assertIn("disable --now fapolicyd", commands.call_args_list[0].args[1])
+        self.assertNotIn("disable --now firewalld", commands.call_args_list[0].args[1])
+        self.assertIn("getenforce", commands.call_args_list[1].args[1])
+
 
 if __name__ == "__main__":
     unittest.main()

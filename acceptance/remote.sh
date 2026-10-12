@@ -8,11 +8,30 @@ prod_ip=$4
 prod_host=$5
 port=$6
 revision=$7
+role=$8
+run_started=$9
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
 product="$base/product"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
+profile() {
+    selinux=$(getenforce)
+    firewall=$(systemctl show firewalld -p ActiveState --value)
+    policy=$(systemctl show fapolicyd -p ActiveState --value)
+    enabled=$(systemctl show fapolicyd -p UnitFileState --value)
+    printf 'PROFILE %s fapolicyd=%s unit=%s SELinux=%s firewalld=%s\n' "$role" "$policy" "$enabled" "$selinux" "$firewall"
+    test "$selinux" = Enforcing
+    test "$firewall" = active
+    if [[ $role == DEV ]]; then
+        test "$policy" = inactive
+        test "$enabled" = disabled
+    else
+        test "$role" = PROD
+        test "$policy" = active
+    fi
+}
 facts() {
+    profile
     cat /etc/os-release
     podman --version
     systemctl --version
@@ -70,6 +89,7 @@ print("PASS: all seven application containers running")'
 }
 case "$action" in
 readiness)
+    profile
     for command in bash podman python3 openssl curl tar sha256sum timeout; do command -v "$command"; done
     sudo -n true
     python3 -c 'import yaml'
@@ -204,6 +224,7 @@ PY
     while read -r image; do sudo -n podman image exists "$image"; done < images/images.txt
     ;;
 check)
+    profile
     healthy
     sudo -n systemctl is-active myproduct-network.service
     sudo -n /usr/lib/systemd/system-generators/podman-system-generator --dryrun
@@ -268,6 +289,23 @@ reboot)
     sudo -n systemd-run --on-active=3 /usr/bin/systemctl reboot
     ;;
 boot) cat /proc/sys/kernel/random/boot_id;;
+audit)
+    # Use VM local time for ausearch, derived from the recorded controller epoch.
+    start_date=$(date -d "@$run_started" +%m/%d/%Y)
+    start_time=$(date -d "@$run_started" +%H:%M:%S)
+    printf 'FANOTIFY evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
+    sudo -n systemctl is-active auditd
+    if events=$(sudo -n env LC_ALL=C ausearch -m FANOTIFY --input-logs -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
+        printf '%s\n' "$events"
+    else
+        status=$?
+        printf '%s\n' "$events"
+        if [[ $status != 1 || $events != '<no matches>' ]]; then
+            exit "$status"
+        fi
+        echo 'PASS: no FANOTIFY events in this run interval'
+    fi
+    ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;
 esac

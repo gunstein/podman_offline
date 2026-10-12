@@ -34,12 +34,13 @@ class Proxmox:
             urllib.request.HTTPSHandler(context=context),
         )
 
-    def request(self, method, path):
+    def request(self, method, path, form=None):
         cfg = self.config
         path = path.replace("{node}", cfg["PVE_NODE"])
         url = "https://" + cfg["PVE_HOST"] + ":8006/api2/json" + path
         request = urllib.request.Request(
             url,
+            data=urllib.parse.urlencode(form).encode() if form else None,
             method=method,
             headers={
                 "Authorization": "PVEAPIToken="
@@ -54,8 +55,8 @@ class Proxmox:
         except urllib.error.HTTPError as error:
             raise RuntimeError(f"Proxmox {method} {path}: HTTP {error.code}") from None
 
-    def task(self, path):
-        task = self.request("POST", path)
+    def task(self, path, form=None):
+        task = self.request("POST", path, form)
         endpoint = (
             "/nodes/{node}/tasks/" + urllib.parse.quote(task, safe="") + "/status"
         )
