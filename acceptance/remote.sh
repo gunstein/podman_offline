@@ -110,7 +110,7 @@ else:
 PY
     # Check prerequisites separately: a missing binary is not proof of isolation.
     sudo -n podman version >/dev/null
-    if timeout 20 sudo -n podman pull docker.io/library/busybox | sed 's/^/pull-probe: /'; then
+    if timeout 20 sudo -n podman pull docker.io/library/busybox 2> >(sed 's/^/pull-probe: /' >&2) | sed 's/^/pull-probe: /'; then
         echo 'FAIL: public image pulled'; exit 1
     else
         status=$?

@@ -307,6 +307,73 @@ class HarnessTests(unittest.TestCase):
         ):
             self.harness.command(["podman"])
 
+    def isolation_script(self, status):
+        """Lag isolasjonssteget med lokale stubber for nett, sudo og verktøy."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        function = remote[
+            remote.index("offline() {") : remote.index("# Kontroller aktiv tjeneste")
+        ]
+        stubs = """
+# Simuler sudo og Podman med valgt pull-status uten privilegier.
+sudo() {
+    if [[ $* == '-n podman pull '* ]]; then
+        echo 'Error: registry blocked' >&2
+        return "$pull_status"
+    fi
+}
+# Simuler en blokkert HTTPS-forbindelse uten nett.
+curl() { echo 'curl: DNS blocked' >&2; return 6; }
+# Simuler DNS-proben uten å gjøre noe oppslag.
+python3() { echo 'PASS: public DNS lookup failed'; }
+# Kjør den stubbede kommandoen uten en virkelig timeout.
+timeout() { shift; "$@"; }
+echo '** WARNING: connection is not using a post-quantum key exchange algorithm.' >&2
+"""
+        return (
+            "set -euo pipefail\npull_status="
+            + str(status)
+            + "\n"
+            + stubs
+            + function
+            + "\noffline\n"
+        )
+
+    def test_isolation_expected_pull_failures_preserve_separate_stderr(self):
+        """Godta blokkerte pull-prober og behold SSH-advarsel og diagnose på stderr."""
+        for status in (125, 124):
+            with self.subTest(status=status):
+                name = "isolation-" + str(status)
+                self.harness.step(
+                    name,
+                    lambda code=status: self.harness.command(
+                        ["bash", "-se"], self.isolation_script(code)
+                    ),
+                )
+                log = (self.harness.folder / ("logs/" + name + ".log")).read_text()
+                stdout, stderr = log.rsplit("[stdout]\n", 1)[1].split("[stderr]\n", 1)
+                self.assertIn(
+                    "PASS: public pull failed (exit " + str(status) + ")", stdout
+                )
+                self.assertNotIn("Error: registry blocked", stdout)
+                self.assertIn("pull-probe: Error: registry blocked", stderr)
+                self.assertIn(
+                    "** WARNING: connection is not using a post-quantum", stderr
+                )
+
+    def test_isolation_successful_pull_is_failure(self):
+        """Avvis isolasjonssteget når et offentlig image kan hentes."""
+        with self.assertRaisesRegex(RuntimeError, "Command exited 1"):
+            self.harness.command(["bash", "-se"], self.isolation_script(0))
+
+    def test_isolation_unexpected_pull_status_is_failure(self):
+        """Avvis uventede pull-statuser selv når stderr har probeprefiks."""
+        for status in (1, 126, 127):
+            with (
+                self.subTest(status=status),
+                self.assertRaisesRegex(RuntimeError, "Command exited 1"),
+            ):
+                self.harness.command(["bash", "-se"], self.isolation_script(status))
+
     def test_empty_resource_stdout_does_not_hide_failed_command(self):
         """Avvis feil i ressurskommandoen før en tom stdout kan godtas."""
         remote = Path(__file__).with_name("remote.sh").read_text()

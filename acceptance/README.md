@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-10 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-11 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -186,7 +186,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 44 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 47 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -279,3 +279,8 @@ Hashverdier for varige filer beholdes bare i kontrollerens minne gjennom
 kjøringen. Logger, rapport og evidence inneholder bare filnavn og
 «likt/endret» fra sammenligningen. Kommandoen leser filene for hashing og
 skriver aldri filinnhold. Rapporten lister stedene hvor kommandosvar parses.
+
+Pull-proben i isolasjonskontrollen merker sin egen stdout og stderr med
+`pull-probe:`, på hver sin strøm. Den forventede nettfeilen treffer dermed
+ikke kontrollen for uventede `Error:`-meldinger. Exit-status 125/124 kreves;
+vellykket pull og andre statuser stopper steget. SSH-advarsler merkes ikke om.
