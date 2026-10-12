@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
-    "smoke", Path(__file__).resolve().parent.parent / "scripts/smoke-test.py"
+    "smoke", Path(__file__).resolve().parent.parent / "dev/smoke-test.py"
 )
 assert spec is not None and spec.loader is not None
 smoke = importlib.util.module_from_spec(spec)

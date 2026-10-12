@@ -121,8 +121,7 @@ play() {
     podman kube play --replace build/install.yaml
 }
 wait_exec() {
-    local i
-    for i in {1..30}; do
+    for _ in {1..30}; do
         if podman exec "$container" "$@"; then return 0; fi
         sleep 1
     done
@@ -142,6 +141,8 @@ play
 wait_exec true
 case "$example" in
     basic)
+        # Utvides av skallet i containeren.
+        # shellcheck disable=SC2016
         wait_exec sh -ec 'test "$GREETING" = "hello from config"; test "$NUMBER" = 42'
         body=$(curl --fail --silent --show-error --noproxy '*' --retry 15 --retry-connrefused --retry-delay 1 --max-time 3 "http://127.0.0.1:${EXAMPLE_PORT:-18080}/")
         [[ $body == "hello from config|42|${EXAMPLE_PORT:-18080}" ]]
@@ -180,9 +181,13 @@ case "$example" in
         echo 'PASS: imported file replaced on second play'
         ;;
     init-containers)
+        # Utvides av skallet i containeren.
+        # shellcheck disable=SC2016
         wait_exec sh -ec 'test "$(cat /tmp/observed)" = "$(printf "first\nsecond")"'
         ;;
     manifest-defined)
+        # Utvides av skallet i containeren.
+        # shellcheck disable=SC2016
         wait_exec sh -ec 'test "$TOKEN" = synthetic-example-value; test "$(cat /data/token-seen)" = "$TOKEN"'
         ;;
 esac

@@ -10,5 +10,5 @@ case "${1:-}" in
     down)
         podman kube down build/install.yaml
         ;;
-    *) echo 'Usage: scripts/dev.sh up|down' >&2; exit 2 ;;
+    *) echo 'Usage: dev/dev.sh up|down' >&2; exit 2 ;;
 esac

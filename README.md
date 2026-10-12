@@ -31,11 +31,11 @@ Krever Podman, OpenSSL, Python 3.6+ og PyYAML på verten. .NET og Python-appens
 avhengigheter installeres bare i imagene. Første bygg trenger internett.
 
 ```sh
-./scripts/build-images.sh
+./dev/build-images.sh
 ./scripts/generate-certificates.sh
 cp config.example.yaml config.yaml
 chmod 600 config.yaml
-./scripts/dev.sh up
+./dev/dev.sh up
 ```
 
 Legg denne linjen i vertens `/etc/hosts` manuelt:
@@ -57,7 +57,7 @@ Eksisterende brukerpassord endres ikke automatisk hvis kildefilene senere endres
 
 ```sh
 podman ps --all --pod
-./scripts/dev.sh down
+./dev/dev.sh down
 ```
 
 `down` beholder databasevolumene og Todo-sertifikatvolumet. Ny `up` importerer
@@ -98,7 +98,7 @@ Med appens avhengigheter i et lokalt testmiljø:
 ```sh
 python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
-.venv-app/bin/python scripts/smoke-test.py
+.venv-app/bin/python dev/smoke-test.py
 ```
 
 Denne testen bruker ekte HTTPS og Duende-innlogging med begge brukerne, verifiserer
@@ -122,7 +122,7 @@ Manifestene er eneste kilde for images. Byggingen leser `containers` og
 `initContainers` fra alle `manifests/*.yaml`, fjerner duplikater og sorterer navnene.
 Images må allerede være hentet med `podman pull` eller bygget med `podman build`
 på byggemaskinen, med nøyaktig samme fulle navn og tagg som i manifestet.
-`./scripts/build-images.sh` gjør dette for demoen.
+`./dev/build-images.sh` gjør dette for demoen.
 
 Bruk helst fulle originalnavn, for eksempel `registry.firma.no/team/app:1.2.3`,
 og `imagePullPolicy: Never`. Også `localhost/myapp:1.0.0` og navn med registry-port

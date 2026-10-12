@@ -181,26 +181,26 @@ clone)
     cat VERSION
     ;;
 unit) cd "$src"; python3 -m unittest discover -s tests;;
-build-images) cd "$src"; ./scripts/build-images.sh;;
+build-images) cd "$src"; ./dev/build-images.sh;;
 dev-up)
     cd "$src"
     ./scripts/generate-certificates.sh
     cp config.example.yaml config.yaml
     chmod 600 config.yaml
-    ./scripts/dev.sh up
+    ./dev/dev.sh up
     ;;
 venv)
     cd "$src"
     python3 -m venv .venv-smoke
     .venv-smoke/bin/pip install -r apps/todo-backend/requirements.txt
     ;;
-dev-e2e) cd "$src"; .venv-smoke/bin/python scripts/smoke-test.py;;
+dev-e2e) cd "$src"; .venv-smoke/bin/python dev/smoke-test.py;;
 examples-setup)
     podman pull docker.io/library/busybox:1.37.0
     podman tag docker.io/library/busybox:1.37.0 localhost/offline-example:1
     ;;
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
-dev-down) cd "$src"; ./scripts/dev.sh down;;
+dev-down) cd "$src"; ./dev/dev.sh down;;
 bundle)
     cd "$src"
     test -z "$(git status --porcelain)"
@@ -371,7 +371,7 @@ prod-e2e|markers-create|markers-check)
     export PUBLIC_ORIGIN="https://$prod_host:$port" CONNECT_IP="$prod_ip"
     export SMOKE_CA_FILE="$private/ca.crt" SMOKE_PASSWORD_DIR="$private"
     if [[ $action == prod-e2e ]]; then
-        .venv-smoke/bin/python scripts/smoke-test.py
+        .venv-smoke/bin/python dev/smoke-test.py
     else
         .venv-smoke/bin/python acceptance/markers.py "${action#markers-}" "$base/markers.json" "$run"
     fi

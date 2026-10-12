@@ -45,6 +45,9 @@ class BundleTests(unittest.TestCase):
             "config.example.yaml": "HTTPS_PORT: 8443\n",
             "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
             "scripts/prepare-host.sh": "#!/bin/sh\nexit 0\n",
+            "dev/dev.sh": "#!/bin/sh\nexit 0\n",
+            "dev/build-images.sh": "#!/bin/sh\nexit 0\n",
+            "dev/smoke-test.py": "print('dev only')\n",
             "quadlet/myproduct.kube": "[Kube]\nYaml=myproduct.yaml\n",
             "quadlet/myproduct.network": "[Network]\nNetworkName=myproduct\n",
             "manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
@@ -95,6 +98,12 @@ class BundleTests(unittest.TestCase):
             regular = {
                 m.name[len(prefix) :] for m in archive.getmembers() if m.isfile()
             }
+            self.assertFalse(
+                any(
+                    member.name.startswith(prefix + "dev/")
+                    for member in archive.getmembers()
+                )
+            )
             self.assertEqual(
                 regular,
                 {
