@@ -66,10 +66,15 @@ wait_trust() {
         }
         status=0
         awk -v wanted="$wanted" -v removed="$removed" '
-            NF != 4 || $2 !~ /^\// || $3 !~ /^[0-9]+$/ ||
-            length($4) != 64 || $4 !~ /^[[:xdigit:]]+$/ { invalid=1 }
-            $2 == wanted { found=1 }
-            removed != "" && $2 == removed { old=1 }
+            {
+                path=$0
+                sub(/^[^[:space:]]+[[:space:]]+/, "", path)
+                sub(/[[:space:]]+[0-9]+[[:space:]]+[[:xdigit:]]+[[:space:]]*$/, "", path)
+                if (NF < 4 || path !~ /^\// || $(NF-1) !~ /^[0-9]+$/ ||
+                    length($NF) != 64 || $NF !~ /^[[:xdigit:]]+$/) invalid=1
+                if (path == wanted) found=1
+                if (removed != "" && path == removed) old=1
+            }
             END { if (NR == 0 || invalid) exit 2; if (!found || old) exit 1 }
         ' <<< "$dump" || status=$?
         case "$status" in

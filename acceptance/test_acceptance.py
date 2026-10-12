@@ -581,6 +581,24 @@ wait_trust /new/deploy.py /old/deploy.py
         self.assertNotIn("--update", self.trust_helper())
         self.assertNotIn("--file", self.trust_helper())
 
+    def test_trust_wait_preserves_paths_with_spaces(self):
+        """Godta faktiske RPM-stier med mellomrom og sammenlign hele release-stien."""
+        digest = "d" * 64
+        rows = [
+            "rpmdb /usr/lib/python3.9/site-packages/setuptools/command/launcher manifest.xml 123 "
+            + digest,
+            "rpmdb /usr/lib/python3.9/site-packages/setuptools/script (dev).tmpl 123 "
+            + digest,
+            "file /new/deploy.py backup 123 " + digest,
+        ]
+        pending = "\n".join(rows) + "\n"
+        result, calls = self.run_trust_wait(
+            [pending, pending + "file /new/deploy.py 123 " + digest + "\n"]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, 2)
+        self.assertNotIn(digest, result.stdout + result.stderr)
+
     def test_trust_wait_times_out_with_stale_database(self):
         """Avvis gammel database etter grensen selv om lesingene lykkes."""
         result, calls = self.run_trust_wait(
@@ -619,7 +637,12 @@ wait_trust /new/deploy.py /old/deploy.py
             section = readme.split("### Oppgradering", 1)[1].split("### fapolicyd", 1)[
                 0
             ]
-            code = "\n".join(re.findall(r"```sh\n(.*?)```", section, re.DOTALL))
+            blocks = re.findall(r"```sh\n(.*?)```", section, re.DOTALL)
+            code = "\n".join(
+                block
+                for block in blocks
+                if "sha256sum" in block or "--file delete" in block
+            )
         (self.root / "version").write_text("0.1.1\n")
         (self.root / "myproduct-0.1.1-offline.tar.gz").touch()
         calls = self.root / "trust-calls"
