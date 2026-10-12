@@ -51,6 +51,9 @@ finnes i [akseptansetesten](../acceptance/README.md).
 
    Forvent myproduct:myproduct, hjem/filkatalog 0700, YAML/arkiver 0600 og
    kube/network 0644. SELinux skal være Enforcing og fapolicyd aktiv.
+   Overlay-kataloger skal ha container_ro_file_t og voluminnhold container_file_t.
+   Kjør `sudo restorecon -n -v -R /var/lib/myproduct`; ingen endringer skal
+   foreslås. Kontroller at audit ikke har AVC-avvisninger siden teststart.
    Registrer faktiske labels; ikke slå av sikkerhetsmekanismer ved avvisninger.
 4. Kontroller generator, nettavhengigheter og DNS:
 

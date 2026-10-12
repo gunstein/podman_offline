@@ -67,11 +67,19 @@ PY
 )
 [[ $uid_range == existing ]] || usermod --add-subuids "$uid_range" myproduct
 [[ $gid_range == existing ]] || usermod --add-subgids "$gid_range" myproduct
-# Persistér samme policyoppslag som /home. Eksisterende identisk regel beholdes.
+# SELinux: lageret følger container-policyen, også for systembrukere.
 equivalences=$(semanage fcontext -l -C)
-if ! grep -Fqx "$service_home = /home" <<< "$equivalences"; then
-    semanage fcontext -a -e /home "$service_home"
+if grep -Fqx "$service_home = /home" <<< "$equivalences"; then
+    semanage fcontext -d "$service_home"
 fi
+container_home="$service_home/.local/share/containers"
+if ! grep -Fqx "$container_home = /var/lib/containers" <<< "$equivalences"; then
+    semanage fcontext -a -e /var/lib/containers "$container_home"
+fi
+# Opprett lagerets foreldre før restorecon, så nye filer arver riktige labels.
+for directory in .local .local/share .local/share/containers .local/share/containers/storage; do
+    install -d -m 0700 -o myproduct -g "$(id -gn myproduct)" "$service_home/$directory"
+done
 restorecon -R "$service_home"
 loginctl enable-linger myproduct
 firewall-cmd --permanent --add-port="$port/tcp"

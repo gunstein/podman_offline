@@ -203,13 +203,23 @@ undersøkes, ikke omgås med endrede tillatelser eller bred trust.
 
 `prepare-host.sh` er idempotent. Det oppretter kontoen med nologin, tildeler
 minst 65536 subuid/subgid uten overlapp, setter hjemmets mode, legger til
-SELinux-ekvivalensen `/var/lib/myproduct = /home`, kjører restorecon og aktiverer
-linger. HTTPS-porten leses fra config (eller eksempelconfig hvis config mangler),
+SELinux-ekvivalensen
+`/var/lib/myproduct/.local/share/containers = /var/lib/containers`, oppretter
+lagerkatalogene, kjører restorecon og aktiverer linger. En eventuell gammel
+`/var/lib/myproduct = /home`-regel slettes først. HTTPS-porten leses fra config (eller eksempelconfig hvis config mangler),
 åpnes permanent i firewalld og brannmuren lastes på nytt. Rootless bruker en
 vanlig vertssocket; velg port 1024 eller høyere. I lab avgrenser nettisolasjonen
 innkommende trafikk ytterligere til lab-subnettet. Scriptet endrer ikke SELinux
 eller fapolicyd sin enforcing-tilstand. Kontroller faktisk SELinux-merking og
 nettverk på målversjonen med akseptansetesten.
+
+Systembrukeren får ikke de vanlige HOME_DIR-reglene fra container-selinux.
+Derfor peker ekvivalensen til `/var/lib/containers`, slik at overlay-lag får
+`container_ro_file_t` og voluminnhold får `container_file_t`. Dette følger
+[Podmans feilsøkingsguide, punkt 11](https://github.com/containers/podman/blob/main/troubleshooting.md#11-changing-the-location-of-the-graphroot-leads-to-permission-denied).
+Ingen generell container-label legges på hjemmet eller andre kataloger.
+Akseptansesteg 07 kontrollerer labels, at `restorecon -n -v -R` ikke foreslår
+endringer og at det ikke finnes AVC-avvisninger siden teststart.
 
 Sertifikatgenereringen ovenfor er for demo/test. I ekte produksjon utstedes
 sertifikatene utenfor målmaskinen og leveres til stiene i config. CA-ens private
@@ -349,7 +359,7 @@ slette brukeren/hjemmet og fjerne SELinux-ekvivalensen:
 ```sh
 sudo systemctl stop "user@$(id -u myproduct).service"
 sudo userdel -r myproduct
-sudo semanage fcontext -d /var/lib/myproduct
+sudo semanage fcontext -d /var/lib/myproduct/.local/share/containers
 ```
 
 Volumsletting eller `userdel` garanterer ikke fysisk sletting fra disk eller

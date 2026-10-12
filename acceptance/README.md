@@ -199,6 +199,9 @@ tjenestebrukeren før install og Podman. Dette er nødvendig når operatørens
 hjem er 0700; sudo -H alene beholder den utilgjengelige arbeidskatalogen. Ingen rootful
 produktressurser skal opprettes. Steg 07 sjekker eierskap/mode, SELinux-labels,
 bruker-generatorens nettavhengighet og at rootful containerlager er tomt.
+Overlay-kataloger skal ha container_ro_file_t, voluminnhold container_file_t.
+En lesende restorecon -n -v -R skal foreslå null endringer, og AVC/USER_AVC
+siden kjøringens start gir stopp. Ingen labels repareres i teststegene.
 Prepare-host åpner HTTPS i firewalld; nft-filteret avgrenser til lab-subnettet.
 
 CA og passord leses via sudo som myproduct direkte til private filer på

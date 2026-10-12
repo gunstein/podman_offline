@@ -182,6 +182,39 @@ sudo() {
         self.assertIn("type=FANOTIFY resp=deny", result.stdout)
         self.assertIn("type=AVC denied", result.stdout)
 
+    def test_selinux_check_rejects_relabel_avc_and_audit_errors(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = remote[
+            remote.index("    proposed=$(sudo -n restorecon") : remote.index(
+                "    as_product podman exec myproduct-todo-backend"
+            )
+        ]
+        stubs = r"""
+run_started=1791821932
+date() { echo 10/12/26; }
+sudo() {
+    if [[ $2 == restorecon ]]; then
+        [[ $* == '-n restorecon -n -v -R /var/lib/myproduct' ]] || return 99
+        [[ $mode != relabel ]] || echo 'Would relabel storage'
+        return 0
+    fi
+    case "$mode" in
+      clean|relabel) echo '<no matches>'; return 1;;
+      avc) echo 'type=AVC denied'; return 0;;
+      error) echo 'Invalid start date'; return 1;;
+    esac
+}
+"""
+        for mode in ("clean", "relabel", "avc", "error"):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    ["bash", "-eu", "-c", "mode=" + mode + "\n" + stubs + block],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode == 0, mode == "clean", result.stdout)
+
     def test_upgrade_preserves_credentials_and_orders_checks(self):
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["persistent_before"] = {"ca_der_sha256": "unchanged"}

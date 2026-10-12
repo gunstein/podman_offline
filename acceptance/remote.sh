@@ -332,6 +332,40 @@ for name, mode in paths.items():
     assert item.st_uid == account.pw_uid and item.st_gid == account.pw_gid and stat.S_IMODE(item.st_mode) == mode, name
     print("PASS: myproduct:myproduct {:04o} {}".format(mode, name))
 PY
+    # Lesende SELinux-kontroll; aldri relabel under en akseptansekjøring.
+    sudo -n python3 - <<'LABELS'
+import os, pathlib
+storage = pathlib.Path("/var/lib/myproduct/.local/share/containers/storage")
+overlays = sorted(storage.glob("overlay*"))
+volumes = sorted((storage / "volumes").glob("*/_data"))
+assert overlays and volumes, "Missing overlay or volume storage"
+for paths, expected in ((overlays, "container_ro_file_t"), (volumes, "container_file_t")):
+    count = 0
+    for root in paths:
+        items = [root]
+        if expected == "container_file_t":
+            for directory, dirs, files in os.walk(str(root)):
+                items.extend(pathlib.Path(directory) / name for name in dirs + files)
+        for path in items:
+            label = os.getxattr(str(path), "security.selinux", follow_symlinks=False).decode().strip("\x00")
+            assert label.split(":")[2] == expected, "{}: {} (expected {})".format(path, label, expected)
+            count += 1
+    print("PASS: {} paths labeled {}".format(count, expected))
+LABELS
+    proposed=$(sudo -n restorecon -n -v -R /var/lib/myproduct 2>&1)
+    printf '%s\n' "$proposed"
+    test -z "$proposed"
+    start_date=$(LC_ALL=C date -d "@$run_started" +%x)
+    start_time=$(date -d "@$run_started" +%H:%M:%S)
+    if avcs=$(sudo -n env LC_ALL=C ausearch --input-logs -m AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
+        printf '%s\n' "$avcs"
+        echo 'FAIL: AVC events recorded since run start'; exit 1
+    else
+        status=$?
+        printf '%s\n' "$avcs"
+        test "$status" = 1 && test "$avcs" = '<no matches>'
+    fi
+    echo 'PASS: labels match policy; no relabel proposed; no AVC events'
     as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
     as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
