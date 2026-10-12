@@ -270,6 +270,9 @@ installasjon, også en oppgradering, restarter alle pods og databasene.
 Tjenesten feiler hvis en pod feiler ved oppstart. Det er ingen startrekkefølge
 mellom pods; appene prøver å koble til databasen i 60 sekunder. Det er én
 installasjon per tjenestebruker, med faste navn på tjenesten og nettverket.
+`systemctl is-active` viser tjenestens tilstand og garanterer ikke at hver
+container kjører. Ved driftskontroll må også containerstatus og HTTPS/e2e
+kontrolleres; tjenesten kan være aktiv selv om én container er stoppet.
 
 ### Oppgradering
 
@@ -291,9 +294,18 @@ sha256sum -c "$archive.sha256"
 sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
-sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
 sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+sudo systemctl --user -M myproduct@ is-active myproduct.service
+```
+
+Kontroller at installasjonen lyktes, at tjenesten er aktiv og at alle
+containere kjører. Hvis noe feiler, stopp her og behold gammel trust. Etter
+vellykket installasjon og kontroll fjernes trust for den gamle releasen:
+
+```sh
+sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py" --trust-file myproduct
+sudo fapolicyd-cli --update
 ```
 
 Etter vellykket oppgradering kan gamle release-kataloger slettes når deres

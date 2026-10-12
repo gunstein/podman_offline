@@ -5,6 +5,8 @@ import importlib.util
 import io
 import json
 import os
+import re
+import shlex
 import stat
 import subprocess
 import tempfile
@@ -174,6 +176,108 @@ class HarnessTests(unittest.TestCase):
         self.harness.cleanup.assert_called_once()
         self.assertFalse(self.harness.report())
 
+    def test_completed_run_with_final_audit_denials_is_not_clean(self):
+        """La avvisninger etter siste e2e underkjenne en ellers fullført kjøring."""
+        self.harness.finished = True
+        self.harness.prod_ready = True
+        self.harness.cleanup = mock.Mock()
+
+        def audit(role, action):
+            """Simuler audit-hendelser og avvis dem bare i kontrollmodus."""
+            self.harness.write("type=AVC denied\n")
+            if action == "audit-check":
+                raise RuntimeError("FANOTIFY/AVC events recorded")
+
+        self.harness.guest = mock.Mock(side_effect=audit)
+        self.harness.finalize()
+        self.harness.guest.assert_called_once_with("PROD", "audit-check")
+        self.assertFalse(self.harness.report())
+        self.assertIn(
+            "type=AVC denied", (self.harness.folder / "EVIDENCE.md").read_text()
+        )
+        self.harness.cleanup.assert_called_once()
+
+    def test_unknown_stderr_warning_is_named_and_redacted_in_report(self):
+        """Registrer også ukjente advarsler uten å eksponere kjente hemmeligheter."""
+        self.harness.redactions.append("synthetic-secret")
+        self.harness.step(
+            "warning",
+            lambda: self.harness.log_streams(
+                "", "Warning: synthetic-secret uses an old key\n"
+            ),
+        )
+        self.harness.report()
+        report = (self.harness.folder / "REPORT.md").read_text()
+        self.assertIn("stderr warning: Warning: [REDACTED] uses an old key", report)
+        self.assertNotIn("synthetic-secret", report)
+
+    def boot_service_fixture(self, states):
+        """Kjør ekte venteløkke med stubbet systemctl og uten tidsforsinkelse."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        function = remote[
+            remote.index("wait_boot_service() {") : remote.index(
+                "# Bekreft blokkert internett"
+            )
+        ]
+        state_file, calls = self.root / "boot-states", self.root / "boot-calls"
+        state_file.write_text("\n".join(states) + "\n")
+        calls.write_text("")
+        stubs = r"""
+# Hent neste systemd-tilstand og logg alle kommandoer.
+user_service() {
+    echo "$*" >> "$calls"
+    if [[ $1 == status ]]; then echo 'service diagnostics'; return 3; fi
+    value=$(head -1 "$state_file")
+    if [[ $(wc -l < "$state_file") -gt 1 ]]; then tail -n +2 "$state_file" > "$state_file.next"; mv "$state_file.next" "$state_file"; fi
+    echo "$value"
+    [[ $value == active ]] && return 0
+    return 3
+}
+# Unngå virkelig venting i testen.
+sleep() { :; }
+"""
+        script = (
+            "set -eu\nstate_file="
+            + shlex.quote(str(state_file))
+            + "\ncalls="
+            + shlex.quote(str(calls))
+            + "\n"
+            + stubs
+            + function
+            + "\nwait_boot_service\n"
+        )
+        result = subprocess.run(
+            ["bash", "-se"], input=script, capture_output=True, text=True, check=False
+        )
+        commands = calls.read_text().splitlines()
+        self.assertTrue(all(c.startswith(("is-active ", "status ")) for c in commands))
+        return result, commands
+
+    def test_boot_service_waits_until_active_without_starting(self):
+        """Godta aktivering som ender aktiv uten start- eller restart-kall."""
+        result, commands = self.boot_service_fixture(
+            ["activating", "activating", "active"]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(commands, ["is-active myproduct.service"] * 3)
+
+    def test_boot_service_failed_stops_immediately_with_status(self):
+        """Stopp straks systemd melder failed og ta med statusdiagnostikk."""
+        result, commands = self.boot_service_fixture(["failed", "active"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            commands,
+            ["is-active myproduct.service", "status --no-pager myproduct.service"],
+        )
+        self.assertIn("service diagnostics", result.stdout)
+
+    def test_boot_service_timeout_fails_without_starting(self):
+        """Avvis en tjeneste som aldri blir aktiv innen venteløkkens grense."""
+        result, commands = self.boot_service_fixture(["activating"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(commands.count("is-active myproduct.service"), 120)
+        self.assertIn("within 240s", result.stdout)
+
     def test_audit_uses_separate_streams_and_locale_date(self):
         """Bekreft datoformat, adskilte audit-strømmer og streng feilbehandling."""
         remote = Path(__file__).with_name("remote.sh").read_text()
@@ -307,7 +411,11 @@ class HarnessTests(unittest.TestCase):
         ):
             self.harness.command(["podman"])
 
-    def isolation_script(self, status):
+    def isolation_script(
+        self,
+        status,
+        diagnostic="Error: dial tcp: lookup registry-1.docker.io: no such host",
+    ):
         """Lag isolasjonssteget med lokale stubber for nett, sudo og verktøy."""
         remote = Path(__file__).with_name("remote.sh").read_text()
         function = remote[
@@ -317,7 +425,8 @@ class HarnessTests(unittest.TestCase):
 # Simuler sudo og Podman med valgt pull-status uten privilegier.
 sudo() {
     if [[ $* == '-n podman pull '* ]]; then
-        echo 'Error: registry blocked' >&2
+        echo 'pull stdout'
+        echo "$diagnostic" >&2
         return "$pull_status"
     fi
 }
@@ -332,6 +441,8 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
         return (
             "set -euo pipefail\npull_status="
             + str(status)
+            + "\ndiagnostic="
+            + shlex.quote(diagnostic)
             + "\n"
             + stubs
             + function
@@ -354,11 +465,24 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
                 self.assertIn(
                     "PASS: public pull failed (exit " + str(status) + ")", stdout
                 )
-                self.assertNotIn("Error: registry blocked", stdout)
-                self.assertIn("pull-probe: Error: registry blocked", stderr)
+                self.assertNotIn("Error: dial tcp", stdout)
+                self.assertIn("pull stdout", stdout)
+                self.assertNotIn("pull stdout", stderr)
+                self.assertIn(
+                    "pull-probe: Error: dial tcp: lookup registry-1.docker.io: no such host",
+                    stderr,
+                )
                 self.assertIn(
                     "** WARNING: connection is not using a post-quantum", stderr
                 )
+
+    def test_isolation_permission_failure_is_not_network_evidence(self):
+        """Avvis Podman exit 125 når feilen gjelder rettigheter fremfor nett."""
+        with self.assertRaisesRegex(RuntimeError, "Command exited 1"):
+            self.harness.command(
+                ["bash", "-se"],
+                self.isolation_script(125, "Error: storage: permission denied"),
+            )
 
     def test_isolation_successful_pull_is_failure(self):
         """Avvis isolasjonssteget når et offentlig image kan hentes."""
@@ -397,6 +521,80 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
             with self.assertRaises(RuntimeError):
                 self.harness.boot_id(output)
 
+    def trust_procedure(self, source, install_status=0, health_status=0):
+        """Kjør README- eller VM-prosedyren med stubbede trust- og installasjonskall."""
+        if source == "remote":
+            remote = Path(__file__).with_name("remote.sh").read_text()
+            code = remote.split("\nupgrade)\n", 1)[1].split("\n    ;;", 1)[0]
+        else:
+            readme = (
+                Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
+            )
+            section = readme.split("### Oppgradering", 1)[1].split("### fapolicyd", 1)[
+                0
+            ]
+            code = "\n".join(re.findall(r"```sh\n(.*?)```", section, re.DOTALL))
+        (self.root / "version").write_text("0.1.1\n")
+        (self.root / "myproduct-0.1.1-offline.tar.gz").touch()
+        calls = self.root / "trust-calls"
+        calls.write_text("")
+        stubs = r"""
+# Registrer trust-handlinger og simuler installasjonsfeil.
+sudo() {
+    case "$*" in
+        *'--file add'*) echo add >> "$calls";;
+        *'--file delete'*) echo delete >> "$calls";;
+        *'--update'*) echo update >> "$calls";;
+        *'deploy.py install'*) echo install >> "$calls"; return "$install_status";;
+        *'--dump-db'*) echo "fake $product/deploy.py digest";;
+        *'systemctl --user'*) healthy;;
+    esac
+}
+# Simuler bestått checksum uten å lese et virkelig arkiv.
+sha256sum() { :; }
+# Simuler helsekontroll etter installasjon.
+healthy() { echo health >> "$calls"; return "$health_status"; }
+"""
+        prefix = (
+            "set -eu\nbase="
+            + shlex.quote(str(self.root))
+            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nold_version=0.1.0\ncalls="
+            + shlex.quote(str(calls))
+            + "\ninstall_status="
+            + str(install_status)
+            + "\nhealth_status="
+            + str(health_status)
+            + "\n"
+        )
+        result = subprocess.run(
+            ["bash", "-se"],
+            input=prefix + stubs + code,
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result, calls.read_text().splitlines()
+
+    def test_upgrade_trust_removed_only_after_install_and_health(self):
+        """Bekreft samme trygge trust-rekkefølge i README og VM-prosedyren."""
+        for source in ("remote", "README"):
+            with self.subTest(source=source):
+                result, calls = self.trust_procedure(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    calls, ["add", "update", "install", "health", "delete", "update"]
+                )
+
+    def test_failed_upgrade_keeps_old_trust(self):
+        """Behold gammel trust når installasjon eller helsekontroll feiler."""
+        for source in ("remote", "README"):
+            for install, health in ((1, 0), (0, 1)):
+                with self.subTest(source=source, install=install, health=health):
+                    result, calls = self.trust_procedure(source, install, health)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("delete", calls)
+
     def test_upgrade_preserves_credentials_and_orders_checks(self):
         """Bekreft oppgraderingsrekkefølge og gjenbruk av opprinnelige passord."""
         self.harness.meta["version"] = "0.1.0"
@@ -411,7 +609,7 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
             self.harness.guest.call_args_list,
             [
                 mock.call("DEV", "upgrade-bundle", "0.1.1"),
-                mock.call("PROD", "upgrade", "0.1.0"),
+                mock.call("PROD", "upgrade", old_version="0.1.0"),
                 mock.call("PROD", "check"),
                 mock.call("PROD", "persistent-state", log_stdout=False),
                 mock.call("DEV", "prod-e2e"),
@@ -463,6 +661,7 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
         ]
         expected = [
             "09-reboot",
+            "09-wait-boot-service",
             "09-offline-after-reboot",
             "09-check-after-reboot",
             "09-e2e-after-reboot",
@@ -684,9 +883,9 @@ class SelinuxTests(unittest.TestCase):
     def setUp(self):
         """Last heredoc-kontrollen med syntetisk policy og faktiske run-6-linjer."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        self.code = remote.split("    sudo -n python3 - <<'LABELS'\n", 1)[1].split(
-            "\nLABELS\n", 1
-        )[0]
+        self.code = remote.split(
+            "    sudo -n python3 - \"$upper_dirs\" <<'LABELS'\n", 1
+        )[1].split("\nLABELS\n", 1)[0]
         self.policy = types.SimpleNamespace(
             matchpathcon=mock.Mock(side_effect=self.matchpathcon)
         )
@@ -694,6 +893,7 @@ class SelinuxTests(unittest.TestCase):
         with mock.patch.dict("sys.modules", {"selinux": self.policy}):
             exec(compile(self.code, "remote.sh:LABELS", "exec"), self.namespace)  # noqa: S102 - trusted repo heredoc under test
         self.storage = self.namespace["STORAGE"]
+        self.upper_layers = set()
         self.filesystem = types.SimpleNamespace(
             lstat=mock.Mock(
                 return_value=types.SimpleNamespace(st_mode=stat.S_IFREG | 0o600)
@@ -708,6 +908,9 @@ class SelinuxTests(unittest.TestCase):
             .joinpath("run-6-restorecon.log")
             .read_text()
             .splitlines()
+        )
+        self.upper_layers = set(
+            re.findall(r"/overlay/([0-9a-f]{64})/diff", "\n".join(self.lines))
         )
 
     def matchpathcon(self, path, mode):
@@ -735,17 +938,17 @@ class SelinuxTests(unittest.TestCase):
             kind = "container_var_lib_t"
         return 0, "system_u:object_r:" + kind + ":s0"
 
-    def test_restorecon_stderr_is_logged_but_not_classified(self):
-        """Kontroller at restorecon-diagnostikk holdes adskilt fra dry-run-linjene."""
+    def test_restorecon_stderr_is_logged_and_fails(self):
+        """Avvis restorecon-diagnostikk ved exit 0 og behold den på stderr."""
         output, errors = io.StringIO(), io.StringIO()
-        result = subprocess.CompletedProcess([], 0, "policy line\n", "diagnostic\n")
+        result = subprocess.CompletedProcess([], 0, "", "diagnostic\n")
         with (
             mock.patch.object(subprocess, "run", return_value=result),
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
+            self.assertRaisesRegex(RuntimeError, "diagnostikk på stderr"),
         ):
-            self.assertEqual(self.namespace["dryrun"](["storage"]), "policy line\n")
-        self.assertIn("policy line", output.getvalue())
+            self.namespace["dryrun"](["storage"])
         self.assertNotIn("diagnostic", output.getvalue())
         self.assertEqual(errors.getvalue(), "diagnostic\n")
 
@@ -819,7 +1022,9 @@ class SelinuxTests(unittest.TestCase):
         lines = [line for line in self.lines if storage in line]
         self.assertEqual(len(lines), 157)
         for line in lines:
-            rule = self.namespace["classify_line"](line, {"container_file_t"})
+            rule = self.namespace["classify_line"](
+                line, {"container_file_t"}, self.upper_layers
+            )
             self.assertIn(
                 rule,
                 (
@@ -829,6 +1034,28 @@ class SelinuxTests(unittest.TestCase):
                     "CUSTOM_WRITABLE_ROOTFS",
                 ),
             )
+
+    def test_writable_layer_rule_rejects_image_layer(self):
+        """Godta container_file_t bare på kjente container-UpperDir, aldri et image-lag."""
+        layer = "a" * 64
+        line = (
+            str(self.storage / "overlay" / layer / "diff/file")
+            + " not reset as customized by admin to u:r:container_file_t:s0"
+        )
+        self.assertEqual(
+            self.namespace["classify_line"](line, {"container_file_t"}, {layer}),
+            "CUSTOM_WRITABLE_LAYER",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Uklassifisert"):
+            self.namespace["classify_line"](line, {"container_file_t"}, {"b" * 64})
+
+    def test_upper_dirs_require_valid_container_storage_paths(self):
+        """Avvis tomme eller feilplasserte inspect-stier før lagerklassifisering."""
+        path = str(self.storage / "overlay" / ("a" * 64) / "diff")
+        self.assertEqual(self.namespace["writable_layers"](path + "\n"), {"a" * 64})
+        for output in ("", "/tmp/overlay/" + "a" * 64 + "/diff", "<no value>"):
+            with self.subTest(output=output), self.assertRaises(RuntimeError):
+                self.namespace["writable_layers"](output)
 
     def test_run6_outside_storage_lines_fail(self):
         """Bekreft at alle run-6-linjer utenfor lageret gir FAIL."""
@@ -840,7 +1067,9 @@ class SelinuxTests(unittest.TestCase):
         self.assertEqual(len(lines), 9)
         for line in lines:
             with self.assertRaisesRegex(RuntimeError, "utenfor lageret"):
-                self.namespace["classify_line"](line, {"container_file_t"})
+                self.namespace["classify_line"](
+                    line, {"container_file_t"}, self.upper_layers
+                )
 
     def test_unknown_line_and_unknown_storage_path_fail(self):
         """Bekreft at ukjente lagerlinjer og diagnostikkmeldinger avvises."""
@@ -854,7 +1083,9 @@ class SelinuxTests(unittest.TestCase):
                 self.subTest(line=line),
                 self.assertRaisesRegex(RuntimeError, "Uklassifisert"),
             ):
-                self.namespace["classify_line"](line, {"container_file_t"})
+                self.namespace["classify_line"](
+                    line, {"container_file_t"}, self.upper_layers
+                )
 
     def test_wrong_overlay_and_container_metadata_types_fail(self):
         """Bekreft at feil typer på lag og containermetadata avvises."""
@@ -898,7 +1129,30 @@ class SelinuxTests(unittest.TestCase):
         """Bekreft at tilpassede labels krever vertens customizable-policy."""
         line = next(line for line in self.lines if " not reset " in line)
         with self.assertRaisesRegex(RuntimeError, "Uklassifisert"):
-            self.namespace["classify_line"](line, set())
+            self.namespace["classify_line"](line, set(), self.upper_layers)
+
+    def test_storage_dryrun_is_logged_when_outside_reports_stderr(self):
+        """Behold begge lesende dry-runs selv når den første skriver diagnostikk."""
+        self.namespace.update(
+            check_equivalence=lambda: None,
+            check_label=lambda path: None,
+            writable_layers=lambda output: {"a" * 64},
+            sys=types.SimpleNamespace(argv=["labels", "fixture"]),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "volumes/app/_data").mkdir(parents=True)
+            self.namespace["STORAGE"] = root
+            dryrun = mock.Mock(
+                side_effect=[RuntimeError("stderr diagnostic"), "inside evidence"]
+            )
+            self.namespace["dryrun"] = dryrun
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(RuntimeError, "stderr diagnostic"),
+            ):
+                self.namespace["main"]()
+            self.assertEqual(dryrun.call_count, 2)
 
     def test_storage_dryrun_is_logged_even_when_outside_fails(self):
         """Bekreft at lagerets dry-run logges selv når kontrollen utenfor feiler."""
@@ -909,12 +1163,17 @@ class SelinuxTests(unittest.TestCase):
                 STORAGE=root,
                 check_equivalence=lambda: None,
                 check_label=lambda path: None,
+                writable_layers=lambda output: {"a" * 64},
+                sys=types.SimpleNamespace(argv=["labels", "fixture"]),
             )
             dryrun = mock.Mock(
                 side_effect=["Would relabel outside", "storage diagnostic"]
             )
             self.namespace["dryrun"] = dryrun
-            with self.assertRaisesRegex(RuntimeError, "utenfor lageret"):
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(RuntimeError, "utenfor lageret"),
+            ):
                 self.namespace["main"]()
             self.assertEqual(dryrun.call_count, 2)
 

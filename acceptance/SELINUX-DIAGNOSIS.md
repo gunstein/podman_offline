@@ -86,3 +86,8 @@ Fixture SHA256: aa7773749c48b5f286b270ab9d682005431491db95ddecca20de10759c0f2607
 
 Lesende VM-kildebevis: `2026-10-12-run-6-policy-sources.log`, lagret utenfor repoet.
 SHA256: 7eeb318a994df2dd8fc5ca317ba1b4f5ef202550d981fd582213179413d28ca6
+
+Etter review av 2129852 krever `CUSTOM_WRITABLE_LAYER` dessuten at lag-ID-en
+er oppgitt som `GraphDriver.Data.UpperDir` av inspect for en eksisterende
+container. S4 begrunner labelen på et skrivbart container-lag, ikke på
+et image-lag. UpperDir-oppslaget er lesende og logges i kontrollen.

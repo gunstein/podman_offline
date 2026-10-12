@@ -29,16 +29,6 @@ SSH = [
     "-o",
     "ConnectTimeout=8",
 ]
-REMOTE_OUTPUT_READERS = (
-    "acceptance.py: Run.persistent_state parses JSON; Run.credentials validates the runtime path; Run.boot_id/Run.wait_ssh/Run.reboot validate boot-ID stdout.",
-    "acceptance.py: Run.readiness parses local Git revision/status; Run.upgrade parses local VERSION; Run.report parses local record.jsonl. No remote int() parser exists.",
-    "remote.sh: profile/facts compare getenforce and systemctl values; clean/check/stop compare Podman resource lists and find output with empty strings.",
-    "remote.sh: clone/bundle/upgrade-bundle compare Git status/diff; unpack/install/upgrade and release selection read VERSION; upgrade greps the trust database.",
-    "remote.sh: healthy parses Podman JSON; check greps generator stdout and filtered journal stdout, using id/install timestamp; kill compares inspect Running stdout.",
-    "remote.sh: LABELS.dryrun/classify_line parse restorecon stdout; audit_events/collect parses ausearch stdout (stderr separate; exit 1 plus <no matches> is the empty audit result).",
-    "prepare_dev_snapshot.py: prepare compares getenforce/systemctl stdout. pve.py reads HTTP JSON; markers.py reads local JSON and HTTP responses, not SSH output.",
-)
-
 SCP = [
     "scp",
     "-o",
@@ -121,10 +111,11 @@ class Run:
             stdout = stdout.decode(errors="replace")
         if isinstance(stderr, bytes):
             stderr = stderr.decode(errors="replace")
-        if "post-quantum key exchange" in stderr:
-            self.warnings.add(
-                "OpenSSH: connection is not using a post-quantum key exchange algorithm"
-            )
+        for line in stderr.splitlines():
+            if re.match(r"^(?:\*\* )?WARNING|^Warning:", line):
+                for value in self.redactions:
+                    line = line.replace(value, "[REDACTED]")
+                self.warnings.add("stderr warning: " + line)
         self.write(
             "[stdout]\n" + (stdout if log_stdout else "[private hash data omitted]\n")
         )
@@ -168,7 +159,7 @@ class Run:
             SSH + [self.host(role), "bash -se"], script, timeout, log_stdout
         )
 
-    def guest(self, role, action, version="", log_stdout=True):
+    def guest(self, role, action, version="", log_stdout=True, old_version=""):
         """Kjør et fast VM-steg via SSH med parametre for denne kjøringen."""
         args = [
             action,
@@ -181,6 +172,7 @@ class Run:
             role,
             self.started_epoch,
             version,
+            old_version,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
@@ -421,7 +413,10 @@ class Run:
             "10-build-upgrade", lambda: self.guest("DEV", "upgrade-bundle", new_version)
         )
         self.step("10-transfer-upgrade", lambda: self.transfer(new_version))
-        self.step("10-install-upgrade", lambda: self.guest("PROD", "upgrade", version))
+        self.step(
+            "10-install-upgrade",
+            lambda: self.guest("PROD", "upgrade", old_version=version),
+        )
         self.step("10-check-upgrade", lambda: self.guest("PROD", "check"))
         self.step("10-persistent-after", lambda: self.persistent_state("after"))
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
@@ -480,7 +475,8 @@ class Run:
         """Samle lesende prod-audit og rydd hemmeligheter, også etter første feil."""
         if self.prod_ready:
             try:
-                self.step("11-prod-audit", lambda: self.guest("PROD", "audit"))
+                action = "audit-check" if self.finished else "audit"
+                self.step("11-prod-audit", lambda: self.guest("PROD", action))
             except Exception as error:  # noqa: BLE001 - preserve original failure and still clean up
                 print(str(error), file=sys.stderr)
         try:
@@ -539,6 +535,9 @@ class Run:
                 "09-markers-" + action, lambda: self.guest("DEV", "markers-check")
             )
         self.step("09-reboot", self.reboot)
+        self.step(
+            "09-wait-boot-service", lambda: self.guest("PROD", "wait-boot-service")
+        )
         self.step("09-offline-after-reboot", lambda: self.guest("PROD", "offline"))
         self.step("09-check-after-reboot", lambda: self.guest("PROD", "check"))
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
@@ -564,9 +563,6 @@ class Run:
             "**" + verdict + "**",
             "",
             "Warnings: " + ("; ".join(sorted(self.warnings)) or "none recorded"),
-            "",
-            "Output parsers reviewed (only stdout is parsed):",
-            *["- " + reader for reader in REMOTE_OUTPUT_READERS],
             "",
             "Persistent files: only names and likt/endret are recorded; hashes remain in memory.",
             "",

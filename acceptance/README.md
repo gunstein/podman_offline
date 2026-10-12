@@ -170,7 +170,7 @@ Den sjekker også hjelp-appen og alle sju appcontainere i seks pods.
 
 Oppgavens `sudo -u myproduct podman kill myproduct-todo-backend` beholdes bokstavelig.
 Podman dokumenterer at eksplisitt kill/stop ikke aktiverer restart-policyen:
-https://docs.podman.io/en/v5.7.0/markdown/podman-run.1.html . Dette steget kan derfor
+https://github.com/containers/podman/blob/v5.8.2/docs/source/markdown/options/restart.md . Dette steget kan derfor
 stoppe selv med Always. Det erstattes ikke med direkte prosessignal for å få
 PASS. Rapporten skiller dette akseptansekravet fra et faktisk applikasjonskrasj.
 Markører opprettes for Alice og Bob, sjekkes etter start/restart/kill/reboot og
@@ -186,7 +186,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 47 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 58 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -250,7 +250,7 @@ Etter livssyklus/reboot øker steg 10 patch-delen i VERSION bare i VM-1 sin
 arbeidskopi. Git-diffen og ny versjon registreres; ingen commit eller andre
 kodeendringer gjøres. Ny bundle bygges og overføres med separat SHA256 i
 rapporten. Oppgraderingen følger README: checksums, trust av ny deploy.py,
-fjerning av gammel trust og install som tjenestebrukeren. Ingen generering
+install som tjenestebrukeren og helsekontroll før gammel trust fjernes. Ingen generering
 eller config-kopiering. Testen krever uendrede filhashverdier og CA, full e2e
 med de opprinnelig overførte passordene, bevarte todo-markører og at gammel
 trust er borte. Steg 11 samler audit og rydder overførte hemmeligheter.
@@ -273,14 +273,47 @@ er forventede resultater i kontrollene som uttrykkelig krever det.
 Audit har ett dokumentert unntak: `ausearch` returnerer 1, tom stdout og
 `<no matches>` på stderr når ingen hendelser finnes. Andre audit-feil stoppes.
 SSH-polling etter rollback/reboot og de eksplisitte isolasjonsprobene godtar
-ventede feilstatuser, uten å bruke stderr som maskinlesbare svar.
+ventede feilstatuser. Pull-proben undersøker bare sin egen stderr for en konkret
+nettfeil; stdout og stderr slås aldri sammen til et maskinlesbart svar.
 
 Hashverdier for varige filer beholdes bare i kontrollerens minne gjennom
 kjøringen. Logger, rapport og evidence inneholder bare filnavn og
 «likt/endret» fra sammenligningen. Kommandoen leser filene for hashing og
-skriver aldri filinnhold. Rapporten lister stedene hvor kommandosvar parses.
+skriver aldri filinnhold. Oversikten nedenfor beskriver stedene hvor
+kommandosvar parses; den er dokumentasjon, ikke et automatisk testbevis.
 
-Pull-proben i isolasjonskontrollen merker sin egen stdout og stderr med
-`pull-probe:`, på hver sin strøm. Den forventede nettfeilen treffer dermed
-ikke kontrollen for uventede `Error:`-meldinger. Exit-status 125/124 kreves;
-vellykket pull og andre statuser stopper steget. SSH-advarsler merkes ikke om.
+Pull-proben beholder stdout og merker sin egen stderr med `pull-probe:`.
+Exit 124 godtas som timeout. Exit 125 krever en konkret nettfeil i stderr
+(lookup, dial tcp, i/o timeout, connection refused, network is unreachable
+eller no such host); rettighets- og lagringsfeil gir FAIL. Vellykket pull og
+andre statuser stopper steget. SSH-advarsler merkes ikke om.
+
+Etter reboot venter `09-wait-boot-service` på automatisk oppstart i inntil
+240 sekunder. `failed` stopper straks; steget starter eller restarter aldri
+tjenesten. Sluttaudit bruker kontrollmodus etter fullført kjøring, slik at
+avvisninger under de siste e2e-stegene også gir NOT CLEAN. Etter en tidligere
+feil samles hendelsene fortsatt inn som bevis.
+
+Ikke-tom stderr fra restorecon gir FAIL også ved exit 0. Regelen for
+`CUSTOM_WRITABLE_LAYER` godtar bare UpperDir-lag fra inspect av eksisterende
+containere; et image-lag med samme label godtas ikke.
+
+### Oversikt over parsing av kommandosvar
+
+- `acceptance.py`: `persistent_state` leser JSON; `credentials` validerer runtime-sti;
+  `boot_id`, `wait_ssh` og `reboot` validerer boot-ID.
+- `remote.sh`: `profile`/`facts` sammenligner getenforce og systemctl; `clean`,
+  `check` og `stop` kontrollerer Podman-lister og find-output.
+- `clone`, `bundle` og `upgrade-bundle` kontrollerer Git-status/diff; release-stegene
+  leser VERSION og `upgrade` kontrollerer trust-databasen.
+- `healthy` leser Podman-JSON; `check` kontrollerer generatoren og filtrert journal,
+  bruker-ID og installasjonstid; `wait-boot-service` leser systemd-tilstand.
+- LABELS leser UpperDir fra inspect og restorecon-linjer; `audit_events` leser
+  ausearch-resultatet med adskilte strømmer.
+- Snapshot-klargjøring sammenligner getenforce/systemctl. Proxmox-data er HTTP-JSON;
+  markørkontrollen leser lokale JSON-filer og HTTP-svar.
+- Git-revisjon/status, VERSION og record.jsonl på kontrolleren er lokale data.
+
+Alle registrerte stderr-linjer som begynner med `WARNING`, `** WARNING` eller
+`Warning:` navngis som «stderr warning» i rapporten. Kilden kan være SSH-klienten
+eller fjernkommandoen; den utledes ikke fra teksten. Kjente hemmeligheter maskeres.

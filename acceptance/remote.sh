@@ -11,6 +11,7 @@ revision=$7
 role=$8
 run_started=$9
 requested_version=${10:-}
+old_version=${11:-}
 state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
@@ -86,6 +87,25 @@ facts() {
     sudo -n systemctl is-active firewalld
     df -h "$HOME"
 }
+# Vent på automatisk oppstart etter reboot uten å starte eller restarte tjenesten.
+wait_boot_service() {
+    for _ in {1..120}; do
+        status=0
+        service=$(user_service is-active myproduct.service) || status=$?
+        printf 'boot-service state=%s exit=%s\n' "$service" "$status"
+        case "$service:$status" in
+            active:0) return;;
+            failed:*)
+                user_service status --no-pager myproduct.service || true
+                echo 'FAIL: product service failed after reboot'; return 1;;
+            activating:3|inactive:3) sleep 2;;
+            *) echo 'FAIL: unexpected service state or command failure'; return 1;;
+        esac
+    done
+    user_service status --no-pager myproduct.service || true
+    echo 'FAIL: product service did not become active within 240s'
+    return 1
+}
 # Bekreft blokkert internett uten å godta manglende verktøy som nettbevis.
 offline() {
     sudo -n systemctl is-active podman-offline-isolation.service
@@ -110,13 +130,20 @@ else:
 PY
     # Check prerequisites separately: a missing binary is not proof of isolation.
     sudo -n podman version >/dev/null
-    if timeout 20 sudo -n podman pull docker.io/library/busybox 2> >(sed 's/^/pull-probe: /' >&2) | sed 's/^/pull-probe: /'; then
-        echo 'FAIL: public image pulled'; exit 1
-    else
-        status=$?
-        test "$status" = 125 -o "$status" = 124
-        echo "PASS: public pull failed (exit $status)"
-    fi
+    status=0
+    # FD 3 bevarer stdout; bare stderr fanges for å validere nettfeilen.
+    { probe_error=$(timeout 20 sudo -n podman pull docker.io/library/busybox 2>&1 1>&3) || status=$?; } 3>&1
+    printf '%s\n' "$probe_error" | sed 's/^/pull-probe: /' >&2
+    case "$status" in
+        124) ;;
+        125)
+            if ! grep -Eqi 'lookup|dial tcp|i/o timeout|connection refused|network is unreachable|no such host' <<< "$probe_error"; then
+                echo 'FAIL: pull failed for a reason other than network isolation'; exit 1
+            fi;;
+        0) echo 'FAIL: public image pulled'; exit 1;;
+        *) echo "FAIL: unexpected pull exit $status"; exit 1;;
+    esac
+    echo "PASS: public pull failed (exit $status)"
 }
 # Kontroller aktiv tjeneste og alle forventede appcontainere.
 healthy() {
@@ -273,10 +300,12 @@ upgrade)
     sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
     sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
-    old_release="/var/lib/myproduct/releases/myproduct-$requested_version"
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file myproduct
+    old_release="/var/lib/myproduct/releases/myproduct-$old_version"
     sudo -n fapolicyd-cli --update
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    healthy
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file myproduct
+    sudo -n fapolicyd-cli --update
     trust=$(sudo -n fapolicyd-cli --dump-db)
     if grep -Fq " $old_release/deploy.py " <<< "$trust"; then
         echo 'FAIL: old release still trusted'; exit 1
@@ -369,7 +398,11 @@ for name, mode in paths.items():
     assert item.st_uid == account.pw_uid and item.st_gid == account.pw_gid and stat.S_IMODE(item.st_mode) == mode, name
     print("PASS: myproduct:myproduct {:04o} {}".format(mode, name))
 PY
-    sudo -n python3 - <<'LABELS'
+    container_ids=$(as_product podman ps -aq)
+    test -n "$container_ids"
+    mapfile -t containers <<< "$container_ids"
+    upper_dirs=$(as_product podman inspect --format '{{.GraphDriver.Data.UpperDir}}' "${containers[@]}")
+    sudo -n python3 - "$upper_dirs" <<'LABELS'
 import os
 import pathlib
 import re
@@ -429,7 +462,20 @@ def check_label(path):
         raise RuntimeError("SELinux-type avviker fra policyen: " + str(path))
 
 
-def classify_line(line, customizable):
+def writable_layers(output):
+    """Valider UpperDir fra eksisterende containere og returner deres skrivbare lag-ID-er."""
+    layers = set()
+    for path in output.splitlines():
+        match = re.fullmatch(re.escape(str(STORAGE)) + r"/overlay/([0-9a-f]{64})/diff", path)
+        if not match:
+            raise RuntimeError("Uventet UpperDir fra podman inspect: " + path)
+        layers.add(match.group(1))
+    if not layers:
+        raise RuntimeError("Ingen skrivbare container-lag funnet")
+    return layers
+
+
+def classify_line(line, customizable, upper_layers):
     """Klassifiser én dry-run-linje med smale regler eller avvis den."""
     proposal = re.fullmatch(r"Would relabel (.+) from (\S+) to (\S+)", line)
     preserved = re.fullmatch(r"(.+) not reset as customized by admin to (\S+)", line)
@@ -454,7 +500,8 @@ def classify_line(line, customizable):
     if preserved and before == "container_file_t" and before in customizable:
         if re.fullmatch(r"volumes/[^/]+/_data(?:/.*)?", relative) and after == "container_file_t":
             return "CUSTOM_VOLUME_CONTENT"
-        if re.fullmatch(r"overlay/[0-9a-f]{64}/diff(?:/.*)?", relative) and after == "container_ro_file_t":
+        layer = re.fullmatch(r"overlay/([0-9a-f]{64})/diff(?:/.*)?", relative)
+        if layer and layer.group(1) in upper_layers and after == "container_ro_file_t":
             return "CUSTOM_WRITABLE_LAYER"
         if re.fullmatch(r"overlay-containers/[0-9a-f]{64}/rootfs/upper(?:/.*)?", relative) and after == "container_var_lib_t":
             return "CUSTOM_WRITABLE_ROOTFS"
@@ -471,12 +518,17 @@ def dryrun(arguments):
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
         raise RuntimeError("restorecon dry-run feilet: exit " + str(result.returncode))
+    if result.stderr:
+        raise RuntimeError("restorecon dry-run skrev diagnostikk på stderr")
     return result.stdout
 
 
 def main():
     """Kontroller policy, faktiske labels og klassifisert dry-run uten relabeling."""
     check_equivalence()
+    upper_layers = writable_layers(sys.argv[1])
+    for layer in sorted(upper_layers):
+        print("WRITABLE_LAYER " + layer)
     for name in ("", "overlay", "overlay-layers", "overlay-images", "overlay-containers", "volumes"):
         check_label(STORAGE / name)
     volumes = sorted((STORAGE / "volumes").glob("*/_data"))
@@ -487,13 +539,22 @@ def main():
         for directory, dirs, files in os.walk(str(root)):
             for name in sorted(dirs + files):
                 check_label(pathlib.Path(directory) / name)
-    outside = dryrun(["-e", str(STORAGE), "/var/lib/myproduct"])
-    inside = dryrun([str(STORAGE)])  # Always log storage output, even if C fails.
+    outputs, failures = [], []
+    # Begge dry-runs er lesende bevis, også når den første rapporterer feil.
+    for arguments in (["-e", str(STORAGE), "/var/lib/myproduct"], [str(STORAGE)]):
+        try:
+            outputs.append(dryrun(arguments))
+        except RuntimeError as error:
+            outputs.append("")
+            failures.append(str(error))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    outside, inside = outputs
     if outside:
         raise RuntimeError("restorecon foreslår endringer utenfor lageret")
     customizable = set(CUSTOMIZABLE.read_text().splitlines())
     for line in inside.splitlines():
-        rule = classify_line(line, customizable)
+        rule = classify_line(line, customizable, upper_layers)
         print("RULE {}: {}".format(rule, line))
     print("PASS: policy, faktiske labels og klassifisert restorecon dry-run")
 
@@ -559,13 +620,14 @@ reboot)
     sudo -n systemd-run --on-active=3 /usr/bin/systemctl reboot
     ;;
 boot) cat /proc/sys/kernel/random/boot_id;;
-audit)
+wait-boot-service) wait_boot_service;;
+audit|audit-check)
     # Use VM local time for ausearch, derived from the recorded controller epoch.
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     printf 'FANOTIFY/AVC evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
     sudo -n systemctl is-active auditd
-    audit_events collect
+    if [[ $action == audit-check ]]; then audit_events check; else audit_events collect; fi
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;
