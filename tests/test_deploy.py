@@ -481,6 +481,43 @@ class LinkTests(unittest.TestCase):
 
 
 class RenderTests(DeployFixture):
+    def test_manifest_errors_include_source_path(self):
+        """Pek på riktig manifest ved manglende config, ugyldig data og delvis placeholder."""
+        for doc, message in (
+            (document("Pod", "bad", value="@@UNKNOWN@@"), "Mangler UNKNOWN"),
+            (document("ConfigMap", "bad", data=["bad"]), "ConfigMap.data"),
+            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Uerstattet"),
+        ):
+            with self.subTest(message=message):
+                self.manifest([doc], "42-bad.yaml")
+                with self.assertRaises(deploy.DeployError) as error:
+                    deploy.render()
+                self.assertIn(
+                    str(deploy.MANIFESTS / "42-bad.yaml"), str(error.exception)
+                )
+                self.assertIn(message, str(error.exception))
+                self.assertFalse(deploy.BUILD.exists())
+
+    def test_real_product_manifests_render_with_dummy_files(self):
+        """Rendr demoens faktiske manifestsett og eksempelconfig med lokale dummyfiler."""
+        repo = Path(__file__).resolve().parent.parent
+        self.config = deploy.load_config(repo / "config.example.yaml")
+        for group in ("SECRET_FILES", "VOLUME_FILES"):
+            for paths in self.config[group].values():
+                for path in paths:
+                    self.write(path + "/dummy", b"dummy")
+        self.write_config()
+        for path in sorted((repo / "manifests").glob("*.yaml")):
+            self.write("manifests/" + path.name, path.read_bytes())
+        docs = list(yaml.safe_load_all(deploy.render(write_archives=False)))
+        kinds = [doc["kind"] for doc in docs]
+        self.assertEqual(kinds.count("Pod"), 6)
+        self.assertEqual(kinds.count("Secret"), 6)
+        self.assertEqual(kinds.count("PersistentVolumeClaim"), 4)
+        self.assertEqual(kinds.count("ConfigMap"), 1)
+        self.assertEqual(len(deploy.find_images(docs)), 6)
+        self.process.assert_not_called()
+
     def test_render_without_archive_writes_still_validates(self):
         self.volume_fixture()
         text = deploy.render(deploy.FILES_DIR, write_archives=False)
@@ -911,6 +948,17 @@ class CommandTests(DeployFixture):
 
 
 class ImageTests(unittest.TestCase):
+    def test_image_errors_identify_container_and_group(self):
+        """Behold containernavnet i alle image-feil, også etter registry-partisjonering."""
+        for group in ("containers", "initContainers"):
+            for image in (None, "postgres:16", "@@IMAGE@@"):
+                with self.subTest(group=group, image=image):
+                    doc = {"spec": {group: [{"name": "backend", "image": image}]}}
+                    with self.assertRaises(deploy.DeployError) as error:
+                        deploy.find_images([doc])
+                    self.assertIn("'backend'", str(error.exception))
+                    self.assertIn(group, str(error.exception))
+
     def test_pods_deployments_duplicates_and_init_containers(self):
         docs = [
             None,

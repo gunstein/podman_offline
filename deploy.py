@@ -354,18 +354,25 @@ def render(files_dir=None, write_archives=True, config_path=None):
     docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
 
     for path in sorted(MANIFESTS.glob("*.yaml")):
-        docs += [
-            replace(document, config)
-            for document in load_yaml_all(path)
-            if document is not None
-        ]
-
-    for doc in docs:
-        if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
-            data = doc.get("data") or {}
-            if not isinstance(data, dict):
-                raise DeployError("ConfigMap.data må være et map")
-            doc["data"] = {str(key): str(value) for key, value in data.items()}
+        try:
+            rendered = [
+                replace(document, config)
+                for document in load_yaml_all(path)
+                if document is not None
+            ]
+            for doc in rendered:
+                if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
+                    data = doc.get("data") or {}
+                    if not isinstance(data, dict):
+                        raise DeployError("ConfigMap.data må være et map")
+                    doc["data"] = {str(key): str(value) for key, value in data.items()}
+            if "@@" in yaml.safe_dump_all(rendered, sort_keys=False):
+                raise DeployError(
+                    'Uerstattet @@...@@. Kun hele verdier som "@@NAVN@@" støttes.'
+                )
+        except DeployError as error:
+            raise DeployError(f"{path}: {error}") from None
+        docs += rendered
 
     from_config = {("Secret", i): f"{SECRET_FILES}.{i}" for i in secrets}
     from_config.update(
@@ -416,11 +423,19 @@ def find_images(documents):
                             if isinstance(container, dict)
                             else None
                         )
+                        container_name = (
+                            container.get("name", "<uten navn>")
+                            if isinstance(container, dict)
+                            else "<uten navn>"
+                        )
+                        where = f"container {container_name!r} ({key})"
                         if not isinstance(image, str) or not image.strip():
-                            raise DeployError("Container må ha et image-navn som tekst")
+                            raise DeployError(
+                                f"Container må ha et image-navn som tekst: {where}"
+                            )
                         if "@@" in image:
                             raise DeployError(
-                                f"Image {image}: placeholders støttes ikke"
+                                f"Image {image}: placeholders støttes ikke i {where}"
                             )
                         registry, separator, name = image.partition("/")
                         if (
@@ -433,7 +448,7 @@ def find_images(documents):
                             )
                         ):
                             raise DeployError(
-                                f"Image {image} må være fullt kvalifisert"
+                                f"Image {image} må være fullt kvalifisert i {where}"
                             )
                         images.add(image)
                 pending.append(child)
