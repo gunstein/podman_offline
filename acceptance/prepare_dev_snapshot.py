@@ -8,6 +8,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 import time
 
 from pve import Proxmox, env_file
@@ -26,7 +27,16 @@ SSH = [
 def ssh(host, script):
     """Logg og kjør et klargjøringsscript på dev-VM-en via SSH."""
     print("$ ssh " + host + " bash -se\n" + script, flush=True)
-    subprocess.run(SSH + [host, "bash -se"], input=script, text=True, check=True)
+    result = subprocess.run(
+        SSH + [host, "bash -se"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    print("[stdout]\n" + result.stdout, flush=True)
+    print("[stderr]\n" + result.stderr, file=sys.stderr, flush=True)
+    result.check_returncode()
 
 
 def wait_ssh(host):
@@ -36,9 +46,11 @@ def wait_ssh(host):
             SSH + [host, "true"],
             check=False,
             timeout=15,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
         )
+        print("[stdout]\n" + result.stdout, flush=True)
+        print("[stderr]\n" + result.stderr, file=sys.stderr, flush=True)
         if result.returncode == 0:
             return
         time.sleep(3)

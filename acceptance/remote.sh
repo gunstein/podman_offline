@@ -27,6 +27,35 @@ as_product() {
 }
 # Styr produktets tjeneste i tjenestebrukerens systemd-instans.
 user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
+# Samle audit med adskilte strømmer og godta bare det dokumenterte tomme svaret.
+audit_events() {
+    sudo -n python3 - "$start_date" "$start_time" "$1" <<'AUDIT'
+import os
+import subprocess
+import sys
+
+
+def collect():
+    """Logg audit-strømmene og avvis feil eller avvisninger i kontrollmodus."""
+    result = subprocess.run(
+        ["ausearch", "--input-logs", "-m", "FANOTIFY,AVC,USER_AVC", "-ts",
+         sys.argv[1], sys.argv[2], "-i"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        check=False, env=dict(os.environ, LC_ALL="C"))
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    if result.returncode == 1 and not result.stdout.strip() and result.stderr.strip() == "<no matches>":
+        print("PASS: no FANOTIFY/AVC events since run start")
+        return
+    if result.returncode or not result.stdout.strip():
+        raise SystemExit("FAIL: audit lookup failed or returned empty stdout")
+    if sys.argv[3] == "check":
+        raise SystemExit("FAIL: FANOTIFY/AVC events recorded since run start")
+
+
+collect()
+AUDIT
+}
 # Valider VM-rollens fapolicyd-, SELinux- og firewalld-profil.
 profile() {
     selinux=$(getenforce)
@@ -81,7 +110,7 @@ else:
 PY
     # Check prerequisites separately: a missing binary is not proof of isolation.
     sudo -n podman version >/dev/null
-    if timeout 20 sudo -n podman pull docker.io/library/busybox 2>&1 | sed 's/^/pull-probe: /'; then
+    if timeout 20 sudo -n podman pull docker.io/library/busybox | sed 's/^/pull-probe: /'; then
         echo 'FAIL: public image pulled'; exit 1
     else
         status=$?
@@ -116,13 +145,18 @@ readiness)
 clean)
     facts
     for prefix in '' 'sudo -n'; do
-        test -z "$($prefix podman ps -aq)"
-        test -z "$($prefix podman pod ps -q)"
-        test -z "$($prefix podman volume ls -q)"
-        test -z "$($prefix podman secret ls -q)"
+        output=$($prefix podman ps -aq)
+        test -z "$output"
+        output=$($prefix podman pod ps -q)
+        test -z "$output"
+        output=$($prefix podman volume ls -q)
+        test -z "$output"
+        output=$($prefix podman secret ls -q)
+        test -z "$output"
         $prefix podman images --format '{{.Repository}}:{{.Tag}}'
     done
-    test -z "$(sudo -n find /etc/containers/systemd -maxdepth 1 -name 'myproduct.*' -print)"
+    output=$(sudo -n find /etc/containers/systemd -maxdepth 1 -name 'myproduct.*' -print)
+    test -z "$output"
     if [[ $role == PROD ]]; then
         if getent passwd myproduct; then echo 'FAIL: myproduct user already exists'; exit 1; fi
         sudo -n test ! -e /var/lib/myproduct
@@ -182,7 +216,8 @@ clone)
     git clone "$base/source.bundle" "$src"
     cd "$src"
     git checkout --detach "$revision"
-    test -z "$(git status --porcelain)"
+    output=$(git status --porcelain)
+    test -z "$output"
     git rev-parse HEAD
     cat VERSION
     ;;
@@ -209,7 +244,8 @@ example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
 bundle)
     cd "$src"
-    test -z "$(git status --porcelain)"
+    output=$(git status --porcelain)
+    test -z "$output"
     ./build-bundle.sh
     cd dist
     sha256sum -c ./*.sha256
@@ -218,10 +254,12 @@ bundle)
     ;;
 upgrade-bundle)
     cd "$src"
-    test -z "$(git status --porcelain)"
+    output=$(git status --porcelain)
+    test -z "$output"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
     printf '%s\n' "$requested_version" > VERSION
-    test "$(git diff --name-only)" = VERSION
+    changed=$(git diff --name-only)
+    test "$changed" = VERSION
     git diff -- VERSION
     ./build-bundle.sh
     (cd dist && sha256sum -c "myproduct-$requested_version-offline.tar.gz.sha256")
@@ -264,8 +302,9 @@ unpack)
     archive="myproduct-$requested_version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
     tar -xOf "$archive" "myproduct-$requested_version/VERSION" > version
-    test "$(cat version)" = "$requested_version"
-    [[ $(cat version) =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
+    version=$(cat version)
+    test "$version" = "$requested_version"
+    [[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
     cat version
     ;;
 install)
@@ -304,10 +343,11 @@ check)
     profile
     healthy
     user_service is-active myproduct-network.service
-    generated=$(as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun 2>&1)
+    generated=$(as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun)
     printf '%s\n' "$generated"
     grep -q 'podman-user-wait-network-online.service' <<< "$generated"
-    test -z "$(sudo -n podman ps -aq)"
+    output=$(sudo -n podman ps -aq)
+    test -z "$output"
     sudo -n podman ps -a
     sudo -n ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
     sudo -n python3 - <<'PY'
@@ -335,6 +375,7 @@ import pathlib
 import re
 import stat
 import subprocess
+import sys
 
 try:
     import selinux
@@ -423,10 +464,11 @@ def classify_line(line, customizable):
 def dryrun(arguments):
     """Logg lesende restorecon-output og avvis kommandoens feilstatus."""
     result = subprocess.run(["restorecon", "-n", "-v", "-R"] + arguments,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False)
     print("$ restorecon -n -v -R " + " ".join(arguments))
     print(result.stdout, end="")
+    print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
         raise RuntimeError("restorecon dry-run feilet: exit " + str(result.returncode))
     return result.stdout
@@ -464,19 +506,14 @@ if __name__ == "__main__":
 LABELS
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
-    if avcs=$(sudo -n env LC_ALL=C ausearch --input-logs -m FANOTIFY,AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
-        printf '%s\n' "$avcs"
-        echo 'FAIL: FANOTIFY/AVC events recorded since run start'; exit 1
-    else
-        status=$?
-        printf '%s\n' "$avcs"
-        test "$status" = 1 && test "$avcs" = '<no matches>'
-    fi
-    echo 'PASS: no FANOTIFY/AVC events since run start'
+    audit_events check
     as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
     as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
-    if sudo -n journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$(id -u myproduct)" --since "@$(cat "$base/install-start")" --no-pager | grep -Ei 'Trying to pull|Pulling image|pull access denied'; then
+    uid=$(id -u myproduct)
+    installed=$(cat "$base/install-start")
+    journal=$(sudo -n journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$uid" --since "@$installed" --no-pager)
+    if grep -Ei 'Trying to pull|Pulling image|pull access denied' <<< "$journal"; then
         echo 'FAIL: install attempted a pull'; exit 1
     fi
     echo 'PASS: journal contains no pull attempts'
@@ -495,7 +532,8 @@ stop)
     user_service stop myproduct.service
     if user_service is-active --quiet myproduct.service; then exit 1; fi
     as_product podman ps --all --pod
-    test -z "$(as_product podman ps -q)"
+    output=$(as_product podman ps -q)
+    test -z "$output"
     as_product podman secret ls
     as_product podman volume ls
     ;;
@@ -506,7 +544,8 @@ start|restart)
 kill)
     as_product podman kill myproduct-todo-backend
     for _ in {1..30}; do
-        if [[ $(as_product podman inspect --format '{{.State.Running}}' myproduct-todo-backend) == true ]]; then
+        running=$(as_product podman inspect --format '{{.State.Running}}' myproduct-todo-backend)
+        if [[ $running == true ]]; then
             healthy; exit 0
         fi
         sleep 2
@@ -526,16 +565,7 @@ audit)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     printf 'FANOTIFY/AVC evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
     sudo -n systemctl is-active auditd
-    if events=$(sudo -n env LC_ALL=C ausearch -m FANOTIFY,AVC,USER_AVC --input-logs -ts "$start_date" "$start_time" -i </dev/null 2>&1); then
-        printf '%s\n' "$events"
-    else
-        status=$?
-        printf '%s\n' "$events"
-        if [[ $status != 1 || $events != '<no matches>' ]]; then
-            exit "$status"
-        fi
-        echo 'PASS: no FANOTIFY/AVC events in this run interval'
-    fi
+    audit_events collect
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;

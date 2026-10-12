@@ -29,6 +29,16 @@ SSH = [
     "-o",
     "ConnectTimeout=8",
 ]
+REMOTE_OUTPUT_READERS = (
+    "acceptance.py: Run.persistent_state parses JSON; Run.credentials validates the runtime path; Run.boot_id/Run.wait_ssh/Run.reboot validate boot-ID stdout.",
+    "acceptance.py: Run.readiness parses local Git revision/status; Run.upgrade parses local VERSION; Run.report parses local record.jsonl. No remote int() parser exists.",
+    "remote.sh: profile/facts compare getenforce and systemctl values; clean/check/stop compare Podman resource lists and find output with empty strings.",
+    "remote.sh: clone/bundle/upgrade-bundle compare Git status/diff; unpack/install/upgrade and release selection read VERSION; upgrade greps the trust database.",
+    "remote.sh: healthy parses Podman JSON; check greps generator stdout and filtered journal stdout, using id/install timestamp; kill compares inspect Running stdout.",
+    "remote.sh: LABELS.dryrun/classify_line parse restorecon stdout; audit_events/collect parses ausearch stdout (stderr separate; exit 1 plus <no matches> is the empty audit result).",
+    "prepare_dev_snapshot.py: prepare compares getenforce/systemctl stdout. pve.py reads HTTP JSON; markers.py reads local JSON and HTTP responses, not SSH output.",
+)
+
 SCP = [
     "scp",
     "-o",
@@ -93,6 +103,8 @@ class Run:
         self.cfg = {}
         self.started_epoch = str(int(time.time()))
         self.prod_ready = False
+        self.persistent_before = None
+        self.warnings = set()
 
     def write(self, text):
         """Skriv til stegets logg etter å ha maskert kjente hemmeligheter."""
@@ -102,8 +114,24 @@ class Run:
             self.log.write(text)
             self.log.flush()
 
-    def command(self, args, script=None, timeout=3600):
-        """Logg en kommando og avvis feilstatus, timeout og rapporterte feil."""
+    def log_streams(self, stdout, stderr, log_stdout=True):
+        """Logg adskilte strømmer og navngi SSH-advarsler uten å vise private hashverdier."""
+        stdout, stderr = stdout or "", stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        if "post-quantum key exchange" in stderr:
+            self.warnings.add(
+                "OpenSSH: connection is not using a post-quantum key exchange algorithm"
+            )
+        self.write(
+            "[stdout]\n" + (stdout if log_stdout else "[private hash data omitted]\n")
+        )
+        self.write("\n[stderr]\n" + stderr + "\n")
+
+    def command(self, args, script=None, timeout=3600, log_stdout=True):
+        """Logg adskilte strømmer, avvis feilstatus og returner bare stdout."""
         self.write("$ " + " ".join(shlex.quote(str(a)) for a in args) + "\n")
         if script:
             self.write("# stdin script:\n" + script + "\n")
@@ -112,33 +140,35 @@ class Run:
                 list(map(str, args)),
                 check=False,
                 input=script,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                capture_output=True,
                 text=True,
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as error:
-            output = error.stdout or b""
-            self.write(
-                output.decode(errors="replace") if isinstance(output, bytes) else output
-            )
+            self.log_streams(error.stdout, error.stderr, log_stdout)
             raise RuntimeError("Command timed out") from None
-        self.write(result.stdout + f"\nexit={result.returncode}\n")
+        self.log_streams(result.stdout, result.stderr, log_stdout)
+        self.write(f"exit={result.returncode}\n")
         if result.returncode:
             raise RuntimeError(f"Command exited {result.returncode}")
-        if re.search(r"(?m)^Error:|^FAIL:", result.stdout):
+        if any(
+            re.search(r"(?m)^Error:|^FAIL:", stream or "")
+            for stream in (result.stdout, result.stderr)
+        ):
             raise RuntimeError("Command reported an error despite exit 0")
-        return result.stdout
+        return result.stdout or ""
 
     def host(self, role):
         """Returner SSH-bruker og adresse for den valgte VM-rollen."""
         return self.cfg["SSH_USER"] + "@" + self.cfg[role + "_IP"]
 
-    def ssh(self, role, script, timeout=3600):
+    def ssh(self, role, script, timeout=3600, log_stdout=True):
         """Kjør et script via SSH og samle output i stegets logg."""
-        return self.command(SSH + [self.host(role), "bash -se"], script, timeout)
+        return self.command(
+            SSH + [self.host(role), "bash -se"], script, timeout, log_stdout
+        )
 
-    def guest(self, role, action, version=""):
+    def guest(self, role, action, version="", log_stdout=True):
         """Kjør et fast VM-steg via SSH med parametre for denne kjøringen."""
         args = [
             action,
@@ -154,7 +184,7 @@ class Run:
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
-        return self.ssh(role, prefix + script)
+        return self.ssh(role, prefix + script, log_stdout=log_stdout)
 
     def step(self, name, action):
         """Kjør ett steg én gang, logg utfallet og stopp ved første feil."""
@@ -265,10 +295,12 @@ class Run:
                 text=True,
                 timeout=15,
             )
-            self.write(result.stdout + result.stderr + f"exit={result.returncode}\n")
-            boot = result.stdout.strip()
-            if result.returncode == 0 and boot and boot != old_boot:
-                return boot
+            self.log_streams(result.stdout, result.stderr)
+            self.write(f"exit={result.returncode}\n")
+            if result.returncode == 0:
+                boot = self.boot_id(result.stdout)
+                if boot != old_boot:
+                    return boot
             time.sleep(3)
         raise RuntimeError("SSH/new boot did not become ready: " + role)
 
@@ -324,11 +356,54 @@ class Run:
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
         self.guest("PROD", "unpack", version)
 
+    def boot_id(self, output):
+        """Valider en boot-ID fra stdout uten å godta advarsler eller tomme svar."""
+        boot = output.strip()
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot):
+            raise RuntimeError("Invalid or empty boot-ID on stdout")
+        return boot
+
     def persistent_state(self, phase):
-        """Registrer varige filhashverdier og avvis endringer etter oppgradering."""
-        state = json.loads(self.guest("PROD", "persistent-state"))
-        self.meta["persistent_" + phase] = state
-        if phase == "after" and state != self.meta["persistent_before"]:
+        """Sammenlign private hashverdier og logg bare filnavn og likt/endret."""
+        try:
+            state = json.loads(self.guest("PROD", "persistent-state", log_stdout=False))
+        except (ValueError, TypeError):
+            raise RuntimeError(
+                "Invalid or empty persistent-state JSON on stdout"
+            ) from None
+        if (
+            not isinstance(state, dict)
+            or set(state) != {"ca_der_sha256", "files_sha256"}
+            or not isinstance(state["files_sha256"], dict)
+            or not state["files_sha256"]
+            or any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in [state["ca_der_sha256"]]
+                + list(state["files_sha256"].values())
+            )
+            or any(
+                not isinstance(name, str)
+                or "\n" in name
+                or name.startswith("/")
+                or ".." in Path(name).parts
+                for name in state["files_sha256"]
+            )
+        ):
+            raise RuntimeError("Invalid persistent-state schema on stdout")
+        if phase == "before":
+            self.persistent_before = state
+        if self.persistent_before is None:
+            raise RuntimeError("Missing persistent-state baseline")
+        before = self.persistent_before
+        comparisons = {}
+        for name in sorted(set(before["files_sha256"]) | set(state["files_sha256"])):
+            same = before["files_sha256"].get(name) == state["files_sha256"].get(name)
+            if name == "PKI/private/ca.crt":
+                same = same and before["ca_der_sha256"] == state["ca_der_sha256"]
+            comparisons[name] = "likt" if same else "endret"
+            self.write(name + ": " + comparisons[name] + "\n")
+        self.meta["persistent_" + phase] = comparisons
+        if phase == "after" and state != before:
             raise RuntimeError(
                 "Persistent config, certificates or CA changed during upgrade"
             )
@@ -356,7 +431,7 @@ class Run:
         """Flytt CA og demo-passord via private runtime-filer uten å logge innhold."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
-        runtime = output.splitlines()[-1]
+        runtime = output.strip()
         if not re.fullmatch(r"/run/user/[0-9]+", runtime):
             raise RuntimeError("Unexpected VM runtime path")
         self.dev_private = runtime + "/podman-offline-" + self.id
@@ -379,6 +454,7 @@ class Run:
                 result = subprocess.run(
                     args, check=False, stdout=stream, stderr=subprocess.PIPE, timeout=30
                 )
+            self.log_streams("", result.stderr)
             self.write(f"secret transfer exit={result.returncode}\n")
             if result.returncode:
                 raise RuntimeError("Unable to read product credentials")
@@ -414,7 +490,7 @@ class Run:
 
     def reboot(self):
         """Bestill prod-reboot og registrer at SSH kommer tilbake med ny boot-ID."""
-        old = self.guest("PROD", "boot").splitlines()[-1]
+        old = self.boot_id(self.guest("PROD", "boot"))
         self.meta["prod_boot_before_reboot"] = old
         self.guest("PROD", "reboot")
         self.meta["prod_boot_after_reboot"] = self.wait_ssh("PROD", old)
@@ -486,6 +562,13 @@ class Run:
             "# Acceptance " + self.id,
             "",
             "**" + verdict + "**",
+            "",
+            "Warnings: " + ("; ".join(sorted(self.warnings)) or "none recorded"),
+            "",
+            "Output parsers reviewed (only stdout is parsed):",
+            *["- " + reader for reader in REMOTE_OUTPUT_READERS],
+            "",
+            "Persistent files: only names and likt/endret are recorded; hashes remain in memory.",
             "",
             "Metadata recorded by the runner:",
             fence + "json",

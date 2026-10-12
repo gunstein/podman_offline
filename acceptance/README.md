@@ -3,7 +3,7 @@
 Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-9 run
+python3 acceptance/acceptance.py --run 2026-10-12-run-10 run
 ```
 
 **Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
@@ -186,7 +186,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 39 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 44 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -241,9 +241,10 @@ separate diagnoselogger endres aldri.
 ## Varig tilstand og oppgradering
 
 Første installasjon skriver config, generated-certificates og PKI direkte i
-`/var/lib/myproduct`, utenfor releases. Steg 07 registrerer CA-sertifikatets
-SHA256-fingeravtrykk (DER) og filhashene for config, sertifikater, passord og CA.
-Ingen filinnhold skrives ut.
+`/var/lib/myproduct`, utenfor releases. Steg 07 beholder CA-sertifikatets
+SHA256-fingeravtrykk (DER) og filhashene for config, sertifikater, passord og CA
+bare i minnet for sammenligning. Bevisene viser filnavn og «likt/endret»,
+uten hashverdier eller filinnhold.
 
 Etter livssyklus/reboot øker steg 10 patch-delen i VERSION bare i VM-1 sin
 arbeidskopi. Git-diffen og ny versjon registreres; ingen commit eller andre
@@ -258,3 +259,23 @@ Hvis et tidligere steg stopper, er oppgraderingen ikke testet.
 Kontroll A–E kjøres på nytt etter reboot og oppgradering. Hashsammenligningen
 omfatter config, generated-certificates, PKI/private og files/. Begge e2e- og
 markørkontrollene bruker de opprinnelige passordene.
+
+### Maskinlesbare kommandosvar
+
+Rammeverket fanger stdout og stderr separat. Bare stdout brukes som JSON,
+runtime-sti, boot-ID eller i VM-kontrollenes strengsammenligninger. Stderr
+logges under egen etikett, inkludert OpenSSH-advarselen om manglende
+postkvante-nøkkelutveksling; advarselen navngis i rapporten. Ikke-null exit
+stopper steget selv om stdout inneholder gyldige data. Tomme eller ugyldige
+maskinlesbare svar stoppes også. Tomme ressurslister og restorecon-utskrifter
+er forventede resultater i kontrollene som uttrykkelig krever det.
+
+Audit har ett dokumentert unntak: `ausearch` returnerer 1, tom stdout og
+`<no matches>` på stderr når ingen hendelser finnes. Andre audit-feil stoppes.
+SSH-polling etter rollback/reboot og de eksplisitte isolasjonsprobene godtar
+ventede feilstatuser, uten å bruke stderr som maskinlesbare svar.
+
+Hashverdier for varige filer beholdes bare i kontrollerens minne gjennom
+kjøringen. Logger, rapport og evidence inneholder bare filnavn og
+«likt/endret» fra sammenligningen. Kommandoen leser filene for hashing og
+skriver aldri filinnhold. Rapporten lister stedene hvor kommandosvar parses.

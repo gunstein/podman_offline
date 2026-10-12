@@ -174,69 +174,167 @@ class HarnessTests(unittest.TestCase):
         self.harness.cleanup.assert_called_once()
         self.assertFalse(self.harness.report())
 
-    def test_audit_uses_locale_date_separate_time_and_both_denial_types(self):
-        """Bekreft ausearch-formatet og innsamling av FANOTIFY og AVC."""
+    def test_audit_uses_separate_streams_and_locale_date(self):
+        """Bekreft datoformat, adskilte audit-strømmer og streng feilbehandling."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        action = remote[
-            remote.index("audit)\n") + len("audit)\n") : remote.index("cleanup)")
-        ]
-        action = action.rsplit(";;", 1)[0]
-        stubs = """
-run_started=1791821932
-date() { if [[ $3 == +%x ]]; then echo 10/12/26; else echo 18:18:52; fi; }
-sudo() {
-    if [[ $2 == systemctl ]]; then echo active; return 0; fi
-    [[ $* == '-n env LC_ALL=C ausearch -m FANOTIFY,AVC,USER_AVC --input-logs -ts 10/12/26 18:18:52 -i' ]] || return 99
-    echo 'type=FANOTIFY resp=deny'
-    echo 'type=AVC denied'
-}
-"""
+        code = remote.split("<<'AUDIT'\n", 1)[1].split("\nAUDIT", 1)[0]
+        self.assertIn(
+            'LC_ALL=C date -d "$run_started"',
+            remote.replace("@$run_started", "$run_started"),
+        )
+        cases = (
+            (1, "", "<no matches>\n", "check", True),
+            (0, "type=AVC denied\n", "warning\n", "check", False),
+            (0, "type=FANOTIFY resp=deny\n", "", "check", False),
+            (0, "type=AVC denied\n", "warning\n", "collect", True),
+            (1, "", "Invalid start date\n", "check", False),
+            (1, "<no matches>\n", "", "check", False),
+            (0, "", "", "collect", False),
+        )
+        for status, stdout, stderr, mode, success in cases:
+            with self.subTest(status=status, mode=mode, stdout=stdout):
+                out, err = io.StringIO(), io.StringIO()
+                result = subprocess.CompletedProcess([], status, stdout, stderr)
+                with (
+                    mock.patch.object(
+                        subprocess, "run", return_value=result
+                    ) as command,
+                    mock.patch("sys.argv", ["audit", "10/12/26", "18:18:52", mode]),
+                    contextlib.redirect_stdout(out),
+                    contextlib.redirect_stderr(err),
+                ):
+                    if success:
+                        exec(code, {"__name__": "audit_test"})  # noqa: S102 - test the repository-owned audit heredoc
+                    else:
+                        with self.assertRaises(SystemExit):
+                            exec(code, {"__name__": "audit_test"})  # noqa: S102 - test the repository-owned audit heredoc
+                self.assertEqual(out.getvalue().startswith(stdout), True)
+                self.assertEqual(err.getvalue(), stderr)
+                self.assertEqual(command.call_args.kwargs["stderr"], subprocess.PIPE)
+                self.assertIn("FANOTIFY,AVC,USER_AVC", command.call_args.args[0])
+                self.assertEqual(
+                    command.call_args.args[0][-3:], ["10/12/26", "18:18:52", "-i"]
+                )
+
+    def state_fixture(self, digest="a"):
+        """Lag syntetiske hashdata uten hemmeligheter for 24 varige filer."""
+        names = (
+            "config.yaml",
+            "PKI/private/ca.crt",
+            "PKI/private/ca.key",
+            "PKI/private/ca.srl",
+            "PKI/private/identity.csr",
+            "PKI/private/identity.ext",
+            "PKI/private/todo-client.csr",
+            "PKI/private/todo-client.ext",
+            "PKI/private/web.csr",
+            "PKI/private/web.ext",
+            "files/todo-signing.tar",
+            "generated-certificates/client/todo-client.crt",
+            "generated-certificates/identity-db/password",
+            "generated-certificates/identity/identity.crt",
+            "generated-certificates/identity/identity.key",
+            "generated-certificates/todo-db/password",
+            "generated-certificates/todo/ca.crt",
+            "generated-certificates/todo/session-key",
+            "generated-certificates/todo/todo-client.crt",
+            "generated-certificates/todo/todo-client.key",
+            "generated-certificates/users/alice-password",
+            "generated-certificates/users/bob-password",
+            "generated-certificates/web/web.crt",
+            "generated-certificates/web/web.key",
+        )
+        return {
+            "ca_der_sha256": digest * 64,
+            "files_sha256": dict.fromkeys(names, digest * 64),
+        }
+
+    def test_json_stdout_with_ssh_warning_passes_without_hash_disclosure(self):
+        """Bekreft gyldig JSON med SSH-advarsel og bare filstatus i bevisene."""
+        state = self.state_fixture()
+        warning = "** WARNING: connection is not using a post-quantum key exchange algorithm.\n"
+        self.harness.guest = lambda *args, **kwargs: self.harness.command(
+            ["ssh"], log_stdout=kwargs["log_stdout"]
+        )
+        result = subprocess.CompletedProcess([], 0, json.dumps(state), warning)
+        with mock.patch.object(
+            runner.subprocess, "run", return_value=result
+        ) as command:
+            self.harness.step("before", lambda: self.harness.persistent_state("before"))
+            self.harness.step("after", lambda: self.harness.persistent_state("after"))
+        self.assertTrue(command.call_args.kwargs["capture_output"])
+        self.harness.report()
+        for name in ("logs/before.log", "logs/after.log", "REPORT.md", "EVIDENCE.md"):
+            data = (self.harness.folder / name).read_text()
+            self.assertNotIn("a" * 64, data)
+            self.assertIn("post-quantum key exchange", data)
+            for filename in state["files_sha256"]:
+                self.assertIn(
+                    filename + (": likt" if name.startswith("logs/") else ""), data
+                )
+
+    def test_invalid_or_empty_json_and_nonzero_valid_json_fail(self):
+        """Avvis ugyldig stdout og feilstatus selv når JSON er gyldig."""
+        for status, output in (
+            (0, ""),
+            (0, "not json"),
+            (0, "{}"),
+            (7, json.dumps(self.state_fixture())),
+        ):
+            with self.subTest(status=status, output=output):
+                self.harness.guest = lambda *args, **kwargs: self.harness.command(
+                    ["ssh"], log_stdout=False
+                )
+                result = subprocess.CompletedProcess(
+                    [], status, output, "SSH warning\n"
+                )
+                log = io.StringIO()
+                self.harness.log = log
+                with (
+                    mock.patch.object(runner.subprocess, "run", return_value=result),
+                    self.assertRaises(RuntimeError),
+                ):
+                    self.harness.persistent_state("before")
+                self.assertIn("[stderr]\nSSH warning", log.getvalue())
+                self.harness.log = None
+
+    def test_zero_exit_error_on_stderr_is_still_failure(self):
+        """Behold kontrollen av Podman-feil også når de skrives til stderr."""
+        result = subprocess.CompletedProcess([], 0, "", "Error: failure\n")
+        with (
+            mock.patch.object(runner.subprocess, "run", return_value=result),
+            self.assertRaises(RuntimeError),
+        ):
+            self.harness.command(["podman"])
+
+    def test_empty_resource_stdout_does_not_hide_failed_command(self):
+        """Avvis feil i ressurskommandoen før en tom stdout kan godtas."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = remote.split("clean)\n    facts\n", 1)[1].split("    if [[ $role", 1)[0]
+        stubs = "podman() { echo 'resource warning' >&2; return 7; }\n"
         result = subprocess.run(
-            ["bash", "-eu", "-c", stubs + action],
-            check=False,
+            ["bash", "-eu", "-c", stubs + block],
             capture_output=True,
             text=True,
+            check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("type=FANOTIFY resp=deny", result.stdout)
-        self.assertIn("type=AVC denied", result.stdout)
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("resource warning", result.stderr)
 
-    def test_denial_check_rejects_fanotify_avc_and_audit_errors(self):
-        """Bekreft stopp ved avvisninger eller ugyldig audit-oppslag."""
-        remote = Path(__file__).with_name("remote.sh").read_text()
-        a = remote.index(
-            "LABELS\n", remote.index("    sudo -n python3 - <<'LABELS'")
-        ) + len("LABELS\n")
-        block = remote[
-            a : remote.index("    as_product podman exec myproduct-todo-backend")
-        ]
-        stubs = r"""
-run_started=1791821932
-date() { echo 10/12/26; }
-sudo() {
-    case "$mode" in
-      clean) echo '<no matches>'; return 1;;
-      avc) echo 'type=AVC denied'; return 0;;
-      fanotify) echo 'type=FANOTIFY resp=deny'; return 0;;
-      error) echo 'Invalid start date'; return 1;;
-    esac
-}
-"""
-        for mode in ("clean", "avc", "fanotify", "error"):
-            with self.subTest(mode=mode):
-                result = subprocess.run(
-                    ["bash", "-eu", "-c", "mode=" + mode + "\n" + stubs + block],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                self.assertEqual(result.returncode == 0, mode == "clean", result.stdout)
+    def test_boot_id_rejects_empty_or_mixed_stdout(self):
+        """Godta bare én gyldig boot-ID fra stdout."""
+        boot = "12345678-1234-1234-1234-123456789abc"
+        self.assertEqual(self.harness.boot_id(boot + "\n"), boot)
+        for output in ("", "warning\n" + boot):
+            with self.assertRaises(RuntimeError):
+                self.harness.boot_id(output)
 
     def test_upgrade_preserves_credentials_and_orders_checks(self):
         """Bekreft oppgraderingsrekkefølge og gjenbruk av opprinnelige passord."""
         self.harness.meta["version"] = "0.1.0"
-        self.harness.meta["persistent_before"] = {"ca_der_sha256": "unchanged"}
-        self.harness.guest = mock.Mock(return_value='{"ca_der_sha256": "unchanged"}')
+        self.harness.persistent_before = self.state_fixture()
+        self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture()))
         self.harness.transfer = mock.Mock()
         self.harness.credentials = mock.Mock()
         self.harness.upgrade()
@@ -248,7 +346,7 @@ sudo() {
                 mock.call("DEV", "upgrade-bundle", "0.1.1"),
                 mock.call("PROD", "upgrade", "0.1.0"),
                 mock.call("PROD", "check"),
-                mock.call("PROD", "persistent-state"),
+                mock.call("PROD", "persistent-state", log_stdout=False),
                 mock.call("DEV", "prod-e2e"),
                 mock.call("DEV", "markers-check"),
             ],
@@ -257,8 +355,8 @@ sudo() {
     def test_upgrade_hash_change_stops_before_e2e(self):
         """Bekreft stopp før e2e når oppgraderingen endrer varig tilstand."""
         self.harness.meta["version"] = "0.1.0"
-        self.harness.meta["persistent_before"] = {"ca_der_sha256": "old"}
-        self.harness.guest = mock.Mock(return_value='{"ca_der_sha256": "new"}')
+        self.harness.persistent_before = self.state_fixture()
+        self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture("b")))
         self.harness.transfer = mock.Mock()
         with self.assertRaisesRegex(RuntimeError, "10-persistent-after"):
             self.harness.upgrade()
@@ -288,9 +386,7 @@ sudo() {
         self.harness.transfer = mock.Mock()
         self.harness.credentials = mock.Mock()
         self.harness.reboot = mock.Mock()
-        self.harness.guest = mock.Mock(
-            return_value='{"files_sha256": {"files/volume.tar": "unchanged"}}'
-        )
+        self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture()))
         self.harness.execute()
         self.harness.reboot.assert_called_once()
         self.assertTrue(self.harness.finished)
@@ -326,12 +422,7 @@ sudo() {
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             private = b"synthetic-secret-that-must-not-be-printed"
-            for name in (
-                "config.yaml",
-                "generated-certificates/key",
-                "PKI/private/key",
-                "files/volume.tar",
-            ):
+            for name in self.state_fixture()["files_sha256"]:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(private)
@@ -346,8 +437,8 @@ sudo() {
                 text=True,
             )
             state = json.loads(result.stdout)
-            self.assertEqual(len(state["files_sha256"]), 5)
-            self.assertIn("files/volume.tar", state["files_sha256"])
+            self.assertEqual(len(state["files_sha256"]), 24)
+            self.assertIn("files/todo-signing.tar", state["files_sha256"])
             self.assertNotIn(private.decode(), result.stdout)
 
     def test_credentials_stream_to_private_files_without_logging_content(self):
@@ -370,12 +461,18 @@ sudo() {
                 args[-1],
             )
             stdout.write(b"synthetic-private-content")
-            return subprocess.CompletedProcess(args, 0)
+            return subprocess.CompletedProcess(
+                args, 0, stderr=b"SSH transfer warning\n"
+            )
 
         with mock.patch.object(runner.subprocess, "run", side_effect=transfer):
             self.harness.step("credentials", self.harness.credentials)
         self.assertNotIn(
             "synthetic-private-content",
+            (self.harness.folder / "logs/credentials.log").read_text(),
+        )
+        self.assertIn(
+            "[stderr]\nSSH transfer warning",
             (self.harness.folder / "logs/credentials.log").read_text(),
         )
         self.assertEqual(
@@ -570,6 +667,20 @@ class SelinuxTests(unittest.TestCase):
         else:
             kind = "container_var_lib_t"
         return 0, "system_u:object_r:" + kind + ":s0"
+
+    def test_restorecon_stderr_is_logged_but_not_classified(self):
+        """Kontroller at restorecon-diagnostikk holdes adskilt fra dry-run-linjene."""
+        output, errors = io.StringIO(), io.StringIO()
+        result = subprocess.CompletedProcess([], 0, "policy line\n", "diagnostic\n")
+        with (
+            mock.patch.object(subprocess, "run", return_value=result),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            self.assertEqual(self.namespace["dryrun"](["storage"]), "policy line\n")
+        self.assertIn("policy line", output.getvalue())
+        self.assertNotIn("diagnostic", output.getvalue())
+        self.assertEqual(errors.getvalue(), "diagnostic\n")
 
     def test_policy_probes_use_zero_without_lstat(self):
         """Bekreft at bare de eksplisitte policy-probene bruker modus 0."""
