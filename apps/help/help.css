@@ -1,0 +1,6 @@
+body { max-width: 48rem; margin: 2rem auto; padding: 0 1rem; font: 1.1rem/1.6 system-ui, sans-serif; color: #182230; background: #fff; }
+nav { display: flex; flex-wrap: wrap; gap: 1rem; border-bottom: 1px solid #ccd3dc; padding-bottom: 1rem; }
+a { color: #174ea6; }
+a:focus-visible { outline: 3px solid #174ea6; outline-offset: 3px; }
+h1, h2 { line-height: 1.25; }
+li { margin-bottom: .5rem; }

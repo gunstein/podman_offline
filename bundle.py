@@ -44,8 +44,7 @@ def owner_root(info):
 def manifest_images():
     documents = []
     for path in sorted((ROOT / "manifests").glob("*.yaml")):
-        with path.open(encoding="utf-8") as stream:
-            documents.extend(yaml.safe_load_all(stream))
+        documents.extend(deploy.load_yaml_all(path))
     try:
         return deploy.find_images(documents)
     except deploy.DeployError as error:

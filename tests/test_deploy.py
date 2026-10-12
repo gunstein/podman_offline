@@ -99,6 +99,7 @@ class DeployFixture(unittest.TestCase):
     def install_fixture(self):
         self.volume_fixture()
         self.write("quadlet/myproduct.kube", "[Kube]\nYaml=myproduct.yaml\n")
+        self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
         self.write("images/images.tar")
         self.config["APP_IMAGE"] = "localhost/app:1"
         self.write_config()
@@ -408,6 +409,24 @@ class LinkTests(unittest.TestCase):
             with self.subTest(kind=kind), error:
                 deploy.check_links([document(kind, "same"), document(kind, "same")], {})
 
+    def test_volume_names_are_unique_across_secret_pvc_and_configmap(self):
+        kinds = ("Secret", "PersistentVolumeClaim", "ConfigMap")
+        for first in kinds:
+            for second in kinds:
+                error = self.assertRaisesRegex(deploy.DeployError, "same.*flere")
+                with self.subTest(first=first, second=second), error:
+                    deploy.check_links(
+                        [document(first, "same"), document(second, "same")], {}
+                    )
+
+    def test_configmap_does_not_satisfy_secret_or_pvc_reference(self):
+        for kind in ("Secret", "PersistentVolumeClaim"):
+            error = self.assertRaisesRegex(deploy.DeployError, "finnes ikke")
+            with self.subTest(kind=kind), error:
+                deploy.check_links(
+                    [document("ConfigMap", "known")] + self.refs(kind, "known"), {}
+                )
+
     def test_unused_config_ids(self):
         for kind, group in (
             ("Secret", "SECRET_FILES"),
@@ -424,18 +443,28 @@ class LinkTests(unittest.TestCase):
     def test_manifest_defined_objects_are_allowed_even_if_unused(self):
         docs = [
             document("Secret", "same", stringData={"token": "test"}),
-            document("PersistentVolumeClaim", "same"),
+            document("PersistentVolumeClaim", "data"),
         ]
         deploy.check_links(docs, {})
         deploy.check_links(
             docs
             + self.refs("Secret", "same")
-            + self.refs("PersistentVolumeClaim", "same"),
+            + self.refs("PersistentVolumeClaim", "data"),
             {},
         )
 
 
 class RenderTests(DeployFixture):
+    def test_render_without_archive_writes_still_validates(self):
+        self.volume_fixture()
+        text = deploy.render(deploy.FILES_DIR, write_archives=False)
+        self.assertIn(str(deploy.FILES_DIR / "uploads.tar"), text)
+        self.assertFalse(deploy.FILES_DIR.exists())
+        self.manifest([document("ConfigMap", "uploads")], "99-collision.yaml")
+        with self.assertRaisesRegex(deploy.DeployError, "uploads.*flere"):
+            deploy.render(deploy.FILES_DIR, write_archives=False)
+        self.assertFalse(deploy.FILES_DIR.exists())
+
     def test_sorted_multidocument_manifests_and_configmap_strings(self):
         self.manifest([document("Pod", "last")], "20.yaml")
         self.manifest(
@@ -547,11 +576,16 @@ class CommandTests(DeployFixture):
         def command(args, check):
             self.assertTrue(check)
             events.append(args)
-            self.assertTrue((deploy.FILES_DIR / "uploads.tar").exists())
             if args[0] == "podman" and args[1] in ("load", "image"):
+                self.assertFalse((deploy.FILES_DIR / "uploads.tar").exists())
                 self.assertFalse(deploy.QUADLET_YAML.exists())
             if args[0] == "systemctl":
+                self.assertTrue((deploy.FILES_DIR / "uploads.tar").exists())
                 self.assertTrue(deploy.QUADLET_YAML.exists())
+                self.assertEqual(
+                    deploy.QUADLET_TARGET.with_suffix(".network").read_bytes(),
+                    deploy.QUADLET_TEMPLATE.with_suffix(".network").read_bytes(),
+                )
                 self.assertEqual(
                     deploy.QUADLET_TARGET.read_bytes(),
                     deploy.QUADLET_TEMPLATE.read_bytes(),
@@ -574,6 +608,7 @@ class CommandTests(DeployFixture):
         for path, mode in (
             (deploy.QUADLET_YAML, 0o600),
             (deploy.QUADLET_TARGET, 0o644),
+            (deploy.QUADLET_TARGET.with_suffix(".network"), 0o644),
             (deploy.FILES_DIR, 0o700),
             (deploy.FILES_DIR / "uploads.tar", 0o600),
         ):
@@ -658,6 +693,25 @@ class CommandTests(DeployFixture):
             deploy.install()
         self.assertEqual(deploy.QUADLET_YAML.read_text(), "old yaml")
         self.assertEqual(deploy.QUADLET_TARGET.read_text(), "old kube")
+
+    def test_failed_image_operations_preserve_existing_archives(self):
+        self.install_fixture()
+        archive = deploy.FILES_DIR / "uploads.tar"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"previous archive")
+        for failing in (0, 1, 2):
+            with self.subTest(failing=failing):
+                self.process.side_effect = [None] * failing + [
+                    subprocess.CalledProcessError(1, "podman")
+                ]
+                with mock.patch.object(deploy.sys, "argv", ["deploy", "install"]):
+                    self.assertEqual(deploy.main(), 1)
+                self.assertEqual(archive.read_bytes(), b"previous archive")
+                self.assertFalse(deploy.QUADLET_DIR.exists())
+        (self.root / "images/images.tar").unlink()
+        with self.assertRaisesRegex(deploy.DeployError, "Mangler image-arkivet"):
+            deploy.install()
+        self.assertEqual(archive.read_bytes(), b"previous archive")
 
     def test_install_validates_rendered_image_names(self):
         self.install_fixture()

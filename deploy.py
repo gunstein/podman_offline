@@ -314,14 +314,17 @@ def check_links(docs, from_config):
         (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
         for doc in docs
         if isinstance(doc, dict)
-        and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
+        and doc.get("kind") in ("Secret", "PersistentVolumeClaim", "ConfigMap")
     ]
 
-    for kind, name in sorted({d for d in defined if defined.count(d) > 1}):
+    names = [name for _, name in defined]
+    for name in sorted({n for n in names if names.count(n) > 1}, key=str):
         raise DeployError(
-            f"{kind} {name!r} er definert flere ganger (i config.yaml og et manifest?)"
+            f"Navnet {name!r} er definert flere ganger som Secret/PVC/ConfigMap. "
+            "Podman lager ett volum per navn, så navnene må være unike på tvers av typene"
         )
 
+    defined = {(kind, name) for kind, name in defined if kind != "ConfigMap"}
     used = references(docs, set())
 
     for kind, name in sorted(used - set(defined)):
@@ -339,11 +342,12 @@ def check_links(docs, from_config):
             )
 
 
-def render(files_dir=None):
+def render(files_dir=None, write_archives=True):
     """Returner ferdig install-YAML som tekst.
 
     Skriver bare tar-arkivene for VOLUME_FILES (til files_dir, standard
-    build/files), og først når alt annet er validert.
+    build/files), og først når alt annet er validert. Med write_archives=False
+    valideres og rendres YAML uten å skrive arkiver.
     """
     if not CONFIG.exists():
         raise DeployError(f"Mangler {CONFIG}")
@@ -383,7 +387,8 @@ def render(files_dir=None):
             'Uerstattet @@...@@ i manifestene. Kun hele verdier som "@@NAVN@@" støttes.'
         )
 
-    write_file_archives(volumes, files_dir)
+    if write_archives:
+        write_file_archives(volumes, files_dir)
     return text
 
 
@@ -445,7 +450,7 @@ def install():
     if os.geteuid() != 0:
         raise DeployError("Produksjonsinstallasjon må kjøres som root (sudo)")
 
-    text = render(FILES_DIR)
+    text = render(FILES_DIR, write_archives=False)
     archive = ROOT / "images" / "images.tar"
     if not archive.is_file():
         raise DeployError(f"Mangler image-arkivet {archive}")
@@ -459,15 +464,19 @@ def install():
                 f"(podman image exists ga exit {error.returncode})"
             ) from None
 
+    render(FILES_DIR)  # Skriv importarkivene først etter vellykket image-sjekk.
+
     # YAML-en ligger ved siden av .kube i en root-eid katalog, slik at den
     # finnes etter reboot og ikke kan byttes ut av brukeren som pakket ut.
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     write_private(QUADLET_YAML, text)
-    QUADLET_TARGET.write_text(
-        QUADLET_TEMPLATE.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    QUADLET_TARGET.chmod(0o644)
+    for suffix in (".kube", ".network"):
+        target = QUADLET_TARGET.with_suffix(suffix)
+        target.write_text(
+            QUADLET_TEMPLATE.with_suffix(suffix).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        target.chmod(0o644)
 
     run("systemctl", "daemon-reload")
     run("systemctl", "restart", SERVICE)

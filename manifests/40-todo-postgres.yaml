@@ -3,7 +3,7 @@ kind: Pod
 metadata:
   name: myproduct-todo-postgres
 spec:
-  restartPolicy: Never
+  restartPolicy: Always
   containers:
   - name: db
     image: localhost/myproduct-postgres:17.11

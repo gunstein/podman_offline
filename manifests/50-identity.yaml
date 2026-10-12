@@ -3,7 +3,7 @@ kind: Pod
 metadata:
   name: myproduct-identity
 spec:
-  restartPolicy: Never
+  restartPolicy: Always
   containers:
   - name: app
     image: localhost/myproduct-identity:0.1.0
@@ -33,6 +33,7 @@ spec:
   - name: signing
     secret:
       secretName: identity-signing
+      defaultMode: 0400
       items:
       - key: identity.crt
         path: identity.crt

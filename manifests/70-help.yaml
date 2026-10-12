@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myproduct-help
+spec:
+  restartPolicy: Always
+  containers:
+  - name: web
+    image: localhost/myproduct-help:0.1.0
+    imagePullPolicy: Never

@@ -45,6 +45,7 @@ class BundleTests(unittest.TestCase):
             "config.example.yaml": "HTTPS_PORT: 8443\n",
             "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
             "quadlet/myproduct.kube": "[Kube]\nYaml=myproduct.yaml\n",
+            "quadlet/myproduct.network": "[Network]\nNetworkName=myproduct\n",
             "manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
         }.items():
             self.write(name, text)
@@ -103,6 +104,7 @@ class BundleTests(unittest.TestCase):
                     "config.example.yaml",
                     "scripts/generate-certificates.sh",
                     "quadlet/myproduct.kube",
+                    "quadlet/myproduct.network",
                     "images/images.tar",
                     "images/images.txt",
                     "manifests/app.yaml",
@@ -238,6 +240,18 @@ data: {image: ignored}
         self.assertIn("ERROR:", self.errors.getvalue())
         self.assertNotIn("Traceback", self.errors.getvalue())
         self.process.assert_not_called()
+
+    def test_duplicate_manifest_keys_fail_before_build(self):
+        self.write(
+            "manifests/app.yaml",
+            "spec:\n  containers:\n  - image: localhost/first:1\n"
+            "    image: localhost/second:1\n",
+        )
+        self.assertEqual(bundle.main(), 1)
+        self.assertIn("line 4", self.errors.getvalue())
+        self.assertNotIn("Traceback", self.errors.getvalue())
+        self.process.assert_not_called()
+        self.assertFalse(bundle.STAGE.exists())
 
     def test_failed_save_returns_one_without_final_bundle(self):
         self.process.side_effect = subprocess.CalledProcessError(1, "podman save")

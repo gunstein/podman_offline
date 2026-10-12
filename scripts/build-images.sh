@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-for app in identity todo-backend todo-frontend proxy; do
+for app in identity todo-backend todo-frontend help proxy; do
     podman build -t "localhost/myproduct-$app:0.1.0" -f "apps/$app/Containerfile" "apps/$app"
 done
 podman pull docker.io/library/postgres:17.11

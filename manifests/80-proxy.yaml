@@ -3,7 +3,7 @@ kind: Pod
 metadata:
   name: myproduct-proxy
 spec:
-  restartPolicy: Never
+  restartPolicy: Always
   containers:
   - name: nginx
     image: localhost/myproduct-proxy:0.1.0
@@ -24,6 +24,7 @@ spec:
   - name: tls
     secret:
       secretName: web-tls
+      defaultMode: 0400
       items:
       - key: web.crt
         path: web.crt

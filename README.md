@@ -1,6 +1,6 @@
 # MyProduct: Todo med Duende og PostgreSQL
 
-Et lite, kjørbart Podman-eksempel med fem pods. Frontend er vanlig
+Et lite, kjørbart Podman-eksempel med seks pods. Frontend er vanlig
 HTML og JavaScript. Python-backenden håndterer innlogging hos Duende med
 Authorization Code + PKCE og `private_key_jwt`. Nettleseren får en HttpOnly-cookie;
 OIDC-tokenene sendes ikke til JavaScript. Hver bruker har sine egne oppgaver.
@@ -10,6 +10,7 @@ Nettleser ── HTTPS :8443 ── nginx reverse proxy (egen pod)
                             ├── /             → frontend :8080 (Todo-pod)
                             ├── /auth/, /api/ → Python-backend :8000 (samme Todo-pod)
                             │                    └── Todo PostgreSQL (egen pod)
+                            ├── /help/        → hjelpesider (egen pod)
                             └── /identity/    → Duende (egen pod)
                                                  └── Identity PostgreSQL (egen pod)
 ```
@@ -18,6 +19,11 @@ Kun nginx publiserer en port. Alle pods bruker Podman-nettverket `myproduct`.
 Det er ingen Kubernetes Services eller Ingress-controller; Podman DNS bruker
 pod-navnene som står i manifestene. Todo-poden `myproduct-todo` deler nettverk
 mellom frontend på port 8080 og backend på port 8000.
+
+Todo har lenker til hjelpesidene på **/help/**. Help-appen kjører i egen pod
+(`myproduct-help`) og serverer vanlig HTML/CSS gjennom samme HTTPS-proxy.
+Hjelpen er tilgjengelig uten innlogging og bruker ingen database. Sidene ligger
+i `apps/help/`; bygg help-imaget på nytt når innholdet endres.
 
 ## Kjør lokalt, rootless
 
@@ -66,6 +72,7 @@ Nettverket og navngitte volumer fjernes bare manuelt når de ikke lenger trengs.
 - `50-identity.yaml`: Duende med privat signeringsnøkkel og sertifikat fra Secret.
 - `60-todo.yaml`: frontend og Python-backend i samme pod. Bare backenden monterer
   Todo-klientsertifikat/nøkkel fra PVC og databasepassordet fra Secret.
+- `70-help.yaml`: statisk help-app med innlogging, oppgaver og feilsøking.
 - `80-proxy.yaml`: nginx reverse proxy med HTTPS-sertifikat fra Secret.
 
 `SECRET_FILES` genererer Secret-dokumentene. `VOLUME_FILES.todo-signing`
@@ -95,14 +102,16 @@ python3 -m venv .venv-app
 ```
 
 Denne testen bruker ekte HTTPS og Duende-innlogging med begge brukerne, verifiserer
-CRUD, tilgangsskille mellom brukere, CSRF-beskyttelse og lokal utlogging. Den
+CRUD, tilgangsskille mellom brukere, CSRF-beskyttelse og lokal utlogging.
+Den følger også hjelpelenkene fra Todo og kontrollerer sidene, navigasjonen,
+stilarket, /help-redirect og 404 for ukjente hjelpesider. Den
 verifiserer CA/vertsnavn og trenger ingen endring i `/etc/hosts`. Dette er en
 HTTP-integrasjonstest; frontend-JavaScript må også prøves i en nettleser.
 De isolerte renderer-/bundle-testene kjøres med `python3 -m unittest discover -s tests`.
 Se også de små [Podman-eksemplene](examples/README.md).
 
-Verifisert 2026-10-12 med ekte rootless Podman 5.7.0: alle fem pods starter,
-og hele HTTP-integrasjonstesten passerer gjennom nginx. De 60 enhetstestene
+Verifisert 2026-10-12 med ekte rootless Podman 5.7.0: alle seks pods starter,
+og hele HTTP-integrasjonstesten passerer gjennom nginx. De 65 enhetstestene
 passerer med både PyYAML 5.4.1 og 6.0.3. Ruff, Pyright og kontroll av Python
 3.6-kompatibilitet for deploy/bundle/testene er rene. Rootful Quadlet og reboot
 er ikke kjørt.
@@ -131,11 +140,11 @@ i checksums. Private nøkler, lokal config og PKI blir ikke pakket med.
 
 På målmaskinen: verifiser checksums, generer lokale testsertifikater med
 `./scripts/generate-certificates.sh`, kopier og tilpass `config.example.yaml`.
-Produksjonssertifikater kan også leveres til stiene i config. Opprett nettverket
-én gang, og installer deretter:
+I produksjon utstedes sertifikatene utenfor målmaskinen og leveres til stiene i
+config. CA-ens private nøkkel skal ikke kopieres dit; sertifikatscriptet er for
+demo/test. Installer deretter:
 
 ```sh
-sudo podman network create myproduct
 sudo ./deploy install
 ```
 
@@ -144,7 +153,44 @@ sudo ./deploy install
 rendrede YAML-en med `podman image exists`. Manglende arkiv eller image stopper
 installasjonen før Quadlet-filene skrives og tjenesten restartes. Ved vellykket
 kontroll installeres `/etc/containers/systemd/myproduct.*` og Quadlet-tjenesten
-startes. Filarkiver plasseres i `/var/lib/myproduct/files`.
+startes. `myproduct.network` oppretter nettverket automatisk via Quadlet og
+gir hovedtjenesten en oppstartsavhengighet til `myproduct-network.service`.
+Filarkiver plasseres i `/var/lib/myproduct/files` først etter image-kontrollen.
+Alle produktpods bruker `restartPolicy: Always` for å starte containere på nytt
+etter prosessfeil, også hvis databasen bruker lang tid ved oppstart.
 `prepare` rendrer som før, uten å laste eller kontrollere images hos Podman.
 Dette demonstrasjonsoppsettet er ikke produksjonsverifisert; rootful/systemd/reboot
 kontrolleres manuelt etter [VM-sjekklisten](examples/VM-CHECKLIST.md).
+
+## Secrets på disk og avinstallering
+
+Podman kube play skriver Secret-innhold til navngitte volumer. Ved rootful drift
+ligger disse normalt under `/var/lib/containers/storage/volumes/<secret-navn>/_data/`.
+Vertens lagringskatalog er root-beskyttet, men private nøkler og passord blir
+liggende etter `kube down` eller stopp av tjenesten, selv om Secret-objektene
+fjernes fra Podmans secret-lager. Filer som fjernes fra Secret-definisjonen,
+kan fortsatt ligge i volumet; filer som fortsatt er definert, skrives over.
+Secret-, PVC- og ConfigMap-navn må derfor også være unike på tvers av typene.
+
+Private signerings- og TLS-nøkler monteres med `defaultMode: 0400`.
+Dette beskytter filene i containeren, men fjerner ikke data fra vertens disk.
+Ved fjerning av Secret-nøkler må berørt Secret-volum slettes mens appen er stoppet,
+før tjenesten startes igjen. Ved avinstallering:
+
+```sh
+sudo systemctl stop myproduct.service
+sudo podman volume ls
+# Eksempel: slett bare det identifiserte Secret-volumet, gjenta for relevante Secrets.
+sudo podman volume rm identity-signing
+```
+
+Secret-volumene i dette oppsettet heter `identity-signing`,
+`identity-client-certificate`, `identity-database-password`,
+`identity-demo-users`, `todo-database-password` og `web-tls`.
+Behold appdata-/databasevolumene med mindre disse bevisst skal slettes.
+Ikke slå på `KubeDownForce`: det kan også slette databasevolumene.
+Ved full avinstallering fjernes i tillegg `myproduct.kube`, `myproduct.network`
+og `myproduct.yaml` fra `/etc/containers/systemd/`, etterfulgt av
+`sudo systemctl daemon-reload`. Rydd deretter lokale nøkkelfiler, config og
+`/var/lib/myproduct/files/` etter ønsket policy for bevaring og sikker sletting.
+Volumsletting alene garanterer ikke fysisk sletting fra disk eller sikkerhetskopier.

@@ -31,7 +31,7 @@ uten å overskrive de nye testene.
 
 ## Images fra manifestene
 
-60 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
+65 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
 Image-testene dekker Pod/Deployment, init-containere, flere filer/dokumenter,
 flow-maps, duplikater, fulle navn og forventede valideringsfeil. Bundle-testene
 kontrollerer én sortert multi-image-save, navnelisten, tar-innhold og checksums.
@@ -55,3 +55,20 @@ Fulle navn og tagger ble bevart, også to navn for samme image-ID.
 Testlageret ble fjernet etterpå. Dette var en separat save/load-test med små
 testimages; full produktbundle og rootful Quadlet-installasjon ble ikke kjørt
 som del av denne endringen.
+
+Review-regresjoner dekker navnekollisjoner mellom Secret/PVC/ConfigMap,
+validering uten arkivskriving, bevaring av gamle arkiver ved load/exists-feil,
+installasjon av network-Quadlet før daemon-reload og avvisning av dupliserte
+manifestnøkler under bygging. Testene for kollisjoner, arkivbevaring og
+dupliserte nøkler feilet før rettingene.
+
+Review-rettingene ble også prøvd med ekte rootless Podman 5.7.0:
+backendens vertsprosess fikk SIGKILL, restart-telleren gikk fra 0 til 1 og
+HTTP-ende-til-ende-testen passerte etter automatisk restart. Begge private nøklene
+i Secret-mountene (Duende-signering og nginx TLS) hadde mode 0400.
+Den ekte Quadlet-generatorens dryrun viste myproduct-network.service,
+network create --ignore og Requires/After fra hovedtjenesten.
+Ved kube down kom fortsatt det tidligere dokumenterte rootless-netns-avviket,
+men kommandoen returnerte 0 og ny oppstart fungerte.
+Rootful systemd/reboot og database utilgjengelig i over 60 sekunder er fortsatt
+manuelle VM-tester, ikke verifisert av denne kjøringen.

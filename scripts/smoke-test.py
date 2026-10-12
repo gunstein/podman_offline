@@ -40,6 +40,48 @@ class LoginForm(HTMLParser):
             self.fields[attrs["name"]] = attrs.get("value", "")
 
 
+class Links(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.hrefs = set()
+
+    def handle_starttag(self, tag, attrs):
+        href = dict(attrs).get("href")
+        if tag == "a" and href:
+            self.hrefs.add(href)
+
+
+def check_help(session):
+    expected = {
+        "/help/": "Hjelp til Todo",
+        "/help/innlogging.html": "Logge inn og ut",
+        "/help/oppgaver.html": "Bruke oppgavelisten",
+        "/help/feilsoking.html": "Når noe ikke virker",
+    }
+    links = Links()
+    links.feed(get(session, "/").text)
+    assert set(expected).issubset(links.hrefs), links.hrefs
+    for path, heading in expected.items():
+        response = get(session, path)
+        assert response.status_code == 200, (path, response.status_code)
+        assert "<h1>" + heading + "</h1>" in response.text, path
+        navigation = Links()
+        navigation.feed(response.text)
+        assert "/" in navigation.hrefs, path
+        assert navigation.hrefs.issubset(set(expected) | {"/"}), navigation.hrefs
+    stylesheet = get(session, "/help/help.css")
+    assert stylesheet.status_code == 200
+    assert "text/css" in stylesheet.headers["Content-Type"]
+    redirect = session.get(ORIGIN + "/help", allow_redirects=False, timeout=10)
+    assert redirect.status_code == 308
+    assert urlparse(redirect.headers["Location"]).path == "/help/"
+    response = get(session, "/help")
+    assert response.status_code == 200
+    assert response.url == ORIGIN + "/help/", response.url
+    assert get(session, "/help/does-not-exist.html").status_code == 404
+    print("PASS: Todo help links, public help pages, navigation, CSS, redirect and 404")
+
+
 def client():
     result = requests.Session()
     result.trust_env = False
@@ -96,6 +138,8 @@ def main():
     assert "<title>Todo</title>" in get(anonymous, "/").text
     assert get(anonymous, "/app.js").status_code == 200
     print("PASS: verified HTTPS, proxy routes, discovery and anonymous rejection")
+
+    check_help(anonymous)
 
     alice, bob = login("alice"), login("bob")
     print("PASS: alice and bob signed in through Duende, PKCE and private_key_jwt")

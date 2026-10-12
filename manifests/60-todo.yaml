@@ -3,7 +3,7 @@ kind: Pod
 metadata:
   name: myproduct-todo
 spec:
-  restartPolicy: Never
+  restartPolicy: Always
   containers:
   - name: backend
     image: localhost/myproduct-todo-backend:0.1.0
