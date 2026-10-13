@@ -96,3 +96,7 @@ and init containers. Nested Deployment pod specs use the same validation.
 Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
+
+The 94 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+separate streams, safe journal/unit projections, strict command/parsing errors,
+audit collection after a diagnostic error, and stopping before reboot on a denial.

@@ -800,8 +800,10 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         ]
         expected = [
             "09-crash",
+            "09-launch-audit-crash",
             "09-markers-crash",
             "09-hang",
+            "09-launch-audit-hang",
             "09-markers-hang",
             "09-reboot",
             "09-wait-boot-service",
@@ -821,6 +823,32 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.assertEqual(
             self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 3
         )
+
+    def test_launcher_denial_stops_before_markers_hang_or_reboot(self):
+        """Stop immediately at the first pre-reboot launcher audit failure."""
+        self.harness.meta["version"] = "0.1.0"
+        for name in (
+            "readiness",
+            "reset",
+            "source",
+            "transfer",
+            "credentials",
+            "reboot",
+        ):
+            setattr(self.harness, name, mock.Mock())
+
+        def guest(role, action, **kwargs):
+            """Fail only the audit immediately after the successful crash check."""
+            if action == "launch-audit-check":
+                raise RuntimeError("FANOTIFY denial")
+            return json.dumps(self.state_fixture())
+
+        self.harness.guest = mock.Mock(side_effect=guest)
+        with self.assertRaisesRegex(RuntimeError, "09-launch-audit-crash"):
+            self.harness.execute()
+        self.harness.reboot.assert_not_called()
+        self.assertNotIn(mock.call("PROD", "hang"), self.harness.guest.call_args_list)
+        self.assertFalse(self.harness.report())
 
     def test_persistent_snapshot_hashes_config_pki_and_files_without_content(self):
         """Confirm file hash coverage without printing secret file content."""
@@ -1111,6 +1139,157 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(len(names), 8)
         self.assertIn("extra-app", names)
         self.assertFalse(init)
+
+
+class LauncherDiagnosticsTests(unittest.TestCase):
+    """Test read-only launcher evidence with separate streams and safe projections."""
+
+    def setUp(self):
+        """Load the diagnostic heredoc without executing its main entry point."""
+        self.remote = Path(__file__).with_name("remote.sh").read_text()
+        self.namespace = {}
+        self.namespace["__name__"] = "launcher_test"
+        exec(shell_code(self.remote, heredoc="LAUNCH_DIAGNOSTICS"), self.namespace)  # noqa: S102 - test the repository-owned diagnostic heredoc
+        self.unit = "a" * 64 + "-123.service"
+
+    def properties(self, arguments=""):
+        """Provide the exact systemd property set with controlled ExecStart content."""
+        values = {key: "" for key in self.namespace["PROPERTIES"]}
+        values.update(
+            LoadState="loaded",
+            ActiveState="active",
+            SubState="exited",
+            Result="success",
+            MainPID="0",
+            ExecMainPID="8805",
+            ExecMainCode="1",
+            ExecMainStatus="0",
+            ExecStart=arguments,
+        )
+        return "\n".join(key + "=" + value for key, value in values.items())
+
+    def test_journal_projection_preserves_exec_failure_without_secret_messages(self):
+        """Keep failure, PID and unit identifiers without arbitrary message content."""
+        rows = [
+            {"MESSAGE": "private-secret-value", "_PID": "1"},
+            {
+                "MESSAGE": "Failed at step EXEC spawning /usr/bin/podman: Operation not permitted private-secret-value",
+                "USER_UNIT": self.unit,
+                "_PID": "8805",
+                "__REALTIME_TIMESTAMP": "123456",
+            },
+        ]
+        events, units = self.namespace["journal_events"](
+            "\n".join(map(json.dumps, rows))
+        )
+        self.assertEqual(units, {self.unit})
+        self.assertEqual(events[0]["_PID"], "8805")
+        self.assertIn("Operation not permitted", json.dumps(events))
+        self.assertNotIn("private-secret-value", json.dumps(events))
+
+    def test_invalid_journal_json_fails_without_echoing_data(self):
+        """Reject malformed or missing journal fields without displaying raw output."""
+        for output in ("private-secret-value", "[]", '{"MESSAGE": 3}'):
+            with (
+                self.subTest(output=output),
+                self.assertRaisesRegex(RuntimeError, "Invalid journal"),
+            ):
+                self.namespace["journal_events"](output)
+
+    def test_unit_properties_log_only_the_expected_healthcheck_arguments(self):
+        """Show the canonical healthcheck command and withhold unexpected arguments."""
+        expected = "/usr/bin/podman healthcheck run " + "a" * 64
+        safe = "{ path=/usr/bin/podman ; argv[]=" + expected + " ; ignore_errors=no ; }"
+        result = self.namespace["unit_state"](self.unit, self.properties(safe))
+        self.assertEqual(result["ExecStart"], expected)
+        unsafe = safe.replace(
+            " ; ignore_errors", " --password private-secret-value ; ignore_errors"
+        )
+        result = self.namespace["unit_state"](self.unit, self.properties(unsafe))
+        self.assertIn("withheld", result["ExecStart"])
+        self.assertNotIn("private-secret-value", json.dumps(result))
+
+    def test_missing_properties_fail_without_logging_raw_data(self):
+        """Reject incomplete systemd output rather than treating it as evidence."""
+        with self.assertRaisesRegex(RuntimeError, "Missing systemd properties"):
+            self.namespace["unit_state"](self.unit, "Result=success")
+
+    def test_command_failure_keeps_stderr_and_never_logs_raw_stdout(self):
+        """Fail on a nonzero status even with valid-looking stdout and retain stderr."""
+        out, err = io.StringIO(), io.StringIO()
+        result = subprocess.CompletedProcess(
+            [], 1, "private-secret-value", "diagnostic warning\n"
+        )
+        with (
+            mock.patch.object(subprocess, "run", return_value=result),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+            self.assertRaisesRegex(RuntimeError, "exit 1"),
+        ):
+            self.namespace["command"](["journalctl"])
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(err.getvalue(), "diagnostic warning\n")
+
+    def test_main_collects_journal_and_read_only_state_before_audit(self):
+        """Collect safe launcher fields with no state-changing commands or environments."""
+        event = json.dumps(
+            {
+                "MESSAGE": self.unit
+                + ": Main process exited, code=exited, status=203/EXEC",
+                "_PID": "8805",
+            }
+        )
+        command = mock.Mock(
+            side_effect=[
+                "0 boot-id\n",
+                event,
+                self.unit + " loaded active exited\n",
+                self.properties(),
+            ]
+        )
+        self.namespace["command"] = command
+        out = io.StringIO()
+        with (
+            mock.patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=995)),
+            mock.patch("sys.argv", ["diagnostics", "123"]),
+            mock.patch.object(Path, "read_text", return_value="boot-id"),
+            contextlib.redirect_stdout(out),
+        ):
+            self.namespace["main"]()
+        self.assertIn("203/EXEC", out.getvalue())
+        self.assertIn('"ExecMainPID": "8805"', out.getvalue())
+        calls = [call.args[0] for call in command.call_args_list]
+        self.assertIn("@123", calls[1])
+        self.assertIn("_UID=995", calls[1])
+        self.assertNotIn("_COMM=systemd", calls[1])
+        self.assertEqual(calls[2][4], "list-units")
+        self.assertEqual(calls[3][4], "show")
+        self.assertNotIn("Environment", " ".join(calls[3]))
+
+    def test_missing_service_user_skips_launcher_commands(self):
+        """Allow read-only final audit collection when installation never created the user."""
+        self.namespace["command"] = mock.Mock()
+        with (
+            mock.patch("pwd.getpwnam", side_effect=KeyError),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.namespace["main"]()
+        self.namespace["command"].assert_not_called()
+
+    def test_audit_still_runs_after_diagnostic_failure(self):
+        """Preserve audit evidence and a failing result even when launch diagnostics fail."""
+        block = shell_code(self.remote, action="audit|audit-check|launch-audit-check")
+        script = (
+            "set -euo pipefail\nrun_started=123\naction=launch-audit-check\n"
+            "health_launch_diagnostics() { echo diagnostic-failed; return 7; }\n"
+            "sudo() { return 0; }\n"
+            "audit_events() { echo audit-mode=$1; }\n" + block
+        )
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("audit-mode=check", result.stdout)
 
 
 class HangTests(unittest.TestCase):

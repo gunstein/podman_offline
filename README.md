@@ -481,6 +481,10 @@ SELinux stays Enforcing. This explanation must be kept separate from actual
 prod verification: the acceptance test and audit document what works on
 the target machine. No crun rules, broad trust rules or binary changes are used.
 
+The user systemd manager and its Podman healthcheck launchers still run on the
+host. Acceptance checks their audit immediately after crash/hang tests and
+preserves safe launcher diagnostics before reboot; any denial gives NOT CLEAN.
+
 ## Secrets on disk and uninstalling
 
 Podman kube play writes Secret content to named volumes under

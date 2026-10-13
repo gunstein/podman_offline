@@ -149,7 +149,7 @@ Reports and artifacts are stored in
 - The source Git bundle and the product bundle/checksum when those steps are reached.
 
 The first failure gives `NOT CLEAN` and stops all following test steps. After a failure only read-only
-collection of the prod audit and cleanup of transferred secrets run. A Podman `Error:` with
+prod launcher diagnostics, collection of the prod audit and cleanup of transferred secrets run. A Podman `Error:` with
 exit 0 also counts as a failure. Run IDs and steps can never be reused. Readiness can
 fail before rollback: then no clean-start test has run, and the report says so.
 Do not repair VMs or change code during a run. There are no automatic new runs.
@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 85 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 94 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Prod operator and audit evidence
@@ -243,6 +243,24 @@ The whole audit excerpt goes into EVIDENCE.md, including denials that did not st
 product step. No matches is valid; an unavailable audit gives NOT CLEAN.
 The original failure is kept even if the audit collection fails. Old runs and
 separate diagnosis logs are never changed.
+
+`09-launch-audit-crash` and `09-launch-audit-hang` collect launcher evidence and
+check the audit immediately after their respective tests, before marker checks
+and reboot. Any denial stops the run at that point. This preserves evidence
+that would otherwise be lost on a VM with a volatile journal, as in run-18.
+The final audit also collects these read-only diagnostics after an earlier failure.
+No journald configuration, labels, security rules or service state are changed.
+
+Launcher diagnostics read the service user's journal since run start and the
+transient healthcheck services' selected state properties: Result, ExecMainPID,
+ExecMainCode, ExecMainStatus and related state. ExecStart is printed only when
+it is the expected `/usr/bin/podman healthcheck run <container-ID>` command;
+other arguments are withheld. Journal output is projected to recognized systemd
+execution failures and safe PID, time and unit identifiers. Arbitrary messages,
+environments and raw inspect data are never logged. A command or parsing error
+fails the diagnostic check, while the final audit is still collected.
+An audit record with `exe=systemd`, `comm=(podman)` and no PATH does not by itself
+identify the target executable or prove a crun failure.
 
 ## Persistent state and upgrade
 

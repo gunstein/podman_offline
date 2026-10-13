@@ -57,6 +57,126 @@ def collect():
 collect()
 AUDIT
 }
+# Preserve safe launcher evidence before reboot discards the volatile journal.
+health_launch_diagnostics() {
+    sudo -n python3 - "$run_started" <<'LAUNCH_DIAGNOSTICS'
+import json
+import pathlib
+import pwd
+import re
+import subprocess
+import sys
+
+UNIT = re.compile(r"\b[0-9a-f]{64}(?:-[0-9a-f]+)?(?:-startup)?\.service\b")
+PROPERTIES = ("LoadState", "ActiveState", "SubState", "Result", "MainPID",
+              "ExecMainPID", "ExecMainCode", "ExecMainStatus", "ExecStart")
+EXEC_ERROR = re.compile(
+    r"Failed (?:at step [A-Z_]+ spawning|to execute) /usr/bin/podman: "
+    r"(?:Operation not permitted|Permission denied|No such file or directory)")
+EXIT_ERROR = re.compile(r"Main process exited, code=exited, status=\d+/[A-Z_]+")
+RESULT_ERROR = re.compile(r"Failed with result '(?:exit-code|signal|core-dump|timeout|resources|protocol)'")
+
+
+def command(arguments):
+    """Read separate streams without printing unfiltered journal or unit data."""
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=30)
+    print(result.stderr or "", end="", file=sys.stderr)
+    if result.returncode:
+        raise RuntimeError("Launch diagnostics command failed: " + arguments[0]
+                           + " exit " + str(result.returncode))
+    return result.stdout
+
+
+def journal_events(output):
+    """Keep only recognized systemd failures and safe identifiers from journal JSON."""
+    events, units = [], set()
+    for line in output.splitlines():
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict) or not isinstance(row.get("MESSAGE"), str):
+                raise ValueError("Invalid journal fields")
+        except (TypeError, ValueError):
+            raise RuntimeError("Invalid journal JSON in launch diagnostics") from None
+        names = set()
+        for key in ("USER_UNIT", "UNIT", "_SYSTEMD_USER_UNIT", "OBJECT_SYSTEMD_USER_UNIT", "MESSAGE"):
+            if isinstance(row.get(key), str):
+                names.update(UNIT.findall(row[key]))
+        units.update(names)
+        errors = [match.group(0) for pattern in (EXEC_ERROR, EXIT_ERROR, RESULT_ERROR)
+                  for match in [pattern.search(row["MESSAGE"])] if match]
+        if not errors:
+            continue
+        event = {"units": sorted(names), "errors": errors}
+        for key in ("__REALTIME_TIMESTAMP", "_PID", "OBJECT_PID"):
+            value = row.get(key)
+            if isinstance(value, str) and value.isdigit():
+                event[key] = value
+        for key, allowed in (("_EXE", ("/usr/lib/systemd/systemd", "/usr/bin/podman")),
+                             ("_COMM", ("systemd", "(podman)", "podman"))):
+            if row.get(key) in allowed:
+                event[key] = row[key]
+        events.append(event)
+    return events, units
+
+
+def unit_state(name, output):
+    """Project selected properties and only the expected Podman healthcheck command."""
+    values = {}
+    for line in output.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key not in PROPERTIES or key in values:
+            raise RuntimeError("Invalid systemd properties in launch diagnostics")
+        values[key] = value
+    if set(values) != set(PROPERTIES):
+        raise RuntimeError("Missing systemd properties in launch diagnostics")
+    result = {"unit": name}
+    for key, value in values.items():
+        if key == "ExecStart":
+            match = re.search(r"path=/usr/bin/podman ; argv\[\]=/usr/bin/podman healthcheck run ([0-9a-f]{64}) ;", value)
+            result[key] = ("/usr/bin/podman healthcheck run " + match.group(1)
+                           if match else "withheld: not the expected healthcheck command")
+        elif re.fullmatch(r"[A-Za-z0-9_-]*", value):
+            result[key] = value
+        else:
+            raise RuntimeError("Invalid systemd state value in launch diagnostics")
+    return result
+
+
+def main():
+    """Collect read-only launcher state and failures without application messages or environments."""
+    try:
+        user = pwd.getpwnam("myproduct")
+    except KeyError:
+        print("LAUNCH_DIAGNOSTICS: service user absent; no product launcher to inspect")
+        return
+    print("LAUNCH_DIAGNOSTICS boot_id=" + pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+    print(command(["journalctl", "--list-boots", "--no-pager"]), end="")
+    output = command(["journalctl", "--since", "@" + sys.argv[1],
+                      "_UID=" + str(user.pw_uid), "--output=json", "--no-pager"])
+    events, units = journal_events(output)
+    print("LAUNCH_JOURNAL records=" + str(len(output.splitlines())))
+    for event in events:
+        print("LAUNCH_EVENT " + json.dumps(event, sort_keys=True))
+    print("LAUNCH_EVENTS count=" + str(len(events)))
+    listing = command(["systemctl", "--user", "-M", "myproduct@", "list-units",
+                       "--all", "--type=service", "--plain", "--no-legend", "--no-pager"])
+    units.update(UNIT.findall(listing))
+    print("LAUNCH_UNITS count=" + str(len(units)))
+    for name in sorted(units):
+        output = command(["systemctl", "--user", "-M", "myproduct@", "show", name]
+                         + ["--property=" + key for key in PROPERTIES])
+        print("LAUNCH_UNIT " + json.dumps(unit_state(name, output), sort_keys=True))
+    print("PASS: read-only launcher diagnostics collected; unrecognized messages and arguments withheld")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+LAUNCH_DIAGNOSTICS
+}
 # Wait, read-only, for exact trust paths after the daemon's asynchronous update.
 wait_trust() {
     local wanted=$1 removed=${2:-} dump status attempt
@@ -926,13 +1046,16 @@ reboot)
     ;;
 boot) cat /proc/sys/kernel/random/boot_id;;
 wait-boot-service) wait_boot_service;;
-audit|audit-check)
+audit|audit-check|launch-audit-check)
+    diagnostic_status=0
+    health_launch_diagnostics || diagnostic_status=$?
     # Use VM local time for ausearch, derived from the recorded controller epoch.
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     printf 'FANOTIFY/AVC evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
     sudo -n systemctl is-active auditd
-    if [[ $action == audit-check ]]; then audit_events check; else audit_events collect; fi
+    if [[ $action == audit ]]; then audit_events collect; else audit_events check; fi
+    test "$diagnostic_status" = 0
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;

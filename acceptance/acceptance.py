@@ -531,6 +531,11 @@ class Run:
         self.step("09-stop", lambda: self.guest("PROD", "stop"))
         for action in ("start", "restart", "crash", "hang"):
             self.step("09-" + action, lambda a=action: self.guest("PROD", a))
+            if action in ("crash", "hang"):
+                self.step(
+                    "09-launch-audit-" + action,
+                    lambda: self.guest("PROD", "launch-audit-check"),
+                )
             self.step(
                 "09-markers-" + action, lambda: self.guest("DEV", "markers-check")
             )
@@ -581,7 +586,7 @@ class Run:
         lines += [
             "",
             "A failed step stops execution. Later steps were NOT TESTED.",
-            "Only read-only prod audit collection and secret cleanup may run after failure. No retries or repairs.",
+            "Only read-only prod launch diagnostics, audit collection and secret cleanup may run after failure. No retries or repairs.",
             "",
         ]
         report = "\n".join(lines)
@@ -596,6 +601,7 @@ class Run:
                 fence + "text",
                 data.decode()
                 if record["step"] == "11-prod-audit"
+                or record["step"].startswith("09-launch-audit-")
                 else "\n".join(data.decode().splitlines()[-65:]),
                 fence,
             ]
