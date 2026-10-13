@@ -788,6 +788,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.reset = mock.Mock()
         self.harness.source = mock.Mock()
         self.harness.transfer = mock.Mock()
+        self.harness.registry_transfer = mock.Mock()
         self.harness.credentials = mock.Mock()
         self.harness.reboot = mock.Mock()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture()))
@@ -820,9 +821,57 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "10-markers-upgrade",
         ]
         self.assertEqual(records[records.index("09-crash") :], expected)
+        for step in (
+            "03-build-images",
+            "03-pull-images",
+            "03-registry-test",
+            "05-registry-transfer",
+            "07-registry-offline",
+        ):
+            self.assertIn(step, records)
+        self.assertLess(
+            records.index("03-registry-test"), records.index("03-examples-setup")
+        )
+        self.assertLess(
+            records.index("06-install"), records.index("07-registry-offline")
+        )
+        self.assertLess(records.index("07-registry-offline"), records.index("07-check"))
         self.assertEqual(
             self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 3
         )
+
+    def test_registry_transfer_moves_archive_and_checksum_without_credentials(self):
+        """Keep the registry fixture transfer separate from the product version and credentials."""
+        self.harness.cfg = {
+            "SSH_USER": "lab",
+            "DEV_IP": "192.0.2.1",
+            "PROD_IP": "192.0.2.2",
+        }
+        self.harness.ssh = mock.Mock()
+
+        def copy(arguments):
+            """Simulate scp downloads to the requested controller artifact path."""
+            if isinstance(arguments[-1], Path):
+                arguments[-1].write_bytes(b"public fixture bundle")
+
+        self.harness.command = mock.Mock(side_effect=copy)
+        self.harness.registry_transfer()
+        self.assertEqual(self.harness.command.call_count, 4)
+        self.assertIn("registry_bundle_sha256", self.harness.meta)
+        self.assertNotIn("version", self.harness.meta)
+        self.assertEqual(
+            (self.harness.folder / "registry").stat().st_mode & 0o777, 0o700
+        )
+
+    def test_registry_offline_probe_checks_exact_name_and_never_pulls(self):
+        """Require offline load/name validation and a temporary run with pull=never."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = shell_code(remote, action="registry-offline")
+        self.assertIn("as_product podman load -i /dev/stdin", block)
+        self.assertIn('as_product podman image exists "$image"', block)
+        self.assertIn('podman run --rm --pull=never --network=none "$image"', block)
+        self.assertIn("audit_events check", block)
+        self.assertNotIn("podman pull", block)
 
     def test_launcher_denial_stops_before_markers_hang_or_reboot(self):
         """Stop immediately at the first pre-reboot launcher audit failure."""
@@ -832,6 +881,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "reset",
             "source",
             "transfer",
+            "registry_transfer",
             "credentials",
             "reboot",
         ):

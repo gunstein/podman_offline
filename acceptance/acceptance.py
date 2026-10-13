@@ -355,6 +355,38 @@ class Run:
             raise RuntimeError("Invalid or empty boot-ID on stdout")
         return boot
 
+    def registry_transfer(self):
+        """Transfer the small registry fixture bundle through the controller with its checksum."""
+        base = "podman-offline-acceptance/" + self.id
+        folder = self.folder / "registry"
+        folder.mkdir(mode=0o700)
+        self.ssh("PROD", "mkdir -p " + shlex.quote(base + "/registry"))
+        archive = "myproduct-0.0.0-offline.tar.gz"
+        for suffix in ("", ".sha256"):
+            local = folder / (archive + suffix)
+            self.command(
+                SCP
+                + [
+                    self.host("DEV")
+                    + ":"
+                    + base
+                    + "/registry-fixture/dist/"
+                    + archive
+                    + suffix,
+                    local,
+                ]
+            )
+            self.command(
+                SCP
+                + [
+                    local,
+                    self.host("PROD") + ":" + base + "/registry/" + archive + suffix,
+                ]
+            )
+        self.meta["registry_bundle_sha256"] = hashlib.sha256(
+            (folder / archive).read_bytes()
+        ).hexdigest()
+
     def persistent_state(self, phase):
         """Compare private hash values and log only file names and same/changed."""
         try:
@@ -501,9 +533,11 @@ class Run:
         actions = [
             "unit",
             "build-images",
+            "pull-images",
             "dev-up",
             "venv",
             "dev-e2e",
+            "registry-test",
             "examples-setup",
         ]
         actions += [
@@ -522,7 +556,9 @@ class Run:
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
         self.step("05-transfer", self.transfer)
+        self.step("05-registry-transfer", self.registry_transfer)
         self.step("06-install", lambda: self.guest("PROD", "install"))
+        self.step("07-registry-offline", lambda: self.guest("PROD", "registry-offline"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)

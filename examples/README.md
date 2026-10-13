@@ -12,6 +12,12 @@ podman tag docker.io/library/busybox:1.37.0 localhost/offline-example:1
 podman image exists localhost/offline-example:1
 ```
 
+To use an Artifactory mirror, replace the source with its fully qualified BusyBox
+image and tag that image as `localhost/offline-example:1`. Log in as the dev user
+and configure its registry CA before pulling; keep TLS verification enabled.
+The acceptance test seeds a temporary TLS registry on VM-1, proves a fresh
+download from it, and uses that downloaded image for these examples.
+
 All containers, including the init containers, use this local name and
 `imagePullPolicy: Never`. Podman may also need its infra/pause image
 on the first run, depending on version and local configuration. Do the first

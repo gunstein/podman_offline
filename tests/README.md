@@ -28,10 +28,14 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 
 ## Images from the manifests
 
-101 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+108 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
 The image tests cover Pod/Deployment, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
+Registry tests require sorted deduplicated pulls with policy=always before save,
+skip localhost/ names, and reject failed pulls without build/save fallback or
+private registry diagnostic output. `test_images.py` runs the actual dev helpers
+with a recording Podman stub, including manifest tags and localhost:port names.
 The installer tests check the render/load/exists order, rendered names,
 a missing archive/image and that existing Quadlet files are kept on check failures.
 The prepare tests still run entirely without Podman calls.
@@ -97,8 +101,11 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 98 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 111 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
 services, without relaxing required properties for a loaded launcher.
+Registry framework tests cover separate log streams, manifest/blob GET evidence,
+expected negative exits, no build fallback, offline load/run ordering and cleanup
+of TLS keys/registry resources. Existing user registry certificates are preserved.

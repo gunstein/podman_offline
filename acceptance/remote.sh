@@ -501,6 +501,8 @@ clone)
     ;;
 unit) cd "$src"; python3 -m unittest discover -s tests;;
 build-images) cd "$src"; ./dev/build-images.sh;;
+pull-images) cd "$src"; ./dev/pull-images.sh;;
+registry-test) cd "$src"; python3 acceptance/registry_test.py "$base" "$run";;
 dev-up)
     cd "$src"
     ./scripts/generate-certificates.sh
@@ -515,8 +517,10 @@ venv)
     ;;
 dev-e2e) cd "$src"; .venv-smoke/bin/python dev/smoke-test.py;;
 examples-setup)
-    podman pull docker.io/library/busybox:1.37.0
-    podman tag docker.io/library/busybox:1.37.0 localhost/offline-example:1
+    image=$(cat "$base/registry-fixture/image.txt")
+    podman image exists "$image"
+    podman tag "$image" localhost/offline-example:1
+    echo 'PASS: examples use the BusyBox image downloaded from the TLS test registry'
     ;;
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
@@ -583,6 +587,24 @@ unpack)
     test "$version" = "$requested_version"
     [[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
     cat version
+    ;;
+registry-offline)
+    cd "$base/registry"
+    sha256sum -c myproduct-0.0.0-offline.tar.gz.sha256
+    tar xzf myproduct-0.0.0-offline.tar.gz
+    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$PWD/myproduct-0.0.0"
+    as_product podman load -i /dev/stdin < myproduct-0.0.0/images/images.tar
+    image=$(cat myproduct-0.0.0/images/images.txt)
+    [[ $image =~ ^127\.0\.0\.1:[0-9]+/acceptance/busybox:1\.37\.0$ ]]
+    as_product podman image exists "$image"
+    as_product podman images --format '{{.Repository}}:{{.Tag}}'
+    result=$(as_product podman run --rm --pull=never --network=none "$image" sh -c 'printf registry-offline-ok')
+    test "$result" = registry-offline-ok
+    echo 'PASS: registry name preserved by save/load; image runs offline with pull=never'
+    healthy
+    start_date=$(LC_ALL=C date -d "@$run_started" +%x)
+    start_time=$(date -d "@$run_started" +%H:%M:%S)
+    audit_events check
     ;;
 install)
     cd "$base"

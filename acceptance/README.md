@@ -120,7 +120,17 @@ the right profile before readiness.
 Commit test code and any allowed smoke changes first: readiness requires a
 clean checkout. No push is needed: a Git bundle of exactly HEAD is sent to VM-1
 and cloned there. Both local commits and offline Git access are therefore supported.
-The product's offline bundle is then built with the unchanged build script.
+The product's offline bundle uses prepared localhost/ demo images and pulls any
+registry names before saving. Dev build and pull are separate steps; the demo
+still builds its app images from source in every clean run.
+
+For a private Artifactory deployment, VM-1's build user must already have a
+working `podman login <registry>` and public CA certificate under
+`~/.config/containers/certs.d/<registry-host[:port]>/ca.crt` (or the system
+`/etc/containers/certs.d` equivalent) in the clean dev profile. Never put an
+auth file, password or registry token in lab.env, Git or evidence. The default
+demo needs no private registry credentials; real Artifactory authentication and
+repository paths are not tested by the temporary registry scenario below.
 
 The steps run in a fixed order: clean start, isolation, dev, bundle, installation,
 checks, life cycle, reboot and upgrade. VM-2 is isolated **before the transfer**, with
@@ -192,8 +202,42 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 98 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 111 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
+
+## Registry source acceptance
+
+`03-build-images` builds local demo images using their manifest tags;
+`03-pull-images` fetches any registry names without a build fallback.
+`03-registry-test` starts the pinned `docker.io/library/registry:3.0.0` image
+rootless on VM-1, bound only to a randomly allocated 127.0.0.1 port. It uses
+a self-signed TLS test certificate and an authority-specific user certs.d entry.
+No insecure-registry flag, system CA update, SELinux relabeling or fapolicyd
+policy change is made. Private TLS files live in a 0700 runtime directory.
+The server, its anonymous storage, the test CA entry and private files are
+removed automatically, including after an unexpected test failure.
+
+The test pulls public BusyBox, pushes it to that registry, removes its source
+image and all fixture aliases from the local image cache, then bundles its
+fully qualified registry name in a separate fixture checkout. It requires
+successful manifest and blob GETs in the projected registry access log and
+an exact pull/save sequence with zero builds. It also runs both dev helpers:
+the build helper must do nothing for registry-only manifests, and the pull
+helper must fetch the registry image.
+
+Two planned negative cases must fail without save or build fallback: a missing
+registry tag with a cached alias, and a stopped registry with a cached valid
+image. Each requires bundle exit 1 and the image/login hint. Their public
+diagnostics are marked as expected failures, not ignored acceptance failures.
+The examples use the BusyBox image downloaded by the positive case.
+
+`05-registry-transfer` copies only the positive fixture bundle and checksum
+through the controller. After the real product installation,
+`07-registry-offline` verifies outer/inner checksums, loads the archive as
+myproduct and proves the exact registry name exists. A temporary container
+runs with `--pull=never --network=none` and removes itself; the product's exact
+healthy inventory and audit are checked afterwards. VM-2 has no test registry
+or its CA/credentials and remains offline. No test container is left behind.
 
 ## Prod operator and audit evidence
 
