@@ -1,10 +1,34 @@
 #!/usr/bin/env bash
-# Build the demo app images and pull PostgreSQL with the local manifest names.
+# Build manifest localhost/ demo images; registry images are handled by pull-images.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# The app list and tag must follow the manifests; the bundle finds images automatically.
-for app in identity todo-backend todo-frontend help proxy; do
-    podman build -t "localhost/myproduct-$app:0.1.0" -f "apps/$app/Containerfile" "apps/$app"
-done
-podman pull docker.io/library/postgres:17.11
-podman tag docker.io/library/postgres:17.11 localhost/myproduct-postgres:17.11
+images=$(python3 - <<'BUILD_IMAGES'
+import sys
+import yaml
+import bundle
+
+try:
+    print("\n".join(bundle.manifest_images()))
+except (OSError, bundle.BundleError, yaml.YAMLError) as error:
+    print("ERROR: " + str(error), file=sys.stderr)
+    raise SystemExit(1)
+BUILD_IMAGES
+)
+while IFS= read -r image; do
+    case "$image" in
+        localhost/myproduct-postgres:*)
+            source="docker.io/library/postgres:${image##*:}"
+            podman pull --policy=always "$source"
+            podman tag "$source" "$image";;
+        localhost/myproduct-*:* )
+            app=${image#localhost/myproduct-}
+            app=${app%:*}
+            [[ $app =~ ^[a-z0-9-]+$ && -f apps/$app/Containerfile ]] || {
+                echo "ERROR: no demo build recipe for $image; prepare it with podman build" >&2; exit 1;
+            }
+            podman build -t "$image" -f "apps/$app/Containerfile" "apps/$app";;
+        localhost/*)
+            echo "ERROR: no demo build recipe for $image; prepare it with podman build" >&2; exit 1;;
+        *) printf 'Registry image %s: use dev/pull-images.sh\n' "$image";;
+    esac
+done <<< "$images"

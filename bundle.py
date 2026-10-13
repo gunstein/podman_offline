@@ -55,8 +55,27 @@ def manifest_images():
         raise BundleError(str(error)) from None
 
 
+def pull_images(images):
+    """Pull registry images afresh; localhost/ names must already exist locally."""
+    for image in sorted(set(images)):
+        registry = image.split("/", 1)[0]
+        if registry == "localhost":
+            continue
+        args = ["podman", "pull", "--policy=always", image]
+        print("+", " ".join(args))
+        try:
+            # Registry errors may contain authentication details; report only the image and hint.
+            subprocess.run(  # noqa: UP022 - Python 3.6 lacks capture_output
+                args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        except subprocess.CalledProcessError:
+            raise BundleError(
+                f"Cannot pull image {image!r}; check podman login {registry} and the registry CA certificate"
+            ) from None
+
+
 def build():
-    """Build a checksummed offline bundle from manifests and local Podman images."""
+    """Bundle prepared local images and freshly pulled registry images with checksums."""
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     name = f"myproduct-{version}"
     target = STAGE / name
@@ -92,6 +111,7 @@ def build():
 
     image_dir = target / "images"
     image_dir.mkdir()
+    pull_images(images)
     run("podman", "save", "-m", "-o", image_dir / "images.tar", *images)
     (image_dir / "images.txt").write_text("\n".join(images) + "\n", encoding="utf-8")
 

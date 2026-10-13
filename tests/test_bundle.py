@@ -60,8 +60,15 @@ class BundleTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def save(self, args, check):
+    def save(self, args, check, **kwargs):
+        """Stub registry pulls and write deterministic bytes for the multi-image save."""
         self.assertTrue(check)
+        if args[:2] == ["podman", "pull"]:
+            self.assertEqual(args[2], "--policy=always")
+            self.assertEqual(
+                kwargs, {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+            )
+            return
         self.assertEqual(args[:4], ["podman", "save", "-m", "-o"])
         Path(args[4]).write_bytes(("stub images " + " ".join(args[5:])).encode("utf-8"))
 
@@ -274,6 +281,100 @@ data: {image: ignored}
 
     def test_main_success(self):
         self.assertEqual(bundle.main(), 0)
+
+    def test_registry_pulls_are_sorted_and_localhost_names_are_preserved(self):
+        """Pull each remote name once, including localhost:port, and never build."""
+        bundle.pull_images(
+            [
+                "registry.example.test/team/app:1",
+                "localhost/app:1",
+                "localhost:5000/test:2",
+                "registry.example.test/team/app:1",
+            ]
+        )
+        self.assertEqual(
+            self.process.call_args_list,
+            [
+                mock.call(
+                    ["podman", "pull", "--policy=always", image],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                for image in (
+                    "localhost:5000/test:2",
+                    "registry.example.test/team/app:1",
+                )
+            ],
+        )
+
+    def test_registry_pull_precedes_save_and_archive_checksums_verify(self):
+        """Bundle a registry image with its exact full name after a successful pull."""
+        self.write(
+            "manifests/remote.yaml",
+            "spec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
+        )
+        bundle.build()
+        self.assertEqual(
+            self.process.call_args_list[0].args[0],
+            [
+                "podman",
+                "pull",
+                "--policy=always",
+                "registry.example.test/app:2",
+            ],
+        )
+        self.assertEqual(
+            self.process.call_args_list[1].args[0][-3:],
+            [
+                "localhost/app:1",
+                "localhost/init:1",
+                "registry.example.test/app:2",
+            ],
+        )
+        with tarfile.open(
+            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+        ) as archive:
+            self.assertIn(
+                b"registry.example.test/app:2\n",
+                self.archive_bytes(archive, "images/images.txt"),
+            )
+            self.assertIn(
+                b"registry.example.test/app:2",
+                self.archive_bytes(archive, "images/images.tar"),
+            )
+            for line in (
+                self.archive_bytes(archive, "checksums.sha256")
+                .decode("utf-8")
+                .splitlines()
+            ):
+                digest, name = line.split("  ", 1)
+                self.assertEqual(
+                    hashlib.sha256(self.archive_bytes(archive, name)).hexdigest(),
+                    digest,
+                )
+
+    def test_failed_pull_reports_only_image_and_login_hint_without_save_or_build(self):
+        """Suppress registry diagnostic credentials and refuse cached/build fallback."""
+        self.write(
+            "manifests/remote.yaml",
+            "spec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
+        )
+        self.process.side_effect = subprocess.CalledProcessError(
+            125,
+            "podman pull",
+            output=b"private-auth-token",
+            stderr=b"private-auth-token",
+        )
+        self.assertEqual(bundle.main(), 1)
+        self.process.assert_called_once()
+        self.assertIn("registry.example.test/app:2", self.errors.getvalue())
+        self.assertIn("podman login registry.example.test", self.errors.getvalue())
+        self.assertEqual(len(self.errors.getvalue().splitlines()), 1)
+        self.assertNotIn(
+            "private-auth-token", self.errors.getvalue() + self.output.getvalue()
+        )
+        self.assertFalse(bundle.DIST.exists())
 
     def test_sha256_reads_more_than_one_chunk(self):
         path = self.root / "large.bin"

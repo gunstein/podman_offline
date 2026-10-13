@@ -32,6 +32,7 @@ app's dependencies are installed only in the images. The first build needs inter
 
 ```sh
 ./dev/build-images.sh
+./dev/pull-images.sh
 ./scripts/generate-certificates.sh
 cp config.example.yaml config.yaml
 chmod 600 config.yaml
@@ -181,7 +182,7 @@ database and OIDC are only needed for apps that use them.
 
 | Need | Files and changes |
 | --- | --- |
-| Code and image | `apps/<app>/Containerfile`; add the app and the right tag to `dev/build-images.sh`, or build/pull the image manually. |
+| Code and image | For a demo image named `localhost/myproduct-<app>:<tag>`, add `apps/<app>/Containerfile`; `dev/build-images.sh` reads its tag from the manifest. Registry images are published outside this repo and fetched by `dev/pull-images.sh`. |
 | Pod | `manifests/NN-<app>.yaml`: full image name, `imagePullPolicy: Never`, `restartPolicy: Always`. |
 | Health check | One local exec-based `livenessProbe` per container: initialDelay 90, period 30, timeout 5, failureThreshold 3. Init containers have no probe. |
 | Product tests | Update the fixed resource counts in `test_real_product_manifests_render_with_dummy_files` in `tests/test_deploy.py`; `tests/test_health.py` checks all probes automatically. |
@@ -193,7 +194,8 @@ database and OIDC are only needed for apps that use them.
 | Documentation | Update the app overview, the Secret volumes listed under uninstall, `acceptance/README.md` and `examples/VM-CHECKLIST.md`. |
 
 Run the unit tests, `./deploy prepare` and dev e2e before building the bundle.
-A new tag in a manifest requires exactly that name to be built or pulled locally.
+A new local tag must be built before bundling. A registry tag must be published
+before bundling; it is pulled automatically, with no build fallback.
 When extending an existing installation, create only the new secrets,
 as described under upgrade; keep all existing files.
 
@@ -201,18 +203,40 @@ as described under upgrade; keep all existing files.
 
 The manifests are the only source of images. The build reads `containers` and
 `initContainers` from all `manifests/*.yaml`, removes duplicates and sorts the names.
-The images must already be pulled with `podman pull` or built with `podman build`
-on the build machine, with exactly the same full name and tag as in the manifest.
-`./dev/build-images.sh` does this for the demo.
+There are two source modes, determined by the full manifest name:
+
+- `localhost/<name>:<tag>` is a locally prepared image. Build it first with
+  `podman build`, or pull/tag it explicitly. `./dev/build-images.sh` prepares
+  the demo images using the manifest tags, including the local PostgreSQL alias.
+- Other names, including `localhost:<port>/<name>:<tag>`, refer to a registry.
+  `bundle.py` pulls every distinct name with `podman pull --policy=always` before
+  saving. `./dev/pull-images.sh` uses the same rule for dev. A cached image does
+  not replace a failed pull; neither helper nor bundling builds registry images.
+
+The demo remains locally buildable, and `apps/` keeps its source code. For
+Artifactory deployments, build/publish the images in your external image pipeline
+and put their exact registry/project/repository/tag names in the manifests,
+including the PostgreSQL mirror. No actual Artifactory addresses are assumed here.
 
 Prefer full original names, for example `registry.example.com/team/app:1.2.3`,
 and `imagePullPolicy: Never`. `localhost/myapp:1.0.0` and names with a registry port
 are also accepted. Short names like `postgres:16` and `team/app:1` are rejected. Placeholders in
 image names are not supported at build time, and the manifests must contain at least one image.
-The bundle needs no separate image list: for a new image version, change the tag
-in the manifest; the new image must exist locally before the build. The demo's
-`dev/build-images.sh`, however, has a fixed app list and tag that must also be updated
-if you use the script to build a new app or version.
+The bundle needs no separate image list: change the manifest tag and prepare the
+local image or publish the registry image. The demo helper discovers local app
+names and tags from these same manifests. Registry tags should never be reused.
+Digest pinning is deferred until save/load and image-exists behavior has been verified.
+
+Registry authentication is external: run `podman login <registry>` as the build
+user before pulling or bundling. No login or credentials are handled by these scripts.
+For an internal registry CA, install its public certificate as
+`/etc/containers/certs.d/<registry-host[:port]>/ca.crt`, or use the build user's
+`~/.config/containers/certs.d/<registry-host[:port]>/ca.crt`.
+The directory must match the registry authority exactly. Keep TLS verification
+enabled. See the [registry certificate directory documentation](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md).
+An expected pull failure reports the image and a login/CA hint, without printing
+the registry's potentially private diagnostics. The offline target needs neither
+registry credentials nor registry access.
 
 Run `./build-bundle.sh` with Podman 4.4 or newer. `bundle.py` uses
 `podman save -m` with the default docker-archive format and creates
