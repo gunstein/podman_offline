@@ -893,6 +893,10 @@ def registration_stage(components, directory, home=None):
                 raise DeployError(
                     f"Expected a public PEM certificate in {certificate}"
                 ) from None
+            if not isinstance(config.get("PUBLIC_ORIGIN"), str):
+                raise DeployError(
+                    f"PUBLIC_ORIGIN in {component} config must be an HTTPS origin"
+                )
             origin = config["PUBLIC_ORIGIN"].rstrip("/")
             address = urlsplit(origin)
             if (
@@ -1076,21 +1080,105 @@ def install():
     """Install the selected component bundle or a standalone manifest fixture."""
     if (ROOT / "bundle.yaml").exists():
         install_components()
+    elif (ROOT / "components").is_dir():
+        raise DeployError(
+            "Run install from an unpacked app/help bundle, not the source checkout"
+        )
     else:
         install_legacy()
 
 
+def uninstall(component=None, delete_data=False):
+    """Remove one scoped service and registration, preserving data unless explicitly requested."""
+    production_environment()
+    selected = bundle_components()
+    own = next(name for name in selected if name != "core")
+    component = component or own
+    if component not in (own, "core"):
+        raise DeployError(
+            "This bundle can only uninstall its own app/help or unused core"
+        )
+    marker = HOME / "installed" / component
+    if not marker.is_file():
+        raise DeployError(f"Component {component} is not installed")
+    if component == "core":
+        dependents = [
+            name
+            for name in ("app1", "app2", "help")
+            if (HOME / "installed" / name).is_file()
+        ]
+        if dependents:
+            raise DeployError("Core is still required by: " + ", ".join(dependents))
+    _, _, output, quadlet = component_paths(component)
+    documents = load_yaml_all(output)
+    check_component_names(documents, component, output)
+    volumes = [
+        doc["metadata"]["name"]
+        for doc in documents
+        if isinstance(doc, dict)
+        and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
+    ]
+    run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
+    for path in (output, quadlet):
+        path.unlink()
+    route = HOME / "routes" / (component + ".conf")
+    if route.is_file():
+        route.unlink()
+    client = HOME / "clients" / component
+    if client.exists():
+        if client.is_symlink():
+            raise DeployError("Refuse symlinked client registration")
+        shutil.rmtree(client)
+    marker.unlink()
+    if component != "core":
+        with tempfile.TemporaryDirectory(
+            prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+        ) as directory:
+            imports, _ = registration_stage([], Path(directory))
+            write_file_archives(imports, component_paths("core")[1])
+        run("systemctl", "--user", "restart", "myproduct-core.service")
+        run("systemctl", "--user", "is-active", "--quiet", "myproduct-core.service")
+    run("systemctl", "--user", "daemon-reload")
+    if delete_data:
+        for name in volumes:
+            result = subprocess.run(  # noqa: UP022 - Python 3.6
+                ["podman", "volume", "exists", name],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if result.returncode == 0:
+                run("podman", "volume", "rm", name)
+            elif result.returncode != 1:
+                raise DeployError(f"Cannot check volume {name} before deletion")
+        shutil.rmtree(HOME / component)
+    print(
+        f"[OK] Uninstalled {component}; shared network retained; data {'deleted' if delete_data else 'preserved'}"
+    )
+
+
 def main():
     """Run the chosen deploy command and return an exit code for expected errors."""
-    commands = {"prepare": prepare, "install": install}
+    commands = {"prepare": prepare, "install": install, "uninstall": uninstall}
     args = sys.argv[1:]
-
-    if len(args) != 1 or args[0] not in commands:
-        print("Usage: ./deploy prepare|install")
+    removing = bool(args and args[0] == "uninstall")
+    valid_remove = removing and args[1:] in (
+        [],
+        ["core"],
+        ["--delete-data"],
+        ["core", "--delete-data"],
+    )
+    if not args or args[0] not in commands or (not valid_remove and len(args) != 1):
+        print("Usage: ./deploy prepare|install|uninstall [core] [--delete-data]")
         return 2
 
     try:
-        commands[args[0]]()
+        if removing:
+            uninstall(
+                "core" if "core" in args[1:] else None, "--delete-data" in args[1:]
+            )
+        else:
+            commands[args[0]]()
     except subprocess.CalledProcessError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         if args[0] == "install":

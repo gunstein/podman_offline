@@ -1,38 +1,19 @@
-# Local test PKI
+# Demo PKI
 
-Run `./PKI/generate.sh` or `./scripts/generate-certificates.sh` from the repo root.
-`PKI/generate.sh` is a wrapper around `scripts/generate-certificates.sh`.
-The script in `scripts/` ships with the offline bundle and creates the PKI directory when needed. The default TLS name is `myproduct-proxy`; an optional first
-argument sets another DNS name.
+`scripts/generate-certificates.sh [--root DIR] core|app1|app2|help [DNS hostname]`
+creates missing component material once. `PKI/generate.sh` forwards arguments to
+that script. Dev uses build/dev; prod passes --root /var/lib/myproduct explicitly.
+The shared CA lives in PKI/private. Core has identity signing and web TLS pairs,
+its database password and shared demo-user passwords. Each app has a separate
+client pair and database password. Session/API keys use GENERATED_SECRETS.
 
-In prod, use `bash scripts/generate-certificates.sh --root /var/lib/myproduct
-myproduct-proxy` (on one line, as the service user). Keys,
-passwords and the CA then live outside the release directory. Without `--root` the default is still
-the project root. Generate only at the first installation, never when upgrading;
-databases and demo users keep their original passwords. A CA on the target host
-is for the demo only; in real prod, certificates are issued externally.
+Identity receives only each client's public certificate; its private key and CA
+certificate reach the own Todo through its signing PVC. All directories/files
+are created privately. Repeating generation preserves existing nonempty files;
+partial certificate/CA pairs and empty password files fail. Adding app2 retains
+core/app1 material, except the CA serial advances when a new certificate is issued.
 
-The CA key and CA certificate are generated in `PKI/private/`. Three separate key pairs
-are signed by the CA:
-
-| Files | Use | Delivered to the pod as |
-| --- | --- | --- |
-| `generated-certificates/identity/identity.{key,crt}` | Duende signs OIDC tokens | Secret |
-| `generated-certificates/todo/todo-client.{key,crt}` | Todo authenticates the client with private_key_jwt | PVC via VOLUME_FILES |
-| `generated-certificates/web/web.{key,crt}` | nginx HTTPS | Secret |
-
-Duende also gets a copy of the Todo client's public certificate in
-`generated-certificates/client/`. The Todo volume gets the CA certificate for HTTPS
-verification and a separate random cookie signing secret. Random
-database passwords and passwords for the demo users alice/bob are created as well.
-
-All output is created with `umask 077` and is ignored by Git. The CA certificate can be
-imported into the browser; the CA private key must stay with whoever issues
-the certificates. The script rejects a new run when key material already exists,
-so that a repeated command does not replace keys or passwords under a running app.
-
-The Todo private key lives in a PVC as intended. It is sensitive even though it is a
-volume file: deploy normalizes the file mode in the import archive to 0644. Only the backend
-mounts the volume, read-only. Protect the host's Podman storage and backups.
-Replace the key and update both the Todo PVC and Duende's public client certificate
-together in a later rotation. This script does not implement automatic rotation.
+No keys, passwords or certificates are committed. A CA private key on the target
+is for the demo only: real production issues certificates elsewhere and delivers
+them to the persistent component paths. Do not replace database passwords or the
+CA during an upgrade. Keep private state outside releases and back it up.

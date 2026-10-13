@@ -449,3 +449,13 @@ Missing or invalid projected fields fail rather than defaulting to false.
 Smoke-test failure messages withhold response URLs and bodies, including OIDC
 callback code/state and form/session tokens. The generated-secrets example also
 checks private file modes and reuse after a second prepare/play.
+
+## Component acceptance
+
+The 0.2 source and bundles use core/app1/app2/help with independent units,
+configs and databases. The component flow checks both installation orders,
+shared sign-in, scoped data/markers, app1-only upgrade and app1 uninstall while
+app2/help remain available. Each bundle has its own deploy.py trust file; shared
+core is reused on an equal CORE_VERSION. Run-23 proves the previous monolithic
+layout only. Component runtime results are recorded in new runs, never inferred
+from it. See the root README for fresh installation and retained-data uninstall.

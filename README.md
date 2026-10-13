@@ -1,281 +1,240 @@
-# MyProduct: Todo with Duende and PostgreSQL
+# Rootless offline Podman demo
 
-A small, runnable Podman example with six pods. The frontend is plain
-HTML and JavaScript. The Python backend signs users in with Duende using
-Authorization Code + PKCE and `private_key_jwt`. The browser gets an HttpOnly cookie;
-the OIDC tokens are never sent to JavaScript. Each user has their own tasks.
+Build on a machine with network, transfer checksummed bundles, then install as
+one service user on an offline host. Python 3.6+ and PyYAML 5.4.1/6.x are the only
+product Python requirements. Podman 5.x, Quadlet, systemd, OpenSSL and Bash are
+required on the target. The demo uses Duende IdentityServer, PostgreSQL, two Todo
+instances, nginx and a static help app.
 
-```text
-Browser ── HTTPS :8443 ── nginx reverse proxy (own pod)
-                          ├── /             → frontend :8080 (Todo pod)
-                          ├── /auth/, /api/ → Python backend :8000 (same Todo pod)
-                          │                    └── Todo PostgreSQL (own pod)
-                          ├── /help/        → help pages (own pod)
-                          └── /identity/    → Duende (own pod)
-                                               └── Identity PostgreSQL (own pod)
-```
+## Components and bundles
 
-Only nginx publishes a port. All pods use the Podman network `myproduct`.
-There are no Kubernetes Services or Ingress controller; Podman DNS uses the
-pod names in the manifests. The Todo pod `myproduct-todo` shares its network
-between the frontend on port 8080 and the backend on port 8000.
+| Bundle | Components | Public paths |
+| --- | --- | --- |
+| `myproduct-app1-<v>-offline.tar.gz` | core + app1 | `/identity/`, `/app1/` |
+| `myproduct-app2-<v>-offline.tar.gz` | core + app2 | `/identity/`, `/app2/` |
+| `myproduct-help-<v>-offline.tar.gz` | help; requires installed core | `/help/` |
 
-Todo links to the help pages at **/help/**. The help app runs in its own pod
-(`myproduct-help`) and serves plain HTML/CSS through the same HTTPS proxy.
-The help is available without signing in and uses no database. The pages live
-in `apps/help/`; rebuild the help image when the content changes.
+Core contains identity, its PostgreSQL pod and the HTTPS proxy. Each Todo has
+its own PostgreSQL pod, plus frontend and backend in one pod. Both apps share
+identity users but have separate OIDC clients, database volumes and session
+cookies. With all components installed there are 8 pods and 10 app containers.
+The root path `/` returns 404; use `/app1/` or `/app2/`.
 
-## Run locally, rootless
+`components/<name>/` holds manifests, an example config and any route/client
+registration. `bundles.yaml` defines the three bundle selections. `VERSION`
+versions app/help releases; `CORE_VERSION` independently versions shared core.
+All Pod, Secret, PVC and ConfigMap names must start with their component prefix;
+the renderer rejects other names before generating files.
 
-Requires Podman, OpenSSL, Python 3.6+ and PyYAML on the host. .NET and the Python
-app's dependencies are installed only in the images. The first build needs internet.
+There is one Quadlet service per component: `myproduct-core`, `myproduct-app1`,
+`myproduct-app2` and `myproduct-help`. The identical `myproduct.network` is shared,
+installed idempotently and never removed by uninstalling one bundle. App bundles
+install missing core, retain equal core, upgrade newer core and refuse older core.
+Changed public routes or OIDC clients restart core even when its version is equal.
+This causes a short shared sign-in/proxy interruption; app2/help services and data
+are not restarted by an app1 upgrade. Unchanged registrations leave equal core
+untouched. There is no start order between pods in one component; apps retry their
+databases for up to 60 seconds.
+
+This component layout is for fresh installations. It does not automatically
+migrate the former monolithic 0.1.x data/config or remove its service. Preserve
+that data and plan an explicit migration before replacing an existing deployment.
+
+## Run locally
 
 ```sh
 ./dev/build-images.sh
 ./dev/pull-images.sh
-./scripts/generate-certificates.sh
-cp config.example.yaml config.yaml
+cp config.example.yaml config.yaml   # edit common dev settings if needed
 chmod 600 config.yaml
 ./dev/dev.sh up
-```
-
-Add this line to the host's `/etc/hosts` manually:
-
-```text
-127.0.0.1 myproduct-proxy
-```
-
-Import **only the CA certificate** `PKI/private/ca.crt` into the browser's local
-CA store, and open **https://myproduct-proxy:8443**. Podman resolves the same name
-internally, so the browser and the backend use an identical OIDC issuer.
-The default setup is meant for one local machine. On other machines, the
-DNS name, certificate, `PUBLIC_ORIGIN` and port setup must be adapted together.
-
-The users `alice` and `bob` are created on first start. Their passwords are
-generated locally in `generated-certificates/users/alice-password` and
-`bob-password`. The passwords are stored as hashes in Duende's PostgreSQL database.
-Existing user passwords are not changed automatically if the source files change later.
-
-```sh
-podman ps --all --pod
+python3 -m venv .venv-app
+.venv-app/bin/pip install -r apps/todo-backend/requirements.txt
+APP_BASE_PATH=/app1 .venv-app/bin/python dev/smoke-test.py
+APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
 ./dev/dev.sh down
 ```
 
-`down` keeps the database volumes and the Todo certificate volume. A new `up`
-imports the `VOLUME_FILES` files again but keeps the existing database content.
-The network and named volumes are only removed manually when no longer needed.
+The dev helper creates missing demo credentials under `build/dev/`, reuses them
+on subsequent starts, and runs `./deploy prepare` followed by `podman kube play`.
+Prepare reads the repo's `config.yaml`; per-component dev config, keys and import
+archives live under `build/dev/<component>/`. `build/install.yaml` is private
+(0600). Down preserves data volumes. Do not delete dev credentials while keeping
+the corresponding database volumes: their initialized passwords would differ.
+The default HTTPS name is `myproduct-proxy:8443`; the smoke test maps it locally
+without editing `/etc/hosts`. A manual browser needs suitable DNS/hosts and CA
+trust. Each app uses `/app1/` or `/app2/`; help is public at `/help/`.
 
-## Manifests and certificates
+Smoke tests use actual HTTPS, OIDC code/PKCE/private_key_jwt, user isolation,
+CRUD, CSRF and help navigation. They withhold auth URLs and response bodies on
+failure. Set `PUBLIC_ORIGIN`, `CONNECT_IP`, `SMOKE_CA_FILE` and
+`SMOKE_PASSWORD_DIR` when checking another installation. JavaScript behavior
+still needs a browser check; this is an HTTP integration test.
 
-- `manifests/10-configmap.yaml`: shared public address through a config placeholder.
-- `20-storage.yaml`: separate PVCs for the two databases and Duende's cookie keys.
-- `30-identity-postgres.yaml` and `40-todo-postgres.yaml`: one PostgreSQL pod each.
-- `50-identity.yaml`: Duende with a private signing key and certificate from a Secret.
-- `60-todo.yaml`: frontend and Python backend in the same pod. Only the backend mounts
-  the Todo client certificate/key from a PVC and the database password from a Secret.
-- `70-help.yaml`: static help app about signing in, tasks and troubleshooting.
-- `80-proxy.yaml`: nginx reverse proxy with the HTTPS certificate from a Secret.
+## Images and offline bundles
 
-`SECRET_FILES` generates the Secret documents. `VOLUME_FILES.todo-signing`
-generates the import archive and the PVC that is mounted read-only in the Python backend.
-It contains `todo-client.key`, `todo-client.crt`, the CA certificate and a separate
-cookie signing secret. Duende gets only the client's **public** certificate
-and verifies the client's signed JWT at the token endpoint. Duende's own
-signing key is used for the OIDC tokens. TLS uses a third key pair.
-See [PKI](PKI/README.md).
+Manifests are the only image list. The build reads containers/initContainers
+structurally, deduplicates and sorts full names. Every container must use
+`imagePullPolicy: Never`; image placeholders and short names are rejected.
 
-This is a small demo setup: Duende's users live in PostgreSQL, while client and
-scope configuration is in code and short-lived OAuth grants are kept in memory.
-A sign-in in progress must therefore be restarted after Duende restarts.
-Signing out ends the Todo session; the next sign-in always asks for the password again.
-The databases use one role per app, without separate migration roles. The PostgreSQL
-image's `POSTGRES_USER` creates a superuser in the app's separate cluster; the apps
-create and own their tables themselves. Automatic schema creation is only for this simple example.
-Duende requires a suitable
-[license for production](https://docs.duendesoftware.com/identityserver/overview/licensing/).
+- `localhost/<name>:<tag>` is prepared locally before bundling. The demo build
+  helper discovers `localhost/myproduct-<app>:<tag>` from manifests and builds
+  `apps/<app>/Containerfile`; the PostgreSQL alias is pulled/tagged explicitly.
+- All other full names, including `localhost:<port>/...`, are registry sources.
+  Bundling pulls each with `--policy=always` before save. A failed pull stops;
+  no cached-image or build fallback is used.
 
-## Checking the whole flow
-
-With the app's dependencies in a local test environment:
+A registry can be any OCI-compatible container registry. Build and publish
+those images in your external pipeline, then put their full immutable tags in
+component manifests, for example `registry.example.test/team/todo:1.2.3`.
+Log in with `podman login <registry>` beforehand; no credentials are handled in
+code. For an internal CA use `/etc/containers/certs.d/<registry>/ca.crt` (or the
+user-specific certs.d directory). Never disable TLS verification. Prefer tags
+that are never reused; digest pinning is deferred until save/load/name behavior
+has been verified. Demo localhost tags may be rebuilt while developing an
+unreleased version; published release tags must remain immutable.
 
 ```sh
-python3 -m venv .venv-app
-.venv-app/bin/pip install -r apps/todo-backend/requirements.txt
-.venv-app/bin/python dev/smoke-test.py
+./build-bundle.sh
+(cd dist && sha256sum -c ./*.sha256)
 ```
 
-This test uses real HTTPS and Duende sign-in with both users, and verifies
-CRUD, separation between users, CSRF protection and local sign-out.
-It also follows the help links from Todo and checks the pages, navigation,
-stylesheet, the /help redirect and 404 for unknown help pages. It
-verifies CA/host name and needs no change to `/etc/hosts`. This is an
-HTTP integration test; the frontend JavaScript must also be tried in a browser.
-The isolated renderer/bundle tests run with `python3 -m unittest discover -s tests`.
-See also the small [Podman examples](examples/README.md).
+One invocation creates all three bundles. Each contains only its components,
+`deploy`/`deploy.py`, scripts, Quadlet templates, version metadata and its own
+`images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
+Checksums cover all shipped files. Apps/dev/tests/examples/acceptance and local
+config, passwords and keys are not shipped. Optional component `files/` is for
+public product payloads. Declarations in local/example configs prevent generated
+secrets from being copied into bundles, including through symlink aliases. Keep
+private files out of shipped directories and retain their declarations.
 
-Verified 2026-10-12 with real rootless Podman 5.7.0: all six pods start,
-and the whole HTTP integration test passes through nginx. The 84 unit tests
-pass with both PyYAML 5.4.1 and 6.0.3. Ruff, Pyright and the Python 3.6
-compatibility check for deploy/bundle/tests were clean in that dev run.
-This does not document the prod Quadlet or reboot.
+## Config, secrets and persistence
 
-## Generated secrets
+Prod reads `~/core/config.yaml`, `~/app1/config.yaml`, `~/app2/config.yaml` and
+`~/help/config.yaml`. Relative `SECRET_FILES`/`VOLUME_FILES` paths are resolved
+from that config's directory; absolute paths and `~` are supported. Config keys
+are strings, ordinary values are text/integers and `HTTPS_PORT` is an integer.
+Duplicate YAML keys, partial placeholders, unresolved references, missing mounts
+and colliding Secret/PVC/ConfigMap names are rejected. Whole `@@NAME@@` values
+preserve int/string types; ConfigMap data becomes text.
 
-`GENERATED_SECRETS` is an optional list of relative file paths, resolved from the
-config directory. Before reading `SECRET_FILES`, both prepare and install create
-missing files with 32 random alphanumeric characters. Files are created exclusively
-with mode 0600 and private parent directories (0700). A nonempty existing file is
-kept unchanged; an empty file is an error, never a request to regenerate it.
-Absolute paths, `..` and symlinks escaping the config directory are rejected.
-Only the created filename is logged.
+`SECRET_FILES: {id: [paths]}` encodes files into Secrets (about 375 kB per id).
+Directories expand one level; nested directories are not allowed for Secrets.
+`VOLUME_FILES` creates private import tar archives and PVCs. Podman imports at
+start, overwriting matching files while preserving app-created/unlisted files.
+Symlinks in product output/state paths are refused to prevent sibling writes.
 
-The demo config generates `generated-certificates/app/ApiResources__0__ApiSecrets__0__Value`.
-`SECRET_FILES.app-secrets` imports that directory, and identity receives it through
-`envFrom.secretRef`. This demonstrates delivery of an API-style environment secret;
-the demo identity still configures its scopes and clients in code.
+`GENERATED_SECRETS` lists relative files beneath the config directory. Missing
+files are created exclusively with 32 random alphanumeric characters, mode 0600
+and private parents. Existing nonempty files are retained; empty files are errors.
+Absolute/traversing/escaping paths are rejected. Only filenames are logged.
+Add new entries to an existing component's persistent config when upgrading,
+then deliver them through `SECRET_FILES`; never replace old database passwords.
+Back these files up with all other persistent state. See the
+[generated-secrets example](examples/generated-secrets/README.md).
 
-Back up `generated-certificates/` with the other persistent files, including these
-values. If paths are placed elsewhere under the config directory, include those
-files in backup too. Keep prod config in the service user's home, outside releases.
-Generated values are retained across upgrades; no Podman secret API is added.
-Keep these files outside shipped product directories, especially `files/`.
-The bundle build checks declarations in both local `config.yaml` and
-`config.example.yaml` and refuses to copy a generated secret, including through
-a symlink alias. Do not remove those declarations while retaining private files
-in a build checkout; undeclared private material cannot be identified automatically.
-Try [the generated-secret example](examples/generated-secrets/README.md) to
-verify exact envFrom delivery and reuse without printing values.
-
-## Health checks
-
-All seven app containers have one exec-based `livenessProbe`, enforced by Podman:
-
-| Container | Local check |
-| --- | --- |
-| identity-postgres-db / todo-postgres-db | `pg_isready` with the same user and database as the PostgreSQL environment variables. |
-| identity-app | Bash `/dev/tcp` requires HTTP 200 from `127.0.0.1:8080/identity/health`. |
-| todo-backend | Python `urllib.request` requires HTTP 204 from `127.0.0.1:8000/livez`, without database or sign-in. |
-| todo-frontend / help-web | BusyBox `wget` against its own `127.0.0.1:8080/`. |
-| proxy-nginx | BusyBox `wget` against its own HTTPS `/livez`, with `HTTPS_PORT` from the environment and no certificate check. |
-
-Liveness never depends on other pods. `/api/health` still checks the database
-for checks/e2e; it is not used as a probe. The proxy's `/livez` returns 204
-itself and never routes to the backend's `/livez`.
-
-`initialDelaySeconds: 90` covers startup, including the apps' up to 60 seconds of
-waiting for the database. Podman runs no check during this period; the status is
-`starting` for up to 90 seconds after each start, and becomes `healthy` after the next
-successful check. The probe runs every 30 seconds with a 5-second timeout; three
-failures in a row give `unhealthy` and an automatic restart with `restartPolicy: Always`.
-No readiness probe or Containerfile HEALTHCHECK is used.
-
-With `as_product` defined as in the prod instructions:
-
-```sh
-as_product podman ps
-as_product podman inspect --format '{{.State.Health.Status}}' myproduct-todo-backend
-as_product podman healthcheck run myproduct-todo-backend
+```text
+/var/lib/myproduct/                         service-user home, 0700
+├── core/, app1/, app2/, help/
+│   ├── config.yaml                        0600, retained across releases
+│   ├── generated-certificates/            0700, keys/passwords retained
+│   └── files/                             0700; import archives 0600
+├── PKI/private/                           0700; shared demo CA
+├── routes/<component>.conf                public route registrations
+├── clients/<component>/                   public OIDC metadata/certificate
+├── installed/<component>                  installed version, 0600
+├── .config/containers/systemd/             scoped .kube/.yaml + shared .network
+├── .local/share/containers/storage/        images, DB data and secret volumes
+└── releases/myproduct-<bundle>-<version>/   code/manifests/images, disposable
 ```
 
-A manual check during the start period is skipped as well. `systemctl is-active` is
-still not a health check for individual containers. Rootless Podman uses transient
-timers in the service user's systemd instance; linger must be enabled.
+Proxy and identity consume imported volumes, not host bind mounts. The renderer
+collects public registrations into current route/client indexes. Only those
+indexes are used at runtime: Podman imports do not delete removed files, so stale
+files left in volumes must not keep an uninstalled route/client active.
 
-## Adding an app
+The shared demo CA and core keys/passwords are generated once. Each app gets
+its own client private key/certificate and database password; session keys use
+GENERATED_SECRETS. Identity receives only public client certificates. Its signing
+key is a Secret; each Todo's private signing/session material is in its own PVC.
+`PKI/private/ca.key` on the target is for the demo only. In real prod, issue
+certificates elsewhere and deliver them to the persistent component paths.
+See [PKI](PKI/README.md). PostgreSQL's entrypoint creates a superuser in each
+separate cluster; each app creates/owns its tables, with no migration/GRANT role.
+Duende needs an appropriate [production license](https://docs.duendesoftware.com/identityserver/overview/licensing/).
+Local Todo logout clears only that app's session; shared identity SSO remains.
 
-A manifest in `manifests/` makes the app's image visible to the bundle build.
-There is no app registry. Go through the points below when you add an app;
-database and OIDC are only needed for apps that use them.
+## First production installation
 
-| Need | Files and changes |
-| --- | --- |
-| Code and image | For a demo image named `localhost/myproduct-<app>:<tag>`, add `apps/<app>/Containerfile`; `dev/build-images.sh` reads its tag from the manifest. Registry images are published outside this repo and fetched by `dev/pull-images.sh`. |
-| Pod | `manifests/NN-<app>.yaml`: full image name, `imagePullPolicy: Never`, `restartPolicy: Always`. |
-| Health check | One local exec-based `livenessProbe` per container: initialDelay 90, period 30, timeout 5, failureThreshold 3. Init containers have no probe. |
-| Product tests | Update the fixed resource counts in `test_real_product_manifests_render_with_dummy_files` in `tests/test_deploy.py`; `tests/test_health.py` checks all probes automatically. |
-| Proxy route | A new `location` in `apps/proxy/default.conf`; rebuild the proxy image. |
-| Config | Update `config.example.yaml` for new installations and the existing `/var/lib/myproduct/config.yaml` when upgrading. Declare new generated values in `GENERATED_SECRETS` and their delivery in `SECRET_FILES`; keep existing secrets unchanged. |
-| Database | Its own postgres pod following `30-identity-postgres.yaml`/`40-todo-postgres.yaml`, a PVC in `20-storage.yaml`, a password file and `SECRET_FILES` in config. For new installations, also update `scripts/generate-certificates.sh`. |
-| OIDC | Client, redirect URI and scope in `apps/identity/Program.cs`; client certificate and Secret/PVC in config and manifest. Rebuild the identity image. |
-| E2E | A new check in `dev/smoke-test.py`, called from `main`; try the frontend JavaScript in a browser. |
-| Acceptance | `healthy()` in `acceptance/remote.sh` reads names from the installed YAML; add the needed DB/OIDC and e2e checks, and extend `acceptance/markers.py` when the app has persistent per-user data. |
-| Documentation | Update the app overview, the Secret volumes listed under uninstall, `acceptance/README.md` and `examples/VM-CHECKLIST.md`. |
-
-Run the unit tests, `./deploy prepare` and dev e2e before building the bundle.
-A new local tag must be built before bundling. A registry tag must be published
-before bundling; it is pulled automatically, with no build fallback.
-When extending an existing installation, create only the new secrets,
-as described under upgrade; keep all existing files.
-
-## Offline bundle and rootless Quadlet
-
-The manifests are the only source of images. The build reads `containers` and
-`initContainers` from all `manifests/*.yaml`, removes duplicates and sorts the names.
-There are two source modes, determined by the full manifest name:
-
-- `localhost/<name>:<tag>` is a locally prepared image. Build it first with
-  `podman build`, or pull/tag it explicitly. `./dev/build-images.sh` prepares
-  the demo images using the manifest tags, including the local PostgreSQL alias.
-- Other names, including `localhost:<port>/<name>:<tag>`, refer to a registry.
-  `bundle.py` pulls every distinct name with `podman pull --policy=always` before
-  saving. `./dev/pull-images.sh` uses the same rule for dev. A cached image does
-  not replace a failed pull; neither helper nor bundling builds registry images.
-
-The demo remains locally buildable, and `apps/` keeps its source code. For
-container registry deployments, build/publish the images in your external image pipeline
-and put their exact registry/project/repository/tag names in the manifests,
-including the PostgreSQL mirror. No actual container registry addresses are assumed here.
-
-Prefer full original names, for example `registry.example.com/team/app:1.2.3`,
-and `imagePullPolicy: Never`. `localhost/myapp:1.0.0` and names with a registry port
-are also accepted. Short names like `postgres:16` and `team/app:1` are rejected. Placeholders in
-image names are not supported at build time, and the manifests must contain at least one image.
-The bundle needs no separate image list: change the manifest tag and prepare the
-local image or publish the registry image. The demo helper discovers local app
-names and tags from these same manifests. Registry tags should never be reused.
-Digest pinning is deferred until save/load and image-exists behavior has been verified.
-
-Registry authentication is external: run `podman login <registry>` as the build
-user before pulling or bundling. No login or credentials are handled by these scripts.
-For an internal registry CA, install its public certificate as
-`/etc/containers/certs.d/<registry-host[:port]>/ca.crt`, or use the build user's
-`~/.config/containers/certs.d/<registry-host[:port]>/ca.crt`.
-The directory must match the registry authority exactly. Keep TLS verification
-enabled. See the [registry certificate directory documentation](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md).
-An expected pull failure reports the image and a login/CA hint, without printing
-the registry's potentially private diagnostics. The offline target needs neither
-registry credentials nor registry access.
-
-Run `./build-bundle.sh` with Podman 4.4 or newer. `bundle.py` uses
-`podman save -m` with the default docker-archive format and creates
-`dist/myproduct-0.1.0-offline.tar.gz` with manifests, deploy, scripts, Quadlet and
-checksums. `images/images.tar` is one archive with all images and their full names
-and tags. `images/images.txt` lists the names, one per line. Both files are part
-of the checksums. Private keys, local config and PKI are not packaged.
-
-The target machine uses a dedicated system user `myproduct`, with home
-`/var/lib/myproduct` (0700), rootless Podman and linger. Host prerequisites:
-Podman 5.x with user Quadlet, Python 3.6+/PyYAML, OpenSSL, `newuidmap`/`newgidmap`,
-`semanage`, `restorecon`, active firewalld and SELinux Enforcing. On OL9,
-`semanage` comes from `policycoreutils-python-utils`; install it before the machine is isolated.
-The product installs no packages.
-
-### First installation
-
-The following runs as a normal operator with sudo, from the directory with the archive and
-the checksum file. Adjust version, IP, host name and port. The host name must match
-DNS, the certificate and `PUBLIC_ORIGIN`; `HTTPS_PORT` and the port in `PUBLIC_ORIGIN`
-must change together. The demo's internal OIDC name is `myproduct-proxy`.
-Edit `IP_ADDRESS`, `PUBLIC_ORIGIN` and `HTTPS_PORT` in the config with sudoedit.
-The port must be identical in `--port`, `HTTPS_PORT` and `PUBLIC_ORIGIN`.
-
-`fapolicyd-cli --update` notifies the daemon and does not wait for the update to finish.
-Define this function in the operator's shell before installing or upgrading.
-It reads the database until the new and any removed paths match, and stops
-on errors or timeout. Only paths and status are printed.
+Run as the operator with sudo. Choose an app bundle first; help alone fails.
+`--port`, every `HTTPS_PORT` and the port in `PUBLIC_ORIGIN` must agree.
+The archive is opened by the operator and streamed to myproduct, which cannot
+read the operator's private home. No `cd` by the operator into the 0700 service
+home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
-# Wait, read-only, for exact trust paths after the daemon's asynchronous update.
+bundle=app1
+version=0.2.0
+archive="myproduct-$bundle-$version-offline.tar.gz"
+sha256sum -c "$archive.sha256"
+stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
+tar xzf "$archive" -C "$stage"
+sudo bash "$stage/myproduct-$bundle-$version/scripts/prepare-host.sh" --port 8443
+rm -rf -- "$stage"
+```
+
+prepare-host creates the system user myproduct with home `/var/lib/myproduct`
+and nologin shell, allocates noncolliding subuid/subgid ranges, enables linger
+and opens the HTTPS port permanently. SELinux stays Enforcing. Storage outside
+the normal home uses Podman's [troubleshooting guide, point 11](https://github.com/containers/podman/blob/v5.8.2/troubleshooting.md#11-podman-run-fails-with-cannot-open-shared-object-file):
+`/var/lib/containers` is mapped to `/var/lib/myproduct/.local/share/containers`.
+Unexpected existing equivalences fail instead of being deleted automatically.
+Recursive restorecon excludes storage; only the storage directory itself is
+restored nonrecursively. Never run recursive or force restorecon on filled storage.
+
+Use these helpers for subsequent commands:
+
+```sh
+# Run commands as the service user from its home and systemd runtime.
+as_product() {
+    sudo -H -u myproduct bash -c '
+        cd "$HOME" || exit
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        exec "$@"
+    ' bash "$@"
+}
+# Require every installed component container to be running and healthy.
+healthy() {
+    as_product python3 - <<'HEALTH'
+import pathlib
+import subprocess
+import yaml
+
+
+def main():
+    """Check each installed Pod container without printing private inspect fields."""
+    paths = sorted((pathlib.Path.home() / ".config/containers/systemd").glob("myproduct-*.yaml"))
+    if not paths:
+        raise SystemExit("No installed component manifests")
+    for path in paths:
+        with path.open() as stream:
+            for doc in yaml.safe_load_all(stream):
+                if doc.get("kind") != "Pod":
+                    continue
+                for container in doc["spec"]["containers"]:
+                    name = doc["metadata"]["name"] + "-" + container["name"]
+                    state = subprocess.check_output(
+                        ["podman", "inspect", "--format", "{{.State.Status}} {{.State.Health.Status}}", name],
+                        universal_newlines=True, timeout=10).strip()
+                    print(name + " " + state)
+                    if state != "running healthy":
+                        raise SystemExit("Wait for healthy before continuing")
+
+
+main()
+HEALTH
+}
+# Wait for an exact trust entry and, optionally, removal of an old release.
 wait_trust() {
     local wanted=$1 removed=${2:-} dump status attempt
     for attempt in {1..30}; do
@@ -307,260 +266,134 @@ wait_trust() {
 }
 ```
 
+Unpack and trust only the verified release's deploy.py. Trust uses one file per
+bundle; never add directory trust, private keys, crun rules or memfd rules.
+Repeat checksum/trust for each release directory:
+
 ```sh
-version=0.1.0
-hostname=myproduct-proxy
-https_port=8443
-archive="myproduct-$version-offline.tar.gz"
-release="/var/lib/myproduct/releases/myproduct-$version"
-sha256sum -c "$archive.sha256"
-stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
-tar xzf "$archive" -C "$stage"
-sudo bash "$stage/myproduct-$version/scripts/prepare-host.sh" --port "$https_port"
-sudo -H -u myproduct mkdir -p /var/lib/myproduct/releases
-# The operator opens the archive: myproduct needs no access to the operator's home.
-sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
-rm -rf -- "$stage"
+release="/var/lib/myproduct/releases/myproduct-$bundle-$version"
+as_product mkdir -p /var/lib/myproduct/releases
+as_product tar xzf - -C /var/lib/myproduct/releases < "$archive"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
-sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
+sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file "myproduct-$bundle"
 sudo fapolicyd-cli --update
 wait_trust "$release/deploy.py"
-sudo -H -u myproduct bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$hostname"
-sudo install -o myproduct -g myproduct -m 0600 "$release/config.example.yaml" /var/lib/myproduct/config.yaml
-sudoedit /var/lib/myproduct/config.yaml
+for component in core "$bundle"; do
+    as_product bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$component" myproduct-proxy
+    if ! sudo test -e "/var/lib/myproduct/$component/config.yaml"; then
+        sudo install -o myproduct -g myproduct -m 0600 "$release/components/$component/config.example.yaml" "/var/lib/myproduct/$component/config.yaml"
+    fi
+done
+sudoedit /var/lib/myproduct/core/config.yaml /var/lib/myproduct/app1/config.yaml
 sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
-sudo systemctl --user -M myproduct@ status myproduct.service
+sudo systemctl --user -M myproduct@ status myproduct-core.service myproduct-app1.service
 ```
 
-The operator does not need to `cd` into the service user's private home. `sudo -H`
-sets the right HOME but does not change the working directory. That is why bash does an
-explicit `cd` as the service user before install: rootless Podman must be able to open
-the working directory again when the process starts in the user's namespace. The operator's
-private home is not accessible to the service user. `sudo bash` reads
-the preparation script from `/tmp`; the script is not executed directly, so `noexec` on
-`/tmp` does not block this form. Any policy denial must still be
-investigated, not bypassed with changed permissions or broad trust.
+Set IP_ADDRESS in core to the target's host IP. Set PUBLIC_ORIGIN/HTTPS_PORT
+consistently in each component; use the DNS name passed to the certificate
+script. The proxy pod's hostname is derived from PUBLIC_ORIGIN, so app pods
+resolve that same HTTPS name internally. Each install validates the user database
+home and runtime, renders, loads/verifies images, writes component imports/units
+and calls `systemctl --user`. It does not wait for health; do the checks below.
 
-`prepare-host.sh --port <port>` is idempotent and requires an integer 1024–65535.
-It reads no config and has no example fallback. The script creates
-the account with nologin, assigns at least 65536 subuid/subgid without overlap, sets
-the home mode, enables linger and opens the port permanently in firewalld.
-Every check gives a clear error. An unexpected equivalence starting with
-`/var/lib/myproduct` stops the script and must be removed manually before preparing.
+To add app2, repeat checksum/unpack/trust with `bundle=app2`, initialize only app2
+credentials/config (keep core's existing config), edit it to match core and install.
+To add help, repeat with `bundle=help`; copy only its missing config and install.
+Help needs no new credentials. These installs update shared routing/client imports
+and restart core, while retaining the other app's service/data.
 
-The system user does not get the usual HOME_DIR rules from container-selinux.
-Storage therefore uses the equivalence
-`/var/lib/myproduct/.local/share/containers = /var/lib/containers`, as described
-[in Podman's troubleshooting guide, item 11](https://github.com/containers/podman/blob/main/troubleshooting.md#11-changing-the-location-of-the-graphroot-leads-to-permission-denied).
-Overlay, overlay-layers and overlay-images have container_ro_file_t;
-overlay-containers has container_var_lib_t; volume content has container_file_t.
+## Upgrade and uninstall
 
-The script creates `.config/cni/net.d`, cni.lock and the user's Quadlet directory
-before the first Podman call. This prevents the runtime type on the config paths that was
-observed in run-6. It labels the home with storage excluded, and only the storage
-directory itself without recursion. **Never run restorecon -R or -F on populated
-storage.** The script does not change the enforcing state of SELinux or fapolicyd.
-
-Acceptance step 07 compares actual types with selinux.matchpathcon. Outside
-storage, `restorecon -n -v -R -e <storage> /var/lib/myproduct` must give empty output.
-The separate storage dry run is always logged, and each line must match a justified,
-named rule; unknown lines give FAIL. See the [SELinux diagnosis](acceptance/SELINUX-DIAGNOSIS.md).
-No AVC/USER_AVC/FANOTIFY denials are allowed. Rootless uses a normal
-host socket on port 1024 or higher; the lab filter restricts access to the lab subnet.
-
-The certificate generation above is for demo/test. In real production the
-certificates are issued outside the target machine and delivered to the paths in the config. The CA's private
-key must not be copied there.
-
-`install` reads config.yaml from the home in the user database (`pwd.getpwuid`).
-All prod paths follow this home; install rejects a set `$HOME` that
-differs, for example from a wrong sudo configuration. `prepare` still reads the config in the repo root.
-Relative paths in `SECRET_FILES` and `VOLUME_FILES` are resolved from the config file's
-directory. Absolute paths and `~` work as before. The example config's
-paths can therefore be used unchanged in both dev and prod.
-
-`install` rejects root, checks the runtime directory and renders the YAML. If
-`XDG_RUNTIME_DIR` is missing, `/run/user/<euid>` is used. A set variable must be
-exactly this path; a mismatch is rejected before rendering. A missing directory gives an
-error with a hint about linger. Then `podman load -i images/images.tar`
-and `podman image exists` run in the service user's storage. Only after a successful
-image check are the file archives and Quadlet files written, and `systemctl --user`
-runs daemon-reload, restart and is-active. `prepare` is unchanged.
-
-```text
-/var/lib/myproduct/                         0700, owned by myproduct
-├── config.yaml                            0600, used by all versions
-├── generated-certificates/                 0700, persistent keys and passwords
-├── PKI/private/                            0700, demo CA
-├── .config/containers/systemd/
-│   ├── myproduct.kube                     0644
-│   ├── myproduct.network                  0644
-│   └── myproduct.yaml                     0600 (includes secrets)
-├── .local/share/containers/storage/        images, volumes and databases
-├── files/                                 0700; tar archives 0600
-└── releases/myproduct-<version>/            code, manifests and images; can be deleted
-```
-
-`myproduct.network` creates the network automatically and gives the main service a
-dependency on `myproduct-network.service`. All pods keep
-`restartPolicy: Always`. The user Quadlet uses `WantedBy=default.target` and
-linger to start without a login. Podman 5.x adds
-`podman-user-wait-network-online.service`; check the generator as the user:
+For an upgrade, verify/unpack/trust the new bundle as above, using the same own
+trust file. Reuse persistent config and credentials: do not copy example config
+or generate a new CA/password set. Install and check health/e2e first. Only after
+success remove the old own trust entry, leaving other bundles' trust untouched:
 
 ```sh
-# Use this function for the Podman commands in operations/uninstall as well.
-as_product() {
-    sudo -H -u myproduct bash -c '
-        cd "$HOME" || exit
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-        exec "$@"
-    ' bash "$@"
-}
+sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --update
+wait_trust "$release/deploy.py"
+sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+as_product podman ps
+healthy
+sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deploy.py" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --update
+wait_trust "$release/deploy.py" "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deploy.py"
+```
+
+Use the `healthy` helper defined above. Also verify HTTPS and application e2e
+before removing the previous trust entry.
+
+Then old release directories can be deleted. Keep component configs, credentials,
+files, shared PKI and Podman storage. Back up databases and private persistent
+state; none of it belongs to a release directory.
+
+Use a currently trusted release of the bundle to uninstall its own component:
+
+```sh
+as_product python3 "$release/deploy.py" uninstall
+# Destructive option: also delete this component's data/secret volumes and state.
+as_product python3 "$release/deploy.py" uninstall --delete-data
+```
+
+Choose one of those commands. Default uninstall retains data/config/credentials
+for reinstall. It removes only the own service, version marker, route and public
+client; core reloads the remaining registrations. Network and sibling data/units
+are retained. Remove the own deploy.py trust entries after uninstall and update
+the trust database. Core is retained while any app or help remains; after removing
+all dependents, use `uninstall core` (optionally `--delete-data`) from an app bundle.
+
+Podman Secret contents also remain in named volumes after down/stop; removed
+Secret keys can remain there. The private home/storage restricts host access.
+Explicit own-data deletion removes those volumes too. Never enable KubeDownForce:
+it can delete database volumes. At final host removal, remove all release trust,
+`loginctl disable-linger myproduct`, remove the storage fcontext equivalence with
+`semanage fcontext -d /var/lib/myproduct/.local/share/containers`, and optionally
+`userdel -r myproduct`. These are destructive operator choices, not bundle install steps.
+
+Rootless is the only production mode. On the OL9.8 lab, rootful crun fails with
+fapolicyd rule 5 while loading libraries after its detached-mount clone; see
+[Red Hat's symptom](https://access.redhat.com/solutions/7072618).
+With allow_filesystem_mark=0, rootless container namespaces are outside fapolicyd's
+observation, not approved by it. SELinux remains Enforcing. Host systemd health
+launchers still need clean audit evidence; no security rules are weakened.
+
+## Health checks and acceptance
+
+Every ordinary container has one exec liveness probe: initial delay 90 seconds,
+period 30, timeout 5, three failures. Status is starting during the start period
+after each restart. PostgreSQL uses pg_isready, identity checks its local /health
+via Bash /dev/tcp, backend uses Python against local /livez, frontend/help use
+local wget and proxy uses wget against its own HTTPS /livez. No probe depends on
+another pod. Backend /api/health checks the database only for e2e/control.
+
+```sh
+as_product podman ps
+as_product podman inspect --format '{{.State.Health.Status}}' app1-todo-backend
+as_product podman healthcheck run app1-todo-backend
 as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
 
-`myproduct.kube` gives one service, `myproduct.service`, for all pods. Every
-installation, including an upgrade, restarts all pods and the databases.
-The service fails if a pod fails at startup. There is no start order
-between pods; the apps try to connect to the database for 60 seconds. There is one
-installation per service user, with fixed names for the service and the network.
-`systemctl is-active` shows the service's state and does not guarantee that every
-container is running. Operational checks must also check container status and HTTPS/e2e;
-the service can be active even if one container is stopped.
+systemctl is-active is not an individual container health check. Linger must
+keep the rootless timer/user instance alive. The manual
+[VM checklist](examples/VM-CHECKLIST.md) covers policy-based labels and read-only
+restorecon classifications. Local [unit tests](tests/README.md) need no Podman;
+[examples](examples/README.md) exercise real Podman; the
+[acceptance harness](acceptance/README.md) tests clean dev-to-offline-prod snapshots,
+registry-only downloads, HTTPS, crash/hang recovery, reboot and upgrades.
+Previous monolithic run-23 passed on 2277a71; component acceptance results must
+be recorded separately and old evidence is never changed.
 
-### Upgrade
+## Adding an app
 
-Config, keys, passwords, CA and the Podman storage belong to the installation, not to a
-release. **Do not run generate-certificates.sh when upgrading**, and do not copy
-a new example config over the existing config. PostgreSQL sets the password only
-at first initialization, the demo users keep their old password hashes,
-and the clients must keep trusting the same CA. The script's guard against existing
-keys also applies when `--root` is used.
-
-To add a generated secret during an upgrade, edit the persistent config and add
-only the new path under `GENERATED_SECRETS`, then reference its directory or file
-under `SECRET_FILES` and use the id in the manifest. For example:
-
-```yaml
-GENERATED_SECRETS:
-  - generated-certificates/new-app-db/password
-SECRET_FILES:
-  new-app-db: [generated-certificates/new-app-db]
-```
-
-Keep existing entries when editing config. The next install creates the missing
-file once; this replaces the manual `openssl rand` recipe for new generated values.
-Never replace an existing database password to add a new app.
-New signing/client certificates are issued separately, in real prod by an external CA,
-and delivered as the service user with `umask 077` to new paths. Also update
-Duende's public client certificate/client configuration when needed. Do not replace
-the existing CA, database passwords, demo passwords or keys by running the whole generator.
-
-Run from the directory with the new archive and checksum file:
-
-```sh
-old_version=0.1.0
-version=0.1.1
-archive="myproduct-$version-offline.tar.gz"
-release="/var/lib/myproduct/releases/myproduct-$version"
-sha256sum -c "$archive.sha256"
-sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
-sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
-sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file myproduct
-sudo fapolicyd-cli --update
-wait_trust "$release/deploy.py"
-sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
-sudo systemctl --user -M myproduct@ is-active myproduct.service
-```
-
-Check that the installation succeeded, that the service is active and that all
-containers are running. If anything fails, stop here and keep the old trust. After
-a successful installation and check, remove the trust for the old release:
-
-```sh
-sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py" --trust-file myproduct
-sudo fapolicyd-cli --update
-wait_trust "$release/deploy.py" "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py"
-```
-
-After a successful upgrade, old release directories can be deleted once their
-trust has been removed. Keep `/var/lib/myproduct/config.yaml`,
-`generated-certificates/`, `PKI/`, `files/` and the Podman storage, also when deleting
-releases. Back up the persistent state, including the databases.
-`PKI/private/ca.key` on the host is only for the demo; in real prod the
-certificates are issued externally and delivered to `generated-certificates/` without the CA key.
-
-### fapolicyd and rootless
-
-The checksum check inside the bundle runs as root: the lab's policy allows
-root with a trusted RPM program to read Python files too. Then only
-the verified `deploy.py` is added to the trust database, so that Python running as
-`myproduct` can read it. Repeat the checksum and trust for every newly unpacked version.
-Shell scripts run with `bash`, which reads the files without executing scripts directly.
-No directories, container runtime or private keys are added to the trust.
-
-On the OL9.8 lab even `sudo crun --version` fails with fapolicyd rule 5.
-The audit shows crun's `open_tree` on `/proc/self/exe`, `mount_setattr` and `execveat`,
-then `exe=/` and denials when opening libraries. This supports
-the explanation that crun runs from a detached mount that fapolicyd has not observed,
-so the process is classified as a directly started dynamic loader.
-[Red Hat describes the same symptom](https://access.redhat.com/solutions/7072618).
-
-The rootless model uses its own mount namespace. With the lab's
-`allow_filesystem_mark = 0`, the containers are expected to be outside fapolicyd's
-observation; this is not an approval of their content by fapolicyd.
-SELinux stays Enforcing. This explanation must be kept separate from actual
-prod verification: the acceptance test and audit document what works on
-the target machine. No crun rules, broad trust rules or binary changes are used.
-
-The user systemd manager and its Podman healthcheck launchers still run on the
-host. Acceptance checks their audit immediately after crash/hang tests and
-preserves safe launcher diagnostics before reboot; any denial gives NOT CLEAN.
-
-## Secrets on disk and uninstalling
-
-Podman kube play writes Secret content to named volumes under
-`/var/lib/myproduct/.local/share/containers/storage/volumes/<secret-name>/_data/`.
-The home is 0700, but private keys and passwords stay after `kube down`
-or stop. Files removed from the Secret definition can still remain in the volume;
-defined files are overwritten. Secret, PVC and ConfigMap names must be unique.
-`defaultMode: 0400` protects private keys inside the container, but does not delete
-data from the host's disk.
-
-Stop the service before deleting a Secret volume. The operator runs the commands
-below. Repeat the trust removal for every installed release that is removed:
-
-```sh
-sudo systemctl --user -M myproduct@ stop myproduct.service
-as_product podman volume ls
-# Example; delete only identified volumes that are not to be kept.
-as_product podman volume rm identity-signing
-sudo fapolicyd-cli --file delete "$release/deploy.py" --trust-file myproduct
-sudo fapolicyd-cli --update
-sudo -H -u myproduct rm /var/lib/myproduct/.config/containers/systemd/myproduct.{kube,network,yaml}
-sudo systemctl --user -M myproduct@ daemon-reload
-sudo loginctl disable-linger myproduct
-```
-
-The Secret volumes are `identity-signing`, `identity-client-certificate`,
-`identity-database-password`, `identity-demo-users`, `todo-database-password`
-and `web-tls`. Keep the database/app data volumes unless they are deliberately deleted.
-Do not enable `KubeDownForce`: it can delete the database volumes too.
-When all data is deliberately to be removed, an administrator can stop the user instance,
-delete the user/home and remove the SELinux equivalence:
-
-```sh
-sudo systemctl stop "user@$(id -u myproduct).service"
-sudo userdel -r myproduct
-sudo semanage fcontext -d /var/lib/myproduct/.local/share/containers
-```
-
-Deleting volumes or running `userdel` does not guarantee physical deletion from disk or
-backups. The installation flow assumes a clean prod host. Use the [acceptance test](acceptance/README.md)
-for prod verification with systemd and reboot.
-
-Manifest validation checks ConfigMap references (envFrom, env key and volume),
-volumeMount names within each pod, and `imagePullPolicy: Never` on every container
-and init-container. Errors include the manifest path; validation finishes before
-volume import archives are written. The hang acceptance test allows 300 seconds
-for failure detection, automatic restart and the new 90-second start period.
+| Need | Files and changes |
+| --- | --- |
+| Component/bundle | Add component manifests/config, bundle selection and validated names/services/state paths. Extend the fixed demo component IDs and dependencies deliberately. |
+| Image | Add apps/<app>/Containerfile for a local myproduct image, or publish a full registry tag; image lists come from manifests. |
+| Config | Update the component config.example.yaml and its existing prod config; never overwrite existing credentials. |
+| Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
+| Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
+| Proxy/OIDC | Own route.conf/client.yaml and public certificate; registrations go through imported core volumes and current indexes. |
+| Tests | Update real resource counts in tests/test_deploy.py and app-specific assertions; probe tests discover every manifest. |
+| E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
+| Docs | Update overview, install/uninstall dependencies, tests/README and acceptance/README. |

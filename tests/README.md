@@ -28,7 +28,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 
 ## Images from the manifests
 
-118 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+142 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
 The image tests cover Pod/Deployment, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
@@ -120,3 +120,12 @@ secrets in shipped directories and symlink aliases before image operations.
 `test_smoke.py` isolates the login and CLI code without requests: callback URLs,
 form/session tokens and HTTP exception contents never appear in failure output.
 The generated-secrets example is rendered twice with temporary private files.
+
+## Component lifecycle
+
+Component tests cover strict resource/file-group prefixes, per-component output paths,
+unchanged siblings, immutable shared networking, core version comparisons, staged
+public route/client imports, current registration indexes, and scoped uninstall.
+Default uninstall retains private state and data volumes; explicit deletion targets
+only the selected component. Certificate tests verify component idempotence and the
+shared CA. The real app fixture has 8 pods, 10 containers and 6 distinct images.

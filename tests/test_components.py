@@ -331,6 +331,76 @@ class ComponentTests(DeployFixture):
             [path.name for path in imports["core-routes"]], ["installed.conf"]
         )
 
+    def test_uninstall_preserves_siblings_and_keeps_data_by_default(self):
+        """Remove app1 routing/service only while retaining app2, help, core and the network."""
+        deploy.install()
+        self.write("home/installed/app2", "1.2.3\n")
+        self.write("home/installed/help", "1.2.3\n")
+        sibling = self.write("home/app2/config.yaml", "persistent app2")
+        route = self.write("home/routes/app1.conf", "app1 route")
+        other = self.write("home/routes/app2.conf", "app2 route")
+        self.process.reset_mock()
+        deploy.uninstall()
+        self.assertFalse(route.exists())
+        self.assertEqual(other.read_text(), "app2 route")
+        self.assertEqual(sibling.read_text(), "persistent app2")
+        self.assertTrue((deploy.HOME / "app1/config.yaml").exists())
+        self.assertTrue((deploy.QUADLET_DIR / "myproduct.network").exists())
+        self.assertFalse((deploy.HOME / "installed/app1").exists())
+        calls = [call.args[0] for call in self.process.call_args_list]
+        self.assertNotIn(
+            ["systemctl", "--user", "stop", "myproduct-core.service"], calls
+        )
+        self.assertFalse(any(args[:2] == ["podman", "volume"] for args in calls))
+
+    def test_core_uninstall_is_blocked_by_apps_or_help(self):
+        """Keep shared core available until every dependent app and help is removed."""
+        deploy.install()
+        self.process.reset_mock()
+        with self.assertRaisesRegex(deploy.DeployError, "still required"):
+            deploy.uninstall("core")
+        self.process.assert_not_called()
+        (deploy.HOME / "installed/app1").unlink()
+        self.write("home/installed/help", "1.2.3\n")
+        with self.assertRaisesRegex(deploy.DeployError, "help"):
+            deploy.uninstall("core")
+
+    def test_explicit_data_deletion_only_removes_own_prefixed_volumes(self):
+        """Use exact own-volume names without broad deletion or touching core volumes."""
+        pod = document(
+            "Pod",
+            "app1-worker",
+            spec={
+                "containers": [
+                    {
+                        "name": "app",
+                        "image": "localhost/app1:1",
+                        "imagePullPolicy": "Never",
+                        "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "data",
+                        "persistentVolumeClaim": {"claimName": "app1-data"},
+                    }
+                ],
+            },
+        )
+        self.write(
+            "components/app1/manifests/10-pod.yaml",
+            yaml.safe_dump_all([document("PersistentVolumeClaim", "app1-data"), pod]),
+        )
+        deploy.install()
+        self.process.reset_mock()
+        self.process.return_value = subprocess.CompletedProcess([], 0)
+        deploy.uninstall(delete_data=True)
+        calls = [call.args[0] for call in self.process.call_args_list]
+        self.assertIn(["podman", "volume", "rm", "app1-data"], calls)
+        self.assertFalse(any("--all" in args or "--force" in args for args in calls))
+        self.assertFalse((deploy.HOME / "app1").exists())
+        self.assertTrue((deploy.HOME / "core/config.yaml").exists())
+
     def test_existing_network_is_kept_and_a_conflict_fails(self):
         """Install the shared network idempotently and refuse another definition."""
         deploy.install()

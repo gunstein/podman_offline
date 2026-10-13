@@ -192,9 +192,10 @@ def build_release(version, bundle_name=None, components=None):
     if (ROOT / "files").is_dir():
         shutil.copytree(ROOT / "files", target / "files", ignore=guard)
 
-    (target / "generated-certificates").mkdir(mode=0o700)
-    (target / "generated-certificates").chmod(0o700)  # uavhengig av umask
-    (target / "build").mkdir()
+    if not components:
+        (target / "generated-certificates").mkdir(mode=0o700)
+        (target / "generated-certificates").chmod(0o700)
+        (target / "build").mkdir()
 
     (target / "deploy").chmod(0o755)
     for script in (target / "scripts").glob("*.sh"):

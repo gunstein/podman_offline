@@ -664,12 +664,11 @@ wait_trust /new/deploy.py /old/deploy.py
             readme = (
                 Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
             )
-            section = readme.split("### Upgrade", 1)[1].split("### fapolicyd", 1)[0]
-            blocks = re.findall(r"```sh\n(.*?)```", section, re.DOTALL)
+            blocks = re.findall(r"```sh\n(.*?)```", readme, re.DOTALL)
             code = "\n".join(
                 block
                 for block in blocks
-                if "sha256sum" in block or "--file delete" in block
+                if "--file delete" in block and "deploy.py install" in block
             )
         (self.root / "version").write_text("0.1.1\n")
         (self.root / "myproduct-0.1.1-offline.tar.gz").touch()
@@ -697,7 +696,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         prefix = (
             "set -eu\nbase="
             + shlex.quote(str(self.root))
-            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nold_version=0.1.0\ncalls="
+            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nold_version=0.1.0\nas_product() { :; }\ncalls="
             + shlex.quote(str(calls))
             + "\ninstall_status="
             + str(install_status)
@@ -1179,14 +1178,15 @@ class HealthTests(unittest.TestCase):
         """Read names from the real manifests and include a new app automatically."""
         repo = Path(__file__).resolve().parent.parent
         text = "\n---\n".join(
-            path.read_text() for path in sorted((repo / "manifests").glob("*.yaml"))
+            path.read_text()
+            for path in sorted((repo / "components").glob("*/manifests/*.yaml"))
         )
         text += "\n---\nkind: Pod\nmetadata: {name: extra}\nspec:\n  containers: [{name: app}]\n"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "installed.yaml"
             path.write_text(text)
             names, init = self.namespace["expected_containers"](path)
-        self.assertEqual(len(names), 8)
+        self.assertEqual(len(names), 11)
         self.assertIn("extra-app", names)
         self.assertFalse(init)
 
