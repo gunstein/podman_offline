@@ -52,7 +52,7 @@ def manifest_images(manifests=None):
         if manifests
         else sorted((ROOT / "components").glob("*/manifests/*.yaml"))
     )
-    if not paths:
+    if manifests is None and not paths:
         paths = sorted((ROOT / "manifests").glob("*.yaml"))
     for path in paths:
         documents.extend(deploy.load_yaml_all(path))

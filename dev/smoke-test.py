@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ORIGIN = os.getenv("PUBLIC_ORIGIN", "https://myproduct-proxy:8443").rstrip("/")
 HOSTNAME = urlparse(ORIGIN).hostname
 CONNECT_IP = os.getenv("CONNECT_IP", "127.0.0.1")
+BASE_PATH = os.getenv("APP_BASE_PATH", "/app1").rstrip("/")
 original_getaddrinfo = socket.getaddrinfo
 
 
@@ -77,8 +78,10 @@ def check_help(session):
         assert "<h1>" + heading + "</h1>" in response.text, path
         navigation = Links()
         navigation.feed(response.text)
-        assert "/" in navigation.hrefs, path
-        assert navigation.hrefs.issubset(set(expected) | {"/"}), navigation.hrefs
+        assert {"/app1/", "/app2/"}.issubset(navigation.hrefs), path
+        assert navigation.hrefs.issubset(set(expected) | {"/app1/", "/app2/"}), (
+            navigation.hrefs
+        )
     stylesheet = get(session, "/help/help.css")
     assert stylesheet.status_code == 200
     assert "text/css" in stylesheet.headers["Content-Type"]
@@ -96,13 +99,25 @@ def client():
     """Create an HTTPS session with the test CA and no environment proxy."""
     result = requests.Session()
     result.trust_env = False
-    result.verify = os.getenv("SMOKE_CA_FILE", str(ROOT / "PKI/private/ca.crt"))
+    result.verify = os.getenv(
+        "SMOKE_CA_FILE", str(ROOT / "build/dev/PKI/private/ca.crt")
+    )
     return result
+
+
+def app_url(path):
+    """Build the selected app's URL while keeping the shared identity origin separate."""
+    return ORIGIN + BASE_PATH + path
 
 
 def get(session, path):
     """Fetch a relative app path with the test session and timeout."""
-    return session.get(ORIGIN + path, timeout=10)
+    target = (
+        app_url(path)
+        if path == "/" or path.startswith(("/api/", "/auth/", "/app.js"))
+        else ORIGIN + path
+    )
+    return session.get(target, timeout=10)
 
 
 def require_success(response, context):
@@ -111,33 +126,34 @@ def require_success(response, context):
         raise RuntimeError(f"{context} failed with HTTP {response.status_code}")
 
 
-def login(username):
+def login(username, session=None):
     """Sign in with the local demo password and return a session with a CSRF header."""
-    session = client()
+    session = session or client()
     response = get(session, "/auth/login")
     require_success(response, "Sign-in page")
-    assert urlparse(response.url).path == "/identity/account/login", (
-        "Unexpected sign-in destination"
-    )
-    form = LoginForm()
-    form.feed(response.text)
-    assert "__RequestVerificationToken" in form.fields
-    form.fields.update(
-        username=username,
-        password=(
-            Path(
-                os.getenv(
-                    "SMOKE_PASSWORD_DIR", str(ROOT / "generated-certificates/users")
+    if urlparse(response.url).path == "/identity/account/login":
+        form = LoginForm()
+        form.feed(response.text)
+        assert "__RequestVerificationToken" in form.fields
+        form.fields.update(
+            username=username,
+            password=(
+                Path(
+                    os.getenv(
+                        "SMOKE_PASSWORD_DIR",
+                        str(ROOT / "build/dev/core/generated-certificates/users"),
+                    )
                 )
+                / (username + "-password")
             )
-            / (username + "-password")
+            .read_text()
+            .strip(),
         )
-        .read_text()
-        .strip(),
+        response = session.post(response.url, data=form.fields, timeout=15)
+        require_success(response, "OIDC callback")
+    assert urlparse(response.url).path == BASE_PATH + "/", (
+        "Unexpected callback destination"
     )
-    response = session.post(response.url, data=form.fields, timeout=15)
-    require_success(response, "OIDC callback")
-    assert urlparse(response.url).path == "/", "Unexpected callback destination"
     state = get(session, "/auth/me").json()
     assert state["user"]["sub"] == username, "Unexpected signed-in user"
     session.headers.update({"X-CSRF-Token": state["csrf"], "Origin": ORIGIN})
@@ -173,7 +189,7 @@ def main():
     alice, bob = login("alice"), login("bob")
     print("PASS: alice and bob signed in through Duende, PKCE and private_key_jwt")
     created = alice.post(
-        ORIGIN + "/api/todos", json={"title": "OIDC smoke test"}, timeout=10
+        app_url("/api/todos"), json={"title": "OIDC smoke test"}, timeout=10
     )
     assert created.status_code == 201, created.text
     item = created.json()
@@ -182,11 +198,11 @@ def main():
         assert any(row["id"] == item["id"] for row in get(alice, "/api/todos").json())
         assert not any(row["id"] == item["id"] for row in get(bob, "/api/todos").json())
         assert (
-            bob.patch(ORIGIN + path, json={"done": True}, timeout=10).status_code == 404
+            bob.patch(app_url(path), json={"done": True}, timeout=10).status_code == 404
         )
-        assert bob.delete(ORIGIN + path, timeout=10).status_code == 404
+        assert bob.delete(app_url(path), timeout=10).status_code == 404
         bad_csrf = alice.post(
-            ORIGIN + "/api/todos",
+            app_url("/api/todos"),
             json={"title": "must not exist"},
             headers={"X-CSRF-Token": "invalid"},
             timeout=10,
@@ -194,16 +210,16 @@ def main():
         assert bad_csrf.status_code == 403
         assert (
             alice.post(
-                ORIGIN + "/api/todos", json={"title": "   "}, timeout=10
+                app_url("/api/todos"), json={"title": "   "}, timeout=10
             ).status_code
             == 400
         )
-        updated = alice.patch(ORIGIN + path, json={"done": True}, timeout=10)
+        updated = alice.patch(app_url(path), json={"done": True}, timeout=10)
         assert updated.status_code == 200 and updated.json()["done"] is True
     finally:
-        deleted = alice.delete(ORIGIN + path, timeout=10)
+        deleted = alice.delete(app_url(path), timeout=10)
         assert deleted.status_code == 204, deleted.text
-    assert alice.post(ORIGIN + "/auth/logout", timeout=10).status_code == 204
+    assert alice.post(app_url("/auth/logout"), timeout=10).status_code == 204
     assert get(alice, "/api/todos").status_code == 401
     print("PASS: create/read/update/delete, user isolation, CSRF and local logout")
 

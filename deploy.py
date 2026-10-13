@@ -7,15 +7,20 @@ Files are listed in config.yaml under SECRET_FILES and VOLUME_FILES (id -> files
 """
 
 import base64
+import json
 import os
 import pwd
 import re
 import secrets
+import shutil
+import ssl
 import string
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -478,6 +483,22 @@ def check_component_names(documents, component, source):
             )
 
 
+def check_component_config_names(config, component, path):
+    """Validate every configured Secret/PVC prefix without generating any files."""
+    for group, kind in (
+        (SECRET_FILES, "Secret"),
+        (VOLUME_FILES, "PersistentVolumeClaim"),
+    ):
+        mapping = config.get(group, {})
+        if not isinstance(mapping, dict):
+            raise DeployError(f"{group} in {path} must be a map")
+        check_component_names(
+            [{"kind": kind, "metadata": {"name": name}} for name in mapping],
+            component,
+            path,
+        )
+
+
 def render(
     files_dir=None,
     write_archives=True,
@@ -497,18 +518,12 @@ def render(
     if component:
         for path in sorted(manifests.glob("*.yaml")):
             check_component_names(load_yaml_all(path), component, path)
-        for group, kind in (
-            (SECRET_FILES, "Secret"),
-            (VOLUME_FILES, "PersistentVolumeClaim"),
-        ):
-            mapping = config.get(group, {})
-            if not isinstance(mapping, dict):
-                raise DeployError(f"{group} in {config_path} must be a map")
-            check_component_names(
-                [{"kind": kind, "metadata": {"name": name}} for name in mapping],
-                component,
-                config_path,
-            )
+        check_component_config_names(config, component, config_path)
+    if component == "core" and "PUBLIC_ORIGIN" in config:
+        origin = config.get("PUBLIC_ORIGIN")
+        if not isinstance(origin, str) or not urlsplit(origin).hostname:
+            raise DeployError(f"PUBLIC_ORIGIN in {config_path} must be an HTTPS origin")
+        config["PUBLIC_HOSTNAME"] = urlsplit(origin).hostname
     generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, SECRET_FILES, config_path.parent)
     volume_config = dict(config)
@@ -568,8 +583,53 @@ def render(
     return text
 
 
+def prepare_components():
+    """Render all source components with private dev state and shared imported registrations."""
+    config = load_config(CONFIG)
+    state = BUILD / "dev"
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for component in ("core", "app1", "app2", "help"):
+        target = state / component / "config.yaml"
+        settings = (
+            load_yaml(target)
+            if target.is_file()
+            else load_yaml(ROOT / "components" / component / "config.example.yaml")
+        )
+        settings.update(
+            {
+                key: value
+                for key, value in config.items()
+                if key not in (SECRET_FILES, VOLUME_FILES, GENERATED_SECRETS)
+            }
+        )
+        write_private(target, yaml.safe_dump(settings, sort_keys=False))
+    with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
+        imports, updates = registration_stage(
+            ["app1", "app2", "help"], Path(directory), home=state
+        )
+        documents = []
+        for component in ("core", "app1", "app2", "help"):
+            text = render(
+                state / component / "files",
+                config_path=state / component / "config.yaml",
+                manifests=ROOT / "components" / component / "manifests",
+                component=component,
+                extra_volumes=imports if component == "core" else None,
+            )
+            documents.extend(yaml.safe_load_all(text))
+        check_links(documents, {})
+        write_registrations(updates, home=state)
+        write_private(
+            BUILD / "install.yaml", yaml.safe_dump_all(documents, sort_keys=False)
+        )
+    print(f"[OK] {BUILD / 'install.yaml'}")
+
+
 def prepare():
     """Write validated dev YAML and import archives without running Podman."""
+    if (ROOT / "components").is_dir() and not (ROOT / "bundle.yaml").exists():
+        prepare_components()
+        return
     output = BUILD / "install.yaml"
     write_private(output, render())
     print(f"[OK] {output}")
@@ -733,15 +793,257 @@ def core_upgrade_needed(version):
     return requested > installed
 
 
-def component_paths(component):
+def component_paths(component, home=None):
     """Return one component's persistent config, archives and Quadlet paths."""
-    state = HOME / component
+    base = (home or HOME).resolve()
+    state = base / component
+    paths = [
+        state,
+        state / "files",
+        state / "config.yaml",
+        base / "installed" / component,
+    ]
+    paths.extend((state / "files").glob("*.tar"))
+    if home is None:
+        paths.extend(
+            [
+                QUADLET_DIR / ("myproduct-" + component + suffix)
+                for suffix in (".yaml", ".kube")
+            ]
+        )
+    if any(path.is_symlink() for path in paths):
+        raise DeployError(
+            f"Refuse symlinked component state or output paths for {component}"
+        )
     return (
         state / "config.yaml",
         state / "files",
         QUADLET_DIR / ("myproduct-" + component + ".yaml"),
         QUADLET_DIR / ("myproduct-" + component + ".kube"),
     )
+
+
+def registration_stage(components, directory, home=None):
+    """Stage existing and proposed public routes and clients without changing live state."""
+    home = home or HOME
+    for name in ("routes", "clients"):
+        source = home / name
+        if source.is_symlink():
+            raise DeployError(
+                f"Refuse symlinked shared registration directory: {source}"
+            )
+        (directory / name).mkdir()
+        if not source.exists():
+            continue
+        for path in sorted(source.iterdir()):
+            if path.is_symlink():
+                raise DeployError(f"Refuse symlinked public registration: {path}")
+            if name == "routes":
+                if path.suffix == ".conf":
+                    shutil.copy2(path, directory / name / path.name)
+            elif path.is_dir() and path.name in ("app1", "app2"):
+                target = directory / name / path.name
+                target.mkdir()
+                for filename in ("client.json", "client.crt"):
+                    public = path / filename
+                    if public.is_symlink():
+                        raise DeployError(
+                            f"Refuse symlinked public client file: {public}"
+                        )
+                    shutil.copy2(public, target / filename)
+            else:
+                raise DeployError(f"Unexpected public client registration: {path}")
+    updates = {}
+    for component in components:
+        source = ROOT / "components" / component
+        route = source / "route.conf"
+        client = source / "client.yaml"
+        if not route.is_file() and not client.is_file():
+            continue
+        config = load_config(component_paths(component, home)[0])
+        core = load_config(component_paths("core", home)[0])
+        if any(
+            config.get(key) != core.get(key) for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")
+        ):
+            raise DeployError(
+                f"{component} PUBLIC_ORIGIN and HTTPS_PORT must match the persistent core config"
+            )
+        if route.is_file():
+            updates["routes/" + component + ".conf"] = route.read_bytes()
+        if client.is_file():
+            metadata = load_yaml(client)
+            if (
+                not isinstance(metadata, dict)
+                or set(metadata) != {"id", "base_path", "scopes", "certificate"}
+                or metadata["id"] != component
+                or metadata["base_path"] != "/" + component
+                or metadata["scopes"] != ["openid", "profile", component]
+                or not isinstance(metadata["certificate"], str)
+                or Path(metadata["certificate"]).is_absolute()
+                or ".." in Path(metadata["certificate"]).parts
+            ):
+                raise DeployError(f"Invalid public client descriptor: {client}")
+            certificate = resolve_path(
+                metadata["certificate"], component_paths(component, home)[0].parent
+            )
+            certificate_bytes = certificate.read_bytes()
+            try:
+                ssl.PEM_cert_to_DER_cert(certificate_bytes.decode("ascii"))
+            except (ValueError, UnicodeError):
+                raise DeployError(
+                    f"Expected a public PEM certificate in {certificate}"
+                ) from None
+            origin = config["PUBLIC_ORIGIN"].rstrip("/")
+            address = urlsplit(origin)
+            if (
+                address.scheme != "https"
+                or not address.hostname
+                or address.path
+                or address.query
+                or address.fragment
+                or address.username
+                or address.password
+            ):
+                raise DeployError(
+                    "PUBLIC_ORIGIN must be an HTTPS origin without credentials, path or query"
+                )
+            prefix = "clients/" + component + "/"
+            updates[prefix + "client.crt"] = certificate_bytes
+            updates[prefix + "client.json"] = json.dumps(
+                {
+                    "Id": component,
+                    "RedirectUris": [origin + metadata["base_path"] + "/auth/callback"],
+                    "Scopes": metadata["scopes"],
+                    "Certificate": "client.crt",
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+    for relative, data in updates.items():
+        target = directory / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    routes = directory / "routes/installed.conf"
+    routes.write_text(
+        "\n".join(
+            path.read_text()
+            for path in sorted((directory / "routes").glob("*.conf"))
+            if path != routes
+        ),
+        encoding="utf-8",
+    )
+    client_dirs = sorted(
+        path for path in (directory / "clients").iterdir() if path.is_dir()
+    )
+    index = directory / "clients/installed.json"
+    index.write_text(
+        json.dumps([path.name + "/client.json" for path in client_dirs]),
+        encoding="utf-8",
+    )
+    # Imports overwrite files without deleting old entries; only these current indexes are read.
+    imports = {"core-routes": [routes], "core-clients": client_dirs + [index]}
+    return imports, updates
+
+
+def write_registrations(updates, home=None):
+    """Write changed public registrations privately and report whether core must restart."""
+    changed = False
+    if any(((home or HOME) / relative).is_symlink() for relative in updates):
+        raise DeployError("Refuse symlinked public registration output")
+    for relative, data in updates.items():
+        target = (home or HOME) / relative
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target.parent.chmod(0o700)
+        write_private(target, data.decode("utf-8"))
+        changed = True
+    return changed
+
+
+def install_component_plan(components, source_components, imports, updates):
+    """Apply a preflighted plan after validating images, changing only selected components."""
+    network = QUADLET_DIR / "myproduct.network"
+    network_text = QUADLET_TEMPLATE.with_suffix(".network").read_text(encoding="utf-8")
+    if network.exists() and network.read_text(encoding="utf-8") != network_text:
+        raise DeployError(f"Existing shared network differs from the bundle: {network}")
+    rendered = {}
+    for component in components:
+        config, files, _, _ = component_paths(component)
+        extra = (
+            imports
+            if component == "core"
+            and "core-routes" in load_config(config).get(VOLUME_FILES, {})
+            else None
+        )
+        rendered[component] = render(
+            files,
+            write_archives=False,
+            config_path=config,
+            manifests=ROOT / "components" / component / "manifests",
+            component=component,
+            extra_volumes=extra,
+        )
+    archive = ROOT / "images/images.tar"
+    if not archive.is_file():
+        raise DeployError(f"Missing image archive {archive}")
+    run("podman", "load", "-i", archive)
+    documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
+    if "core" in source_components and "core" not in components:
+        for path in sorted((ROOT / "components/core/manifests").glob("*.yaml")):
+            documents.extend(load_yaml_all(path))
+    for image in find_images(documents):
+        try:
+            run("podman", "image", "exists", image)
+        except subprocess.CalledProcessError as error:
+            raise DeployError(
+                f"Image {image} is unavailable after load (exit {error.returncode})"
+            ) from None
+    changed = write_registrations(updates)
+    QUADLET_DIR.mkdir(parents=True, exist_ok=True)
+    if not network.exists():
+        network.write_text(network_text, encoding="utf-8")
+        network.chmod(0o644)
+    for component in components:
+        config, files, output, quadlet = component_paths(component)
+        extra = (
+            imports
+            if component == "core"
+            and "core-routes" in load_config(config).get(VOLUME_FILES, {})
+            else None
+        )
+        render(
+            files,
+            config_path=config,
+            manifests=ROOT / "components" / component / "manifests",
+            component=component,
+            extra_volumes=extra,
+        )
+        write_private(output, rendered[component])
+        quadlet.write_text(
+            QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
+                "Yaml=myproduct.yaml", "Yaml=" + output.name
+            ),
+            encoding="utf-8",
+        )
+        quadlet.chmod(0o644)
+    if changed and "core" not in components:
+        write_file_archives(imports, component_paths("core")[1])
+    run("systemctl", "--user", "daemon-reload")
+    services = [component for component in components if component != "core"]
+    if "core" in components or changed:
+        services.append("core")
+    for component in services:
+        service = "myproduct-" + component + ".service"
+        run("systemctl", "--user", "restart", service)
+        run("systemctl", "--user", "is-active", "--quiet", service)
+    for component in components:
+        version = (
+            (ROOT / ("CORE_VERSION" if component == "core" else "VERSION"))
+            .read_text()
+            .strip()
+        )
+        write_private(HOME / "installed" / component, version + "\n")
+    run("podman", "ps", "--all", "--pod")
 
 
 def install_components():
@@ -754,71 +1056,20 @@ def install_components():
         (ROOT / "CORE_VERSION").read_text().strip()
     ):
         components.remove("core")
+    if components == ["help"] and not (HOME / "installed/core").is_file():
+        raise DeployError("Install an app bundle with core before installing help")
     for component in source_components:
         for path in sorted(
             (ROOT / "components" / component / "manifests").glob("*.yaml")
         ):
             check_component_names(load_yaml_all(path), component, path)
-    if components == ["help"] and not (HOME / "installed/core").is_file():
-        raise DeployError("Install an app bundle with core before installing help")
-    network = QUADLET_DIR / "myproduct.network"
-    network_text = QUADLET_TEMPLATE.with_suffix(".network").read_text(encoding="utf-8")
-    if network.exists() and network.read_text(encoding="utf-8") != network_text:
-        raise DeployError(f"Existing shared network differs from the bundle: {network}")
-    rendered = {}
-    for component in components:
-        config, files, _, _ = component_paths(component)
-        rendered[component] = render(
-            files,
-            write_archives=False,
-            config_path=config,
-            manifests=ROOT / "components" / component / "manifests",
-            component=component,
-        )
-    archive = ROOT / "images/images.tar"
-    if not archive.is_file():
-        raise DeployError(f"Missing image archive {archive}")
-    run("podman", "load", "-i", archive)
-    documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
-    for image in find_images(documents):
-        try:
-            run("podman", "image", "exists", image)
-        except subprocess.CalledProcessError as error:
-            raise DeployError(
-                f"Image {image} is unavailable after load (exit {error.returncode})"
-            ) from None
-    QUADLET_DIR.mkdir(parents=True, exist_ok=True)
-    if not network.exists():
-        network.write_text(network_text, encoding="utf-8")
-        network.chmod(0o644)
-    for component in components:
-        config, files, output, quadlet = component_paths(component)
-        render(
-            files,
-            config_path=config,
-            manifests=ROOT / "components" / component / "manifests",
-            component=component,
-        )
-        write_private(output, rendered[component])
-        quadlet.write_text(
-            QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
-                "Yaml=myproduct.yaml", "Yaml=" + output.name
-            ),
-            encoding="utf-8",
-        )
-        quadlet.chmod(0o644)
-    run("systemctl", "--user", "daemon-reload")
-    for component in components:
-        service = "myproduct-" + component + ".service"
-        run("systemctl", "--user", "restart", service)
-        run("systemctl", "--user", "is-active", "--quiet", service)
-        version = (
-            (ROOT / ("CORE_VERSION" if component == "core" else "VERSION"))
-            .read_text()
-            .strip()
-        )
-        write_private(HOME / "installed" / component, version + "\n")
-    run("podman", "ps", "--all", "--pod")
+        config_path = component_paths(component)[0]
+        check_component_config_names(load_config(config_path), component, config_path)
+    with tempfile.TemporaryDirectory(
+        prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
+    ) as directory:
+        imports, updates = registration_stage(source_components, Path(directory))
+        install_component_plan(components, source_components, imports, updates)
 
 
 def install():

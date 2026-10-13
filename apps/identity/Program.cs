@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Duende.IdentityServer;
 using Duende.IdentityServer.Models;
 using Duende.IdentityServer.Services;
@@ -32,7 +33,12 @@ builder.Services.Configure<ForwardedHeadersOptions>(options => {
 });
 var signing = X509Certificate2.CreateFromPemFile(
     "/run/secrets/signing/identity.crt", "/run/secrets/signing/identity.key");
-var clientCertificate = X509Certificate2.CreateFromPem(File.ReadAllText("/run/secrets/client/todo-client.crt"));
+// Client registrations contain only public certificates; new imports take effect on restart.
+var registrations = JsonSerializer.Deserialize<string[]>(File.ReadAllText("/clients/installed.json"))
+    ?? throw new InvalidOperationException("Missing client index");
+var clients = registrations.Select(path => LoadClient(Path.Combine("/clients", path))).ToArray();
+if (clients.Select(client => client.ClientId).Distinct().Count() != clients.Length)
+    throw new InvalidOperationException("Duplicate OIDC client IDs");
 builder.Services.AddIdentityServer(options => {
     options.IssuerUri = origin + "/identity";
     options.KeyManagement.Enabled = false;
@@ -42,17 +48,10 @@ builder.Services.AddIdentityServer(options => {
     .AddInMemoryIdentityResources(new IdentityResource[] {
         new IdentityResources.OpenId(), new IdentityResources.Profile()
     })
-    .AddInMemoryApiScopes(new[] { new ApiScope("todo") })
-    .AddInMemoryClients(new[] { new Client {
-        ClientId = "todo", ClientName = "Todo", AllowedGrantTypes = GrantTypes.Code,
-        RequirePkce = true, RequireConsent = false,
-        RedirectUris = { origin + "/auth/callback" },
-        AllowedScopes = { "openid", "profile", "todo" },
-        ClientSecrets = { new Duende.IdentityServer.Models.Secret {
-            Type = IdentityServerConstants.SecretTypes.X509CertificateBase64,
-            Value = Convert.ToBase64String(clientCertificate.RawData)
-        }}
-    }})
+    .AddInMemoryApiScopes(clients.SelectMany(client => client.AllowedScopes)
+        .Where(scope => scope != "openid" && scope != "profile").Distinct()
+        .Select(scope => new ApiScope(scope)))
+    .AddInMemoryClients(clients)
     .AddJwtBearerClientAuthentication();
 
 var app = builder.Build();
@@ -114,3 +113,23 @@ app.MapPost("/account/login", async (HttpContext context, IAntiforgery antiforge
     return Results.Redirect(returnUrl);
 });
 app.Run();
+
+// Load one validated public client registration and its adjacent certificate.
+static Client LoadClient(string path) {
+    var config = JsonSerializer.Deserialize<ClientConfig>(File.ReadAllText(path))
+        ?? throw new InvalidOperationException("Missing client registration");
+    if (config.Certificate != "client.crt") throw new InvalidOperationException("Invalid certificate filename");
+    var certificate = X509Certificate2.CreateFromPem(File.ReadAllText(Path.Combine(Path.GetDirectoryName(path)!, config.Certificate)));
+    return new Client {
+        ClientId = config.Id, ClientName = config.Id, AllowedGrantTypes = GrantTypes.Code,
+        RequirePkce = true, RequireConsent = false,
+        RedirectUris = config.RedirectUris, AllowedScopes = config.Scopes,
+        ClientSecrets = { new Duende.IdentityServer.Models.Secret {
+            Type = IdentityServerConstants.SecretTypes.X509CertificateBase64,
+            Value = Convert.ToBase64String(certificate.RawData)
+        }}
+    };
+}
+
+// Public registration data loaded from the imported clients volume.
+sealed record ClientConfig(string Id, string[] RedirectUris, string[] Scopes, string Certificate);

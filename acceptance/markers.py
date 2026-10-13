@@ -23,9 +23,9 @@ def main():
         markers = {}
         for user in ("alice", "bob"):
             session = smoke.login(user)
-            title = f"Acceptance {run_id} {user}"
+            title = f"Acceptance {run_id} {smoke.BASE_PATH} {user}"
             response = session.post(
-                smoke.ORIGIN + "/api/todos", json={"title": title}, timeout=10
+                smoke.app_url("/api/todos"), json={"title": title}, timeout=10
             )
             response.raise_for_status()
             row = response.json()

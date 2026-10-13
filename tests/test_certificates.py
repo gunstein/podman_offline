@@ -81,6 +81,39 @@ class CertificateTests(unittest.TestCase):
         )
         self.assertFalse((self.root / "generated-certificates").exists())
 
+    def test_component_credentials_are_independent_and_generated_once(self):
+        """Keep core/app1 private bytes unchanged when app2 is added or scripts repeat."""
+        target = self.root / "component-home"
+        for component in ("core", "app1"):
+            result = self.run_script("--root", str(target), component, "example.test")
+            self.assertEqual(result.returncode, 0, result.stdout)
+        before = self.fingerprints(target)
+        result = self.run_script("--root", str(target), "app2", "example.test")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        after = self.fingerprints(target)
+        self.assertTrue(
+            all(
+                after[name] == digest
+                for name, digest in before.items()
+                if name != "PKI/private/ca.srl"
+            ),
+            "Adding app2 changed existing credentials",
+        )
+        before_repeat = after
+        for component in ("core", "app1", "app2"):
+            result = self.run_script("--root", str(target), component, "example.test")
+            self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(
+            before_repeat == self.fingerprints(target),
+            "Repeated generation changed files",
+        )
+        first = (target / "app1/generated-certificates/database/password").read_bytes()
+        second = (target / "app2/generated-certificates/database/password").read_bytes()
+        self.assertTrue(first != second, "Apps share a database password")
+        for path in target.rglob("*"):
+            if path.is_file():
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
     def test_invalid_arguments_do_not_generate_material(self):
         for args in (("--root",), ("--root", ""), ("bad/name",), ("one", "two")):
             with self.subTest(args=args):

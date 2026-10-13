@@ -16,7 +16,7 @@ class ProbeTests(unittest.TestCase):
 
     def containers(self):
         """Return every ordinary or init-container from product manifests."""
-        for path in sorted((ROOT / "manifests").glob("*.yaml")):
+        for path in sorted((ROOT / "components").glob("*/manifests/*.yaml")):
             with path.open() as stream:
                 for doc in yaml.safe_load_all(stream):
                     if isinstance(doc, dict) and doc.get("kind") == "Pod":
@@ -63,6 +63,59 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("127.0.0.1:8000/livez", command)
         self.assertNotIn("/api/health", command)
 
+    def test_backend_routes_and_cookie_are_scoped_to_the_app(self):
+        """Keep auth/API routes and browser cookies independent for each Todo instance."""
+        tree = ast.parse((ROOT / "apps/todo-backend/app.py").read_text())
+        for component in ("app1", "app2"):
+            namespace = {"BASE_PATH": "/" + component, "APP_ID": component}
+            routes = []
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef):
+                    for decorator in node.decorator_list:
+                        if (
+                            isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Attribute)
+                            and decorator.func.attr
+                            in ("get", "post", "patch", "delete")
+                        ):
+                            expression = ast.Expression(decorator.args[0])
+                            routes.append(
+                                eval(
+                                    compile(expression, "backend route", "eval"),
+                                    namespace,
+                                )
+                            )
+            self.assertIn("/livez", routes)
+            self.assertTrue(
+                all(
+                    route == "/livez" or route.startswith("/" + component + "/")
+                    for route in routes
+                )
+            )
+            settings = next(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "update"
+                and any(key.arg == "SESSION_COOKIE_PATH" for key in node.keywords)
+            )
+            cookies = {
+                key.arg: eval(
+                    compile(ast.Expression(key.value), "cookie setting", "eval"),
+                    namespace,
+                )
+                for key in settings.keywords
+                if key.arg in ("SESSION_COOKIE_NAME", "SESSION_COOKIE_PATH")
+            }
+            self.assertEqual(
+                cookies,
+                {
+                    "SESSION_COOKIE_NAME": component + "-session",
+                    "SESSION_COOKIE_PATH": "/" + component + "/",
+                },
+            )
+
     def test_livez_is_anonymous_and_does_not_connect_to_database(self):
         """Execute liveness/auth functions without importing the app or its dependencies."""
         module = ast.parse((ROOT / "apps/todo-backend/app.py").read_text())
@@ -75,6 +128,7 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(len(functions), 2)
         namespace = {
             "request": types.SimpleNamespace(path="/livez", method="GET"),
+            "BASE_PATH": "",
             "session": {},
             "time": types.SimpleNamespace(time=lambda: 1),
             "abort": mock.Mock(side_effect=AssertionError("Authentication required")),

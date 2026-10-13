@@ -1,6 +1,9 @@
 """Test component namespace and rootless isolation without Podman or systemd."""
 
+import json
+import shutil
 import subprocess
+from pathlib import Path
 
 import yaml
 from test_deploy import DeployFixture, document
@@ -72,6 +75,21 @@ class ComponentTests(DeployFixture):
         self.assertFalse((deploy.HOME / "core/generated/token").exists())
         self.process.assert_not_called()
 
+    def test_app_prefix_error_prevents_core_secret_generation(self):
+        """Preflight every component config before rendering any component secrets."""
+        self.write(
+            "home/core/config.yaml",
+            "HTTPS_PORT: 8443\nGENERATED_SECRETS: [generated/token]\n",
+        )
+        self.write(
+            "home/app1/config.yaml",
+            "HTTPS_PORT: 8443\nSECRET_FILES: {other-token: [missing]}\n",
+        )
+        with self.assertRaisesRegex(deploy.DeployError, "config.yaml.*app1-"):
+            deploy.install()
+        self.assertFalse((deploy.HOME / "core/generated/token").exists())
+        self.process.assert_not_called()
+
     def test_config_group_names_are_checked_before_generated_files(self):
         """Reject an unprefixed config Secret without generating private material."""
         self.write(
@@ -108,7 +126,7 @@ class ComponentTests(DeployFixture):
                 for args in calls
                 if args[:3] == ["systemctl", "--user", "restart"]
             ],
-            ["myproduct-core.service", "myproduct-app1.service"],
+            ["myproduct-app1.service", "myproduct-core.service"],
         )
         self.assertFalse(any("myproduct-app2.service" in args for args in calls))
 
@@ -165,6 +183,153 @@ class ComponentTests(DeployFixture):
             deploy.install()
         self.process.assert_not_called()
         self.assertFalse((deploy.HOME / "core/generated/token").exists())
+
+    def registration_fixture(self):
+        """Create matching origins, a public client descriptor and a synthetic PEM."""
+        for component in ("core", "app1"):
+            self.write(
+                "home/" + component + "/config.yaml",
+                "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+            )
+        source = Path(__file__).resolve().parent.parent / "components/app1"
+        for name in ("route.conf", "client.yaml"):
+            self.write("components/app1/" + name, (source / name).read_bytes())
+        self.write(
+            "home/app1/generated-certificates/todo/todo-client.crt",
+            "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
+        )
+        work = self.root / "registration-stage"
+        work.mkdir()
+        return work
+
+    def test_registrations_stage_public_data_without_touching_siblings(self):
+        """Merge app1 into a pending route/client view while preserving live app2 files."""
+        work = self.registration_fixture()
+        sibling = self.write("home/routes/app2.conf", "existing app2 route")
+        client = self.write("home/clients/app2/client.json", "existing app2 client")
+        self.write("home/clients/app2/client.crt", "existing public certificate")
+        imports, updates = deploy.registration_stage(["app1"], work)
+        self.assertFalse((deploy.HOME / "routes/app1.conf").exists())
+        self.assertEqual(sibling.read_text(), "existing app2 route")
+        self.assertEqual(client.read_text(), "existing app2 client")
+        self.assertEqual(
+            {path.name for path in imports["core-clients"]},
+            {"app1", "app2", "installed.json"},
+        )
+        registration = json.loads(updates["clients/app1/client.json"])
+        self.assertEqual(
+            registration["RedirectUris"],
+            ["https://example.test:8443/app1/auth/callback"],
+        )
+        self.assertEqual(registration["Id"], "app1")
+        self.assertTrue(deploy.write_registrations(updates))
+        self.assertFalse(deploy.write_registrations(updates))
+        self.assertEqual(sibling.read_text(), "existing app2 route")
+        self.assertEqual(self.mode(deploy.HOME / "clients/app1/client.json"), 0o600)
+
+    def test_invalid_client_and_origin_are_rejected_before_live_writes(self):
+        """Reject inconsistent public origins and client identities without modifying routes."""
+        work = self.registration_fixture()
+        self.write(
+            "home/app1/config.yaml",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://other.test:8443\n",
+        )
+        with self.assertRaisesRegex(deploy.DeployError, "must match"):
+            deploy.registration_stage(["app1"], work)
+        self.assertFalse((deploy.HOME / "routes").exists())
+        self.write(
+            "home/app1/config.yaml",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+        )
+        work = self.root / "invalid-client-stage"
+        work.mkdir()
+        self.write(
+            "components/app1/client.yaml",
+            "id: app2\nbase_path: /app1\nscopes: [openid, profile, app1]\ncertificate: generated-certificates/todo/todo-client.crt\n",
+        )
+        with self.assertRaisesRegex(deploy.DeployError, "Invalid public client"):
+            deploy.registration_stage(["app1"], work)
+
+    def test_equal_core_images_are_still_verified(self):
+        """Verify bundled core image names even when the equal core service is retained."""
+        deploy.install()
+        self.process.reset_mock()
+        deploy.install()
+        self.assertIn(
+            ["podman", "image", "exists", "localhost/core:1"],
+            [call.args[0] for call in self.process.call_args_list],
+        )
+
+    def test_dev_prepare_uses_dev_state_instead_of_service_home(self):
+        """Render all real components without reading or writing the account's prod state."""
+        (self.root / "bundle.yaml").unlink()
+        shutil.rmtree(self.root / "components")
+        repo = Path(__file__).resolve().parent.parent
+        shutil.copytree(repo / "components", self.root / "components")
+        self.write(
+            "config.yaml",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nIP_ADDRESS: 127.0.0.1\n",
+        )
+        for component in ("core", "app1", "app2", "help"):
+            config = deploy.load_config(
+                repo / "components" / component / "config.example.yaml"
+            )
+            for group in ("SECRET_FILES", "VOLUME_FILES"):
+                for entries in config.get(group, {}).values():
+                    for entry in entries:
+                        if ".." not in Path(entry).parts:
+                            self.write(
+                                "build/dev/" + component + "/" + entry + "/dummy",
+                                b"dummy",
+                            )
+            if component.startswith("app"):
+                self.write(
+                    "build/dev/"
+                    + component
+                    + "/generated-certificates/todo/todo-client.crt",
+                    "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
+                )
+        before = (deploy.HOME / "app1/config.yaml").read_bytes()
+        deploy.prepare()
+        self.assertEqual((deploy.HOME / "app1/config.yaml").read_bytes(), before)
+        self.assertTrue((deploy.BUILD / "dev/clients/app2/client.json").exists())
+        docs = list(yaml.safe_load_all((deploy.BUILD / "install.yaml").read_text()))
+        self.assertEqual(sum(doc["kind"] == "Pod" for doc in docs), 8)
+        proxy = next(
+            doc
+            for doc in docs
+            if doc.get("kind") == "Pod" and doc["metadata"]["name"] == "core-proxy"
+        )
+        self.assertEqual(proxy["spec"]["hostname"], "example.test")
+        self.process.assert_not_called()
+
+    def test_symlinked_archive_directory_cannot_modify_a_sibling(self):
+        """Reject an app1 output alias to app2 before any image or write operation."""
+        sibling = deploy.HOME / "app2/files"
+        sibling.mkdir(parents=True)
+        (deploy.HOME / "app1/files").symlink_to(sibling, target_is_directory=True)
+        with self.assertRaisesRegex(deploy.DeployError, "symlinked component"):
+            deploy.install()
+        self.assertEqual(list(sibling.iterdir()), [])
+        self.process.assert_not_called()
+
+    def test_import_indexes_exclude_removed_routes_and_clients(self):
+        """Overwrite active indexes so stale files left in imported volumes are ignored."""
+        work = self.registration_fixture()
+        deploy.registration_stage(["app1"], work)
+        self.assertIn(
+            "app1/client.json",
+            json.loads((work / "clients/installed.json").read_text()),
+        )
+        self.assertIn("location /app1/", (work / "routes/installed.conf").read_text())
+        empty = self.root / "empty-stage"
+        empty.mkdir()
+        imports, _ = deploy.registration_stage([], empty)
+        self.assertEqual(json.loads((empty / "clients/installed.json").read_text()), [])
+        self.assertEqual((empty / "routes/installed.conf").read_text(), "")
+        self.assertEqual(
+            [path.name for path in imports["core-routes"]], ["installed.conf"]
+        )
 
     def test_existing_network_is_kept_and_a_conflict_fails(self):
         """Install the shared network idempotently and refuse another definition."""

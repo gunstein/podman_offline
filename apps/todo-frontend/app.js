@@ -1,7 +1,8 @@
 const element = (id) => document.getElementById(id);
+const basePath = new URL(".", location.href).pathname.replace(/\/$/, "");
 let csrf = "";
 async function api(path, method = "GET", body) {
-  const response = await fetch(path, {
+  const response = await fetch(basePath + path, {
     method,
     headers: {"Content-Type": "application/json", "X-CSRF-Token": csrf},
     body: body === undefined ? undefined : JSON.stringify(body)

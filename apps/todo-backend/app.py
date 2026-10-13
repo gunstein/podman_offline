@@ -15,12 +15,15 @@ from psycopg.rows import DictRow, dict_row
 
 ORIGIN = os.environ["PUBLIC_ORIGIN"].rstrip("/")
 ISSUER = ORIGIN + "/identity"
+APP_ID = os.getenv("APP_ID", "todo")
+BASE_PATH = os.getenv("BASE_PATH", "").rstrip("/")
 CERTIFICATES = Path(os.getenv("CERTIFICATES_DIR", "/certificates"))
 
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=(CERTIFICATES / "session-key").read_text().strip(),
-    SESSION_COOKIE_NAME="todo-session",
+    SESSION_COOKIE_NAME=APP_ID + "-session",
+    SESSION_COOKIE_PATH=BASE_PATH + "/",
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -30,11 +33,11 @@ app.config.update(
 oauth = OAuth(app)
 identity = oauth.register(
     "identity",
-    client_id="todo",
+    client_id=APP_ID,
     client_secret=(CERTIFICATES / "todo-client.key").read_text(),
     server_metadata_url=ISSUER + "/.well-known/openid-configuration",
     client_kwargs={
-        "scope": "openid profile todo",
+        "scope": "openid profile " + APP_ID,
         "code_challenge_method": "S256",
         "token_endpoint_auth_method": "private_key_jwt",
     },
@@ -43,6 +46,7 @@ identity = oauth.register(
 
 
 def connect():
+    """Open this instance's PostgreSQL connection with its private password."""
     return psycopg.Connection[DictRow].connect(
         host=os.environ["DATABASE_HOST"],
         dbname="todo",
@@ -58,6 +62,7 @@ def connect():
 
 
 def initialize():
+    """Create the instance's Todo table, retrying while PostgreSQL starts."""
     for attempt in range(60):
         try:
             with connect() as db:
@@ -78,10 +83,14 @@ def initialize():
 
 @app.before_request
 def authenticate():
+    """Protect only this instance's API and logout with session and CSRF checks."""
     if session.get("expires", 0) <= time.time() and "user" in session:
         session.clear()
-    protected = request.path.startswith("/api/") and request.path != "/api/health"
-    if protected or request.path == "/auth/logout":
+    protected = (
+        request.path.startswith(BASE_PATH + "/api/")
+        and request.path != BASE_PATH + "/api/health"
+    )
+    if protected or request.path == BASE_PATH + "/auth/logout":
         if "user" not in session:
             abort(401)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
@@ -95,19 +104,21 @@ def authenticate():
 
 @app.after_request
 def private_response(response):
+    """Prevent caching and MIME sniffing of backend responses."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
-@app.get("/auth/login")
+@app.get(BASE_PATH + "/auth/login")
 def login():
-    # Require credentials again after local logout for this small demo.
-    return identity.authorize_redirect(ORIGIN + "/auth/callback", prompt="login")
+    """Start OIDC for this instance; the shared identity cookie permits SSO."""
+    return identity.authorize_redirect(ORIGIN + BASE_PATH + "/auth/callback")
 
 
-@app.get("/auth/callback")
+@app.get(BASE_PATH + "/auth/callback")
 def callback():
+    """Validate OIDC and issue a session cookie scoped to this app path."""
     # Authlib validates state, nonce, issuer, audience, expiry and ID-token signature.
     token = identity.authorize_access_token()
     claims = token["userinfo"]
@@ -116,22 +127,25 @@ def callback():
     session["user"] = {"sub": claims["sub"], "name": claims.get("name", claims["sub"])}
     session["expires"] = min(claims["exp"], int(time.time()) + 3600)
     session["csrf"] = secrets.token_urlsafe(32)
-    return redirect("/")
+    return redirect(BASE_PATH + "/")
 
 
 @app.errorhandler(OAuthError)
 def oauth_error(error):
+    """Return a safe sign-in failure without logging callback URLs or tokens."""
     app.logger.warning("OIDC rejected: %s", error.error)
     return "Sign-in failed. Go back and try again.", 400
 
 
-@app.get("/auth/me")
+@app.get(BASE_PATH + "/auth/me")
 def me():
+    """Return this instance's current user and CSRF token."""
     return jsonify(user=session.get("user"), csrf=session.get("csrf", ""))
 
 
-@app.post("/auth/logout")
+@app.post(BASE_PATH + "/auth/logout")
 def logout():
+    """Clear only this app's local session."""
     session.clear()
     return "", 204
 
@@ -142,15 +156,17 @@ def livez():
     return "", 204
 
 
-@app.get("/api/health")
+@app.get(BASE_PATH + "/api/health")
 def health():
+    """Check this app's database for integration tests, not liveness."""
     with connect() as db:
         db.execute("SELECT 1")
     return jsonify(status="ok")
 
 
-@app.get("/api/todos")
+@app.get(BASE_PATH + "/api/todos")
 def list_todos():
+    """List only the current user's tasks in this app database."""
     with connect() as db:
         rows = db.execute(
             "SELECT id, title, done FROM todos WHERE owner = %s ORDER BY id",
@@ -159,8 +175,9 @@ def list_todos():
     return jsonify(rows)
 
 
-@app.post("/api/todos")
+@app.post(BASE_PATH + "/api/todos")
 def create_todo():
+    """Validate and store a new task for the current user."""
     data = request.get_json()
     title = data.get("title") if isinstance(data, dict) else None
     if not isinstance(title, str) or not 1 <= len(title.strip()) <= 200:
@@ -173,8 +190,9 @@ def create_todo():
     return jsonify(row), 201
 
 
-@app.patch("/api/todos/<int:todo_id>")
+@app.patch(BASE_PATH + "/api/todos/<int:todo_id>")
 def update_todo(todo_id):
+    """Update a task owned by the current user in this app database."""
     data = request.get_json()
     if not isinstance(data, dict) or not isinstance(data.get("done"), bool):
         abort(400)
@@ -188,8 +206,9 @@ def update_todo(todo_id):
     return jsonify(row)
 
 
-@app.delete("/api/todos/<int:todo_id>")
+@app.delete(BASE_PATH + "/api/todos/<int:todo_id>")
 def delete_todo(todo_id):
+    """Delete a task owned by the current user in this app database."""
     with connect() as db:
         row = db.execute(
             "DELETE FROM todos WHERE id = %s AND owner = %s RETURNING id",

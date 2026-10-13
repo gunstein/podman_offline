@@ -46,3 +46,4 @@ spec:
   - name: routes
     persistentVolumeClaim:
       claimName: core-routes
+  hostname: '@@PUBLIC_HOSTNAME@@'

@@ -36,6 +36,7 @@ class SmokeErrorTests(unittest.TestCase):
             "os": types.SimpleNamespace(getenv=lambda key, default: default),
             "ROOT": Path("fixture"),
             "ORIGIN": "https://example.test",
+            "BASE_PATH": "/app1",
             "client": mock.Mock(),
             "get": mock.Mock(),
             "LoginForm": mock.Mock(),
@@ -84,6 +85,20 @@ class SmokeErrorTests(unittest.TestCase):
             namespace["login"]("alice")
         self.assertNotIn("private-code", str(caught.exception))
         self.assertNotIn("private-state", str(caught.exception))
+
+    def test_shared_identity_session_needs_no_password_form(self):
+        """Accept an SSO return to this app without opening or submitting a password."""
+        namespace = self.namespace()
+        browser = mock.Mock()
+        namespace["get"].side_effect = [
+            types.SimpleNamespace(status_code=200, url="https://example.test/app1/"),
+            types.SimpleNamespace(
+                json=lambda: {"user": {"sub": "alice"}, "csrf": "synthetic-csrf"}
+            ),
+        ]
+        self.assertIs(namespace["login"]("alice", browser), browser)
+        browser.post.assert_not_called()
+        namespace["Path"].assert_not_called()
 
     def test_cli_does_not_log_exception_contents(self):
         """Redact HTTP exception URLs and assertion payloads at the CLI boundary."""

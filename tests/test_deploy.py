@@ -805,21 +805,36 @@ class RenderTests(DeployFixture):
     def test_real_product_manifests_render_with_dummy_files(self):
         """Render the demo's real manifest set and example config with local dummy files."""
         repo = Path(__file__).resolve().parent.parent
-        self.config = deploy.load_config(repo / "config.example.yaml")
-        for group in ("SECRET_FILES", "VOLUME_FILES"):
-            for paths in self.config[group].values():
-                for path in paths:
-                    self.write(path + "/dummy", b"dummy")
-        self.write_config()
-        for path in sorted((repo / "manifests").glob("*.yaml")):
-            self.write("manifests/" + path.name, path.read_bytes())
-        docs = list(yaml.safe_load_all(deploy.render(write_archives=False)))
+        docs = []
+        for component in ("core", "app1", "app2", "help"):
+            config = deploy.load_config(
+                repo / "components" / component / "config.example.yaml"
+            )
+            base = self.root / "state" / component
+            for group in ("SECRET_FILES", "VOLUME_FILES"):
+                for paths in config.get(group, {}).values():
+                    for path in paths:
+                        target = base / path
+                        target.mkdir(parents=True, exist_ok=True)
+                        (target / "dummy").write_bytes(b"dummy")
+            path = self.write(
+                "state/" + component + "/config.yaml", yaml.safe_dump(config)
+            )
+            text = deploy.render(
+                base / "files",
+                write_archives=False,
+                config_path=path,
+                manifests=repo / "components" / component / "manifests",
+                component=component,
+            )
+            docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]
-        self.assertEqual(kinds.count("Pod"), 6)
+        self.assertEqual(kinds.count("Pod"), 8)
         self.assertEqual(kinds.count("Secret"), 7)
-        self.assertEqual(kinds.count("PersistentVolumeClaim"), 4)
-        self.assertEqual(kinds.count("ConfigMap"), 1)
+        self.assertEqual(kinds.count("PersistentVolumeClaim"), 8)
+        self.assertEqual(kinds.count("ConfigMap"), 3)
         self.assertEqual(len(deploy.find_images(docs)), 6)
+        deploy.check_links(docs, {})
         self.process.assert_not_called()
 
     def test_render_without_archive_writes_still_validates(self):
