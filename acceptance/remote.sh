@@ -12,11 +12,14 @@ role=$8
 run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
+bundle=${12:-app1}
+[[ $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
 state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
-product="/var/lib/myproduct/releases/myproduct-RELEASE"
-if [[ -f $base/version ]]; then product="/var/lib/myproduct/releases/myproduct-$(cat "$base/version")"; fi
+version=$requested_version
+if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
+product="$state/releases/myproduct-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
 # Run commands as the service user from its home with the right runtime.
 as_product() {
@@ -28,6 +31,76 @@ as_product() {
 }
 # Control the product service in the service user's systemd instance.
 user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
+# List only validated installed component markers, never their private state.
+installed_components() {
+    as_product python3 - <<'INSTALLED'
+import pathlib
+import re
+
+
+def main():
+    """Return installed component names after strict name and version validation."""
+    names = []
+    for path in sorted((pathlib.Path.home() / "installed").glob("*")):
+        if path.name not in ("core", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
+            raise SystemExit("FAIL: invalid installed component marker")
+        names.append(path.name)
+    if not names or "core" not in names:
+        raise SystemExit("FAIL: no installed core")
+    print("\n".join(names))
+
+
+main()
+INSTALLED
+}
+# Verify and trust only this bundle's release, reusing an already prepared release.
+prepare_release() {
+    cd "$base"
+    archive="myproduct-$bundle-$version-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    if ! sudo -n test -d "$product"; then
+        # shellcheck disable=SC2024
+        as_product tar xzf - -C "$state/releases" < "$archive"
+        sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+        sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file "myproduct-$bundle"
+        sudo -n fapolicyd-cli --update
+    fi
+    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+    wait_trust "$product/deploy.py"
+}
+# Create only missing component configs and credentials; upgrades reuse them.
+install_configuration() {
+    local component components
+    if [[ $bundle == help ]]; then components=help; else components="core $bundle"; fi
+    for component in $components; do
+        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
+        as_product python3 - "$product/components/$component/config.example.yaml" "$state/$component/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
+import os
+import pathlib
+import sys
+import yaml
+
+
+def main():
+    """Create a private component config once, preserving every existing config."""
+    path = pathlib.Path(sys.argv[2])
+    if path.exists():
+        print("PASS: existing config retained: " + str(path))
+        return
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(sys.argv[1]) as stream:
+        config = yaml.safe_load(stream)
+    config.update(IP_ADDRESS=sys.argv[3], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[4], sys.argv[5]), HTTPS_PORT=int(sys.argv[5]))
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        yaml.safe_dump(config, stream)
+    print("PASS: private config created: " + str(path))
+
+
+main()
+CONFIG
+    done
+}
 # Collect audit with separate streams and accept only the documented empty result.
 audit_events() {
     sudo -n python3 - "$start_date" "$start_time" "$1" <<'AUDIT'
@@ -243,22 +316,27 @@ facts() {
 }
 # Wait for automatic start after reboot without starting or restarting the service.
 wait_boot_service() {
+    local component components
+    components=$(installed_components)
+    for component in $components; do
     for _ in {1..120}; do
         status=0
-        service=$(user_service is-active myproduct.service) || status=$?
+        service=$(user_service is-active "myproduct-$component.service") || status=$?
         printf 'boot-service state=%s exit=%s\n' "$service" "$status"
         case "$service:$status" in
-            active:0) return;;
+            active:0) break;;
             failed:*)
-                user_service status --no-pager myproduct.service || true
+                user_service status --no-pager "myproduct-$component.service" || true
                 echo 'FAIL: product service failed after reboot'; return 1;;
             activating:3|inactive:3) sleep 2;;
             *) echo 'FAIL: unexpected service state or command failure'; return 1;;
         esac
     done
-    user_service status --no-pager myproduct.service || true
-    echo 'FAIL: product service did not become active within 240s'
-    return 1
+    if [[ $service != active || $status != 0 ]]; then
+        user_service status --no-pager "myproduct-$component.service" || true
+        echo 'FAIL: product service did not become active within 240s'; return 1
+    fi
+    done
 }
 # Confirm blocked internet without accepting missing tools as network evidence.
 offline() {
@@ -301,7 +379,9 @@ PY
 }
 # Wait for all manifest-defined app containers and their Podman health status.
 healthy() {
-    user_service is-active myproduct.service
+    local component components
+    components=$(installed_components)
+    for component in $components; do user_service is-active "myproduct-$component.service"; done
     as_product python3 - <<'HEALTHY'
 import json
 import pathlib
@@ -372,7 +452,17 @@ def states(expected, init):
 
 def main():
     """Wait up to 150 seconds for healthy; reject inventory, command and parse errors at once."""
-    expected, init = expected_containers(pathlib.Path.home() / ".config/containers/systemd/myproduct.yaml")
+    folder = pathlib.Path.home() / ".config/containers/systemd"
+    paths = sorted(folder.glob("myproduct-*.yaml"))
+    if not paths:
+        raise RuntimeError("No installed component YAML")
+    expected, init = set(), set()
+    for path in paths:
+        names, initial = expected_containers(path)
+        if (expected | init) & (names | initial):
+            raise RuntimeError("Duplicate container names across components")
+        expected.update(names)
+        init.update(initial)
     deadline = time.monotonic() + 150
     while True:
         current = states(expected, init)
@@ -401,7 +491,7 @@ wait_backend() {
         status=0
         http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
             --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
-            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/api/health") || status=$?
+            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/app1/api/health") || status=$?
         printf 'backend-health HTTP=%s exit=%s\n' "$http" "$status"
         if [[ $status == 0 && $http == 200 ]]; then
             echo 'PASS: backend ready through HTTPS proxy'; return
@@ -505,7 +595,6 @@ pull-images) cd "$src"; ./dev/pull-images.sh;;
 registry-test) cd "$src"; python3 acceptance/registry_test.py "$base" "$run";;
 dev-up)
     cd "$src"
-    ./scripts/generate-certificates.sh
     cp config.example.yaml config.yaml
     chmod 600 config.yaml
     ./dev/dev.sh up
@@ -515,7 +604,10 @@ venv)
     python3 -m venv .venv-smoke
     .venv-smoke/bin/pip install -r apps/todo-backend/requirements.txt
     ;;
-dev-e2e) cd "$src"; .venv-smoke/bin/python dev/smoke-test.py;;
+dev-e2e)
+    cd "$src"
+    for app in app1 app2; do APP_BASE_PATH=/$app .venv-smoke/bin/python dev/smoke-test.py; done
+    ;;
 examples-setup)
     image=$(cat "$base/registry-fixture/image.txt")
     podman image exists "$image"
@@ -545,48 +637,94 @@ upgrade-bundle)
     git diff -- VERSION
     ./build-bundle.sh
     (cd dist && sha256sum -c "myproduct-$requested_version-offline.tar.gz.sha256")
-    cat "build/bundle/myproduct-$requested_version/images/images.txt"
+    cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
+    ;;
+prepare-host)
+    cd "$base"
+    archive="myproduct-$bundle-$version-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    stage=$(mktemp -d /tmp/myproduct-host.XXXXXXXX)
+    tar xzf "$archive" -C "$stage"
+    sudo -n bash "$stage/myproduct-$bundle-$version/scripts/prepare-host.sh" --port "$port"
+    rm -rf -- "$stage"
+    as_product mkdir -p "$state/releases"
+    ;;
+help-alone)
+    prepare_release
+    as_product python3 - "$product/deploy.py" <<'HELP_ALONE'
+import pathlib
+import subprocess
+import sys
+
+
+def main():
+    """Require a clean dependency refusal without creating any component state."""
+    result = subprocess.run(["python3", sys.argv[1], "install"], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 1 or result.stderr.strip() != "ERROR: Install an app bundle with core before installing help":
+        raise SystemExit("FAIL: help-alone did not refuse the missing core")
+    home = pathlib.Path.home()
+    if any((home / name).exists() for name in ("installed", "core", "app1", "app2", "help", "routes", "clients")):
+        raise SystemExit("FAIL: help-alone changed persistent component state")
+    print("PASS: help-alone refused missing core without component writes")
+
+
+main()
+HELP_ALONE
+    output=$(as_product podman ps -aq)
+    test -z "$output"
     ;;
 upgrade)
-    cd "$base"
-    archive="myproduct-$(cat version)-offline.tar.gz"
-    sha256sum -c "$archive.sha256"
-    # shellcheck disable=SC2024
-    sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
-    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-    sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
-    old_release="/var/lib/myproduct/releases/myproduct-$old_version"
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py"
+    prepare_release
+    old_release="$state/releases/myproduct-$bundle-$old_version"
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     healthy
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file myproduct
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deploy.py" "$old_release/deploy.py"
-    echo 'PASS: old deploy.py trust removed, new deploy.py trusted'
+    echo 'PASS: old own deploy.py trust removed; other bundles untouched'
     ;;
 persistent-state)
     as_product python3 - <<'HASHES'
-import hashlib, json, pathlib, ssl
-root = pathlib.Path.home()
-paths = [root / "config.yaml"]
-for directory in ("generated-certificates", "PKI/private", "files"):
-    paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
-assert len(paths) > 1
-hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
-ca = ssl.PEM_cert_to_DER_cert((root / "PKI/private/ca.crt").read_text())
-print(json.dumps({"files_sha256": hashes, "ca_der_sha256": hashlib.sha256(ca).hexdigest()}, sort_keys=True))
+import hashlib
+import json
+import pathlib
+import ssl
+
+
+def main():
+    """Hash private persistent files for the controller without printing their contents."""
+    root = pathlib.Path.home()
+    paths = []
+    for component in ("core", "app1", "app2", "help"):
+        config = root / component / "config.yaml"
+        if config.is_file():
+            paths.append(config)
+        for directory in ("generated-certificates", "files"):
+            paths.extend(p for p in (root / component / directory).rglob("*") if p.is_file())
+    for directory in ("PKI/private", "routes", "clients"):
+        paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
+    if not paths:
+        raise SystemExit("FAIL: no persistent files")
+    hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
+    ca = ssl.PEM_cert_to_DER_cert((root / "PKI/private/ca.crt").read_text())
+    print(json.dumps({"files_sha256": hashes, "ca_der_sha256": hashlib.sha256(ca).hexdigest()}, sort_keys=True))
+
+
+main()
 HASHES
     ;;
 unpack)
     cd "$base"
-    archive="myproduct-$requested_version-offline.tar.gz"
+    archive="myproduct-$bundle-$requested_version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
-    tar -xOf "$archive" "myproduct-$requested_version/VERSION" > version
-    version=$(cat version)
+    tar -xOf "$archive" "myproduct-$bundle-$requested_version/VERSION" > "version-$bundle"
+    version=$(cat "version-$bundle")
     test "$version" = "$requested_version"
-    [[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
-    cat version
+    [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    cat "version-$bundle"
     ;;
 registry-offline)
     cd "$base/registry"
@@ -607,38 +745,14 @@ registry-offline)
     audit_events check
     ;;
 install)
-    cd "$base"
-    archive="myproduct-$(cat version)-offline.tar.gz"
-    sha256sum -c "$archive.sha256"
-    stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
-    tar xzf "$archive" -C "$stage"
-    sudo -n bash "$stage/myproduct-$(cat version)/scripts/prepare-host.sh" --port "$port"
-    sudo -n -H -u myproduct mkdir -p /var/lib/myproduct/releases
-    # The operator opens the archive; myproduct needs no read access to the operator's home.
-    # shellcheck disable=SC2024
-    sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
-    rm -rf -- "$stage"
-    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-    sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py"
-    sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" --root "$state" "$prod_host"
-    sudo -n install -o myproduct -g myproduct -m 0600 "$product/config.example.yaml" "$state/config.yaml"
-    sudo -n -H -u myproduct python3 - "$state/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
-import os, sys, yaml
-with open(sys.argv[1]) as stream:
-    config = yaml.safe_load(stream)
-config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
-os.chmod(sys.argv[1], 0o600)
-with open(sys.argv[1], "w") as stream:
-    yaml.safe_dump(config, stream)
-CONFIG
-    date +%s > "$base/install-start"
+    prepare_release
+    install_configuration
+    date +%s > "$base/install-start-$bundle"
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
-    user_service status --no-pager myproduct.service
-    as_product podman images
+    as_product podman ps --all
     sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
+health) healthy;;
 check)
     profile
     healthy
@@ -648,29 +762,41 @@ check)
     grep -q 'podman-user-wait-network-online.service' <<< "$generated"
     output=$(sudo -n podman ps -aq)
     test -z "$output"
-    sudo -n podman ps -a
     sudo -n ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
-    sudo -n python3 - <<'PY'
-import pathlib, pwd, stat
-account = pwd.getpwnam("myproduct")
-paths = {
- "/var/lib/myproduct": 0o700,
- "/var/lib/myproduct/config.yaml": 0o600,
- "/var/lib/myproduct/generated-certificates": 0o700,
- "/var/lib/myproduct/generated-certificates/app": 0o700,
- "/var/lib/myproduct/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value": 0o600,
- "/var/lib/myproduct/PKI/private": 0o700,
- "/var/lib/myproduct/.config/containers/systemd/myproduct.yaml": 0o600,
- "/var/lib/myproduct/.config/containers/systemd/myproduct.kube": 0o644,
- "/var/lib/myproduct/.config/containers/systemd/myproduct.network": 0o644,
- "/var/lib/myproduct/files": 0o700,
-}
-paths.update({str(p): 0o600 for p in pathlib.Path("/var/lib/myproduct/files").glob("*.tar")})
-for name, mode in paths.items():
-    item = pathlib.Path(name).stat()
-    assert item.st_uid == account.pw_uid and item.st_gid == account.pw_gid and stat.S_IMODE(item.st_mode) == mode, name
-    print("PASS: myproduct:myproduct {:04o} {}".format(mode, name))
-PY
+    sudo -n python3 - <<'PERMISSIONS'
+import pathlib
+import pwd
+import stat
+
+
+def main():
+    """Require private state and readable Quadlets for every installed component."""
+    account = pwd.getpwnam("myproduct")
+    root = pathlib.Path("/var/lib/myproduct")
+    paths = {root: 0o700, root / "PKI/private": 0o700}
+    units = root / ".config/containers/systemd"
+    paths[units / "myproduct.network"] = 0o644
+    for marker in (root / "installed").glob("*"):
+        component = marker.name
+        paths[root / component / "config.yaml"] = 0o600
+        for directory in ("generated-certificates", "files"):
+            folder = root / component / directory
+            if folder.is_dir():
+                paths[folder] = 0o700
+                for path in folder.rglob("*"):
+                    paths[path] = 0o700 if path.is_dir() else 0o600
+        paths[units / ("myproduct-" + component + ".yaml")] = 0o600
+        paths[units / ("myproduct-" + component + ".kube")] = 0o644
+    for path, mode in sorted(paths.items()):
+        item = path.lstat()
+        if (item.st_uid != account.pw_uid or item.st_gid != account.pw_gid
+                or stat.S_IMODE(item.st_mode) != mode):
+            raise SystemExit("FAIL: private ownership/mode: " + str(path))
+        print("PASS: myproduct:myproduct {:04o} {}".format(mode, path))
+
+
+main()
+PERMISSIONS
     container_ids=$(as_product podman ps -aq)
     test -n "$container_ids"
     mapfile -t containers <<< "$container_ids"
@@ -845,14 +971,14 @@ LABELS
 import subprocess
 from pathlib import Path
 
-SECRET_FILE = Path("/var/lib/myproduct/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
+SECRET_FILE = Path("/var/lib/myproduct/core/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
 
 
 def main():
     """Compare source bytes to the delivered secret without printing either value."""
     expected = SECRET_FILE.read_bytes()
     result = subprocess.run(
-        ["podman", "exec", "myproduct-identity-app", "bash", "-c",
+        ["podman", "exec", "core-identity-app", "bash", "-c",
          'printf "%s" "$ApiResources__0__ApiSecrets__0__Value"'],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
     )
@@ -867,38 +993,53 @@ if __name__ == "__main__":
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         raise SystemExit("FAIL: generated API secret delivery check failed")
 API_SECRET
-    as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
-    as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
+    components=$(installed_components)
+    for component in $components; do
+        if [[ $component == app1 || $component == app2 ]]; then
+            as_product podman exec "$component-todo-backend" python -c "import socket; socket.create_connection(('$component-postgres',5432),5).close()"
+        fi
+    done
+    as_product podman exec core-proxy-nginx wget -qO- http://core-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
     uid=$(id -u myproduct)
-    installed=$(cat "$base/install-start")
-    journal=$(sudo -n journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$uid" --since "@$installed" --no-pager)
+    journal=$(sudo -n journalctl _UID="$uid" --since "@$run_started" --no-pager)
     if grep -Ei 'Trying to pull|Pulling image|pull access denied' <<< "$journal"; then
         echo 'FAIL: install attempted a pull'; exit 1
     fi
     echo 'PASS: journal contains no pull attempts'
     ;;
-prod-e2e|markers-create|markers-check)
+prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers)
     cd "$src"
     export PUBLIC_ORIGIN="https://$prod_host:$port" CONNECT_IP="$prod_ip"
     export SMOKE_CA_FILE="$private/ca.crt" SMOKE_PASSWORD_DIR="$private"
-    if [[ $action == prod-e2e ]]; then
-        .venv-smoke/bin/python dev/smoke-test.py
+    if [[ $action == shared-login ]]; then
+        .venv-smoke/bin/python acceptance/shared_login.py
     else
-        .venv-smoke/bin/python acceptance/markers.py "${action#markers-}" "$base/markers.json" "$run"
+        apps="app1 app2"
+        if [[ $action == survivor-* ]]; then apps=app2; fi
+        for app in $apps; do
+            export APP_BASE_PATH=/$app
+            if [[ $action == prod-e2e || $action == survivor-e2e ]]; then
+                .venv-smoke/bin/python dev/smoke-test.py
+            else
+                operation=${action#markers-}
+                if [[ $action == survivor-markers ]]; then operation=check; fi
+                .venv-smoke/bin/python acceptance/markers.py "$operation" "$base/markers-$app.json" "$run"
+            fi
+        done
     fi
     ;;
 stop)
-    user_service stop myproduct.service
-    if user_service is-active --quiet myproduct.service; then exit 1; fi
-    as_product podman ps --all --pod
+    components=$(installed_components)
+    for component in $components; do user_service stop "myproduct-$component.service"; done
     output=$(as_product podman ps -q)
     test -z "$output"
     as_product podman secret ls
     as_product podman volume ls
     ;;
 start|restart)
-    user_service "$action" myproduct.service
+    components=$(installed_components)
+    for component in $components; do user_service "$action" "myproduct-$component.service"; done
     healthy
     ;;
 crash)
@@ -909,7 +1050,7 @@ import subprocess
 import sys
 import time
 
-CONTAINER = "myproduct-todo-backend"
+CONTAINER = "app1-todo-backend"
 
 
 def product_command(arguments):
@@ -997,7 +1138,7 @@ import subprocess
 import sys
 import time
 
-CONTAINER = "myproduct-todo-backend"
+CONTAINER = "app1-todo-backend"
 
 
 def product_command(arguments):
@@ -1097,6 +1238,92 @@ if __name__ == "__main__":
 HANG
     healthy
     wait_backend
+    ;;
+siblings-before|siblings-after)
+    sudo -n python3 - "$action" "$base/siblings.json" <<'SIBLINGS'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+
+def command(arguments):
+    """Read separate command streams without printing private inspect or trust content."""
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=15)
+    print(result.stderr, end="", file=sys.stderr)
+    if result.returncode:
+        raise SystemExit("FAIL: sibling observation command failed")
+    return result.stdout
+
+
+def observe():
+    """Project sibling process identity, version markers and their exact trust records."""
+    prefix = ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+              'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
+    names = ["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend", "help-web-web"]
+    rows = json.loads(command(prefix + ["podman", "inspect", "--format", "json"] + names))
+    if not isinstance(rows, list) or len(rows) != len(names):
+        raise SystemExit("FAIL: incomplete sibling inspect list")
+    observed = {}
+    for row in rows:
+        name, state = row["Name"], row["State"]
+        if (name not in names or name in observed or state["Status"] != "running"
+                or state["Health"]["Status"] != "healthy"
+                or type(row["RestartCount"]) is not int
+                or type(state["Pid"]) is not int or state["Pid"] <= 1
+                or not isinstance(state["StartedAt"], str) or not state["StartedAt"]):
+            raise SystemExit("FAIL: invalid sibling state")
+        observed[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": row["RestartCount"]}
+    trust = command(["fapolicyd-cli", "--dump-db"])
+    records = sorted(line for line in trust.splitlines()
+                     if any("/releases/myproduct-" + component + "-" in line for component in ("app2", "help")))
+    if len(records) != 2:
+        raise SystemExit("FAIL: expected one trust entry per sibling bundle")
+    versions = {name: (pathlib.Path("/var/lib/myproduct/installed") / name).read_text()
+                for name in ("app2", "help")}
+    return {"containers": observed, "trust": records, "versions": versions}
+
+
+def main():
+    """Compare untouched app2/help process identities, version markers and trust entries."""
+    path = pathlib.Path(sys.argv[2])
+    current = observe()
+    if sys.argv[1] == "siblings-before":
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(current, stream)
+    elif json.loads(path.read_text()) != current:
+        raise SystemExit("FAIL: app2/help process identity, version or trust changed")
+    print("SIBLINGS " + json.dumps(current["containers"], sort_keys=True))
+    print("PASS: sibling versions and trust " + ("recorded" if sys.argv[1] == "siblings-before" else "unchanged"))
+
+
+try:
+    main()
+except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+    raise SystemExit("FAIL: invalid or incomplete sibling observation")
+SIBLINGS
+    ;;
+uninstall)
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py uninstall' bash "$product"
+    sudo -n fapolicyd-cli --file delete "$product/deploy.py" --trust-file myproduct-app1
+    sudo -n fapolicyd-cli --update
+    app2_version=$(sudo -n -H -u myproduct cat "$state/installed/app2")
+    wait_trust "$state/releases/myproduct-app2-$app2_version/deploy.py" "$product/deploy.py"
+    sudo -n test ! -e "$state/installed/app1"
+    sudo -n test ! -e "$state/routes/app1.conf"
+    sudo -n test ! -e "$state/clients/app1"
+    sudo -n test -f "$state/app1/config.yaml"
+    as_product podman volume exists app1-data
+    as_product podman network exists myproduct
+    healthy
+    http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+        --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/app1/")
+    test "$http" = 404
+    echo 'PASS: app1 removed, route inactive, data/network retained; app2/help healthy'
     ;;
 reboot)
     cat /proc/sys/kernel/random/boot_id

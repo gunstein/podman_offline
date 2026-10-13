@@ -101,7 +101,7 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 121 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 131 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
@@ -129,3 +129,8 @@ public route/client imports, current registration indexes, and scoped uninstall.
 Default uninstall retains private state and data volumes; explicit deletion targets
 only the selected component. Certificate tests verify component idempotence and the
 shared CA. The real app fixture has 8 pods, 10 containers and 6 distinct images.
+
+Component acceptance regressions cover both install orders, help-alone without
+state writes, all three archive transfers, app1-only upgrade, cross-file inventory
+collisions, untouched sibling observations/trust and retained-data uninstall.
+The cross-app SSO CLI regression withholds callback details on failure.

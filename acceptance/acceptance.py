@@ -76,9 +76,10 @@ def validate(config):
 class Run:
     """Perform one immutable acceptance run with logs and stop at the first failure."""
 
-    def __init__(self, run_id, config):
+    def __init__(self, run_id, config, first_app="app1"):
         """Create a new, private run folder and initialize the run state."""
         self.id = run_id
+        self.first_app = first_app
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -159,7 +160,9 @@ class Run:
             SSH + [self.host(role), "bash -se"], script, timeout, log_stdout
         )
 
-    def guest(self, role, action, version="", log_stdout=True, old_version=""):
+    def guest(
+        self, role, action, version="", log_stdout=True, old_version="", bundle="app1"
+    ):
         """Run a fixed VM step over SSH with this run's parameters."""
         args = [
             action,
@@ -173,6 +176,7 @@ class Run:
             self.started_epoch,
             version,
             old_version,
+            bundle,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
@@ -224,6 +228,8 @@ class Run:
             revision=self.revision,
             clean=clean,
             version=(ROOT / "VERSION").read_text().strip(),
+            core_version=(ROOT / "CORE_VERSION").read_text().strip(),
+            first_app=self.first_app,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -322,11 +328,11 @@ class Run:
         self.command(SCP + [source, self.host("DEV") + ":" + base + "/source.bundle"])
         self.guest("DEV", "clone")
 
-    def transfer(self, version=None):
+    def transfer(self, version=None, bundle="app1"):
         """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["version"]
-        archive = "myproduct-" + version + "-offline.tar.gz"
+        archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
             local = self.folder / (archive + suffix)
@@ -344,9 +350,14 @@ class Run:
             digest = hashlib.sha256()
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        self.meta.setdefault("bundles", {})[version] = digest.hexdigest()
+        self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
-        self.guest("PROD", "unpack", version)
+        self.guest("PROD", "unpack", version, bundle=bundle)
+
+    def transfer_bundles(self):
+        """Transfer all three scoped bundles before testing independent installations."""
+        for bundle in ("app1", "app2", "help"):
+            self.transfer(bundle=bundle)
 
     def boot_id(self, output):
         """Validate a boot ID from stdout without accepting warnings or empty output."""
@@ -441,6 +452,7 @@ class Run:
         parts[-1] = str(int(parts[-1]) + 1)
         new_version = ".".join(parts)
         self.meta["upgrade_version"] = new_version
+        self.step("10-siblings-before", lambda: self.guest("PROD", "siblings-before"))
         self.step(
             "10-build-upgrade", lambda: self.guest("DEV", "upgrade-bundle", new_version)
         )
@@ -449,6 +461,7 @@ class Run:
             "10-install-upgrade",
             lambda: self.guest("PROD", "upgrade", old_version=version),
         )
+        self.step("10-siblings-after", lambda: self.guest("PROD", "siblings-after"))
         self.step("10-check-upgrade", lambda: self.guest("PROD", "check"))
         self.step("10-persistent-after", lambda: self.persistent_state("after"))
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
@@ -466,8 +479,8 @@ class Run:
         base = "/var/lib/myproduct/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
-            "alice-password": "generated-certificates/users/alice-password",
-            "bob-password": "generated-certificates/users/bob-password",
+            "alice-password": "core/generated-certificates/users/alice-password",
+            "bob-password": "core/generated-certificates/users/bob-password",
         }
         for name, relative in files.items():
             local = self.private / name
@@ -556,14 +569,30 @@ class Run:
         for action in actions:
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
-        self.step("05-transfer", self.transfer)
+        self.step("05-transfer", self.transfer_bundles)
         self.step("05-registry-transfer", self.registry_transfer)
-        self.step("06-install", lambda: self.guest("PROD", "install"))
+        self.step(
+            "06-prepare-host", lambda: self.guest("PROD", "prepare-host", bundle="help")
+        )
+        self.step(
+            "06-help-alone", lambda: self.guest("PROD", "help-alone", bundle="help")
+        )
+        for bundle in (
+            self.first_app,
+            "app2" if self.first_app == "app1" else "app1",
+            "help",
+        ):
+            self.step(
+                "06-install-" + bundle,
+                lambda b=bundle: self.guest("PROD", "install", bundle=b),
+            )
+            self.step("06-healthy-" + bundle, lambda: self.guest("PROD", "health"))
         self.step("07-registry-offline", lambda: self.guest("PROD", "registry-offline"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)
         self.step("08-e2e", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("08-shared-login", lambda: self.guest("DEV", "shared-login"))
         self.step("08-markers", lambda: self.guest("DEV", "markers-create"))
         self.step("09-stop", lambda: self.guest("PROD", "stop"))
         for action in ("start", "restart", "crash", "hang"):
@@ -585,6 +614,10 @@ class Run:
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
         self.upgrade()
+        self.step("10-uninstall-app1", lambda: self.guest("PROD", "uninstall"))
+        self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
+        self.step("10-e2e-uninstall", lambda: self.guest("DEV", "survivor-e2e"))
+        self.step("10-markers-uninstall", lambda: self.guest("DEV", "survivor-markers"))
         self.finished = True
 
     def report(self):
@@ -654,12 +687,13 @@ def main():
     parser.add_argument(
         "--config", default="~/.config/podman-offline-acceptance/lab.env"
     )
+    parser.add_argument("--first-app", choices=["app1", "app2"], default="app1")
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
     os.umask(0o077)
-    run = Run(args.run, args.config)
+    run = Run(args.run, args.config, args.first_app)
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

@@ -3,7 +3,9 @@
 Run from the controller (a Linux laptop with Python 3.11+, git, SSH and scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-13 run
+python3 acceptance/acceptance.py --run 2026-10-13-run-24 run
+# Separate fresh-snapshot run for the reverse installation order.
+python3 acceptance/acceptance.py --run 2026-10-13-run-25 --first-app app2 run
 ```
 
 **This rolls both configured VMs back to their snapshots and deletes their
@@ -176,13 +178,27 @@ The product's own Secret volumes on VM-2 stay as evidence after a stop.
 ## What the test actually requires
 
 The product uses Always, a network Quadlet, name checks and deferred archive writes. The test therefore does not create the product network manually.
-It also checks the help app and all seven app containers in six pods.
+It checks every container from all installed component YAML files: ten app containers
+in eight pods after app1, app2 and help. The first app is selected by --first-app;
+run both app1-first and app2-first as separate clean-snapshot runs. Help alone must
+refuse missing core without writing component state. Each subsequent install has
+an explicit health wait, with no unknown, missing or duplicate app containers allowed.
+
+The two Todo instances get full HTTPS e2e and independent Alice/Bob markers.
+The shared-login step signs in once per direction and proves that the other app
+uses that identity session without another password form, keeps app cookies scoped,
+and cannot read the first app's database rows. Only app1 is upgraded. All private
+persistent file hashes must remain identical; only names and same/changed are logged.
+Before/after observations require app2/help PID, StartedAt and RestartCount, their
+version markers and their own trust records to be unchanged. App1 is then
+uninstalled with data retained: its route returns 404 and app2/help e2e, markers,
+health and the shared network must still work.
 
 `09-crash` tests an unexpected
 process crash. The step reads PID, start time and restart count from inspect JSON and
 sends one `sudo -n kill -KILL <host PID>`. Within 60 seconds it requires Running,
 a restart count increased by exactly one, a new PID, a new start time and no StoppedByUser.
-Then all containers and `/api/health` through the HTTPS proxy are checked
+Then all containers and `/app1/api/health` through the HTTPS proxy are checked
 with the installation's CA before the markers are read.
 
 `podman kill` is not used to simulate a crash: Podman marks it as an
@@ -202,7 +218,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 121 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 131 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Registry source acceptance
@@ -254,7 +270,7 @@ or its CA/credentials and remains offline. No test container is left behind.
 Prod runs as the lab user with sudo exactly as in the product's [README](../README.md):
 temporary unpacking, prepare-host, a release under /var/lib/myproduct, inner
 checksums as root and trust of deploy.py only, certificates as myproduct,
-config with install -o myproduct -g myproduct -m 0600,
+per-component config created exclusively with mode 0600,
 and install as myproduct. The user's HOME is set with sudo -H, and bash changes the working directory as
 the service user before install and Podman. This is needed when the operator's
 home is 0700; sudo -H alone keeps the inaccessible working directory. No rootful
@@ -332,7 +348,7 @@ without hash values or file content.
 
 After the life cycle and reboot, step 10 increments the patch part of VERSION only in VM-1's
 working copy. The Git diff and the new version are recorded; no commit or other
-code changes are made. A new bundle is built and transferred with a separate SHA256 in
+code changes are made. Three scoped bundles are rebuilt, and only the new app1 bundle is transferred with a separate SHA256 in
 the report. The upgrade follows the README: checksums, trust of the new deploy.py,
 install as the service user and a health check before the old trust is removed. No generation
 or config copying. The test requires unchanged file hashes and CA, full e2e
@@ -341,7 +357,7 @@ trust is gone. Step 11 collects the audit and cleans up transferred secrets.
 If an earlier step stops, the upgrade is not tested.
 
 Checks A–E run again after reboot and upgrade. The hash comparison
-covers config, generated-certificates, PKI/private and files/. Both the e2e and
+covers each component config, generated-certificates and files, plus shared PKI/private, routes and clients. Both the e2e and
 marker checks use the original passwords.
 
 ### Machine-readable command output
@@ -372,7 +388,7 @@ Exit 124 is accepted as a timeout. Exit 125 requires a specific network error on
 or no such host); permission and storage errors give FAIL. A successful pull and
 other statuses stop the step. SSH warnings are not relabeled.
 
-After reboot, `09-wait-boot-service` waits up to 240 seconds for the automatic
+After reboot, `09-wait-boot-service` waits up to 240 seconds per installed component for automatic
 start. `failed` stops at once; the step never starts or restarts
 the service. The final audit uses check mode after a complete run, so that
 denials during the last e2e steps also give NOT CLEAN. After an earlier

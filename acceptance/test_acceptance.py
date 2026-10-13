@@ -269,6 +269,7 @@ user_service() {
 }
 # Avoid real waiting in the test.
 sleep() { :; }
+installed_components() { echo core; }
 """
         script = (
             "set -eu\nstate_file="
@@ -293,7 +294,7 @@ sleep() { :; }
             ["activating", "activating", "active"]
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(commands, ["is-active myproduct.service"] * 3)
+        self.assertEqual(commands, ["is-active myproduct-core.service"] * 3)
 
     def test_boot_service_failed_stops_immediately_with_status(self):
         """Stop as soon as systemd reports failed and include status diagnostics."""
@@ -301,7 +302,10 @@ sleep() { :; }
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(
             commands,
-            ["is-active myproduct.service", "status --no-pager myproduct.service"],
+            [
+                "is-active myproduct-core.service",
+                "status --no-pager myproduct-core.service",
+            ],
         )
         self.assertIn("service diagnostics", result.stdout)
 
@@ -309,7 +313,7 @@ sleep() { :; }
         """Reject a service that never becomes active within the wait limit."""
         result, commands = self.boot_service_fixture(["activating"])
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(commands.count("is-active myproduct.service"), 120)
+        self.assertEqual(commands.count("is-active myproduct-core.service"), 120)
         self.assertIn("within 240s", result.stdout)
 
     def test_audit_uses_separate_streams_and_locale_date(self):
@@ -357,7 +361,7 @@ sleep() { :; }
     def state_fixture(self, digest="a"):
         """Build synthetic hash data without secrets for 24 persistent files."""
         names = (
-            "config.yaml",
+            "core/config.yaml",
             "PKI/private/ca.crt",
             "PKI/private/ca.key",
             "PKI/private/ca.srl",
@@ -367,20 +371,20 @@ sleep() { :; }
             "PKI/private/todo-client.ext",
             "PKI/private/web.csr",
             "PKI/private/web.ext",
-            "files/todo-signing.tar",
-            "generated-certificates/client/todo-client.crt",
-            "generated-certificates/identity-db/password",
-            "generated-certificates/identity/identity.crt",
-            "generated-certificates/identity/identity.key",
-            "generated-certificates/todo-db/password",
-            "generated-certificates/todo/ca.crt",
-            "generated-certificates/todo/session-key",
-            "generated-certificates/todo/todo-client.crt",
-            "generated-certificates/todo/todo-client.key",
-            "generated-certificates/users/alice-password",
-            "generated-certificates/users/bob-password",
-            "generated-certificates/web/web.crt",
-            "generated-certificates/web/web.key",
+            "app1/files/app1-signing.tar",
+            "core/generated-certificates/client/todo-client.crt",
+            "core/generated-certificates/identity-db/password",
+            "core/generated-certificates/identity/identity.crt",
+            "core/generated-certificates/identity/identity.key",
+            "core/generated-certificates/todo-db/password",
+            "core/generated-certificates/todo/ca.crt",
+            "core/generated-certificates/todo/session-key",
+            "core/generated-certificates/todo/todo-client.crt",
+            "core/generated-certificates/todo/todo-client.key",
+            "core/generated-certificates/users/alice-password",
+            "core/generated-certificates/users/bob-password",
+            "core/generated-certificates/web/web.crt",
+            "core/generated-certificates/web/web.key",
         )
         return {
             "ca_der_sha256": digest * 64,
@@ -659,7 +663,9 @@ wait_trust /new/deploy.py /old/deploy.py
         """Run the README or VM procedure with stubbed trust and install calls."""
         if source == "remote":
             remote = Path(__file__).with_name("remote.sh").read_text()
-            code = shell_code(remote, action="upgrade")
+            code = shell_code(remote, function="prepare_release") + shell_code(
+                remote, action="upgrade"
+            )
         else:
             readme = (
                 Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
@@ -671,13 +677,14 @@ wait_trust /new/deploy.py /old/deploy.py
                 if "--file delete" in block and "deploy.py install" in block
             )
         (self.root / "version").write_text("0.1.1\n")
-        (self.root / "myproduct-0.1.1-offline.tar.gz").touch()
+        (self.root / "myproduct-app1-0.1.1-offline.tar.gz").touch()
         calls = self.root / "trust-calls"
         calls.write_text("")
         stubs = r"""
 # Record trust actions and simulate install failures.
 sudo() {
     case "$*" in
+        *'test -d'*) return 1;;
         *'--file add'*) echo add >> "$calls";;
         *'--file delete'*) echo delete >> "$calls";;
         *'--update'*) echo update >> "$calls";;
@@ -696,7 +703,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         prefix = (
             "set -eu\nbase="
             + shlex.quote(str(self.root))
-            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nold_version=0.1.0\nas_product() { :; }\ncalls="
+            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\nstate=/var/lib/myproduct\nold_version=0.1.0\nas_product() { :; }\ncalls="
             + shlex.quote(str(calls))
             + "\ninstall_status="
             + str(install_status)
@@ -746,8 +753,10 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.assertEqual(
             self.harness.guest.call_args_list,
             [
+                mock.call("PROD", "siblings-before"),
                 mock.call("DEV", "upgrade-bundle", "0.1.1"),
                 mock.call("PROD", "upgrade", old_version="0.1.0"),
+                mock.call("PROD", "siblings-after"),
                 mock.call("PROD", "check"),
                 mock.call("PROD", "persistent-state", log_stdout=False),
                 mock.call("DEV", "prod-e2e"),
@@ -773,11 +782,11 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.meta["version"] = "0.1.0"
         self.harness.transfer = mock.Mock()
         self.harness.guest = mock.Mock(
-            side_effect=["built", RuntimeError("install failed")]
+            side_effect=["baseline", "built", RuntimeError("install failed")]
         )
         with self.assertRaisesRegex(RuntimeError, "10-install-upgrade"):
             self.harness.upgrade()
-        self.assertEqual(self.harness.guest.call_count, 2)
+        self.assertEqual(self.harness.guest.call_count, 3)
         self.assertFalse(self.harness.finished)
 
     def test_full_run_rechecks_after_reboot_and_upgrade(self):
@@ -811,13 +820,19 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "09-check-after-reboot",
             "09-e2e-after-reboot",
             "09-markers-after-reboot",
+            "10-siblings-before",
             "10-build-upgrade",
             "10-transfer-upgrade",
             "10-install-upgrade",
+            "10-siblings-after",
             "10-check-upgrade",
             "10-persistent-after",
             "10-e2e-upgrade",
             "10-markers-upgrade",
+            "10-uninstall-app1",
+            "10-check-uninstall",
+            "10-e2e-uninstall",
+            "10-markers-uninstall",
         ]
         self.assertEqual(records[records.index("09-crash") :], expected)
         for step in (
@@ -832,11 +847,11 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             records.index("03-registry-test"), records.index("03-examples-setup")
         )
         self.assertLess(
-            records.index("06-install"), records.index("07-registry-offline")
+            records.index("06-install-help"), records.index("07-registry-offline")
         )
         self.assertLess(records.index("07-registry-offline"), records.index("07-check"))
         self.assertEqual(
-            self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 3
+            self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 4
         )
 
     def test_registry_transfer_moves_archive_and_checksum_without_credentials(self):
@@ -922,7 +937,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             )
             state = json.loads(result.stdout)
             self.assertEqual(len(state["files_sha256"]), 24)
-            self.assertIn("files/todo-signing.tar", state["files_sha256"])
+            self.assertIn("app1/files/app1-signing.tar", state["files_sha256"])
             self.assertNotIn(private.decode(), result.stdout)
 
     def test_credentials_stream_to_private_files_without_logging_content(self):
@@ -1133,12 +1148,18 @@ class HealthTests(unittest.TestCase):
             )
 
         output, errors = io.StringIO(), io.StringIO()
-        with (
-            mock.patch.object(subprocess, "run", side_effect=run),
-            contextlib.redirect_stdout(output),
-            contextlib.redirect_stderr(errors),
-        ):
-            self.namespace["main"]()
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            units = home / ".config/containers/systemd"
+            units.mkdir(parents=True)
+            (units / "myproduct-core.yaml").touch()
+            with (
+                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.object(subprocess, "run", side_effect=run),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(errors),
+            ):
+                self.namespace["main"]()
         return output.getvalue(), errors.getvalue()
 
     def test_healthy_and_warning_pass_without_private_output(self):
@@ -1812,7 +1833,7 @@ sleep() { :; }
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("HTTP=503", result.stdout)
         self.assertIn("HTTP=200", result.stdout)
-        self.assertIn('"https://$prod_host:$port/api/health"', function)
+        self.assertIn('"https://$prod_host:$port/app1/api/health"', function)
         self.assertIn('--cacert "$state/PKI/private/ca.crt"', function)
 
 

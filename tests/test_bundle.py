@@ -455,6 +455,23 @@ data: {image: ignored}
                         "components/" + component + "/config.yaml", members
                     )
                 self.assertIn("CORE_VERSION", members)
+                checksum = archive.extractfile(prefix + "checksums.sha256")
+                assert checksum is not None
+                lines = checksum.read().decode().splitlines()
+                for line in lines:
+                    digest, filename = line.split("  ", 1)
+                    data = archive.extractfile(prefix + filename)
+                    assert data is not None
+                    self.assertEqual(hashlib.sha256(data.read()).hexdigest(), digest)
+                self.assertEqual(
+                    {line.split("  ", 1)[1] for line in lines},
+                    {
+                        member.name[len(prefix) :]
+                        for member in archive.getmembers()
+                        if member.isfile()
+                        and member.name != prefix + "checksums.sha256"
+                    },
+                )
 
     def test_sha256_reads_more_than_one_chunk(self):
         path = self.root / "large.bin"
