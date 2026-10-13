@@ -841,10 +841,32 @@ LABELS
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     audit_events check
-    # Expand inside the container so the host never reads the secret value.
-    # shellcheck disable=SC2016
-    as_product podman exec myproduct-identity-app bash -c 'test "${#ApiResources__0__ApiSecrets__0__Value}" -eq 32'
-    echo 'PASS: generated API secret delivered through envFrom without logging its value'
+    as_product python3 - <<'API_SECRET'
+import subprocess
+from pathlib import Path
+
+SECRET_FILE = Path("/var/lib/myproduct/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
+
+
+def main():
+    """Compare source bytes to the delivered secret without printing either value."""
+    expected = SECRET_FILE.read_bytes()
+    result = subprocess.run(
+        ["podman", "exec", "myproduct-identity-app", "bash", "-c",
+         'printf "%s" "$ApiResources__0__ApiSecrets__0__Value"'],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
+    )
+    if result.returncode or len(expected) != 32 or result.stdout != expected:
+        raise RuntimeError("Generated API secret delivery did not match its source file")
+    print("PASS: generated API secret matches its source bytes; values are withheld")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        raise SystemExit("FAIL: generated API secret delivery check failed")
+API_SECRET
     as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
     as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
@@ -911,13 +933,18 @@ def command(arguments):
 def inspect_container():
     """Parse inspect JSON and validate only the fields the check uses."""
     try:
-        rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
+        template = ('[{"State":{"Pid":{{.State.Pid}},"Running":{{.State.Running}},'
+                    '"StartedAt":{{json .State.StartedAt}},'
+                    '"StoppedByUser":{{.State.StoppedByUser}},'
+                    '"Health":{"Status":{{json .State.Health.Status}}}},'
+                    '"RestartCount":{{.RestartCount}}}]')
+        rows = json.loads(command(product_command(["podman", "inspect", "--format", template, CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
             raise ValueError("Expected one container")
         state = rows[0]["State"]
         result = {"Pid": state["Pid"], "Running": state["Running"],
                   "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
-                  "StoppedByUser": state.get("StoppedByUser", False)}
+                  "StoppedByUser": state["StoppedByUser"]}
         if (type(result["Pid"]) is not int or result["Pid"] < 0
                 or type(result["Running"]) is not bool
                 or (result["Running"] and result["Pid"] <= 1)
@@ -994,13 +1021,18 @@ def command(arguments):
 def inspect_container():
     """Parse inspect JSON and validate the hang test state fields."""
     try:
-        rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
+        template = ('[{"State":{"Pid":{{.State.Pid}},"Running":{{.State.Running}},'
+                    '"StartedAt":{{json .State.StartedAt}},'
+                    '"StoppedByUser":{{.State.StoppedByUser}},'
+                    '"Health":{"Status":{{json .State.Health.Status}}}},'
+                    '"RestartCount":{{.RestartCount}}}]')
+        rows = json.loads(command(product_command(["podman", "inspect", "--format", template, CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
             raise ValueError("Expected one container")
         state = rows[0]["State"]
         result = {"Pid": state["Pid"], "Running": state["Running"],
                   "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
-                  "StoppedByUser": state.get("StoppedByUser", False),
+                  "StoppedByUser": state["StoppedByUser"],
                   "Health": state["Health"]["Status"]}
         if (type(result["Pid"]) is not int or result["Pid"] < 0
                 or type(result["Running"]) is not bool

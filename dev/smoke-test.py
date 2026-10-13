@@ -105,12 +105,20 @@ def get(session, path):
     return session.get(ORIGIN + path, timeout=10)
 
 
+def require_success(response, context):
+    """Report an HTTP failure without its potentially secret-bearing URL or body."""
+    if response.status_code >= 400:
+        raise RuntimeError(f"{context} failed with HTTP {response.status_code}")
+
+
 def login(username):
     """Sign in with the local demo password and return a session with a CSRF header."""
     session = client()
     response = get(session, "/auth/login")
-    response.raise_for_status()
-    assert urlparse(response.url).path == "/identity/account/login", response.url
+    require_success(response, "Sign-in page")
+    assert urlparse(response.url).path == "/identity/account/login", (
+        "Unexpected sign-in destination"
+    )
     form = LoginForm()
     form.feed(response.text)
     assert "__RequestVerificationToken" in form.fields
@@ -128,10 +136,10 @@ def login(username):
         .strip(),
     )
     response = session.post(response.url, data=form.fields, timeout=15)
-    response.raise_for_status()
-    assert urlparse(response.url).path == "/", response.url
+    require_success(response, "OIDC callback")
+    assert urlparse(response.url).path == "/", "Unexpected callback destination"
     state = get(session, "/auth/me").json()
-    assert state["user"]["sub"] == username, state
+    assert state["user"]["sub"] == username, "Unexpected signed-in user"
     session.headers.update({"X-CSRF-Token": state["csrf"], "Origin": ORIGIN})
     return session
 
@@ -203,6 +211,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (AssertionError, requests.RequestException, RuntimeError) as error:
-        print("FAIL:", error, file=sys.stderr)
+    except (AssertionError, requests.RequestException, RuntimeError):
+        print(
+            "FAIL: smoke test failed; response URLs and bodies are withheld",
+            file=sys.stderr,
+        )
         raise SystemExit(1)

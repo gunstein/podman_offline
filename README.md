@@ -138,6 +138,13 @@ Back up `generated-certificates/` with the other persistent files, including the
 values. If paths are placed elsewhere under the config directory, include those
 files in backup too. Keep prod config in the service user's home, outside releases.
 Generated values are retained across upgrades; no Podman secret API is added.
+Keep these files outside shipped product directories, especially `files/`.
+The bundle build checks declarations in both local `config.yaml` and
+`config.example.yaml` and refuses to copy a generated secret, including through
+a symlink alias. Do not remove those declarations while retaining private files
+in a build checkout; undeclared private material cannot be identified automatically.
+Try [the generated-secret example](examples/generated-secrets/README.md) to
+verify exact envFrom delivery and reuse without printing values.
 
 ## Health checks
 
@@ -187,10 +194,11 @@ database and OIDC are only needed for apps that use them.
 | Health check | One local exec-based `livenessProbe` per container: initialDelay 90, period 30, timeout 5, failureThreshold 3. Init containers have no probe. |
 | Product tests | Update the fixed resource counts in `test_real_product_manifests_render_with_dummy_files` in `tests/test_deploy.py`; `tests/test_health.py` checks all probes automatically. |
 | Proxy route | A new `location` in `apps/proxy/default.conf`; rebuild the proxy image. |
+| Config | Update `config.example.yaml` for new installations and the existing `/var/lib/myproduct/config.yaml` when upgrading. Declare new generated values in `GENERATED_SECRETS` and their delivery in `SECRET_FILES`; keep existing secrets unchanged. |
 | Database | Its own postgres pod following `30-identity-postgres.yaml`/`40-todo-postgres.yaml`, a PVC in `20-storage.yaml`, a password file and `SECRET_FILES` in config. For new installations, also update `scripts/generate-certificates.sh`. |
 | OIDC | Client, redirect URI and scope in `apps/identity/Program.cs`; client certificate and Secret/PVC in config and manifest. Rebuild the identity image. |
 | E2E | A new check in `dev/smoke-test.py`, called from `main`; try the frontend JavaScript in a browser. |
-| Acceptance | `healthy()` in `acceptance/remote.sh` reads names from the installed YAML; add the needed DB/OIDC and e2e checks. |
+| Acceptance | `healthy()` in `acceptance/remote.sh` reads names from the installed YAML; add the needed DB/OIDC and e2e checks, and extend `acceptance/markers.py` when the app has persistent per-user data. |
 | Documentation | Update the app overview, the Secret volumes listed under uninstall, `acceptance/README.md` and `examples/VM-CHECKLIST.md`. |
 
 Run the unit tests, `./deploy prepare` and dev e2e before building the bundle.

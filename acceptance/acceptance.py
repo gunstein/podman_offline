@@ -545,6 +545,7 @@ class Run:
             for name in (
                 "basic",
                 "secrets",
+                "generated-secrets",
                 "volumes",
                 "init-containers",
                 "manifest-defined",

@@ -28,7 +28,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 
 ## Images from the manifests
 
-108 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+118 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
 The image tests cover Pod/Deployment, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
@@ -101,7 +101,7 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 111 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 115 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
@@ -109,3 +109,11 @@ services, without relaxing required properties for a loaded launcher.
 Registry framework tests cover separate log streams, manifest/blob GET evidence,
 expected negative exits, no build fallback, offline load/run ordering and cleanup
 of TLS keys/registry resources. Existing user registry certificates are preserved.
+
+Review regressions reject false-like non-map file groups and accept ConfigMap
+`data.spec` as ordinary data. Invalid config and YAML errors retain field/line
+context without echoing source values. Bundle tests reject declared generated
+secrets in shipped directories and symlink aliases before image operations.
+`test_smoke.py` isolates the login and CLI code without requests: callback URLs,
+form/session tokens and HTTP exception contents never appear in failure output.
+The generated-secrets example is rendered twice with temporary private files.

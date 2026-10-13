@@ -202,7 +202,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 111 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 115 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Registry source acceptance
@@ -430,3 +430,12 @@ The demo generates one additional persistent API-secret file through
 GENERATED_SECRETS. Step 07 checks its 0600 mode, its private parent directory,
 and delivery through identity envFrom by checking length only. The persistent
 file comparison after upgrade includes this file without logging hashes or values.
+
+Generated API-secret delivery compares the source file's bytes with the container
+environment in memory; another 32-character value fails. Neither values nor
+hashes are logged. Crash and hang checks explicitly project `StoppedByUser`
+through a Podman template, because native inspect JSON omits false values.
+Missing or invalid projected fields fail rather than defaulting to false.
+Smoke-test failure messages withhold response URLs and bodies, including OIDC
+callback code/state and form/session tokens. The generated-secrets example also
+checks private file modes and reuse after a second prepare/play.
