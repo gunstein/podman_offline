@@ -457,7 +457,35 @@ def check_pod_spec(value):
             check_pod_spec(child)
 
 
-def render(files_dir=None, write_archives=True, config_path=None):
+def check_component_names(documents, component, source):
+    """Reject unprefixed component resources before generating or writing files."""
+    for doc in documents:
+        if not isinstance(doc, dict) or doc.get("kind") not in (
+            "Pod",
+            "Secret",
+            "PersistentVolumeClaim",
+            "ConfigMap",
+        ):
+            continue
+        name = (doc.get("metadata") or {}).get("name")
+        if (
+            not isinstance(name, str)
+            or not name.startswith(component + "-")
+            or not ID.fullmatch(name)
+        ):
+            raise DeployError(
+                f"{source}: {doc['kind']} name must start with {component}- and be a valid resource name"
+            )
+
+
+def render(
+    files_dir=None,
+    write_archives=True,
+    config_path=None,
+    manifests=None,
+    component=None,
+    extra_volumes=None,
+):
     """Render validated YAML and write import archives if write_archives is set."""
     config_path = config_path or CONFIG
     if not config_path.exists():
@@ -465,14 +493,40 @@ def render(files_dir=None, write_archives=True, config_path=None):
 
     files_dir = files_dir or BUILD / "files"
     config = load_config(config_path)
+    manifests = manifests or MANIFESTS
+    if component:
+        for path in sorted(manifests.glob("*.yaml")):
+            check_component_names(load_yaml_all(path), component, path)
+        for group, kind in (
+            (SECRET_FILES, "Secret"),
+            (VOLUME_FILES, "PersistentVolumeClaim"),
+        ):
+            mapping = config.get(group, {})
+            if not isinstance(mapping, dict):
+                raise DeployError(f"{group} in {config_path} must be a map")
+            check_component_names(
+                [{"kind": kind, "metadata": {"name": name}} for name in mapping],
+                component,
+                config_path,
+            )
     generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, SECRET_FILES, config_path.parent)
-    volumes = load_file_group(config, VOLUME_FILES, config_path.parent)
+    volume_config = dict(config)
+    mapping = config.get(VOLUME_FILES, {})
+    if not isinstance(mapping, dict):
+        raise DeployError(f"{VOLUME_FILES} in {config_path} must be a map")
+    volume_config[VOLUME_FILES] = {
+        key: entries
+        for key, entries in mapping.items()
+        if key not in (extra_volumes or {})
+    }
+    volumes = load_file_group(volume_config, VOLUME_FILES, config_path.parent)
+    volumes.update(extra_volumes or {})
 
     docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
     sources: list = [None] * len(docs)
 
-    for path in sorted(MANIFESTS.glob("*.yaml")):
+    for path in sorted(manifests.glob("*.yaml")):
         try:
             rendered = [
                 replace(document, config)
@@ -578,8 +632,8 @@ def find_images(documents):
     return sorted(images)
 
 
-def install():
-    """Install the rootless Quadlet from the release using the persistent config."""
+def production_environment():
+    """Validate the service user and set its runtime before rendering or commands."""
     if os.geteuid() == 0:
         raise DeployError("Run install as the service user, not as root")
 
@@ -604,6 +658,10 @@ def install():
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
 
+
+def install_legacy():
+    """Install a standalone rootless manifest fixture using the persistent config."""
+    production_environment()
     config_path = HOME / "config.yaml"
     text = render(FILES_DIR, write_archives=False, config_path=config_path)
     archive = ROOT / "images" / "images.tar"
@@ -638,6 +696,103 @@ def install():
     run("podman", "ps", "--all", "--pod")
 
     print(f"[OK] {SERVICE} is running. Check that the containers above are 'Up'.")
+
+
+def bundle_components():
+    """Read a release's fixed component selection and reject an invalid descriptor."""
+    descriptor = load_yaml(ROOT / "bundle.yaml")
+    if not isinstance(descriptor, dict) or set(descriptor) != {"name", "components"}:
+        raise DeployError("Invalid bundle.yaml")
+    name = descriptor["name"]
+    expected = ["help"] if name == "help" else ["core", name]
+    if name not in ("app1", "app2", "help") or descriptor["components"] != expected:
+        raise DeployError("Invalid bundle component selection")
+    return expected
+
+
+def component_paths(component):
+    """Return one component's persistent config, archives and Quadlet paths."""
+    state = HOME / component
+    return (
+        state / "config.yaml",
+        state / "files",
+        QUADLET_DIR / ("myproduct-" + component + ".yaml"),
+        QUADLET_DIR / ("myproduct-" + component + ".kube"),
+    )
+
+
+def install_components():
+    """Validate the selected components and images before writing scoped services."""
+    production_environment()
+    components = bundle_components()
+    if components == ["help"] and not (HOME / "installed/core").is_file():
+        raise DeployError("Install an app bundle with core before installing help")
+    network = QUADLET_DIR / "myproduct.network"
+    network_text = QUADLET_TEMPLATE.with_suffix(".network").read_text(encoding="utf-8")
+    if network.exists() and network.read_text(encoding="utf-8") != network_text:
+        raise DeployError(f"Existing shared network differs from the bundle: {network}")
+    rendered = {}
+    for component in components:
+        config, files, _, _ = component_paths(component)
+        rendered[component] = render(
+            files,
+            write_archives=False,
+            config_path=config,
+            manifests=ROOT / "components" / component / "manifests",
+            component=component,
+        )
+    archive = ROOT / "images/images.tar"
+    if not archive.is_file():
+        raise DeployError(f"Missing image archive {archive}")
+    run("podman", "load", "-i", archive)
+    documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
+    for image in find_images(documents):
+        try:
+            run("podman", "image", "exists", image)
+        except subprocess.CalledProcessError as error:
+            raise DeployError(
+                f"Image {image} is unavailable after load (exit {error.returncode})"
+            ) from None
+    QUADLET_DIR.mkdir(parents=True, exist_ok=True)
+    if not network.exists():
+        network.write_text(network_text, encoding="utf-8")
+        network.chmod(0o644)
+    for component in components:
+        config, files, output, quadlet = component_paths(component)
+        render(
+            files,
+            config_path=config,
+            manifests=ROOT / "components" / component / "manifests",
+            component=component,
+        )
+        write_private(output, rendered[component])
+        quadlet.write_text(
+            QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
+                "Yaml=myproduct.yaml", "Yaml=" + output.name
+            ),
+            encoding="utf-8",
+        )
+        quadlet.chmod(0o644)
+    run("systemctl", "--user", "daemon-reload")
+    for component in components:
+        service = "myproduct-" + component + ".service"
+        run("systemctl", "--user", "restart", service)
+        run("systemctl", "--user", "is-active", "--quiet", service)
+        version = (
+            (ROOT / ("CORE_VERSION" if component == "core" else "VERSION"))
+            .read_text()
+            .strip()
+        )
+        write_private(HOME / "installed" / component, version + "\n")
+    run("podman", "ps", "--all", "--pod")
+
+
+def install():
+    """Install the selected component bundle or a standalone manifest fixture."""
+    if (ROOT / "bundle.yaml").exists():
+        install_components()
+    else:
+        install_legacy()
 
 
 def main():
