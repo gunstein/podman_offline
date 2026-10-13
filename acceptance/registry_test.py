@@ -18,6 +18,12 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = "docker.io/library/busybox:1.37.0"
 SERVER = "docker.io/library/registry:3.0.0"
+# Distribution's HTTP handler emits Combined access records even with a JSON app logger.
+COMBINED_ACCESS = re.compile(
+    r"\S+ - \S+ \[[0-9]{2}/[A-Za-z]{3}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}\] "
+    r'"(?P<method>[A-Z]+) (?P<path>(?:[^"\\ ]|\\.)+) HTTP/[0-9]+\.[0-9]+" '
+    r'(?P<status>[1-5][0-9]{2}) [0-9]+ "(?:[^"\\]|\\.)*" "(?:[^"\\]|\\.)*"'
+)
 
 
 def command(arguments, cwd=None, env=None, expected_failure=False):
@@ -94,7 +100,7 @@ def check_operations(path, expected):
 
 
 def access_requests(output):
-    """Project only public HTTP access fields from controlled registry JSON logs."""
+    """Project public request fields from JSON or Combined logs; reject unknown formats."""
     requests = []
     for line in output.splitlines():
         try:
@@ -102,12 +108,17 @@ def access_requests(output):
             if not isinstance(row, dict):
                 raise TypeError("Expected a log object")
         except (TypeError, ValueError):
-            raise RuntimeError("Invalid registry JSON log") from None
-        method, path, status = (
-            row.get("http.request.method"),
-            row.get("http.request.uri"),
-            row.get("http.response.status"),
-        )
+            match = COMBINED_ACCESS.fullmatch(line)
+            if not match:
+                raise RuntimeError("Invalid registry JSON or Combined log") from None
+            method, path, status = match.group("method", "path", "status")
+            status = int(status)
+        else:
+            method, path, status = (
+                row.get("http.request.method"),
+                row.get("http.request.uri"),
+                row.get("http.response.status"),
+            )
         if (
             method == "GET"
             and isinstance(path, str)

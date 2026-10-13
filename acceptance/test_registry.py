@@ -47,6 +47,110 @@ class RegistryTests(unittest.TestCase):
             for suffix in ("manifests/1.37.0", "blobs/sha256:" + "a" * 64)
         )
 
+    def combined(self, path, method="GET", status=200):
+        """Recreate Gorilla's Combined format using public run-21 request fields."""
+        return (
+            "127.0.0.1 - - [13/Oct/2026:16:18:00 +0000] "
+            f'"{method} {path} HTTP/1.1" {status} 528 '
+            '"https://example.test/?token=private-referrer" '
+            '"test-agent/private-agent\\"quoted\\""\n'
+        )
+
+    def test_mixed_formats_across_streams_project_only_public_request_fields(self):
+        """Accept JSON and Combined records without logging referrers or user agents."""
+        manifest, blob = self.requests().splitlines()
+        combined = self.combined("/v2/acceptance/busybox/manifests/1.37.0")
+        result = subprocess.CompletedProcess(
+            [],
+            0,
+            manifest + "\n" + combined,
+            '{"msg":"private-startup-message"}\n' + blob,
+        )
+        with mock.patch.object(subprocess, "run", return_value=result):
+            registry.registry_requests("test-registry", "test-time")
+        self.assertEqual(self.out.getvalue().count("REGISTRY_REQUEST"), 3)
+        for private in (
+            "private-referrer",
+            "private-agent",
+            "private-auth-token",
+            "private-startup-message",
+        ):
+            self.assertNotIn(private, self.out.getvalue() + self.err.getvalue())
+
+    def test_combined_only_download_evidence_passes(self):
+        """Require manifest and blob GETs from the recorded public run-21 request paths."""
+        paths = [
+            "/v2/acceptance/busybox/manifests/1.37.0",
+            "/v2/acceptance/busybox/blobs/sha256:30ecbe1509090b38ef3260f3609d64d8261230464eaa4d235901db496e9647fb",
+            "/v2/acceptance/busybox/blobs/sha256:531a57b3af5d57dd80ed8d71a11c248764b564adf7076b7109606e769ea8bf6e",
+        ]
+        output = "".join(self.combined(path) for path in paths)
+        result = subprocess.CompletedProcess([], 0, output, "")
+        with mock.patch.object(subprocess, "run", return_value=result):
+            registry.registry_requests("test-registry", "test-time")
+        for row, path in zip(registry.access_requests(output), paths):
+            self.assertEqual(row, {"method": "GET", "path": path, "status": 200})
+        self.assertEqual(self.out.getvalue().count("REGISTRY_REQUEST"), 3)
+
+    def test_combined_private_queries_and_non_get_requests_are_not_evidence(self):
+        """Exclude query strings, unapproved paths and non-GET methods in Combined logs."""
+        path = "/v2/acceptance/busybox/manifests/1.37.0"
+        for output in (
+            self.combined(path + "?token=private-query"),
+            self.combined("/v2/private-repository/manifests/secret-tag"),
+            self.combined(path, method="HEAD"),
+            self.combined(path, method="PUT"),
+        ):
+            self.assertEqual(registry.access_requests(output), [])
+        self.assertEqual(self.out.getvalue() + self.err.getvalue(), "")
+
+    def test_malformed_combined_records_and_unknown_lines_fail_privately(self):
+        """Reject truncated or wrapped access lines without echoing their private contents."""
+        line = self.combined("/v2/acceptance/busybox/manifests/1.37.0").rstrip("\n")
+        for invalid in (
+            line.rsplit(" ", 1)[0],
+            "prefix " + line,
+            line + " trailing",
+            line.replace(" 200 ", " invalid-status "),
+            line.replace("HTTP/1.1", "not-http"),
+            line.replace("[13/Oct/2026:16:18:00 +0000]", "[not-a-time]"),
+            '{"msg": "private-broken-json"',
+            "private-unknown-line",
+            " ",
+        ):
+            with (
+                self.subTest(kind=invalid[:20]),
+                self.assertRaises(RuntimeError) as caught,
+            ):
+                registry.access_requests(invalid)
+            self.assertNotIn("private-", str(caught.exception))
+        self.assertEqual(self.out.getvalue() + self.err.getvalue(), "")
+
+    def test_combined_download_requires_successful_get_for_both_artifacts(self):
+        """Refuse HEAD, missing or failed manifest/blob evidence in either order."""
+        manifest = "/v2/acceptance/busybox/manifests/1.37.0"
+        blob = "/v2/acceptance/busybox/blobs/sha256:" + "a" * 64
+        for absent, present in ((manifest, blob), (blob, manifest)):
+            for method, status in (("HEAD", 200), ("GET", 404), ("GET", 500)):
+                result = subprocess.CompletedProcess(
+                    [], 0, self.combined(present), self.combined(absent, method, status)
+                )
+                with (
+                    mock.patch.object(subprocess, "run", return_value=result),
+                    self.assertRaisesRegex(RuntimeError, "download not proven"),
+                ):
+                    registry.registry_requests("test-registry", "test-time")
+
+    def test_failed_log_command_cannot_supply_success_evidence(self):
+        """Reject nonzero log-command exit even with valid successful download records."""
+        result = subprocess.CompletedProcess([], 125, self.requests(), "private-error")
+        with (
+            mock.patch.object(subprocess, "run", return_value=result),
+            self.assertRaisesRegex(RuntimeError, "Cannot read registry"),
+        ):
+            registry.registry_requests("test-registry", "test-time")
+        self.assertEqual(self.out.getvalue() + self.err.getvalue(), "")
+
     def test_registry_logs_require_manifest_and_blob_gets_across_separate_streams(self):
         """Prove data download from both log streams without printing private log fields."""
         manifest, blob = self.requests().splitlines()

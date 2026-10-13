@@ -101,12 +101,15 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 115 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 121 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
 services, without relaxing required properties for a loaded launcher.
-Registry framework tests cover separate log streams, manifest/blob GET evidence,
+Registry framework tests cover separate log streams, strict JSON/Combined format
+parsing (including escaped quoted fields and final newlines), public run-21
+manifest/blob request fixtures, private query/header omission, malformed or
+unknown records, failing log commands and missing HTTP 200 GET evidence,
 expected negative exits, no build fallback, offline load/run ordering and cleanup
 of TLS keys/registry resources. Existing user registry certificates are preserved.
 

@@ -202,7 +202,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 115 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 121 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Registry source acceptance
@@ -221,7 +221,17 @@ The test pulls public BusyBox, pushes it to that registry, removes its source
 image and all fixture aliases from the local image cache, then bundles its
 fully qualified registry name in a separate fixture checkout. It requires
 successful manifest and blob GETs in the projected registry access log and
-an exact pull/save sequence with zero builds. It also runs both dev helpers:
+an exact pull/save sequence with zero builds. The log parser validates JSON
+objects and complete Combined Log Format access records separately on each
+stream. Registry 3.0.0 emits Combined records even when its application logger
+uses JSON ([Distribution handler](https://github.com/distribution/distribution/blob/v3.0.0/registry/registry.go#L145),
+[Gorilla format](https://github.com/gorilla/handlers/blob/v1.5.2/logging.go#L192)).
+Only GET method, an allowlisted manifest/blob path without a query, and status
+are projected. Referrers, user agents, headers and arbitrary messages are never
+printed. Unknown or malformed lines fail, as does a failing log command or
+missing HTTP 200 evidence for either artifact type.
+
+It also runs both dev helpers:
 the build helper must do nothing for registry-only manifests, and the pull
 helper must fetch the registry image.
 
