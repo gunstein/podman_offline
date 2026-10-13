@@ -137,6 +137,7 @@ sjekk lykkes. Kjør ved behov `as_product podman healthcheck run <container>`.
 Akseptansens `09-hang` fryser backendens vertsprosesser med SIGSTOP, etter at
 PID-ene er lest med `podman top myproduct-todo-backend hpid`. Den krever unhealthy,
 nøyaktig én automatisk restart, ny PID/starttid og healthy innen 240 sekunder,
-uten StoppedByUser. Etterpå kontrolleres alle manifestdefinerte containere,
+med StoppedByUser=false etter restart. Under Podmans automatiske stopp kan flagget
+være true på den opprinnelige, ikke-kjørende unhealthy prosessen. Etterpå kontrolleres alle manifestdefinerte containere,
 HTTPS og markører. Ikke bruk podman pause/stop/kill eller manuell SIGCONT;
 ved feil stoppes testen og bare lesende diagnose utføres.

@@ -1135,14 +1135,20 @@ class HangTests(unittest.TestCase):
         self.now += seconds
 
     def state(
-        self, pid=1200, count=0, started="before", stopped=False, health="healthy"
+        self,
+        pid=1200,
+        count=0,
+        started="before",
+        stopped=False,
+        health="healthy",
+        running=True,
     ):
         """Lag begrenset inspect-fixture med kontrollerbare restart- og helsefelt."""
         return {
             "RestartCount": count,
             "State": {
                 "Pid": pid,
-                "Running": True,
+                "Running": running,
                 "StartedAt": started,
                 "StoppedByUser": stopped,
                 "Health": {"Status": health},
@@ -1150,9 +1156,13 @@ class HangTests(unittest.TestCase):
             "Config": {"Env": ["PRIVATE=DO_NOT_LOG"]},
         }
 
-    def run_hang(self, after, top="HPID\n1200\n1201\n"):
+    def run_hang(self, after, top="HPID\n1200\n1201\n", phases=None):
         """Kjør hengtesten med kontrollerte tilstander uten å fryse vertsprosesser."""
-        pending = [self.state(), self.state(health="unhealthy"), after]
+        pending = (
+            [self.state()]
+            + (phases if phases is not None else [self.state(health="unhealthy")])
+            + [after]
+        )
 
         def run(arguments, **kwargs):
             """Returner top/inspect og registrer SIGSTOP uten å sende signal."""
@@ -1189,6 +1199,47 @@ class HangTests(unittest.TestCase):
             ],
         )
         self.assertFalse(any("pause" in call or "-CONT" in call for call in self.calls))
+
+    def test_health_stop_flag_clears_after_one_restart(self):
+        """Godta run-15s midlertidige brukerstoppflagg bare på opprinnelig unhealthy prosess."""
+        phases = [
+            self.state(health="unhealthy", stopped=True, running=False),
+            self.state(pid=0, health="unhealthy", stopped=True, running=False),
+            self.state(pid=1300, count=1, started="after", health="starting"),
+        ]
+        output = self.run_hang(
+            self.state(pid=1300, count=1, started="after"), phases=phases
+        )
+        self.assertIn('"StoppedByUser": true', output)
+        self.assertIn("PASS: unhealthy", output)
+
+    def test_stop_flag_outside_original_unhealthy_stop_fails(self):
+        """Avvis brukerstopp på frisk, kjørende eller endret prosess og etter restart."""
+        phases = [
+            self.state(stopped=True, running=False),
+            self.state(health="unhealthy", stopped=True),
+            self.state(pid=1300, health="unhealthy", stopped=True, running=False),
+            self.state(
+                started="other", health="unhealthy", stopped=True, running=False
+            ),
+            self.state(
+                pid=1300, count=1, started="after", health="starting", stopped=True
+            ),
+        ]
+        for phase in phases:
+            with (
+                self.subTest(phase=phase),
+                self.assertRaisesRegex(RuntimeError, "StoppedByUser"),
+            ):
+                self.run_hang(
+                    self.state(pid=1300, count=1, started="after"), phases=[phase]
+                )
+
+    def test_original_unhealthy_stop_without_restart_times_out(self):
+        """Et lovlig mellomstadium gir fortsatt FAIL når automatisk restart uteblir."""
+        with self.assertRaisesRegex(RuntimeError, "240s"):
+            self.run_hang(self.state(health="unhealthy", stopped=True, running=False))
+        self.assertEqual(self.now, 240)
 
     def test_unchanged_count_or_pid_times_out(self):
         """Avvis restart uten økt teller eller endret PID."""

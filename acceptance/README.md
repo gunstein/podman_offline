@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 82 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 85 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -346,6 +346,9 @@ og healthy først når neste sjekk lykkes.
 restart-teller og helse. Alle verts-PID-er fra `podman top ... hpid` får SIGSTOP,
 uten pause/stop/kill via Podman. Innen 240 sekunder kreves observert unhealthy,
 nøyaktig én restart med ny PID/starttid, StoppedByUser=false og til slutt healthy.
+Podmans helsestyrte stopp kan midlertidig sette StoppedByUser=true på den
+opprinnelige, ikke-kjørende unhealthy prosessen før restart. Bare den fasen
+tillates; flagget må være false på den nye prosessen.
 Deretter kontrolleres alle containere, HTTPS-backend og `09-markers-hang`.
 Ingen SIGCONT eller reparasjon brukes ved feil. Samme helsekrav gjelder etter
 reboot og oppgradering, og sluttaudit må fortsatt være uten avvisninger.

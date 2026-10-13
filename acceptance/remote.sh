@@ -884,11 +884,19 @@ def main():
         after = inspect_container()
         print("AFTER " + json.dumps(after, sort_keys=True), flush=True)
         unhealthy = unhealthy or after["Health"] == "unhealthy"
-        if after["StoppedByUser"]:
-            raise RuntimeError("StoppedByUser ble satt under hengtesten")
+        stopping_original = (
+            after["Health"] == "unhealthy" and not after["Running"]
+            and after["RestartCount"] == before["RestartCount"]
+            and after["StartedAt"] == before["StartedAt"]
+            and after["Pid"] in (0, before["Pid"])
+        )
+        # Podmans helsestyrte Stop setter flagget før cleanup restarter containeren.
+        if after["StoppedByUser"] and not stopping_original:
+            raise RuntimeError("StoppedByUser utenfor opprinnelig unhealthy stoppfase")
         if after["RestartCount"] > before["RestartCount"] + 1:
             raise RuntimeError("Containeren restartet mer enn én gang")
-        if (unhealthy and after["Running"] and after["Health"] == "healthy"
+        if (unhealthy and after["Running"] and not after["StoppedByUser"]
+                and after["Health"] == "healthy"
                 and after["RestartCount"] == before["RestartCount"] + 1
                 and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
             print("PASS: unhealthy fulgt av én automatisk restart til healthy")
