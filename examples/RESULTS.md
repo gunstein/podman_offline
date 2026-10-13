@@ -78,3 +78,17 @@ Production start-up and an actual reboot must be checked manually with the
 Later, the image handling was changed to structural YAML reading and one shared
 image archive. The current build and installation flow is described in the
 [README](../README.md#offline-bundle-and-rootless-quadlet).
+
+## Generated-secret example, 2026-10-13
+
+`./examples/run.sh generated-secrets` passed on rootless Podman 5.7.0 with the
+existing BusyBox example image. It checked 0600/0700 modes, exact envFrom bytes
+and unchanged values after a second prepare/play. Cleanup returned 0 without
+network warnings. No secret values or hashes were printed.
+
+A separate smoke run against the already-running local demo stopped at the
+help-link check: that installation still served `/help/innlogging.html`,
+`/help/oppgaver.html` and `/help/feilsoking.html`, while the current test expects
+the English filenames. HTTPS, discovery and anonymous rejection passed before
+that check. The existing images were not rebuilt or replaced in this review round.
+This does not constitute a new VM acceptance run.

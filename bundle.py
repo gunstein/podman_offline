@@ -74,6 +74,36 @@ def pull_images(images):
             ) from None
 
 
+def generated_secret_guard():
+    """Reject copies of declared local secrets, including symlink aliases."""
+    secrets = set()
+    for name in ("config.yaml", "config.example.yaml"):
+        path = ROOT / name
+        if path.exists():
+            try:
+                config = deploy.load_yaml(path)
+                if not isinstance(config, dict):
+                    raise deploy.DeployError("Config must be a mapping")
+                secrets.update(deploy.generated_secret_paths(config, ROOT))
+            except (deploy.DeployError, yaml.YAMLError):
+                raise BundleError(
+                    f"Cannot validate generated secret paths in {path}"
+                ) from None
+
+    def guard(directory, names):
+        """Fail before copying a secret file or a directory containing one."""
+        for name in names:
+            path = (Path(directory) / name).resolve()
+            for secret in secrets:
+                if path == secret or path in secret.parents:
+                    raise BundleError(
+                        f"Cannot bundle generated secret via {Path(directory) / name}"
+                    )
+        return []
+
+    return guard
+
+
 def build():
     """Bundle prepared local images and freshly pulled registry images with checksums."""
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -81,6 +111,21 @@ def build():
     target = STAGE / name
 
     images = manifest_images()
+    guard = generated_secret_guard()
+    guard(
+        ROOT,
+        [
+            "deploy",
+            "deploy.py",
+            "VERSION",
+            "README.md",
+            "config.example.yaml",
+            "manifests",
+            "scripts",
+            "quadlet",
+            "files",
+        ],
+    )
 
     shutil.rmtree(STAGE, ignore_errors=True)
     target.mkdir(parents=True)
@@ -95,11 +140,11 @@ def build():
         shutil.copy2(ROOT / filename, target / filename)
 
     for dirname in ["manifests", "scripts", "quadlet"]:
-        shutil.copytree(ROOT / dirname, target / dirname)
+        shutil.copytree(ROOT / dirname, target / dirname, ignore=guard)
 
     # Optional files/ ships product files for SECRET_FILES and VOLUME_FILES.
     if (ROOT / "files").is_dir():
-        shutil.copytree(ROOT / "files", target / "files")
+        shutil.copytree(ROOT / "files", target / "files", ignore=guard)
 
     (target / "generated-certificates").mkdir(mode=0o700)
     (target / "generated-certificates").chmod(0o700)  # uavhengig av umask

@@ -84,7 +84,14 @@ def load_yaml_all(path):
 
 def load_config(path):
     """Read config and validate key types, value types and the HTTPS port."""
-    config = load_yaml(path)
+    try:
+        config = load_yaml(path)
+    except yaml.YAMLError as error:
+        mark = getattr(error, "problem_mark", None)
+        location = f" at line {mark.line + 1}" if mark is not None else ""
+        problem = getattr(error, "problem", "") or ""
+        detail = problem if problem.startswith("duplicate key ") else "invalid YAML"
+        raise yaml.YAMLError(f"{path}{location}: {detail}") from None
 
     if not isinstance(config, dict):
         raise DeployError(f"{path} must contain KEY: value pairs")
@@ -99,21 +106,20 @@ def load_config(path):
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise DeployError(
                 f"{key} in config.yaml must be a string or an integer, "
-                f"got {value!r}. Put text in quotes."
+                f"got type {type(value).__name__}. Put text in quotes."
             )
 
     port = config.get("HTTPS_PORT")
     if not isinstance(port, int) or not 1 <= port <= MAX_PORT:
         raise DeployError(
-            f"HTTPS_PORT in config.yaml must be an integer 1-{MAX_PORT} "
-            f"without quotes, got {port!r}"
+            f"HTTPS_PORT in config.yaml must be an integer 1-{MAX_PORT} without quotes"
         )
 
     return config
 
 
-def generate_secrets(config, base_dir):
-    """Create missing private secret files once, within the config directory."""
+def generated_secret_paths(config, base_dir):
+    """Resolve declared secret paths without generating or reading their contents."""
     entries = config.get(GENERATED_SECRETS, [])
     if not isinstance(entries, list) or not all(
         isinstance(entry, str) for entry in entries
@@ -135,7 +141,12 @@ def generate_secrets(config, base_dir):
                 f"{GENERATED_SECRETS}: {entry!r} resolves outside the config directory"
             ) from None
         paths.append(path)
-    for path in paths:
+    return paths
+
+
+def generate_secrets(config, base_dir):
+    """Create missing private secret files once, within the config directory."""
+    for path in generated_secret_paths(config, base_dir):
         if path.exists():
             if not path.is_file() or path.stat().st_size == 0:
                 raise DeployError(
@@ -203,7 +214,7 @@ def resolve_path(value, base_dir=None):
 
 def load_file_group(config, group, base_dir=None):
     """Read file groups and expand directory paths one level, relative to the config."""
-    spec = config.get(group) or {}
+    spec = config.get(group, {})
 
     if not isinstance(spec, dict):
         raise DeployError(f"{group} in config.yaml must be id: [list of files]")
@@ -417,7 +428,9 @@ def check_links(docs, from_config, sources=None):
 def check_pod_spec(value):
     """Validate offline pull policy and mounts within each pod specification."""
     if isinstance(value, dict):
-        spec = value.get("spec") or {}
+        spec = value.get("spec")
+        if not isinstance(spec, dict):
+            spec = {}
         volumes = {
             volume.get("name")
             for volume in spec.get("volumes", [])

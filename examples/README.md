@@ -30,6 +30,7 @@ To move the test image to a machine without network you can use `podman save` an
 ```sh
 ./examples/run.sh basic
 ./examples/run.sh secrets
+./examples/run.sh generated-secrets
 ./examples/run.sh volumes
 ./examples/run.sh init-containers
 ./examples/run.sh manifest-defined
@@ -46,6 +47,7 @@ EXAMPLE_PORT=18081 ./examples/run.sh basic
 | --- | --- |
 | [basic](basic/README.md) | ConfigMap/envFrom, types in placeholders, HTTP and port binding |
 | [secrets](secrets/README.md) | Several ids, binary bytes, SHA-256 and selection/renaming with `items` |
+| [generated-secrets](generated-secrets/README.md) | Private one-time generation, exact envFrom delivery and reuse after prepare/play |
 | [volumes](volumes/README.md) | File trees, owners/permissions, persistence and a new import |
 | [init-containers](init-containers/README.md) | Two init containers in order before the app |
 | [manifest-defined](manifest-defined/README.md) | Manifest-defined PVC and Secret/stringData/secretKeyRef |

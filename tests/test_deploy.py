@@ -7,6 +7,7 @@ import os
 import runpy
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -167,6 +168,26 @@ class ConfigTests(DeployFixture):
                 ):
                     deploy.load_config(deploy.CONFIG)
 
+    def test_invalid_values_are_not_disclosed(self):
+        """Keep secret-bearing invalid config values out of errors and CLI output."""
+        private = "synthetic-private-value"
+        for key, value in (
+            ("VALUE", [private]),
+            ("VALUE", {"token": private}),
+            ("HTTPS_PORT", private),
+        ):
+            with self.subTest(key=key, value_type=type(value).__name__):
+                self.config = {"HTTPS_PORT": 8443, key: value}
+                self.write_config()
+                with self.assertRaises(deploy.DeployError) as caught:
+                    deploy.load_config(deploy.CONFIG)
+                self.assertNotIn(private, str(caught.exception))
+                with mock.patch.object(sys, "argv", ["deploy", "prepare"]):
+                    self.assertEqual(deploy.main(), 1)
+                self.assertNotIn(
+                    private, self.stdout.getvalue() + self.stderr.getvalue()
+                )
+
     def test_rejects_non_mapping_document(self):
         for text in ("", "null", "[]", "text", "42"):
             with self.subTest(text=text):
@@ -210,6 +231,18 @@ class ConfigTests(DeployFixture):
             deploy.load_config(deploy.CONFIG)
         self.assertIn("duplicate key 'HOSTNAME'", str(caught.exception))
         self.assertIn("line 3", str(caught.exception))
+
+    def test_invalid_yaml_does_not_disclose_source_values(self):
+        """Retain YAML line diagnostics without echoing secret-bearing source lines."""
+        for text in (
+            "HTTPS_PORT: 8443\nTOKEN: first\nTOKEN: private-value\n",
+            "HTTPS_PORT: 8443\nTOKEN: [private-value\n",
+        ):
+            self.write("config.yaml", text)
+            with self.assertRaises(yaml.YAMLError) as caught:
+                deploy.load_config(deploy.CONFIG)
+            self.assertIn("line", str(caught.exception))
+            self.assertNotIn("private-value", str(caught.exception))
 
     def test_duplicate_nested_key_reports_line(self):
         self.write(
@@ -329,6 +362,14 @@ class FileGroupTests(DeployFixture):
                 for entries in (["a", "b"], ["a/file", "a/file"]):
                     with self.assertRaisesRegex(deploy.DeployError, "same name"):
                         self.file_config(group, {"test": entries})
+
+    def test_false_like_groups_are_not_empty_mappings(self):
+        """Reject non-map file groups even when their values are false-like."""
+        for group in ("SECRET_FILES", "VOLUME_FILES"):
+            for value in (False, 0, "", [], None):
+                error = self.assertRaisesRegex(deploy.DeployError, group)
+                with self.subTest(group=group, value_type=type(value).__name__), error:
+                    self.file_config(group, value)
 
     def test_absent_groups(self):
         for group in ("SECRET_FILES", "VOLUME_FILES"):
@@ -565,6 +606,27 @@ class GeneratedSecretTests(DeployFixture):
         output = self.stdout.getvalue() + self.stderr.getvalue()
         self.assertTrue(before.decode("ascii") not in output, "Install logged a secret")
 
+    def test_generated_secret_example_renders_and_reuses_its_file(self):
+        """Render the shipped example twice with private values only in temporary files."""
+        example = Path(__file__).resolve().parent.parent / "examples/generated-secrets"
+        self.write(
+            "config.yaml",
+            (example / "config.yaml").read_text() + "POD_NAME: example-run\n",
+        )
+        with mock.patch.object(deploy, "MANIFESTS", example / "manifests"):
+            first = list(yaml.safe_load_all(deploy.render()))
+            path = self.root / "generated-certificates/app/API_TOKEN"
+            before = path.read_bytes()
+            second = list(yaml.safe_load_all(deploy.render()))
+        self.assertTrue(path.read_bytes() == before, "Example regenerated its secret")
+        self.assertEqual(self.mode(path), 0o600)
+        self.assertTrue(first == second, "Example render changed its secret")
+        secret = next(doc for doc in first if doc["kind"] == "Secret")
+        self.assertTrue(
+            base64.b64decode(secret["data"]["API_TOKEN"]) == before,
+            "Example Secret changed the bytes",
+        )
+
     def test_empty_or_directory_path_is_not_regenerated(self):
         """Reject empty files and directory targets without replacing them."""
         path = self.configure_generated()
@@ -642,6 +704,12 @@ class ManifestValidationTests(DeployFixture):
                 ],
             },
         )
+
+    def test_configmap_data_spec_is_not_a_pod_specification(self):
+        """Render valid ConfigMap data named spec without treating it as a pod."""
+        self.manifest([document("ConfigMap", "settings", data={"spec": "plain text"})])
+        docs = list(yaml.safe_load_all(deploy.render()))
+        self.assertEqual(docs[0]["data"]["spec"], "plain text")
 
     def test_configmap_reference_forms_accept_later_definition(self):
         """Resolve envFrom, env key and volume ConfigMaps across sorted files."""

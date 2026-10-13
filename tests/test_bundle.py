@@ -182,6 +182,33 @@ class BundleTests(unittest.TestCase):
                 self.archive_bytes(archive, "checksums.sha256"),
             )
 
+    def test_generated_secret_under_shipped_files_is_rejected(self):
+        """Refuse a bundle that would copy a declared generated secret."""
+        for config in ("config.yaml", "config.example.yaml"):
+            with self.subTest(config=config):
+                self.write(config, "GENERATED_SECRETS: [files/private/token]\n")
+                self.write("files/private/token", "synthetic-private-value")
+                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                    bundle.build()
+                self.process.assert_not_called()
+                self.assertFalse(bundle.DIST.exists())
+                (self.root / config).unlink()
+
+    def test_shipped_symlink_cannot_copy_a_generated_secret(self):
+        """Reject a files alias pointing at a private generated file or directory."""
+        self.write("config.yaml", "GENERATED_SECRETS: [private/token]\n")
+        secret = self.write("private/token", "synthetic-private-value")
+        (self.root / "files").mkdir()
+        for target in (secret, secret.parent):
+            with self.subTest(target=target.name):
+                alias = self.root / "files/alias"
+                alias.symlink_to(target, target_is_directory=target.is_dir())
+                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                    bundle.build()
+                self.process.assert_not_called()
+                self.assertFalse(bundle.DIST.exists())
+                alias.unlink()
+
     def test_multiple_files_documents_flow_maps_and_deployments(self):
         self.write(
             "manifests/second.yaml",
