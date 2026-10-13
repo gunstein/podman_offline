@@ -21,7 +21,7 @@ original_getaddrinfo = socket.getaddrinfo
 
 
 def local_dns(host, *args, **kwargs):
-    """Styr appens vertsnavn til test-IP-en og behold øvrige DNS-oppslag."""
+    """Point the app host name at the test IP and keep other DNS lookups."""
     return original_getaddrinfo(
         CONNECT_IP if host == HOSTNAME else host, *args, **kwargs
     )
@@ -31,42 +31,42 @@ socket.getaddrinfo = local_dns
 
 
 class LoginForm(HTMLParser):
-    """Hent skjulte skjemafelt fra Duendes innloggingsside."""
+    """Collect hidden form fields from the Duende sign-in page."""
 
     def __init__(self):
-        """Opprett parser og tom samling av skjulte skjemafelt."""
+        """Create the parser and an empty set of hidden form fields."""
         super().__init__()
         self.fields = {}
 
     def handle_starttag(self, tag, attrs):
-        """Samle navn og verdi fra skjulte input-felt."""
+        """Collect name and value from hidden input fields."""
         attrs = dict(attrs)
         if tag == "input" and attrs.get("type") == "hidden":
             self.fields[attrs["name"]] = attrs.get("value", "")
 
 
 class Links(HTMLParser):
-    """Hent lenkeadresser fra HTML for navigasjonskontroll."""
+    """Collect link targets from HTML for navigation checks."""
 
     def __init__(self):
-        """Opprett parser og en tom samling av lenkeadresser."""
+        """Create the parser and an empty set of link targets."""
         super().__init__()
         self.hrefs = set()
 
     def handle_starttag(self, tag, attrs):
-        """Samle adresser fra lenker som har href."""
+        """Collect targets from links that have an href."""
         href = dict(attrs).get("href")
         if tag == "a" and href:
             self.hrefs.add(href)
 
 
 def check_help(session):
-    """Kontroller hjelpesider, Todo-lenker, navigasjon, CSS og HTTP-status."""
+    """Check help pages, Todo links, navigation, CSS and HTTP status."""
     expected = {
-        "/help/": "Hjelp til Todo",
-        "/help/innlogging.html": "Logge inn og ut",
-        "/help/oppgaver.html": "Bruke oppgavelisten",
-        "/help/feilsoking.html": "Når noe ikke virker",
+        "/help/": "Todo help",
+        "/help/login.html": "Signing in and out",
+        "/help/tasks.html": "Using the task list",
+        "/help/troubleshooting.html": "When something does not work",
     }
     links = Links()
     links.feed(get(session, "/").text)
@@ -93,7 +93,7 @@ def check_help(session):
 
 
 def client():
-    """Opprett en HTTPS-sesjon med testens CA og uten miljøstyrt proxy."""
+    """Create an HTTPS session with the test CA and no environment proxy."""
     result = requests.Session()
     result.trust_env = False
     result.verify = os.getenv("SMOKE_CA_FILE", str(ROOT / "PKI/private/ca.crt"))
@@ -101,12 +101,12 @@ def client():
 
 
 def get(session, path):
-    """Hent en relativ appsti med testens sesjon og timeout."""
+    """Fetch a relative app path with the test session and timeout."""
     return session.get(ORIGIN + path, timeout=10)
 
 
 def login(username):
-    """Logg inn med lokalt demopassord og returner en sesjon med CSRF-header."""
+    """Sign in with the local demo password and return a session with a CSRF header."""
     session = client()
     response = get(session, "/auth/login")
     response.raise_for_status()
@@ -137,7 +137,7 @@ def login(username):
 
 
 def main():
-    """Test HTTPS, innlogging, Todo-isolasjon, CSRF, utlogging og hjelpesider."""
+    """Test HTTPS, sign-in, Todo isolation, CSRF, sign-out and help pages."""
     anonymous = client()
     for attempt in range(60):
         try:

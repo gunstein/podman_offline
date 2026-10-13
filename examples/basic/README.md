@@ -1,14 +1,14 @@
 # basic
 
-Kjør `./examples/run.sh basic` fra repo-roten etter image-oppsettet i
-[oversikten](../README.md). Standardporten er 18080; bruk `EXAMPLE_PORT=18081`
-hvis den er opptatt.
+Run `./examples/run.sh basic` from the repo root after the image setup in
+[the overview](../README.md). The default port is 18080; use `EXAMPLE_PORT=18081`
+if it is taken.
 
-Tester ConfigMap via `envFrom`, tekst og heltall gjennom placeholders,
-ConfigMap-verdier som strenger, samt `hostPort` og `hostIP: 127.0.0.1`.
-BusyBox httpd lytter på containerport 8080. Config-nøkkelen heter fortsatt
-`HTTPS_PORT` fordi deploy krever den, men denne testserveren bruker vanlig HTTP.
+Tests a ConfigMap through `envFrom`, strings and integers through placeholders,
+ConfigMap values as strings, plus `hostPort` and `hostIP: 127.0.0.1`.
+BusyBox httpd listens on container port 8080. The config key is still called
+`HTTPS_PORT` because deploy requires it, but this test server uses plain HTTP.
 
-Forventet: `curl` får `hello from config|42|18080`, miljøvariablene stemmer,
-og `podman port` viser nøyaktig `127.0.0.1:18080`. Ved overstyring av port
-endres forventet svar tilsvarende. Scriptet avslutter med PASS og exit 0.
+Expected: `curl` gets `hello from config|42|18080`, the environment variables match,
+and `podman port` shows exactly `127.0.0.1:18080`. When the port is overridden,
+the expected response changes accordingly. The script ends with PASS and exit 0.

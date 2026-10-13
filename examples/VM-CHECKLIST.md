@@ -1,19 +1,19 @@
-# Manuell prod-test på en VM
+# Manual prod test on a VM
 
-Bruk en disponibel VM med samme Podman-versjon, OS/systemd og sikkerhetsoppsett
-som målnettet. Prod bruker rootless Podman som `myproduct`, med hjem
-`/var/lib/myproduct`. Denne sjekklisten er manuell; automatisert kjøring og bevis
-finnes i [akseptansetesten](../acceptance/README.md).
+Use a disposable VM with the same Podman version, OS/systemd and security setup
+as the target network. Prod uses rootless Podman as `myproduct`, with home
+`/var/lib/myproduct`. This checklist is manual; automated runs and evidence
+are in the [acceptance test](../acceptance/README.md).
 
-1. Følg klargjøringen i [prod-flyten i README](../README.md#offline-bundle-og-rootless-quadlet):
-   ytre checksum, midlertidig utpakking, prepare-host, utpakking som myproduct,
-   indre checksums, trust av kun deploy.py og demo-sertifikater/config. Vent med
-   install til steg 2 nedenfor. Ingen
-   private nøkler eller passord skal i Git eller logger. VM-en skal være uten
-   internett før bundlen overføres. Registrer OS, Podman og systemd-versjon.
-2. Som operatør med sudo, definer kommandohjelperen og installer fra releasen.
-   HOME og arbeidskatalog må begge tilhøre tjenestebrukeren; `sudo -H` alene
-   bytter ikke arbeidskatalog. Shell-script kjøres med bash.
+1. Follow the preparation in the [prod flow in the README](../README.md#offline-bundle-and-rootless-quadlet):
+   outer checksum, temporary unpacking, prepare-host, unpacking as myproduct,
+   inner checksums, trust of deploy.py only and demo certificates/config. Wait with
+   install until step 2 below. No
+   private keys or passwords may go into Git or logs. The VM must be without
+   internet before the bundle is transferred. Record the OS, Podman and systemd versions.
+2. As an operator with sudo, define the command helper and install from the release.
+   HOME and the working directory must both belong to the service user; `sudo -H` alone
+   does not change the working directory. Shell scripts run with bash.
 
    ```sh
    as_product() {
@@ -33,10 +33,10 @@ finnes i [akseptansetesten](../acceptance/README.md).
    as_product podman volume ls
    ```
 
-   Forvent aktiv tjeneste og sju kjørende appcontainere. Test Todo, innlogging og
-   hjelpesidene over HTTPS fra en annen maskin med korrekt CA/navn. Bruk smoke og
-   markørtesten i acceptance for å kontrollere data for både Alice og Bob.
-3. Kontroller filrettigheter, SELinux og linger:
+   Expect an active service and seven running app containers. Test Todo, sign-in and
+   the help pages over HTTPS from another machine with the correct CA/name. Use the smoke and
+   marker tests in acceptance to check data for both Alice and Bob.
+3. Check file permissions, SELinux and linger:
 
    ```sh
    sudo stat -c '%U:%G %a %n' /var/lib/myproduct
@@ -49,18 +49,18 @@ finnes i [akseptansetesten](../acceptance/README.md).
    systemctl is-active fapolicyd
    ```
 
-   Forvent myproduct:myproduct, hjem/filkatalog 0700, YAML/arkiver 0600 og
-   kube/network 0644. SELinux skal være Enforcing og fapolicyd aktiv.
-   Overlay, overlay-layers og overlay-images skal ha container_ro_file_t;
-   overlay-containers skal ha container_var_lib_t og voluminnhold container_file_t.
-   Kontroller faktiske typer mot selinux.matchpathcon, som steg 07 gjør.
-   Kjør `sudo restorecon -n -v -R -e /var/lib/myproduct/.local/share/containers/storage /var/lib/myproduct`;
-   output utenfor lageret skal være tom. Logg separat dry-run av storage og
-   klassifiser hver linje etter [reglene](../acceptance/SELINUX-DIAGNOSIS.md).
-   Ukjente linjer og AVC/USER_AVC/FANOTIFY siden teststart gir FAIL.
-   Kjør aldri restorecon -R eller -F på et fylt lager.
-   Registrer faktiske labels; ikke slå av sikkerhetsmekanismer ved avvisninger.
-4. Kontroller generator, nettavhengigheter og DNS:
+   Expect myproduct:myproduct, home/files directory 0700, YAML/archives 0600 and
+   kube/network 0644. SELinux must be Enforcing and fapolicyd active.
+   Overlay, overlay-layers and overlay-images must have container_ro_file_t;
+   overlay-containers must have container_var_lib_t and volume content container_file_t.
+   Check the actual types against selinux.matchpathcon, as step 07 does.
+   Run `sudo restorecon -n -v -R -e /var/lib/myproduct/.local/share/containers/storage /var/lib/myproduct`;
+   the output outside storage must be empty. Log a separate dry run of storage and
+   classify every line according to [the rules](../acceptance/SELINUX-DIAGNOSIS.md).
+   Unknown lines and AVC/USER_AVC/FANOTIFY since the test start give FAIL.
+   Never run restorecon -R or -F on populated storage.
+   Record the actual labels; do not turn off security mechanisms on denials.
+4. Check the generator, network dependencies and DNS:
 
    ```sh
    as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
@@ -70,10 +70,10 @@ finnes i [akseptansetesten](../acceptance/README.md).
    as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
    ```
 
-   Forvent nettavhengighet mot myproduct-network.service og
-   podman-user-wait-network-online.service, samt WantedBy=default.target.
-5. Opprett Todo-markører for begge brukerne. Etter hver overgang skal tjenesten
-   være aktiv, alle appcontainere kjøre og markørene fortsatt finnes:
+   Expect a network dependency on myproduct-network.service and
+   podman-user-wait-network-online.service, plus WantedBy=default.target.
+5. Create Todo markers for both users. After every transition the service must
+   be active, all app containers running and the markers still present:
 
    ```sh
    sudo systemctl --user -M myproduct@ stop myproduct.service
@@ -81,62 +81,62 @@ finnes i [akseptansetesten](../acceptance/README.md).
    as_product podman secret ls
    as_product podman volume ls
    sudo systemctl --user -M myproduct@ start myproduct.service
-   # Kontroller status, HTTPS og markører før neste overgang.
+   # Check status, HTTPS and markers before the next transition.
    sudo systemctl --user -M myproduct@ restart myproduct.service
-   # Registrer PID, starttid og restart-teller før krasjet.
+   # Record PID, start time and restart count before the crash.
    as_product podman inspect --format '{{.State.Pid}} {{json .State.StartedAt}} {{.RestartCount}}' myproduct-todo-backend
    pid=$(as_product podman inspect --format '{{.State.Pid}}' myproduct-todo-backend)
    [[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]] || exit 1
    sudo -n kill -KILL "$pid"
    ```
 
-   Secret-volumene blir liggende på disk etter stopp. Følg README for sletting.
-   Etter det uventede prosesskrasjet kreves automatisk retur innen 60 sekunder:
-   Running=true, restart-teller økt med én, ny PID og starttid, StoppedByUser=false.
-   Kontroller deretter alle containere, `/api/health` via HTTPS-proxyen med CA
-   og markørene. Rammeverkets `09-crash` parser inspect-JSON og verifiserer alle
-   disse feltene automatisk. `podman kill` markerer eksplisitt brukerstopp og
-   brukes derfor ikke til denne krasjtesten. Ikke start eller reparer en
-   container som ikke kommer tilbake; registrer avviket og stopp testen.
-6. Hvis foregående steg passerer, registrer boot-ID og utfør ekte reboot:
+   The Secret volumes stay on disk after a stop. Follow the README to delete them.
+   After the unexpected process crash, an automatic return within 60 seconds is required:
+   Running=true, restart count increased by one, a new PID and start time, StoppedByUser=false.
+   Then check all containers, `/api/health` through the HTTPS proxy with the CA
+   and the markers. The harness's `09-crash` parses inspect JSON and verifies all
+   these fields automatically. `podman kill` marks an explicit user stop and
+   is therefore not used for this crash test. Do not start or repair a
+   container that does not come back; record the deviation and stop the test.
+6. If the previous step passes, record the boot ID and do a real reboot:
 
    ```sh
    cat /proc/sys/kernel/random/boot_id
    sudo reboot
    ```
 
-   Etter ny SSH-innlogging som operatør, uten innlogging som myproduct og uten
-   install/start først: kontroller ny boot-ID, brukerens tjeneste, containere,
-   markører, full e2e og at internett fortsatt er blokkert. Definer as_product
-   på nytt i den nye skallsesjonen. Linger skal gi oppstart uten brukerinnlogging.
-7. Følg README sin oppgraderingsflyt med ny VERSION. Bruk de samme passordene
-   til full e2e og kontroller markørene fra steg 5. Sammenlign CA-fingeravtrykk
-   og SHA256 for generated-certificates før/etter; ingen fil skal endres.
-   Kontroller at gammel deploy.py er fjernet fra trust-databasen.
-   Ikke generer sertifikater eller erstatt config ved oppgradering.
-8. Registrer alle avvik og hent lesende journal/audit. Ikke logg nøkkel- eller
-   passordinnhold og ikke slett data for å få testen til å passere.
+   After a new SSH login as the operator, without logging in as myproduct and without
+   running install/start first: check the new boot ID, the user's service, containers,
+   markers, full e2e and that internet is still blocked. Define as_product
+   again in the new shell session. Linger must start the service without a user login.
+7. Follow the README's upgrade flow with a new VERSION. Use the same passwords
+   for full e2e and check the markers from step 5. Compare the CA fingerprint
+   and SHA256 for generated-certificates before/after; no file may change.
+   Check that the old deploy.py has been removed from the trust database.
+   Do not generate certificates or replace the config when upgrading.
+8. Record all deviations and collect the journal/audit read-only. Do not log key or
+   password content and do not delete data to make the test pass.
 
    ```sh
    sudo journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$(id -u myproduct)" --no-pager
-   # Sett start til epoch registrert før kjøringen.
+   # Set start to the epoch recorded before the run.
    start_date=$(LC_ALL=C date -d "@$start" +%x)
    start_time=$(date -d "@$start" +%H:%M:%S)
    sudo env LC_ALL=C ausearch --input-logs -m FANOTIFY,AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null
    ```
 
-   Dato og tid er separate argumenter. `%x` under C-lokalen gir formatet som
-   VM-ens ausearch krever. Ta med avvisninger også når funksjonstestene passerer.
+   Date and time are separate arguments. `%x` under the C locale gives the format that
+   the VM's ausearch requires. Include denials even when the functional tests pass.
 
-Helsesjekker: se alle containere med `as_product podman ps`, og les hver status
-med `as_product podman inspect --format '{{.State.Health.Status}}' <container>`.
-Alle appcontainere skal være running og healthy. InitialDelay 90 sekunder dekker
-oppstarten; starting er forventet i inntil 90 sekunder etter hver start, før neste
-sjekk lykkes. Kjør ved behov `as_product podman healthcheck run <container>`.
+Health checks: list all containers with `as_product podman ps`, and read each status
+with `as_product podman inspect --format '{{.State.Health.Status}}' <container>`.
+All app containers must be running and healthy. The 90-second initialDelay covers
+startup; starting is expected for up to 90 seconds after each start, until the next
+check succeeds. When needed, run `as_product podman healthcheck run <container>`.
 
-Akseptansens `09-hang` fryser backendens vertsprosesser med SIGSTOP, etter at
-PID-ene er lest med `podman top myproduct-todo-backend hpid`. Den krever unhealthy,
-nøyaktig én automatisk restart, ny PID/starttid og healthy innen 240 sekunder,
-uten StoppedByUser. Etterpå kontrolleres alle manifestdefinerte containere,
-HTTPS og markører. Ikke bruk podman pause/stop/kill eller manuell SIGCONT;
-ved feil stoppes testen og bare lesende diagnose utføres.
+The acceptance step `09-hang` freezes the backend's host processes with SIGSTOP, after
+reading the PIDs with `podman top myproduct-todo-backend hpid`. It requires unhealthy,
+exactly one automatic restart, a new PID/start time and healthy within 240 seconds,
+without StoppedByUser. Afterwards all manifest-defined containers,
+HTTPS and markers are checked. Do not use podman pause/stop/kill or a manual SIGCONT;
+on failure the test stops and only read-only diagnosis is done.

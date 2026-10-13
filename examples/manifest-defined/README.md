@@ -1,12 +1,12 @@
 # manifest-defined
 
-Kjør `./examples/run.sh manifest-defined` etter [image-oppsettet](../README.md).
+Run `./examples/run.sh manifest-defined` after [the image setup](../README.md).
 
-Både appdata-PVC-en og en Secret er definert direkte i manifestet, uten
-`SECRET_FILES` eller `VOLUME_FILES`. Secret bruker `stringData` med en tydelig
-syntetisk verdi. Containeren leser verdien via `env.valueFrom.secretKeyRef`
-og skriver den til PVC-volumet.
+Both the app data PVC and a Secret are defined directly in the manifest, without
+`SECRET_FILES` or `VOLUME_FILES`. The Secret uses `stringData` with a clearly
+synthetic value. The container reads the value through `env.valueFrom.secretKeyRef`
+and writes it to the PVC volume.
 
-Forventet: både miljøvariabelen `TOKEN` og filen `/data/token-seen` inneholder
-`synthetic-example-value`. Rendrerens koblingssjekk godtar definisjonene.
-Kontrollene passerer, og Secret samt volum fjernes ved opprydding.
+Expected: both the environment variable `TOKEN` and the file `/data/token-seen` contain
+`synthetic-example-value`. The renderer's link check accepts the definitions.
+The checks pass, and the Secret and the volume are removed at cleanup.

@@ -2,8 +2,8 @@
 
 ./deploy prepare   Dev: write build/install.yaml (+ build/files/*.tar).
 
-Filer angis i config.yaml under SECRET_FILES og VOLUME_FILES (id -> filer).
-./deploy install   Prod (tjenestebruker): render, podman load, install Quadlet, restart.
+Files are listed in config.yaml under SECRET_FILES and VOLUME_FILES (id -> files).
+./deploy install   Prod (service user): render, podman load, install Quadlet, restart.
 """
 
 import base64
@@ -26,20 +26,20 @@ CONFIG = ROOT / "config.yaml"
 QUADLET_TEMPLATE = ROOT / "quadlet" / "myproduct.kube"
 QUADLET_DIR = HOME / ".config/containers/systemd"
 QUADLET_TARGET = QUADLET_DIR / "myproduct.kube"
-QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml i .kube
+QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml in .kube
 SERVICE = "myproduct.service"
 
 SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
 
-# Tar-arkiver for VOLUME_FILES. Podman importerer dem i volumene ved hver
-# oppstart, så de må ligge fast i tjenestebrukerens hjemmekatalog.
+# Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
+# start, so they must stay in the service user's home directory.
 FILES_DIR = HOME / "files"
 IMPORT_SOURCE = "volume.podman.io/import-source"
 
 ID = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 SECRET_KEY = re.compile(r"^[-._a-zA-Z0-9]+$")
-# Podman avviser secrets over 512 000 byte (hele Secret-dokumentet).
+# Podman rejects secrets over 512,000 bytes (the whole Secret document).
 MAX_SECRET_SIZE = 500000
 
 PH = re.compile(r"^@@([A-Z0-9_]+)@@$")
@@ -47,70 +47,70 @@ MAX_PORT = 65535
 
 
 class DeployError(Exception):
-    """Feil som vises som én ERROR-linje uten traceback."""
+    """Error shown as a single ERROR line without a traceback."""
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """SafeLoader som avviser dupliserte nøkler i stedet for å ta siste verdi."""
+    """SafeLoader that rejects duplicate keys instead of keeping the last value."""
 
     def construct_mapping(self, node, deep=False):
-        """Konstruer en YAML-mapping og avvis dupliserte nøkler med linjenummer."""
+        """Build a YAML mapping and reject duplicate keys with their line number."""
         seen = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
             if key in seen:
                 raise yaml.constructor.ConstructorError(
-                    None, None, f"duplikat nøkkel {key!r}", key_node.start_mark
+                    None, None, f"duplicate key {key!r}", key_node.start_mark
                 )
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
 
 
 def load_yaml(path):
-    """Les ett YAML-dokument sikkert og avvis dupliserte nøkler."""
+    """Read one YAML document safely and reject duplicate keys."""
     with path.open(encoding="utf-8") as f:
-        # Egen SafeLoader avviser duplikater uten å tillate YAML-objektkonstruksjon.
+        # A SafeLoader subclass rejects duplicates without allowing object construction.
         return yaml.load(f, Loader=UniqueKeyLoader)
 
 
 def load_yaml_all(path):
-    """Les alle YAML-dokumentene sikkert og avvis dupliserte nøkler."""
+    """Read all YAML documents safely and reject duplicate keys."""
     with path.open(encoding="utf-8") as f:
         return list(yaml.load_all(f, Loader=UniqueKeyLoader))
 
 
 def load_config(path):
-    """Les config og valider nøkkeltyper, verdityper og HTTPS-port."""
+    """Read config and validate key types, value types and the HTTPS port."""
     config = load_yaml(path)
 
     if not isinstance(config, dict):
-        raise DeployError(f"{path} må inneholde KEY: verdi-par")
+        raise DeployError(f"{path} must contain KEY: value pairs")
 
     for key, value in config.items():
         if not isinstance(key, str):
-            raise DeployError("Alle nøkler i config.yaml må være tekst")
+            raise DeployError("All keys in config.yaml must be strings")
 
         if key in (SECRET_FILES, VOLUME_FILES):
-            continue  # valideres i load_file_group()
+            continue  # validated in load_file_group()
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise DeployError(
-                f"{key} i config.yaml må være tekst eller heltall, "
-                f"fikk {value!r}. Sett tekst i anførselstegn."
+                f"{key} in config.yaml must be a string or an integer, "
+                f"got {value!r}. Put text in quotes."
             )
 
     port = config.get("HTTPS_PORT")
     if not isinstance(port, int) or not 1 <= port <= MAX_PORT:
         raise DeployError(
-            f"HTTPS_PORT i config.yaml må være et heltall 1-{MAX_PORT} "
-            f"uten anførselstegn, fikk {port!r}"
+            f"HTTPS_PORT in config.yaml must be an integer 1-{MAX_PORT} "
+            f"without quotes, got {port!r}"
         )
 
     return config
 
 
 def replace(value, config):
-    """Erstatt hele placeholders rekursivt og behold config-verdiens type."""
+    """Replace whole placeholders recursively and keep the config value's type."""
     if isinstance(value, dict):
         return {key: replace(item, config) for key, item in value.items()}
 
@@ -122,33 +122,33 @@ def replace(value, config):
         if match:
             key = match.group(1)
             if key not in config:
-                raise DeployError(f"Mangler {key} i config.yaml")
+                raise DeployError(f"Missing {key} in config.yaml")
             return config[key]
 
     return value
 
 
 def write_private(path, text):
-    """Skriv filen med mode 0600 fra første byte."""
+    """Write the file with mode 0600 from the first byte."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        os.fchmod(f.fileno(), 0o600)  # i tilfelle filen fantes med annen mode
+        os.fchmod(f.fileno(), 0o600)  # in case the file existed with another mode
         f.write(text)
 
 
 def resolve_path(value, base_dir=None):
-    """Relativ sti regnes fra config-katalogen. ~ er tillatt."""
+    """Resolve a relative path from the config directory; ~ is allowed."""
     path = Path(value).expanduser()
     return path if path.is_absolute() else (base_dir or CONFIG.parent) / path
 
 
 def load_file_group(config, group, base_dir=None):
-    """Les filgrupper og ekspander katalogstier ett nivå fra config-katalogen."""
+    """Read file groups and expand directory paths one level, relative to the config."""
     spec = config.get(group) or {}
 
     if not isinstance(spec, dict):
-        raise DeployError(f"{group} i config.yaml må være id: [liste med filer]")
+        raise DeployError(f"{group} in config.yaml must be id: [list of files]")
 
     groups = {}
 
@@ -157,7 +157,7 @@ def load_file_group(config, group, base_dir=None):
 
         if not isinstance(group_id, str) or not ID.fullmatch(group_id):
             raise DeployError(
-                f"Ugyldig id {group_id!r} i {group}. Bruk små bokstaver, tall og -"
+                f"Invalid id {group_id!r} in {group}. Use lowercase letters, digits and -"
             )
 
         if (
@@ -165,31 +165,33 @@ def load_file_group(config, group, base_dir=None):
             or not entries
             or not all(isinstance(entry, str) for entry in entries)
         ):
-            raise DeployError(f"{where} må være en liste med filstier")
+            raise DeployError(f"{where} must be a list of file paths")
 
         items = []
 
         for path in (resolve_path(entry, base_dir) for entry in entries):
             if not path.exists():
-                raise DeployError(f"Mangler {path} ({where})")
+                raise DeployError(f"Missing {path} ({where})")
             items += sorted(path.iterdir()) if path.is_dir() else [path]
 
         names = [item.name for item in items]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
-            raise DeployError(f"{where} har flere filer med samme navn: {duplicates}")
+            raise DeployError(
+                f"{where} has several files with the same name: {duplicates}"
+            )
 
         if group == SECRET_FILES:
             for item in items:
                 if not item.is_file():
                     raise DeployError(
-                        f"{where}: {item} er en katalog. Secrets kan bare "
-                        "inneholde filer; bruk VOLUME_FILES for katalogtrær"
+                        f"{where}: {item} is a directory. Secrets can only "
+                        "contain files; use VOLUME_FILES for directory trees"
                     )
                 if not SECRET_KEY.fullmatch(item.name):
                     raise DeployError(
-                        f"{where}: filnavnet {item.name!r} kan bare inneholde "
-                        "bokstaver, tall, . - og _"
+                        f"{where}: the file name {item.name!r} may only contain "
+                        "letters, digits, . - and _"
                     )
 
         groups[group_id] = items
@@ -198,7 +200,7 @@ def load_file_group(config, group, base_dir=None):
 
 
 def secret_documents(secrets):
-    """Lag base64-kodede Secrets innenfor Podmans størrelsesgrense."""
+    """Build base64-encoded Secrets within Podman's size limit."""
     docs = []
 
     for secret_id, items in secrets.items():
@@ -215,9 +217,9 @@ def secret_documents(secrets):
 
         if len(yaml.safe_dump(doc)) > MAX_SECRET_SIZE:
             raise DeployError(
-                f"{SECRET_FILES}.{secret_id} er for stor for en Podman-secret "
-                f"(maks ca. {MAX_SECRET_SIZE * 3 // 4} byte filinnhold). "
-                "Bruk VOLUME_FILES for store filer"
+                f"{SECRET_FILES}.{secret_id} is too large for a Podman secret "
+                f"(max about {MAX_SECRET_SIZE * 3 // 4} bytes of file content). "
+                "Use VOLUME_FILES for large files"
             )
 
         docs.append(doc)
@@ -226,7 +228,7 @@ def secret_documents(secrets):
 
 
 def normalize(info):
-    """Normaliser tar-eier til root og filmoduser til 0644 eller 0755."""
+    """Normalize tar ownership to root and file modes to 0644 or 0755."""
     info.uid = 0
     info.gid = 0
     info.uname = "root"
@@ -236,12 +238,12 @@ def normalize(info):
 
 
 def archive_path(files_dir, volume_id):
-    """Returner stien til importarkivet for en volum-id."""
+    """Return the import archive path for a volume id."""
     return files_dir / f"{volume_id}.tar"
 
 
 def write_file_archives(volumes, files_dir):
-    """Lag ett tar-arkiv per VOLUME_FILES-id."""
+    """Write one tar archive per VOLUME_FILES id."""
     if not volumes:
         return
 
@@ -254,14 +256,14 @@ def write_file_archives(volumes, files_dir):
 
         with os.fdopen(fd, "wb") as raw:
             os.fchmod(raw.fileno(), 0o600)
-            # Offline-arkivet må inneholde målfiler, ikke lenker til byggemaskinen.
+            # The offline archive must contain link targets, not links to the build machine.
             with tarfile.open(fileobj=raw, mode="w", dereference=True) as tar:
                 for item in items:
                     tar.add(str(item), arcname=item.name, filter=normalize)
 
 
 def volume_claims(volumes, files_dir):
-    """Lag PVC-er som lar Podman importere hvert VOLUME_FILES-arkiv."""
+    """Build PVCs that let Podman import each VOLUME_FILES archive."""
     return [
         {
             "apiVersion": "v1",
@@ -270,7 +272,7 @@ def volume_claims(volumes, files_dir):
                 "name": volume_id,
                 "annotations": {IMPORT_SOURCE: str(archive_path(files_dir, volume_id))},
             },
-            # Podman bruker ikke spec, men Kubernetes krever feltene.
+            # Podman ignores spec, but Kubernetes requires the fields.
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "resources": {"requests": {"storage": "1Gi"}},
@@ -281,7 +283,7 @@ def volume_claims(volumes, files_dir):
 
 
 def references(value, found):
-    """Finn alle Secret- og PVC-navn manifestene bruker."""
+    """Find every Secret and PVC name used by the manifests."""
     if isinstance(value, dict):
         secret = value.get("secret")
         if isinstance(secret, dict) and "secretName" in secret:
@@ -307,7 +309,7 @@ def references(value, found):
 
 
 def check_links(docs, from_config):
-    """Valider unike volumnavn og koblinger mellom config og manifester."""
+    """Validate unique volume names and links between config and manifests."""
     defined = [
         (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
         for doc in docs
@@ -318,8 +320,8 @@ def check_links(docs, from_config):
     names = [name for _, name in defined]
     for name in sorted({n for n in names if names.count(n) > 1}, key=str):
         raise DeployError(
-            f"Navnet {name!r} er definert flere ganger som Secret/PVC/ConfigMap. "
-            "Podman lager ett volum per navn, så navnene må være unike på tvers av typene"
+            f"The name {name!r} is defined more than once as Secret/PVC/ConfigMap. "
+            "Podman creates one volume per name, so names must be unique across kinds"
         )
 
     defined = {(kind, name) for kind, name in defined if kind != "ConfigMap"}
@@ -328,23 +330,23 @@ def check_links(docs, from_config):
     for kind, name in sorted(used - set(defined)):
         group = SECRET_FILES if kind == "Secret" else VOLUME_FILES
         raise DeployError(
-            f"Et manifest bruker {kind} {name!r}, men den finnes ikke. "
-            f"Legg den til under {group} i config.yaml eller i et manifest"
+            f"A manifest uses {kind} {name!r}, but it does not exist. "
+            f"Add it under {group} in config.yaml or in a manifest"
         )
 
     for key, where in sorted(from_config.items()):
         if key not in used:
             raise DeployError(
-                f"{where} i config.yaml brukes ikke av noe manifest. "
-                "Sjekk at id-en er lik secretName/claimName i manifestet"
+                f"{where} in config.yaml is not used by any manifest. "
+                "Check that the id matches secretName/claimName in the manifest"
             )
 
 
 def render(files_dir=None, write_archives=True, config_path=None):
-    """Rendr validert YAML og skriv importarkiver hvis write_archives er satt."""
+    """Render validated YAML and write import archives if write_archives is set."""
     config_path = config_path or CONFIG
     if not config_path.exists():
-        raise DeployError(f"Mangler {config_path}")
+        raise DeployError(f"Missing {config_path}")
 
     files_dir = files_dir or BUILD / "files"
     config = load_config(config_path)
@@ -364,11 +366,11 @@ def render(files_dir=None, write_archives=True, config_path=None):
                 if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
                     data = doc.get("data") or {}
                     if not isinstance(data, dict):
-                        raise DeployError("ConfigMap.data må være et map")
+                        raise DeployError("ConfigMap.data must be a map")
                     doc["data"] = {str(key): str(value) for key, value in data.items()}
             if "@@" in yaml.safe_dump_all(rendered, sort_keys=False):
                 raise DeployError(
-                    'Uerstattet @@...@@. Kun hele verdier som "@@NAVN@@" støttes.'
+                    'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'
                 )
         except DeployError as error:
             raise DeployError(f"{path}: {error}") from None
@@ -382,10 +384,10 @@ def render(files_dir=None, write_archives=True, config_path=None):
 
     text = yaml.safe_dump_all(docs, sort_keys=False)
 
-    # Base64 inneholder aldri '@', så Secret-data gir ikke falske treff.
+    # Base64 never contains '@', so Secret data cannot give false matches.
     if "@@" in text:
         raise DeployError(
-            'Uerstattet @@...@@ i manifestene. Kun hele verdier som "@@NAVN@@" støttes.'
+            'Unreplaced @@...@@ in the manifests. Only whole values like "@@NAME@@" are supported.'
         )
 
     if write_archives:
@@ -394,20 +396,20 @@ def render(files_dir=None, write_archives=True, config_path=None):
 
 
 def prepare():
-    """Skriv validert dev-YAML og importarkiver uten å kjøre Podman."""
+    """Write validated dev YAML and import archives without running Podman."""
     output = BUILD / "install.yaml"
     write_private(output, render())
     print(f"[OK] {output}")
 
 
 def run(*args):
-    """Vis og kjør en kommando; avbryt ved feilstatus."""
+    """Show and run a command; stop on a failing status."""
     print("+", " ".join(map(str, args)))
     subprocess.run(list(map(str, args)), check=True)
 
 
 def find_images(documents):
-    """Finn unike, fullt kvalifiserte images i pod-spesifikasjoner."""
+    """Find unique, fully qualified images in pod specs."""
     images = set()
     pending = list(documents)
     while pending:
@@ -424,18 +426,18 @@ def find_images(documents):
                             else None
                         )
                         container_name = (
-                            container.get("name", "<uten navn>")
+                            container.get("name", "<unnamed>")
                             if isinstance(container, dict)
-                            else "<uten navn>"
+                            else "<unnamed>"
                         )
                         where = f"container {container_name!r} ({key})"
                         if not isinstance(image, str) or not image.strip():
                             raise DeployError(
-                                f"Container må ha et image-navn som tekst: {where}"
+                                f"Container must have an image name as a string: {where}"
                             )
                         if "@@" in image:
                             raise DeployError(
-                                f"Image {image}: placeholders støttes ikke i {where}"
+                                f"Image {image}: placeholders are not supported in {where}"
                             )
                         registry, separator, name = image.partition("/")
                         if (
@@ -448,38 +450,38 @@ def find_images(documents):
                             )
                         ):
                             raise DeployError(
-                                f"Image {image} må være fullt kvalifisert i {where}"
+                                f"Image {image} must be fully qualified in {where}"
                             )
                         images.add(image)
                 pending.append(child)
     if not images:
-        raise DeployError("Ingen images funnet i manifestene")
+        raise DeployError("No images found in the manifests")
     return sorted(images)
 
 
 def install():
-    """Installer rootless Quadlet fra releasen med tjenestebrukerens varige config."""
+    """Install the rootless Quadlet from the release using the persistent config."""
     if os.geteuid() == 0:
-        raise DeployError("Kjør install som tjenestebrukeren, ikke som root")
+        raise DeployError("Run install as the service user, not as root")
 
     configured_home = os.environ.get("HOME")
     if configured_home is not None and Path(configured_home) != HOME:
         raise DeployError(
-            f"HOME={configured_home!r} avviker fra hjemmekatalogen {HOME} i "
-            "brukerdatabasen. Kjør install med tjenestebrukerens HOME"
+            f"HOME={configured_home!r} differs from the home directory {HOME} in "
+            "the user database. Run install with the service user's HOME"
         )
 
     runtime = Path(f"/run/user/{os.geteuid()}")
     configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if configured_runtime is not None and configured_runtime != str(runtime):
         raise DeployError(
-            f"XDG_RUNTIME_DIR={configured_runtime!r} avviker fra forventet {runtime} "
-            "for tjenestebrukeren"
+            f"XDG_RUNTIME_DIR={configured_runtime!r} differs from the expected {runtime} "
+            "for the service user"
         )
     if not runtime.is_dir():
         raise DeployError(
-            f"Mangler runtime-katalog {runtime}. Aktiver linger for tjenestebrukeren "
-            "med loginctl enable-linger og kontroller at brukerinstansen kjører"
+            f"Missing runtime directory {runtime}. Enable linger for the service user "
+            "with loginctl enable-linger and check that the user instance is running"
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
 
@@ -487,18 +489,18 @@ def install():
     text = render(FILES_DIR, write_archives=False, config_path=config_path)
     archive = ROOT / "images" / "images.tar"
     if not archive.is_file():
-        raise DeployError(f"Mangler image-arkivet {archive}")
+        raise DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     for image in find_images(yaml.safe_load_all(text)):
         try:
             run("podman", "image", "exists", image)
         except subprocess.CalledProcessError as error:
             raise DeployError(
-                f"Image {image} er ikke tilgjengelig etter podman load "
-                f"(podman image exists ga exit {error.returncode})"
+                f"Image {image} is not available after podman load "
+                f"(podman image exists returned exit {error.returncode})"
             ) from None
 
-    # Gammel YAML må ikke importere nye filer etter en mislykket image-kontroll.
+    # Old YAML must not import new files after a failed image check.
     render(FILES_DIR, config_path=config_path)
 
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)
@@ -516,11 +518,11 @@ def install():
     run("systemctl", "--user", "is-active", "--quiet", SERVICE)
     run("podman", "ps", "--all", "--pod")
 
-    print(f"[OK] {SERVICE} kjører. Sjekk at containerne over er 'Up'.")
+    print(f"[OK] {SERVICE} is running. Check that the containers above are 'Up'.")
 
 
 def main():
-    """Kjør valgt deploy-kommando og returner exit-kode for forventede feil."""
+    """Run the chosen deploy command and return an exit code for expected errors."""
     commands = {"prepare": prepare, "install": install}
     args = sys.argv[1:]
 
@@ -534,7 +536,7 @@ def main():
         print(f"ERROR: {error}", file=sys.stderr)
         if args[0] == "install":
             print(
-                f"Feilsøk: journalctl --user -u {SERVICE} og "
+                f"Troubleshoot: journalctl --user -u {SERVICE} and "
                 "/usr/lib/systemd/user-generators/podman-user-generator --dryrun",
                 file=sys.stderr,
             )

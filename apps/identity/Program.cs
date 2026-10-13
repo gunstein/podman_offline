@@ -85,14 +85,14 @@ app.MapGet("/account/login", (HttpContext context, IAntiforgery antiforgery,
     if (!interaction.IsValidReturnUrl(returnUrl)) return Results.BadRequest("Invalid return URL");
     var tokens = antiforgery.GetAndStoreTokens(context);
     string Escape(string? value) => HtmlEncoder.Default.Encode(value ?? "");
-    var html = "<!doctype html><html lang=nb><meta charset=utf-8><title>Logg inn</title>" +
-        "<h1>Duende – logg inn</h1><form method=post>" +
+    var html = "<!doctype html><html lang=en><meta charset=utf-8><title>Sign in</title>" +
+        "<h1>Duende – sign in</h1><form method=post>" +
         "<input type=hidden name=returnUrl value=\"" + Escape(returnUrl) + "\">" +
         "<input type=hidden name=\"" + Escape(tokens.FormFieldName) + "\" value=\"" +
         Escape(tokens.RequestToken) + "\">" +
-        "<p><label>Brukernavn <input name=username autocomplete=username required></label></p>" +
-        "<p><label>Passord <input name=password type=password autocomplete=current-password required></label></p>" +
-        "<button>Logg inn</button></form></html>";
+        "<p><label>User name <input name=username autocomplete=username required></label></p>" +
+        "<p><label>Password <input name=password type=password autocomplete=current-password required></label></p>" +
+        "<button>Sign in</button></form></html>";
     return Results.Content(html, "text/html; charset=utf-8");
 });
 app.MapPost("/account/login", async (HttpContext context, IAntiforgery antiforgery,

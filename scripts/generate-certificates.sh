@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generer demo-CA, sertifikater og passord uten å erstatte eksisterende nøkler.
+# Generate the demo CA, certificates and passwords without replacing existing keys.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 umask 077
@@ -27,7 +27,7 @@ openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
     -keyout PKI/private/ca.key -out PKI/private/ca.crt \
     -subj '/CN=MyProduct Development CA' \
     -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign'
-# Utsted en privat nøkkel og et sertifikat signert av demo-CA-en.
+# Issue a private key and a certificate signed by the demo CA.
 issue() {
     local name=$1 dir=$2 usage=$3
     openssl req -new -newkey rsa:2048 -nodes -sha256 \

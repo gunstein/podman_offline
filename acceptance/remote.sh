@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kjør faste akseptansesteg på VM-ene uten å logge hemmeligheter.
+# Run fixed acceptance steps on the VMs without logging secrets.
 set -euo pipefail
 action=$1
 run=$2
@@ -18,7 +18,7 @@ src="$base/src"
 product="/var/lib/myproduct/releases/myproduct-RELEASE"
 if [[ -f $base/version ]]; then product="/var/lib/myproduct/releases/myproduct-$(cat "$base/version")"; fi
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
-# Kjør kommandoer som tjenestebrukeren fra hjemmet med riktig runtime.
+# Run commands as the service user from its home with the right runtime.
 as_product() {
     sudo -n -H -u myproduct bash -c '
         cd "$HOME" || exit
@@ -26,9 +26,9 @@ as_product() {
         exec "$@"
     ' bash "$@"
 }
-# Styr produktets tjeneste i tjenestebrukerens systemd-instans.
+# Control the product service in the service user's systemd instance.
 user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
-# Samle audit med adskilte strømmer og godta bare det dokumenterte tomme svaret.
+# Collect audit with separate streams and accept only the documented empty result.
 audit_events() {
     sudo -n python3 - "$start_date" "$start_time" "$1" <<'AUDIT'
 import os
@@ -37,7 +37,7 @@ import sys
 
 
 def collect():
-    """Logg audit-strømmene og avvis feil eller avvisninger i kontrollmodus."""
+    """Log the audit streams and reject errors or denials in check mode."""
     result = subprocess.run(
         ["ausearch", "--input-logs", "-m", "FANOTIFY,AVC,USER_AVC", "-ts",
          sys.argv[1], sys.argv[2], "-i"],
@@ -57,7 +57,7 @@ def collect():
 collect()
 AUDIT
 }
-# Vent lesende på eksakte trust-stier etter daemonens asynkrone oppdatering.
+# Wait, read-only, for exact trust paths after the daemon's asynchronous update.
 wait_trust() {
     local wanted=$1 removed=${2:-} dump status attempt
     for attempt in {1..30}; do
@@ -87,7 +87,7 @@ wait_trust() {
     echo 'FAIL: trust update did not finish within 30 checks' >&2
     return 1
 }
-# Valider VM-rollens fapolicyd-, SELinux- og firewalld-profil.
+# Validate the VM role's fapolicyd, SELinux and firewalld profile.
 profile() {
     selinux=$(getenforce)
     firewall=$(systemctl show firewalld -p ActiveState --value)
@@ -104,7 +104,7 @@ profile() {
         test "$policy" = active
     fi
 }
-# Logg OS-, verktøy- og oppstartsdata etter profilkontroll.
+# Log OS, tool and boot data after the profile check.
 facts() {
     profile
     cat /etc/os-release
@@ -117,7 +117,7 @@ facts() {
     sudo -n systemctl is-active firewalld
     df -h "$HOME"
 }
-# Vent på automatisk oppstart etter reboot uten å starte eller restarte tjenesten.
+# Wait for automatic start after reboot without starting or restarting the service.
 wait_boot_service() {
     for _ in {1..120}; do
         status=0
@@ -136,7 +136,7 @@ wait_boot_service() {
     echo 'FAIL: product service did not become active within 240s'
     return 1
 }
-# Bekreft blokkert internett uten å godta manglende verktøy som nettbevis.
+# Confirm blocked internet without accepting missing tools as network evidence.
 offline() {
     sudo -n systemctl is-active podman-offline-isolation.service
     sudo -n nft list table inet podman_offline
@@ -161,7 +161,7 @@ PY
     # Check prerequisites separately: a missing binary is not proof of isolation.
     sudo -n podman version >/dev/null
     status=0
-    # FD 3 bevarer stdout; bare stderr fanges for å validere nettfeilen.
+    # FD 3 keeps stdout; only stderr is captured to validate the network error.
     { probe_error=$(timeout 20 sudo -n podman pull docker.io/library/busybox 2>&1 1>&3) || status=$?; } 3>&1
     printf '%s\n' "$probe_error" | sed 's/^/pull-probe: /' >&2
     case "$status" in
@@ -175,7 +175,7 @@ PY
     esac
     echo "PASS: public pull failed (exit $status)"
 }
-# Vent på alle manifestdefinerte appcontainere og deres Podman-helsestatus.
+# Wait for all manifest-defined app containers and their Podman health status.
 healthy() {
     user_service is-active myproduct.service
     as_product python3 - <<'HEALTHY'
@@ -188,18 +188,18 @@ import yaml
 
 
 def podman(arguments):
-    """Les Podman-stdout uten privat inspect-innhold, og logg stderr ved alle utfall."""
+    """Read Podman stdout without private inspect content, and log stderr on every outcome."""
     result = subprocess.run(["podman"] + arguments, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, universal_newlines=True,
                             check=False, timeout=10)
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("Podman-kontroll feilet: exit " + str(result.returncode))
+        raise RuntimeError("Podman check failed: exit " + str(result.returncode))
     return result.stdout
 
 
 def expected_containers(path):
-    """Les unike app- og init-containernavn fra installert Pod-YAML."""
+    """Read unique app and init-container names from the installed Pod YAML."""
     expected, init = set(), set()
     with path.open() as stream:
         for doc in yaml.safe_load_all(stream):
@@ -210,44 +210,44 @@ def expected_containers(path):
                 for container in doc["spec"].get(group, []):
                     name = pod + "-" + container["name"]
                     if name in expected or name in init:
-                        raise RuntimeError("Duplisert forventet containernavn: " + name)
+                        raise RuntimeError("Duplicate expected container name: " + name)
                     target.add(name)
     if not expected:
-        raise RuntimeError("Ingen appcontainere i installert YAML")
+        raise RuntimeError("No app containers in the installed YAML")
     return expected, init
 
 
 def states(expected, init):
-    """Krev eksakt containerinventar og returner bare offentlige helsetilstandsfelt."""
+    """Require the exact container inventory and return only public health fields."""
     ids = podman(["ps", "-aq"]).splitlines()
     if not ids or any(not value.strip() for value in ids):
-        raise RuntimeError("Manglende containerinventar")
+        raise RuntimeError("Missing container inventory")
     rows = json.loads(podman(["inspect", "--format", "json"] + ids))
     if not isinstance(rows, list) or not rows:
-        raise RuntimeError("Ugyldig inspect-liste")
+        raise RuntimeError("Invalid inspect list")
     found = {}
     for row in rows:
         if type(row["IsInfra"]) is not bool or type(row["IsService"]) is not bool:
-            raise RuntimeError("Ugyldige inventarflagg")
+            raise RuntimeError("Invalid inventory flags")
         if row["IsInfra"] or row["IsService"]:
             continue
         name = row["Name"]
         if name in init:
             continue
         if name not in expected or name in found:
-            raise RuntimeError("Ukjent eller duplisert container: " + str(name))
+            raise RuntimeError("Unknown or duplicate container: " + str(name))
         state = row["State"]
         running, health = state["Status"], state["Health"]["Status"]
         if not isinstance(running, str) or health not in ("starting", "healthy", "unhealthy"):
-            raise RuntimeError("Ugyldig helsestatus: " + name)
+            raise RuntimeError("Invalid health status: " + name)
         found[name] = (running, health)
     if set(found) != expected:
-        raise RuntimeError("Mangler containere: " + ", ".join(sorted(expected - set(found))))
+        raise RuntimeError("Missing containers: " + ", ".join(sorted(expected - set(found))))
     return found
 
 
 def main():
-    """Vent inntil 150 sekunder på healthy; avvis inventar-, kommando- og parsefeil straks."""
+    """Wait up to 150 seconds for healthy; reject inventory, command and parse errors at once."""
     expected, init = expected_containers(pathlib.Path.home() / ".config/containers/systemd/myproduct.yaml")
     deadline = time.monotonic() + 150
     while True:
@@ -255,12 +255,12 @@ def main():
         for name, (running, health) in sorted(current.items()):
             print("HEALTH {} state={} health={}".format(name, running, health), flush=True)
             if running != "running" or health == "unhealthy":
-                raise RuntimeError("Containeren er ikke frisk: " + name)
+                raise RuntimeError("Container is not healthy: " + name)
         if all(health == "healthy" for _, health in current.values()):
-            print("PASS: alle {} appcontainere kjører og er healthy".format(len(expected)))
+            print("PASS: all {} app containers are running and healthy".format(len(expected)))
             return
         if time.monotonic() >= deadline:
-            raise RuntimeError("Helsestatus fortsatt starting etter 150s")
+            raise RuntimeError("Health status still starting after 150s")
         time.sleep(min(2, max(0, deadline - time.monotonic())))
 
 
@@ -271,7 +271,7 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: " + str(error))
 HEALTHY
 }
-# Vent på backend gjennom HTTPS-proxyen før autentiserte markørkontroller.
+# Wait for the backend through the HTTPS proxy before authenticated marker checks.
 wait_backend() {
     for _ in {1..30}; do
         status=0
@@ -468,7 +468,7 @@ install)
     tar xzf "$archive" -C "$stage"
     sudo -n bash "$stage/myproduct-$(cat version)/scripts/prepare-host.sh" --port "$port"
     sudo -n -H -u myproduct mkdir -p /var/lib/myproduct/releases
-    # Operatøren åpner arkivet; myproduct trenger ikke lesetilgang til operatørens hjem.
+    # The operator opens the archive; myproduct needs no read access to the operator's home.
     # shellcheck disable=SC2024
     sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
     rm -rf -- "$stage"
@@ -538,70 +538,70 @@ import sys
 try:
     import selinux
 except ImportError:
-    raise SystemExit("FAIL: Python-modulen selinux mangler; installer vertens policycoreutils-python-utils før snapshot")
+    raise SystemExit("FAIL: the selinux Python module is missing; install the host's policycoreutils-python-utils before the snapshot")
 
 STORAGE = pathlib.Path("/var/lib/myproduct/.local/share/containers/storage")
 CUSTOMIZABLE = pathlib.Path("/etc/selinux/targeted/contexts/customizable_types")
 
 
 def context_type(context):
-    """Hent typen fra en SELinux-context og avvis ugyldig format."""
+    """Get the type from an SELinux context and reject an invalid format."""
     parts = context.rstrip("\x00").split(":")
     if len(parts) < 4:
-        raise RuntimeError("Ugyldig SELinux-context: " + context)
+        raise RuntimeError("Invalid SELinux context: " + context)
     return parts[2]
 
 
 def policy_type(path):
-    """Hent policytypen med stiens lstat-filtype; avvis feil uten reserveoppslag."""
+    """Get the policy type using the path's lstat file type; reject errors without fallback."""
     try:
         mode = stat.S_IFMT(os.lstat(str(path)).st_mode)
     except OSError as error:
-        raise RuntimeError("lstat feilet for {}: {}".format(path, error)) from None
+        raise RuntimeError("lstat failed for {}: {}".format(path, error)) from None
     status, context = selinux.matchpathcon(str(path), mode)
     if status != 0:
-        raise RuntimeError("matchpathcon feilet: " + str(path))
+        raise RuntimeError("matchpathcon failed: " + str(path))
     return context_type(context)
 
 
 def check_equivalence():
-    """Bekreft container-ekvivalensen med policy-prober uten filkrav."""
+    """Confirm the container equivalence with policy probes that need no files."""
     probes = ((STORAGE / "overlay-layers", "container_ro_file_t"),
               (STORAGE / "volumes/x/_data/y", "container_file_t"))
     for path, expected in probes:
         status, context = selinux.matchpathcon(str(path), 0)
         if status != 0:
-            raise RuntimeError("matchpathcon feilet for policy-probe: " + str(path))
+            raise RuntimeError("matchpathcon failed for policy probe: " + str(path))
         actual = context_type(context)
         print("POLICY {} type={} expected={}".format(path, actual, expected))
         if actual != expected:
-            raise RuntimeError("Container-ekvivalensen mangler eller gir feil type: " + str(path))
+            raise RuntimeError("The container equivalence is missing or gives the wrong type: " + str(path))
 
 
 def check_label(path):
-    """Logg faktisk og forventet type og avvis avvik fra policyen."""
+    """Log the actual and expected type and reject deviations from the policy."""
     actual = context_type(os.getxattr(str(path), "security.selinux", follow_symlinks=False).decode())
     expected = policy_type(path)
     print("LABEL {} actual={} expected={}".format(path, actual, expected))
     if actual != expected:
-        raise RuntimeError("SELinux-type avviker fra policyen: " + str(path))
+        raise RuntimeError("SELinux type deviates from the policy: " + str(path))
 
 
 def writable_layers(output):
-    """Valider UpperDir fra eksisterende containere og returner deres skrivbare lag-ID-er."""
+    """Validate UpperDir of existing containers and return their writable layer IDs."""
     layers = set()
     for path in output.splitlines():
         match = re.fullmatch(re.escape(str(STORAGE)) + r"/overlay/([0-9a-f]{64})/diff", path)
         if not match:
-            raise RuntimeError("Uventet UpperDir fra podman inspect: " + path)
+            raise RuntimeError("Unexpected UpperDir from podman inspect: " + path)
         layers.add(match.group(1))
     if not layers:
-        raise RuntimeError("Ingen skrivbare container-lag funnet")
+        raise RuntimeError("No writable container layers found")
     return layers
 
 
 def classify_line(line, customizable, upper_layers):
-    """Klassifiser én dry-run-linje med smale regler eller avvis den."""
+    """Classify one dry-run line with narrow rules or reject it."""
     proposal = re.fullmatch(r"Would relabel (.+) from (\S+) to (\S+)", line)
     preserved = re.fullmatch(r"(.+) not reset as customized by admin to (\S+)", line)
     if proposal:
@@ -611,10 +611,10 @@ def classify_line(line, customizable, upper_layers):
         path, context = preserved.groups()
         before, after = context_type(context), policy_type(path)
     else:
-        raise RuntimeError("Uklassifisert restorecon-linje: " + line)
+        raise RuntimeError("Unclassified restorecon line: " + line)
     prefix = str(STORAGE) + "/"
     if not path.startswith(prefix) or ".." in pathlib.Path(path).parts:
-        raise RuntimeError("restorecon-linje utenfor lageret: " + line)
+        raise RuntimeError("restorecon line outside storage: " + line)
     relative = path[len(prefix):]
     # R1: container.if named transition for 'artifacts'; container.fc path default.
     if (proposal and re.fullmatch(r"overlay-containers/[0-9a-f]{64}/userdata/artifacts", relative)
@@ -630,11 +630,11 @@ def classify_line(line, customizable, upper_layers):
             return "CUSTOM_WRITABLE_LAYER"
         if re.fullmatch(r"overlay-containers/[0-9a-f]{64}/rootfs/upper(?:/.*)?", relative) and after == "container_var_lib_t":
             return "CUSTOM_WRITABLE_ROOTFS"
-    raise RuntimeError("Uklassifisert restorecon-linje: " + line)
+    raise RuntimeError("Unclassified restorecon line: " + line)
 
 
 def dryrun(arguments):
-    """Logg lesende restorecon-output og avvis kommandoens feilstatus."""
+    """Log read-only restorecon output and reject the command's failing status."""
     result = subprocess.run(["restorecon", "-n", "-v", "-R"] + arguments,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False)
@@ -642,14 +642,14 @@ def dryrun(arguments):
     print(result.stdout, end="")
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("restorecon dry-run feilet: exit " + str(result.returncode))
+        raise RuntimeError("restorecon dry-run failed: exit " + str(result.returncode))
     if result.stderr:
-        raise RuntimeError("restorecon dry-run skrev diagnostikk på stderr")
+        raise RuntimeError("restorecon dry-run wrote diagnostics to stderr")
     return result.stdout
 
 
 def main():
-    """Kontroller policy, faktiske labels og klassifisert dry-run uten relabeling."""
+    """Check policy, actual labels and the classified dry run without relabeling."""
     check_equivalence()
     upper_layers = writable_layers(sys.argv[1])
     for layer in sorted(upper_layers):
@@ -658,14 +658,14 @@ def main():
         check_label(STORAGE / name)
     volumes = sorted((STORAGE / "volumes").glob("*/_data"))
     if not volumes:
-        raise RuntimeError("Ingen volumdata funnet")
+        raise RuntimeError("No volume data found")
     for root in volumes:
         check_label(root)
         for directory, dirs, files in os.walk(str(root)):
             for name in sorted(dirs + files):
                 check_label(pathlib.Path(directory) / name)
     outputs, failures = [], []
-    # Begge dry-runs er lesende bevis, også når den første rapporterer feil.
+    # Both dry runs are read-only evidence, even when the first one reports an error.
     for arguments in (["-e", str(STORAGE), "/var/lib/myproduct"], [str(STORAGE)]):
         try:
             outputs.append(dryrun(arguments))
@@ -676,12 +676,12 @@ def main():
         raise RuntimeError("; ".join(failures))
     outside, inside = outputs
     if outside:
-        raise RuntimeError("restorecon foreslår endringer utenfor lageret")
+        raise RuntimeError("restorecon proposes changes outside storage")
     customizable = set(CUSTOMIZABLE.read_text().splitlines())
     for line in inside.splitlines():
         rule = classify_line(line, customizable, upper_layers)
         print("RULE {}: {}".format(rule, line))
-    print("PASS: policy, faktiske labels og klassifisert restorecon dry-run")
+    print("PASS: policy, actual labels and classified restorecon dry run")
 
 
 if __name__ == "__main__":
@@ -739,29 +739,29 @@ CONTAINER = "myproduct-todo-backend"
 
 
 def product_command(arguments):
-    """Bygg et Podman-kall som tjenestebrukeren fra riktig hjem og runtime."""
+    """Build a Podman call as the service user from the right home and runtime."""
     return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
             'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
             "bash"] + arguments
 
 
 def command(arguments):
-    """Returner stdout uten å logge inspect-innhold og behold stderr også ved feil."""
+    """Return stdout without logging inspect content and keep stderr also on failure."""
     print("$ " + " ".join(shlex.quote(arg) for arg in arguments))
     result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False, timeout=10)
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("Krasjtest-kommando feilet: exit " + str(result.returncode))
+        raise RuntimeError("Crash test command failed: exit " + str(result.returncode))
     return result.stdout
 
 
 def inspect_container():
-    """Parse inspect-JSON og valider bare feltene som brukes til krasjkontrollen."""
+    """Parse inspect JSON and validate only the fields the check uses."""
     try:
         rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
-            raise ValueError("Forventet én container")
+            raise ValueError("Expected one container")
         state = rows[0]["State"]
         result = {"Pid": state["Pid"], "Running": state["Running"],
                   "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
@@ -772,17 +772,17 @@ def inspect_container():
                 or type(result["RestartCount"]) is not int or result["RestartCount"] < 0
                 or type(result["StoppedByUser"]) is not bool
                 or not isinstance(result["StartedAt"], str) or not result["StartedAt"].strip()):
-            raise ValueError("Ugyldige tilstandsfelt")
+            raise ValueError("Invalid state fields")
     except (ValueError, KeyError, TypeError):
-        raise RuntimeError("Ugyldig eller tom container-tilstand fra inspect") from None
+        raise RuntimeError("Invalid or empty container state from inspect") from None
     return result
 
 
 def main():
-    """Drep vertsprosessen én gang og krev én automatisk restart innen 60 sekunder."""
+    """Kill the host process once and require one automatic restart within 60 seconds."""
     before = inspect_container()
     if not before["Running"] or before["StoppedByUser"]:
-        raise RuntimeError("Containeren må kjøre og ikke være stoppet av bruker før krasjtesten")
+        raise RuntimeError("The container must be running and not stopped by the user before the crash test")
     print("BEFORE " + json.dumps(before, sort_keys=True))
     command(["sudo", "-n", "kill", "-KILL", str(before["Pid"])])
     deadline = time.monotonic() + 60
@@ -790,15 +790,15 @@ def main():
         after = inspect_container()
         print("AFTER " + json.dumps(after, sort_keys=True))
         if after["StoppedByUser"]:
-            raise RuntimeError("StoppedByUser ble satt under krasjtesten")
+            raise RuntimeError("StoppedByUser was set during the crash test")
         if after["RestartCount"] > before["RestartCount"] + 1:
-            raise RuntimeError("Containeren restartet mer enn én gang")
+            raise RuntimeError("The container restarted more than once")
         if (after["Running"] and after["RestartCount"] == before["RestartCount"] + 1
                 and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
-            print("PASS: én automatisk restart med ny PID og starttid etter prosesskrasj")
+            print("PASS: one automatic restart with a new PID and start time after the process crash")
             return
         time.sleep(min(2, max(0, deadline - time.monotonic())))
-    raise RuntimeError("Ingen verifisert automatisk restart innen 60s")
+    raise RuntimeError("No verified automatic restart within 60s")
 
 
 if __name__ == "__main__":
@@ -822,29 +822,29 @@ CONTAINER = "myproduct-todo-backend"
 
 
 def product_command(arguments):
-    """Bygg et Podman-kall som tjenestebrukeren fra riktig hjem og runtime."""
+    """Build a Podman call as the service user from the right home and runtime."""
     return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
             'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
             "bash"] + arguments
 
 
 def command(arguments):
-    """Returner stdout uten å logge inspect-innhold og behold stderr også ved feil."""
+    """Return stdout without logging inspect content and keep stderr also on failure."""
     print("$ " + " ".join(shlex.quote(arg) for arg in arguments))
     result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False, timeout=10)
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("Hengtest-kommando feilet: exit " + str(result.returncode))
+        raise RuntimeError("Hang test command failed: exit " + str(result.returncode))
     return result.stdout
 
 
 def inspect_container():
-    """Parse inspect-JSON og valider bare feltene som brukes til krasjkontrollen."""
+    """Parse inspect JSON and validate only the fields the check uses."""
     try:
         rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
-            raise ValueError("Forventet én container")
+            raise ValueError("Expected one container")
         state = rows[0]["State"]
         result = {"Pid": state["Pid"], "Running": state["Running"],
                   "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
@@ -857,26 +857,26 @@ def inspect_container():
                 or type(result["StoppedByUser"]) is not bool
                 or result["Health"] not in ("healthy", "starting", "unhealthy")
                 or not isinstance(result["StartedAt"], str) or not result["StartedAt"].strip()):
-            raise ValueError("Ugyldige tilstandsfelt")
+            raise ValueError("Invalid state fields")
     except (ValueError, KeyError, TypeError):
-        raise RuntimeError("Ugyldig eller tom container-tilstand fra inspect") from None
+        raise RuntimeError("Invalid or empty container state from inspect") from None
     return result
 
 
 def main():
-    """Frys alle vertsprosesser én gang og krev unhealthy fulgt av én frisk restart."""
+    """Freeze all host processes once and require unhealthy followed by one healthy restart."""
     before = inspect_container()
     if not before["Running"] or before["StoppedByUser"] or before["Health"] != "healthy":
-        raise RuntimeError("Containeren må være healthy før hengtesten")
+        raise RuntimeError("The container must be healthy before the hang test")
     print("BEFORE " + json.dumps(before, sort_keys=True), flush=True)
     top = command(product_command(["podman", "top", CONTAINER, "hpid"]))
     lines = top.splitlines()
     if not lines or lines[0].strip().upper() != "HPID":
-        raise RuntimeError("Ugyldig PID-liste fra podman top")
+        raise RuntimeError("Invalid PID list from podman top")
     pids = [line.strip() for line in lines[1:]]
     if (not pids or any(not pid.isdigit() or int(pid) <= 1 for pid in pids)
             or len(set(pids)) != len(pids) or str(before["Pid"]) not in pids):
-        raise RuntimeError("Ugyldige verts-PID-er fra podman top")
+        raise RuntimeError("Invalid host PIDs from podman top")
     for pid in pids:
         command(["sudo", "-n", "kill", "-STOP", pid])
     deadline, unhealthy = time.monotonic() + 240, False
@@ -885,16 +885,16 @@ def main():
         print("AFTER " + json.dumps(after, sort_keys=True), flush=True)
         unhealthy = unhealthy or after["Health"] == "unhealthy"
         if after["StoppedByUser"]:
-            raise RuntimeError("StoppedByUser ble satt under hengtesten")
+            raise RuntimeError("StoppedByUser was set during the hang test")
         if after["RestartCount"] > before["RestartCount"] + 1:
-            raise RuntimeError("Containeren restartet mer enn én gang")
+            raise RuntimeError("The container restarted more than once")
         if (unhealthy and after["Running"] and after["Health"] == "healthy"
                 and after["RestartCount"] == before["RestartCount"] + 1
                 and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
-            print("PASS: unhealthy fulgt av én automatisk restart til healthy")
+            print("PASS: unhealthy followed by one automatic restart to healthy")
             return
         time.sleep(min(2, max(0, deadline - time.monotonic())))
-    raise RuntimeError("Ingen verifisert frisk restart etter heng innen 240s")
+    raise RuntimeError("No verified healthy restart after the hang within 240s")
 
 
 if __name__ == "__main__":

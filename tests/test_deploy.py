@@ -161,7 +161,7 @@ class ConfigTests(DeployFixture):
                 self.config["VALUE"] = value
                 self.write_config()
                 with self.assertRaisesRegex(
-                    deploy.DeployError, "VALUE.*tekst eller heltall"
+                    deploy.DeployError, "VALUE.*string or an integer"
                 ):
                     deploy.load_config(deploy.CONFIG)
 
@@ -169,7 +169,7 @@ class ConfigTests(DeployFixture):
         for text in ("", "null", "[]", "text", "42"):
             with self.subTest(text=text):
                 self.write("config.yaml", text)
-                with self.assertRaisesRegex(deploy.DeployError, "KEY: verdi"):
+                with self.assertRaisesRegex(deploy.DeployError, "KEY: value"):
                     deploy.load_config(deploy.CONFIG)
 
     def test_rejects_non_string_keys(self):
@@ -178,7 +178,7 @@ class ConfigTests(DeployFixture):
                 self.write(
                     "config.yaml", yaml.safe_dump({key: "x", "HTTPS_PORT": 8443})
                 )
-                with self.assertRaisesRegex(deploy.DeployError, "nøkler.*tekst"):
+                with self.assertRaisesRegex(deploy.DeployError, "keys.*strings"):
                     deploy.load_config(deploy.CONFIG)
 
     def test_port_boundaries(self):
@@ -206,7 +206,7 @@ class ConfigTests(DeployFixture):
         )
         with self.assertRaises(yaml.YAMLError) as caught:
             deploy.load_config(deploy.CONFIG)
-        self.assertIn("duplikat nøkkel 'HOSTNAME'", str(caught.exception))
+        self.assertIn("duplicate key 'HOSTNAME'", str(caught.exception))
         self.assertIn("line 3", str(caught.exception))
 
     def test_duplicate_nested_key_reports_line(self):
@@ -231,7 +231,7 @@ class ReplaceTests(unittest.TestCase):
                 self.assertIs(type(result), type(value))
 
     def test_missing_key(self):
-        with self.assertRaisesRegex(deploy.DeployError, "Mangler MISSING"):
+        with self.assertRaisesRegex(deploy.DeployError, "Missing MISSING"):
             deploy.replace("@@MISSING@@", {})
 
     def test_nested_maps_and_lists(self):
@@ -265,7 +265,7 @@ class FileGroupTests(DeployFixture):
         for name in ("with space", "æ.txt", "bad@name"):
             with self.subTest(name=name):
                 self.write(name)
-                with self.assertRaisesRegex(deploy.DeployError, "filnavnet"):
+                with self.assertRaisesRegex(deploy.DeployError, "the file name"):
                     self.file_config("SECRET_FILES", {"test": [name]})
         self.write("OK-a_b.c")
         self.assertIn("test", self.file_config("SECRET_FILES", {"test": ["OK-a_b.c"]}))
@@ -273,7 +273,7 @@ class FileGroupTests(DeployFixture):
     def test_secret_rejects_subdirectory(self):
         self.write("tree/nested/file")
         with self.assertRaisesRegex(
-            deploy.DeployError, "Secrets kan bare inneholde filer"
+            deploy.DeployError, "Secrets can only contain files"
         ):
             self.file_config("SECRET_FILES", {"test": ["tree"]})
 
@@ -284,12 +284,12 @@ class FileGroupTests(DeployFixture):
             "SECRET_FILES", {"first": ["first"], "second": ["second"]}
         )
         self.assertEqual(len(deploy.secret_documents(groups)), 2)
-        with self.assertRaisesRegex(deploy.DeployError, "for stor.*Podman-secret"):
+        with self.assertRaisesRegex(deploy.DeployError, "too large.*Podman secret"):
             deploy.secret_documents(
                 {"combined": [self.root / "first", self.root / "second"]}
             )
         self.write("boundary", b"x" * (deploy.MAX_SECRET_SIZE * 3 // 4))
-        with self.assertRaisesRegex(deploy.DeployError, "for stor"):
+        with self.assertRaisesRegex(deploy.DeployError, "too large"):
             deploy.secret_documents({"boundary": [self.root / "boundary"]})
 
     def test_tilde_and_absolute_paths(self):
@@ -320,12 +320,12 @@ class FileGroupTests(DeployFixture):
     def test_missing_file_and_name_collisions(self):
         for group in ("SECRET_FILES", "VOLUME_FILES"):
             with self.subTest(group=group):
-                with self.assertRaisesRegex(deploy.DeployError, "Mangler"):
+                with self.assertRaisesRegex(deploy.DeployError, "Missing"):
                     self.file_config(group, {"test": ["missing"]})
                 self.write("a/file")
                 self.write("b/file")
                 for entries in (["a", "b"], ["a/file", "a/file"]):
-                    with self.assertRaisesRegex(deploy.DeployError, "samme navn"):
+                    with self.assertRaisesRegex(deploy.DeployError, "same name"):
                         self.file_config(group, {"test": entries})
 
     def test_absent_groups(self):
@@ -424,14 +424,14 @@ class LinkTests(unittest.TestCase):
         for kind in ("Secret", "PersistentVolumeClaim"):
             for ref in self.refs(kind, "missing"):
                 error = self.assertRaisesRegex(
-                    deploy.DeployError, kind + ".*missing.*finnes ikke"
+                    deploy.DeployError, kind + ".*missing.*does not exist"
                 )
                 with self.subTest(kind=kind, ref=ref), error:
                     deploy.check_links([ref], {})
 
     def test_duplicate_definitions(self):
         for kind in ("Secret", "PersistentVolumeClaim"):
-            error = self.assertRaisesRegex(deploy.DeployError, "definert flere ganger")
+            error = self.assertRaisesRegex(deploy.DeployError, "defined more than once")
             with self.subTest(kind=kind), error:
                 deploy.check_links([document(kind, "same"), document(kind, "same")], {})
 
@@ -439,7 +439,9 @@ class LinkTests(unittest.TestCase):
         kinds = ("Secret", "PersistentVolumeClaim", "ConfigMap")
         for first in kinds:
             for second in kinds:
-                error = self.assertRaisesRegex(deploy.DeployError, "same.*flere")
+                error = self.assertRaisesRegex(
+                    deploy.DeployError, "same.*more than once"
+                )
                 with self.subTest(first=first, second=second), error:
                     deploy.check_links(
                         [document(first, "same"), document(second, "same")], {}
@@ -447,7 +449,7 @@ class LinkTests(unittest.TestCase):
 
     def test_configmap_does_not_satisfy_secret_or_pvc_reference(self):
         for kind in ("Secret", "PersistentVolumeClaim"):
-            error = self.assertRaisesRegex(deploy.DeployError, "finnes ikke")
+            error = self.assertRaisesRegex(deploy.DeployError, "does not exist")
             with self.subTest(kind=kind), error:
                 deploy.check_links(
                     [document("ConfigMap", "known")] + self.refs(kind, "known"), {}
@@ -458,9 +460,7 @@ class LinkTests(unittest.TestCase):
             ("Secret", "SECRET_FILES"),
             ("PersistentVolumeClaim", "VOLUME_FILES"),
         ):
-            error = self.assertRaisesRegex(
-                deploy.DeployError, group + ".id.*brukes ikke"
-            )
+            error = self.assertRaisesRegex(deploy.DeployError, group + ".id.*not used")
             with self.subTest(kind=kind), error:
                 deploy.check_links(
                     [document(kind, "id")], {(kind, "id"): group + ".id"}
@@ -482,11 +482,11 @@ class LinkTests(unittest.TestCase):
 
 class RenderTests(DeployFixture):
     def test_manifest_errors_include_source_path(self):
-        """Pek på riktig manifest ved manglende config, ugyldig data og delvis placeholder."""
+        """Point at the right manifest for missing config, invalid data and partial placeholders."""
         for doc, message in (
-            (document("Pod", "bad", value="@@UNKNOWN@@"), "Mangler UNKNOWN"),
+            (document("Pod", "bad", value="@@UNKNOWN@@"), "Missing UNKNOWN"),
             (document("ConfigMap", "bad", data=["bad"]), "ConfigMap.data"),
-            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Uerstattet"),
+            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Unreplaced"),
         ):
             with self.subTest(message=message):
                 self.manifest([doc], "42-bad.yaml")
@@ -499,7 +499,7 @@ class RenderTests(DeployFixture):
                 self.assertFalse(deploy.BUILD.exists())
 
     def test_real_product_manifests_render_with_dummy_files(self):
-        """Rendr demoens faktiske manifestsett og eksempelconfig med lokale dummyfiler."""
+        """Render the demo's real manifest set and example config with local dummy files."""
         repo = Path(__file__).resolve().parent.parent
         self.config = deploy.load_config(repo / "config.example.yaml")
         for group in ("SECRET_FILES", "VOLUME_FILES"):
@@ -524,7 +524,7 @@ class RenderTests(DeployFixture):
         self.assertIn(str(deploy.FILES_DIR / "uploads.tar"), text)
         self.assertFalse(deploy.FILES_DIR.exists())
         self.manifest([document("ConfigMap", "uploads")], "99-collision.yaml")
-        with self.assertRaisesRegex(deploy.DeployError, "uploads.*flere"):
+        with self.assertRaisesRegex(deploy.DeployError, "uploads.*more than once"):
             deploy.render(deploy.FILES_DIR, write_archives=False)
         self.assertFalse(deploy.FILES_DIR.exists())
 
@@ -554,8 +554,8 @@ class RenderTests(DeployFixture):
     def test_no_archives_written_on_validation_failure(self):
         self.volume_fixture()
         cases = [
-            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Uerstattet"),
-            (document("Pod", "bad", value="@@UNKNOWN@@"), "Mangler UNKNOWN"),
+            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Unreplaced"),
+            (document("Pod", "bad", value="@@UNKNOWN@@"), "Missing UNKNOWN"),
             (document("ConfigMap", "bad", data=["bad"]), "ConfigMap.data"),
             (
                 document(
@@ -563,9 +563,9 @@ class RenderTests(DeployFixture):
                     "bad",
                     spec={"persistentVolumeClaim": {"claimName": "unknown"}},
                 ),
-                "finnes ikke",
+                "does not exist",
             ),
-            (document("PersistentVolumeClaim", "uploads"), "definert flere ganger"),
+            (document("PersistentVolumeClaim", "uploads"), "defined more than once"),
         ]
         for doc, error in cases:
             with self.subTest(error=error):
@@ -582,12 +582,12 @@ class RenderTests(DeployFixture):
     def test_no_archives_for_unused_id_or_large_secret(self):
         self.volume_fixture()
         (deploy.MANIFESTS / "10-pod.yaml").unlink()
-        with self.assertRaisesRegex(deploy.DeployError, "brukes ikke"):
+        with self.assertRaisesRegex(deploy.DeployError, "not used"):
             deploy.render()
         self.assertFalse(deploy.BUILD.exists())
         self.write("large", b"x" * 400000)
         self.file_config("SECRET_FILES", {"large": ["large"]})
-        with self.assertRaisesRegex(deploy.DeployError, "for stor"):
+        with self.assertRaisesRegex(deploy.DeployError, "too large"):
             deploy.render()
         self.assertFalse(deploy.BUILD.exists())
 
@@ -599,7 +599,7 @@ class RenderTests(DeployFixture):
 
     def test_missing_config(self):
         deploy.CONFIG.unlink()
-        with self.assertRaisesRegex(deploy.DeployError, "Mangler"):
+        with self.assertRaisesRegex(deploy.DeployError, "Missing"):
             deploy.render()
 
 
@@ -717,7 +717,7 @@ class CommandTests(DeployFixture):
         renderer = mock.patch.object(deploy, "render")
         with environment, renderer as render:
             with self.assertRaisesRegex(
-                deploy.DeployError, "HOME=.*avviker.*brukerdatabasen"
+                deploy.DeployError, "HOME=.*differs.*user database"
             ) as failure:
                 deploy.install()
             render.assert_not_called()
@@ -762,7 +762,9 @@ class CommandTests(DeployFixture):
         directory = mock.patch.object(Path, "is_dir", return_value=False)
         renderer = mock.patch.object(deploy, "render")
         with directory, renderer as render:
-            with self.assertRaisesRegex(deploy.DeployError, "runtime-katalog.*linger"):
+            with self.assertRaisesRegex(
+                deploy.DeployError, "runtime directory.*linger"
+            ):
                 deploy.install()
             render.assert_not_called()
         self.process.assert_not_called()
@@ -780,7 +782,7 @@ class CommandTests(DeployFixture):
                 renderer = mock.patch.object(deploy, "render")
                 with renderer as render:
                     with self.assertRaisesRegex(
-                        deploy.DeployError, "XDG_RUNTIME_DIR=.*forventet /run/user/1000"
+                        deploy.DeployError, "XDG_RUNTIME_DIR=.*expected /run/user/1000"
                     ) as error:
                         deploy.install()
                     self.assertIn(repr(configured), str(error.exception))
@@ -876,7 +878,7 @@ class CommandTests(DeployFixture):
         (self.root / "images/images.tar").unlink()
         with mock.patch.object(deploy.sys, "argv", ["deploy", "install"]):
             self.assertEqual(deploy.main(), 1)
-        self.assertIn("Mangler image-arkivet", self.stderr.getvalue())
+        self.assertIn("Missing image archive", self.stderr.getvalue())
         self.assertIn("images.tar", self.stderr.getvalue())
         self.process.assert_not_called()
         self.assertFalse(deploy.QUADLET_DIR.exists())
@@ -927,7 +929,7 @@ class CommandTests(DeployFixture):
                 self.assertEqual(archive.read_bytes(), b"previous archive")
                 self.assertFalse(deploy.QUADLET_DIR.exists())
         (self.root / "images/images.tar").unlink()
-        with self.assertRaisesRegex(deploy.DeployError, "Mangler image-arkivet"):
+        with self.assertRaisesRegex(deploy.DeployError, "Missing image archive"):
             deploy.install()
         self.assertEqual(archive.read_bytes(), b"previous archive")
 
@@ -938,7 +940,7 @@ class CommandTests(DeployFixture):
                 self.config["APP_IMAGE"] = image
                 self.write_config()
                 self.process.reset_mock()
-                with self.assertRaisesRegex(deploy.DeployError, "fullt kvalifisert"):
+                with self.assertRaisesRegex(deploy.DeployError, "fully qualified"):
                     deploy.install()
                 self.process.assert_called_once_with(
                     ["podman", "load", "-i", str(self.root / "images/images.tar")],
@@ -949,7 +951,7 @@ class CommandTests(DeployFixture):
 
 class ImageTests(unittest.TestCase):
     def test_image_errors_identify_container_and_group(self):
-        """Behold containernavnet i alle image-feil, også etter registry-partisjonering."""
+        """Keep the container name in every image error, also after splitting off the registry."""
         for group in ("containers", "initContainers"):
             for image in (None, "postgres:16", "@@IMAGE@@"):
                 with self.subTest(group=group, image=image):
@@ -1001,7 +1003,7 @@ class ImageTests(unittest.TestCase):
             [{"image": "localhost/ignored:1"}],
             [{"spec": {"containers": []}}],
         ):
-            error = self.assertRaisesRegex(deploy.DeployError, "Ingen images")
+            error = self.assertRaisesRegex(deploy.DeployError, "No images")
             with self.subTest(docs=docs), error:
                 deploy.find_images(docs)
 
@@ -1009,10 +1011,10 @@ class ImageTests(unittest.TestCase):
         for image, error in (
             ("@@IMAGE@@", "placeholders"),
             ("localhost/app:@@VERSION@@", "placeholders"),
-            ("postgres:16", "fullt kvalifisert"),
-            ("team/app:1", "fullt kvalifisert"),
-            ("localhost", "fullt kvalifisert"),
-            ("localhost/", "fullt kvalifisert"),
+            ("postgres:16", "fully qualified"),
+            ("team/app:1", "fully qualified"),
+            ("localhost", "fully qualified"),
+            ("localhost/", "fully qualified"),
         ):
             expected = self.assertRaisesRegex(deploy.DeployError, error)
             with self.subTest(image=image), expected:
@@ -1040,7 +1042,7 @@ class ImageTests(unittest.TestCase):
             {"image": []},
             "invalid",
         ):
-            error = self.assertRaisesRegex(deploy.DeployError, "image-navn som tekst")
+            error = self.assertRaisesRegex(deploy.DeployError, "image name as a string")
             with self.subTest(container=container), error:
                 deploy.find_images([{"spec": {"containers": [container]}}])
 

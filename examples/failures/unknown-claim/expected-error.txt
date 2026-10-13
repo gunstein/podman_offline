@@ -1,1 +1,1 @@
-PersistentVolumeClaim 'example-run-missing', men den finnes ikke
+PersistentVolumeClaim 'example-run-missing', but it does not exist

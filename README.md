@@ -1,34 +1,34 @@
-# MyProduct: Todo med Duende og PostgreSQL
+# MyProduct: Todo with Duende and PostgreSQL
 
-Et lite, kjørbart Podman-eksempel med seks pods. Frontend er vanlig
-HTML og JavaScript. Python-backenden håndterer innlogging hos Duende med
-Authorization Code + PKCE og `private_key_jwt`. Nettleseren får en HttpOnly-cookie;
-OIDC-tokenene sendes ikke til JavaScript. Hver bruker har sine egne oppgaver.
+A small, runnable Podman example with six pods. The frontend is plain
+HTML and JavaScript. The Python backend signs users in with Duende using
+Authorization Code + PKCE and `private_key_jwt`. The browser gets an HttpOnly cookie;
+the OIDC tokens are never sent to JavaScript. Each user has their own tasks.
 
 ```text
-Nettleser ── HTTPS :8443 ── nginx reverse proxy (egen pod)
-                            ├── /             → frontend :8080 (Todo-pod)
-                            ├── /auth/, /api/ → Python-backend :8000 (samme Todo-pod)
-                            │                    └── Todo PostgreSQL (egen pod)
-                            ├── /help/        → hjelpesider (egen pod)
-                            └── /identity/    → Duende (egen pod)
-                                                 └── Identity PostgreSQL (egen pod)
+Browser ── HTTPS :8443 ── nginx reverse proxy (own pod)
+                          ├── /             → frontend :8080 (Todo pod)
+                          ├── /auth/, /api/ → Python backend :8000 (same Todo pod)
+                          │                    └── Todo PostgreSQL (own pod)
+                          ├── /help/        → help pages (own pod)
+                          └── /identity/    → Duende (own pod)
+                                               └── Identity PostgreSQL (own pod)
 ```
 
-Kun nginx publiserer en port. Alle pods bruker Podman-nettverket `myproduct`.
-Det er ingen Kubernetes Services eller Ingress-controller; Podman DNS bruker
-pod-navnene som står i manifestene. Todo-poden `myproduct-todo` deler nettverk
-mellom frontend på port 8080 og backend på port 8000.
+Only nginx publishes a port. All pods use the Podman network `myproduct`.
+There are no Kubernetes Services or Ingress controller; Podman DNS uses the
+pod names in the manifests. The Todo pod `myproduct-todo` shares its network
+between the frontend on port 8080 and the backend on port 8000.
 
-Todo har lenker til hjelpesidene på **/help/**. Help-appen kjører i egen pod
-(`myproduct-help`) og serverer vanlig HTML/CSS gjennom samme HTTPS-proxy.
-Hjelpen er tilgjengelig uten innlogging og bruker ingen database. Sidene ligger
-i `apps/help/`; bygg help-imaget på nytt når innholdet endres.
+Todo links to the help pages at **/help/**. The help app runs in its own pod
+(`myproduct-help`) and serves plain HTML/CSS through the same HTTPS proxy.
+The help is available without signing in and uses no database. The pages live
+in `apps/help/`; rebuild the help image when the content changes.
 
-## Kjør lokalt, rootless
+## Run locally, rootless
 
-Krever Podman, OpenSSL, Python 3.6+ og PyYAML på verten. .NET og Python-appens
-avhengigheter installeres bare i imagene. Første bygg trenger internett.
+Requires Podman, OpenSSL, Python 3.6+ and PyYAML on the host. .NET and the Python
+app's dependencies are installed only in the images. The first build needs internet.
 
 ```sh
 ./dev/build-images.sh
@@ -38,63 +38,64 @@ chmod 600 config.yaml
 ./dev/dev.sh up
 ```
 
-Legg denne linjen i vertens `/etc/hosts` manuelt:
+Add this line to the host's `/etc/hosts` manually:
 
 ```text
 127.0.0.1 myproduct-proxy
 ```
 
-Importer **kun CA-sertifikatet** `PKI/private/ca.crt` i nettleserens lokale
-CA-lager, og åpne **https://myproduct-proxy:8443**. Det samme navnet løses
-internt av Podman, slik at nettleseren og backenden bruker identisk OIDC issuer.
-Standardoppsettet er ment for én lokal maskin. Ved bruk på andre maskiner må
-DNS/navn, sertifikat, `PUBLIC_ORIGIN` og portoppsettet tilpasses samlet.
+Import **only the CA certificate** `PKI/private/ca.crt` into the browser's local
+CA store, and open **https://myproduct-proxy:8443**. Podman resolves the same name
+internally, so the browser and the backend use an identical OIDC issuer.
+The default setup is meant for one local machine. On other machines, the
+DNS name, certificate, `PUBLIC_ORIGIN` and port setup must be adapted together.
 
-Brukerne `alice` og `bob` opprettes ved første oppstart. Passordene er generert
-lokalt og ligger i henholdsvis `generated-certificates/users/alice-password`
-og `bob-password`. Passordene lagres som hash i Duendes PostgreSQL-database.
-Eksisterende brukerpassord endres ikke automatisk hvis kildefilene senere endres.
+The users `alice` and `bob` are created on first start. Their passwords are
+generated locally in `generated-certificates/users/alice-password` and
+`bob-password`. The passwords are stored as hashes in Duende's PostgreSQL database.
+Existing user passwords are not changed automatically if the source files change later.
 
 ```sh
 podman ps --all --pod
 ./dev/dev.sh down
 ```
 
-`down` beholder databasevolumene og Todo-sertifikatvolumet. Ny `up` importerer
-filene fra `VOLUME_FILES` på nytt, men beholder eksisterende databaseinnhold.
-Nettverket og navngitte volumer fjernes bare manuelt når de ikke lenger trengs.
+`down` keeps the database volumes and the Todo certificate volume. A new `up`
+imports the `VOLUME_FILES` files again but keeps the existing database content.
+The network and named volumes are only removed manually when no longer needed.
 
-## Manifester og sertifikater
+## Manifests and certificates
 
-- `manifests/10-configmap.yaml`: felles offentlig adresse via config-placeholder.
-- `20-storage.yaml`: separate PVC-er for de to databasene og Duendes cookie-nøkler.
-- `30-identity-postgres.yaml` og `40-todo-postgres.yaml`: hver sin PostgreSQL-pod.
-- `50-identity.yaml`: Duende med privat signeringsnøkkel og sertifikat fra Secret.
-- `60-todo.yaml`: frontend og Python-backend i samme pod. Bare backenden monterer
-  Todo-klientsertifikat/nøkkel fra PVC og databasepassordet fra Secret.
-- `70-help.yaml`: statisk help-app med innlogging, oppgaver og feilsøking.
-- `80-proxy.yaml`: nginx reverse proxy med HTTPS-sertifikat fra Secret.
+- `manifests/10-configmap.yaml`: shared public address through a config placeholder.
+- `20-storage.yaml`: separate PVCs for the two databases and Duende's cookie keys.
+- `30-identity-postgres.yaml` and `40-todo-postgres.yaml`: one PostgreSQL pod each.
+- `50-identity.yaml`: Duende with a private signing key and certificate from a Secret.
+- `60-todo.yaml`: frontend and Python backend in the same pod. Only the backend mounts
+  the Todo client certificate/key from a PVC and the database password from a Secret.
+- `70-help.yaml`: static help app about signing in, tasks and troubleshooting.
+- `80-proxy.yaml`: nginx reverse proxy with the HTTPS certificate from a Secret.
 
-`SECRET_FILES` genererer Secret-dokumentene. `VOLUME_FILES.todo-signing`
-genererer importarkivet og PVC-en som monteres read-only i Python-backenden.
-Den inneholder `todo-client.key`, `todo-client.crt`, CA-sertifikatet og en egen
-cookie-signeringhemmelighet. Duende får bare klientens **offentlige** sertifikat
-og verifiserer klientens signerte JWT ved token-endepunktet. Duendes egen
-signeringsnøkkel brukes til OIDC-tokenene. TLS bruker et tredje nøkkelpar.
-Se [PKI](PKI/README.md).
+`SECRET_FILES` generates the Secret documents. `VOLUME_FILES.todo-signing`
+generates the import archive and the PVC that is mounted read-only in the Python backend.
+It contains `todo-client.key`, `todo-client.crt`, the CA certificate and a separate
+cookie signing secret. Duende gets only the client's **public** certificate
+and verifies the client's signed JWT at the token endpoint. Duende's own
+signing key is used for the OIDC tokens. TLS uses a third key pair.
+See [PKI](PKI/README.md).
 
-Dette er et lite demooppsett: Duendes brukere ligger i PostgreSQL, mens klient- og
-scope-konfigurasjon er i kode og kortlivede OAuth-grants ligger i minnet.
-Pågående innlogging må derfor startes på nytt etter restart av Duende.
-Utlogging avslutter Todo-sesjonen; neste innlogging ber alltid om passord på nytt.
-Databasene bruker én rolle per app, uten egne migreringsroller. PostgreSQL-imagets
-`POSTGRES_USER` oppretter en superbruker i appens separate klynge; appene lager
-og eier tabellene selv. Automatisk skjemaoppretting er kun for dette enkle eksempelet. Duende krever en passende
-[lisens for produksjon](https://docs.duendesoftware.com/identityserver/overview/licensing/).
+This is a small demo setup: Duende's users live in PostgreSQL, while client and
+scope configuration is in code and short-lived OAuth grants are kept in memory.
+A sign-in in progress must therefore be restarted after Duende restarts.
+Signing out ends the Todo session; the next sign-in always asks for the password again.
+The databases use one role per app, without separate migration roles. The PostgreSQL
+image's `POSTGRES_USER` creates a superuser in the app's separate cluster; the apps
+create and own their tables themselves. Automatic schema creation is only for this simple example.
+Duende requires a suitable
+[license for production](https://docs.duendesoftware.com/identityserver/overview/licensing/).
 
-## Kontroll av hele flyten
+## Checking the whole flow
 
-Med appens avhengigheter i et lokalt testmiljø:
+With the app's dependencies in a local test environment:
 
 ```sh
 python3 -m venv .venv-app
@@ -102,45 +103,45 @@ python3 -m venv .venv-app
 .venv-app/bin/python dev/smoke-test.py
 ```
 
-Denne testen bruker ekte HTTPS og Duende-innlogging med begge brukerne, verifiserer
-CRUD, tilgangsskille mellom brukere, CSRF-beskyttelse og lokal utlogging.
-Den følger også hjelpelenkene fra Todo og kontrollerer sidene, navigasjonen,
-stilarket, /help-redirect og 404 for ukjente hjelpesider. Den
-verifiserer CA/vertsnavn og trenger ingen endring i `/etc/hosts`. Dette er en
-HTTP-integrasjonstest; frontend-JavaScript må også prøves i en nettleser.
-De isolerte renderer-/bundle-testene kjøres med `python3 -m unittest discover -s tests`.
-Se også de små [Podman-eksemplene](examples/README.md).
+This test uses real HTTPS and Duende sign-in with both users, and verifies
+CRUD, separation between users, CSRF protection and local sign-out.
+It also follows the help links from Todo and checks the pages, navigation,
+stylesheet, the /help redirect and 404 for unknown help pages. It
+verifies CA/host name and needs no change to `/etc/hosts`. This is an
+HTTP integration test; the frontend JavaScript must also be tried in a browser.
+The isolated renderer/bundle tests run with `python3 -m unittest discover -s tests`.
+See also the small [Podman examples](examples/README.md).
 
-Verifisert 2026-10-12 med ekte rootless Podman 5.7.0: alle seks pods starter,
-og hele HTTP-integrasjonstesten passerer gjennom nginx. De 84 enhetstestene
-passerer med både PyYAML 5.4.1 og 6.0.3. Ruff, Pyright og kontroll av Python
-3.6-kompatibilitet for deploy/bundle/testene var rene ved denne dev-kjøringen.
-Dette dokumenterer ikke prod-Quadlet eller reboot.
+Verified 2026-10-12 with real rootless Podman 5.7.0: all six pods start,
+and the whole HTTP integration test passes through nginx. The 84 unit tests
+pass with both PyYAML 5.4.1 and 6.0.3. Ruff, Pyright and the Python 3.6
+compatibility check for deploy/bundle/tests were clean in that dev run.
+This does not document the prod Quadlet or reboot.
 
-## Helsesjekker
+## Health checks
 
-Alle sju appcontainere har én exec-basert `livenessProbe`, håndhevet av Podman:
+All seven app containers have one exec-based `livenessProbe`, enforced by Podman:
 
-| Container | Lokal kontroll |
+| Container | Local check |
 | --- | --- |
-| identity-postgres-db / todo-postgres-db | `pg_isready` med samme bruker og database som PostgreSQL-miljøvariablene. |
-| identity-app | Bash `/dev/tcp` krever HTTP 200 fra `127.0.0.1:8080/identity/health`. |
-| todo-backend | Python `urllib.request` krever HTTP 204 fra `127.0.0.1:8000/livez`, uten database eller innlogging. |
-| todo-frontend / help-web | BusyBox `wget` mot egen `127.0.0.1:8080/`. |
-| proxy-nginx | BusyBox `wget` mot egen HTTPS `/livez`, med `HTTPS_PORT` fra miljøet og uten sertifikatkontroll. |
+| identity-postgres-db / todo-postgres-db | `pg_isready` with the same user and database as the PostgreSQL environment variables. |
+| identity-app | Bash `/dev/tcp` requires HTTP 200 from `127.0.0.1:8080/identity/health`. |
+| todo-backend | Python `urllib.request` requires HTTP 204 from `127.0.0.1:8000/livez`, without database or sign-in. |
+| todo-frontend / help-web | BusyBox `wget` against its own `127.0.0.1:8080/`. |
+| proxy-nginx | BusyBox `wget` against its own HTTPS `/livez`, with `HTTPS_PORT` from the environment and no certificate check. |
 
-Liveness avhenger aldri av andre pods. `/api/health` sjekker fortsatt databasen
-for kontroll/e2e; den brukes ikke som probe. Proxyens `/livez` returnerer 204
-lokalt og ruter aldri til backendens `/livez`.
+Liveness never depends on other pods. `/api/health` still checks the database
+for checks/e2e; it is not used as a probe. The proxy's `/livez` returns 204
+itself and never routes to the backend's `/livez`.
 
-`initialDelaySeconds: 90` dekker oppstarten, inkludert appenes opptil 60 sekunders
-venting på databasen. Podman kjører ingen sjekk i denne perioden; status er
-`starting` i inntil 90 sekunder etter hver start, og blir `healthy` etter neste
-vellykkede sjekk. Proben kjøres hvert 30. sekund med timeout 5 sekunder; tre
-feil på rad gir `unhealthy` og automatisk restart med `restartPolicy: Always`.
-Ingen readiness-probe eller HEALTHCHECK i Containerfile brukes.
+`initialDelaySeconds: 90` covers startup, including the apps' up to 60 seconds of
+waiting for the database. Podman runs no check during this period; the status is
+`starting` for up to 90 seconds after each start, and becomes `healthy` after the next
+successful check. The probe runs every 30 seconds with a 5-second timeout; three
+failures in a row give `unhealthy` and an automatic restart with `restartPolicy: Always`.
+No readiness probe or Containerfile HEALTHCHECK is used.
 
-Med `as_product` definert som i prod-veiledningen:
+With `as_product` defined as in the prod instructions:
 
 ```sh
 as_product podman ps
@@ -148,81 +149,81 @@ as_product podman inspect --format '{{.State.Health.Status}}' myproduct-todo-bac
 as_product podman healthcheck run myproduct-todo-backend
 ```
 
-En manuell sjekk i startperioden hoppes også over. `systemctl is-active` er
-fortsatt ingen helsesjekk for enkeltcontainere. Rootless Podman bruker transient-
-timere i tjenestebrukerens systemd-instans; linger må være aktiv.
+A manual check during the start period is skipped as well. `systemctl is-active` is
+still not a health check for individual containers. Rootless Podman uses transient
+timers in the service user's systemd instance; linger must be enabled.
 
-## Legge til en app
+## Adding an app
 
-Et manifest i `manifests/` gjør appens image synlig for bundle-byggingen.
-Det finnes ikke et appregister. Gå gjennom punktene under når du legger til en app;
-database og OIDC trengs bare for apper som bruker dem.
+A manifest in `manifests/` makes the app's image visible to the bundle build.
+There is no app registry. Go through the points below when you add an app;
+database and OIDC are only needed for apps that use them.
 
-| Behov | Filer og endringer |
+| Need | Files and changes |
 | --- | --- |
-| Kode og image | `apps/<app>/Containerfile`; legg app og riktig tagg til i `dev/build-images.sh`, eller bygg/pull imaget manuelt. |
-| Pod | `manifests/NN-<app>.yaml`: fullt image-navn, `imagePullPolicy: Never`, `restartPolicy: Always`. |
-| Helsesjekk | Én lokal exec-basert `livenessProbe` per container: initialDelay 90, period 30, timeout 5, failureThreshold 3. Init-containere har ingen probe. |
-| Produkttester | Oppdater de faste ressurstallene i `test_real_product_manifests_render_with_dummy_files` i `tests/test_deploy.py`; `tests/test_health.py` kontrollerer alle prober automatisk. |
-| Proxy-rute | Ny `location` i `apps/proxy/default.conf`; bygg proxy-imaget på nytt. |
-| Database | Egen postgres-pod etter mønster fra `30-identity-postgres.yaml`/`40-todo-postgres.yaml`, PVC i `20-storage.yaml`, passordfil og `SECRET_FILES` i config. For nye installasjoner oppdateres også `scripts/generate-certificates.sh`. |
-| OIDC | Klient, redirect-URI og scope i `apps/identity/Program.cs`; klientsertifikat og Secret/PVC i config og manifest. Bygg identity-imaget på nytt. |
-| E2E | Ny kontroll i `dev/smoke-test.py`, kalt fra `main`; prøv frontend-JavaScript i nettleser. |
-| Akseptanse | `healthy()` i `acceptance/remote.sh` leser navn fra installert YAML; legg til nødvendige DB-/OIDC- og e2e-kontroller. |
-| Dokumentasjon | Oppdater appoversikt, Secret-volumer ved avinstallering, `acceptance/README.md` og `examples/VM-CHECKLIST.md`. |
+| Code and image | `apps/<app>/Containerfile`; add the app and the right tag to `dev/build-images.sh`, or build/pull the image manually. |
+| Pod | `manifests/NN-<app>.yaml`: full image name, `imagePullPolicy: Never`, `restartPolicy: Always`. |
+| Health check | One local exec-based `livenessProbe` per container: initialDelay 90, period 30, timeout 5, failureThreshold 3. Init containers have no probe. |
+| Product tests | Update the fixed resource counts in `test_real_product_manifests_render_with_dummy_files` in `tests/test_deploy.py`; `tests/test_health.py` checks all probes automatically. |
+| Proxy route | A new `location` in `apps/proxy/default.conf`; rebuild the proxy image. |
+| Database | Its own postgres pod following `30-identity-postgres.yaml`/`40-todo-postgres.yaml`, a PVC in `20-storage.yaml`, a password file and `SECRET_FILES` in config. For new installations, also update `scripts/generate-certificates.sh`. |
+| OIDC | Client, redirect URI and scope in `apps/identity/Program.cs`; client certificate and Secret/PVC in config and manifest. Rebuild the identity image. |
+| E2E | A new check in `dev/smoke-test.py`, called from `main`; try the frontend JavaScript in a browser. |
+| Acceptance | `healthy()` in `acceptance/remote.sh` reads names from the installed YAML; add the needed DB/OIDC and e2e checks. |
+| Documentation | Update the app overview, the Secret volumes listed under uninstall, `acceptance/README.md` and `examples/VM-CHECKLIST.md`. |
 
-Kjør enhetstester, `./deploy prepare` og dev-e2e før du bygger bundlen.
-Ny tagg i manifestet krever at nøyaktig det navnet er bygget eller hentet lokalt.
-Ved utvidelse av en eksisterende installasjon opprettes bare nye hemmeligheter,
-som beskrevet under oppgradering; behold alle eksisterende filer.
+Run the unit tests, `./deploy prepare` and dev e2e before building the bundle.
+A new tag in a manifest requires exactly that name to be built or pulled locally.
+When extending an existing installation, create only the new secrets,
+as described under upgrade; keep all existing files.
 
-## Offline-bundle og rootless Quadlet
+## Offline bundle and rootless Quadlet
 
-Manifestene er eneste kilde for images. Byggingen leser `containers` og
-`initContainers` fra alle `manifests/*.yaml`, fjerner duplikater og sorterer navnene.
-Images må allerede være hentet med `podman pull` eller bygget med `podman build`
-på byggemaskinen, med nøyaktig samme fulle navn og tagg som i manifestet.
-`./dev/build-images.sh` gjør dette for demoen.
+The manifests are the only source of images. The build reads `containers` and
+`initContainers` from all `manifests/*.yaml`, removes duplicates and sorts the names.
+The images must already be pulled with `podman pull` or built with `podman build`
+on the build machine, with exactly the same full name and tag as in the manifest.
+`./dev/build-images.sh` does this for the demo.
 
-Bruk helst fulle originalnavn, for eksempel `registry.firma.no/team/app:1.2.3`,
-og `imagePullPolicy: Never`. Også `localhost/myapp:1.0.0` og navn med registry-port
-godtas. Korte navn som `postgres:16` og `team/app:1` avvises. Placeholders i
-image-navn støttes ikke ved bygging, og manifestene må inneholde minst ett image.
-Bundlen trenger ingen separat image-liste: ved en ny image-versjon endres taggen
-i manifestet, og det nye imaget må finnes lokalt før bygging. Demoens
-`dev/build-images.sh` har derimot en fast appliste og tagg som også må oppdateres
-hvis du bruker scriptet til å bygge en ny app eller versjon.
+Prefer full original names, for example `registry.example.com/team/app:1.2.3`,
+and `imagePullPolicy: Never`. `localhost/myapp:1.0.0` and names with a registry port
+are also accepted. Short names like `postgres:16` and `team/app:1` are rejected. Placeholders in
+image names are not supported at build time, and the manifests must contain at least one image.
+The bundle needs no separate image list: for a new image version, change the tag
+in the manifest; the new image must exist locally before the build. The demo's
+`dev/build-images.sh`, however, has a fixed app list and tag that must also be updated
+if you use the script to build a new app or version.
 
-Kjør `./build-bundle.sh` med Podman 4.4 eller nyere. `bundle.py` bruker
-`podman save -m` med standardformatet docker-archive og lager
-`dist/myproduct-0.1.0-offline.tar.gz` med manifests, deploy, scripts, Quadlet og
-checksums. `images/images.tar` er ett arkiv med alle imagene og deres fulle navn
-og tagger. `images/images.txt` lister navnene, ett per linje. Begge filene inngår
-i checksums. Private nøkler, lokal config og PKI blir ikke pakket med.
+Run `./build-bundle.sh` with Podman 4.4 or newer. `bundle.py` uses
+`podman save -m` with the default docker-archive format and creates
+`dist/myproduct-0.1.0-offline.tar.gz` with manifests, deploy, scripts, Quadlet and
+checksums. `images/images.tar` is one archive with all images and their full names
+and tags. `images/images.txt` lists the names, one per line. Both files are part
+of the checksums. Private keys, local config and PKI are not packaged.
 
-På målmaskinen brukes en egen systembruker `myproduct`, med hjem
-`/var/lib/myproduct` (0700), rootless Podman og linger. Forutsetninger på verten:
-Podman 5.x med bruker-Quadlet, Python 3.6+/PyYAML, OpenSSL, `newuidmap`/`newgidmap`,
-`semanage`, `restorecon`, aktiv firewalld og SELinux Enforcing. På OL9 leveres
-`semanage` av `policycoreutils-python-utils`; klargjør dette før maskinen isoleres.
-Ingen pakker installeres av produktet.
+The target machine uses a dedicated system user `myproduct`, with home
+`/var/lib/myproduct` (0700), rootless Podman and linger. Host prerequisites:
+Podman 5.x with user Quadlet, Python 3.6+/PyYAML, OpenSSL, `newuidmap`/`newgidmap`,
+`semanage`, `restorecon`, active firewalld and SELinux Enforcing. On OL9,
+`semanage` comes from `policycoreutils-python-utils`; install it before the machine is isolated.
+The product installs no packages.
 
-### Første installasjon
+### First installation
 
-Følgende kjøres som vanlig operatør med sudo, fra katalogen med arkivet og
-checksum-filen. Tilpass versjon, IP, vertsnavn og port. Vertsnavnet må stemme med
-DNS, sertifikatet og `PUBLIC_ORIGIN`; `HTTPS_PORT` og porten i `PUBLIC_ORIGIN`
-må endres sammen. Demoens interne OIDC-navn er `myproduct-proxy`.
-Rediger `IP_ADDRESS`, `PUBLIC_ORIGIN` og `HTTPS_PORT` i config med sudoedit.
-Porten må være identisk i `--port`, `HTTPS_PORT` og `PUBLIC_ORIGIN`.
+The following runs as a normal operator with sudo, from the directory with the archive and
+the checksum file. Adjust version, IP, host name and port. The host name must match
+DNS, the certificate and `PUBLIC_ORIGIN`; `HTTPS_PORT` and the port in `PUBLIC_ORIGIN`
+must change together. The demo's internal OIDC name is `myproduct-proxy`.
+Edit `IP_ADDRESS`, `PUBLIC_ORIGIN` and `HTTPS_PORT` in the config with sudoedit.
+The port must be identical in `--port`, `HTTPS_PORT` and `PUBLIC_ORIGIN`.
 
-`fapolicyd-cli --update` varsler daemonen og venter ikke på ferdig oppdatering.
-Definer denne funksjonen i operatørens shell før installasjon eller oppgradering.
-Den leser databasen inntil nye og eventuelt fjernede stier stemmer, og stopper
-ved feil eller tidsavbrudd. Bare stier og status skrives ut.
+`fapolicyd-cli --update` notifies the daemon and does not wait for the update to finish.
+Define this function in the operator's shell before installing or upgrading.
+It reads the database until the new and any removed paths match, and stops
+on errors or timeout. Only paths and status are printed.
 
 ```sh
-# Vent lesende på eksakte trust-stier etter daemonens asynkrone oppdatering.
+# Wait, read-only, for exact trust paths after the daemon's asynchronous update.
 wait_trust() {
     local wanted=$1 removed=${2:-} dump status attempt
     for attempt in {1..30}; do
@@ -265,7 +266,7 @@ stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
 tar xzf "$archive" -C "$stage"
 sudo bash "$stage/myproduct-$version/scripts/prepare-host.sh" --port "$https_port"
 sudo -H -u myproduct mkdir -p /var/lib/myproduct/releases
-# Operatøren åpner arkivet: myproduct trenger ikke tilgang til operatørens hjem.
+# The operator opens the archive: myproduct needs no access to the operator's home.
 sudo -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
 rm -rf -- "$stage"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
@@ -279,83 +280,83 @@ sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$
 sudo systemctl --user -M myproduct@ status myproduct.service
 ```
 
-Operatøren trenger ikke `cd` inn i tjenestebrukerens private hjem. `sudo -H`
-setter riktig HOME, men endrer ikke arbeidskatalogen. Derfor gjør bash et
-uttrykkelig `cd` som tjenestebrukeren før install: rootless Podman må kunne åpne
-arbeidskatalogen igjen når prosessen startes i brukerens navnerom. Operatørens
-private hjem er ikke tilgjengelig for tjenestebrukeren. `sudo bash` leser
-klargjøringsscriptet fra `/tmp`; scriptet startes ikke direkte, så `noexec` på
-`/tmp` hindrer ikke denne kjøreformen. En eventuell policyavvisning skal fortsatt
-undersøkes, ikke omgås med endrede tillatelser eller bred trust.
+The operator does not need to `cd` into the service user's private home. `sudo -H`
+sets the right HOME but does not change the working directory. That is why bash does an
+explicit `cd` as the service user before install: rootless Podman must be able to open
+the working directory again when the process starts in the user's namespace. The operator's
+private home is not accessible to the service user. `sudo bash` reads
+the preparation script from `/tmp`; the script is not executed directly, so `noexec` on
+`/tmp` does not block this form. Any policy denial must still be
+investigated, not bypassed with changed permissions or broad trust.
 
-`prepare-host.sh --port <port>` er idempotent og krever heltall 1024–65535.
-Det leser ingen config og har ingen eksempel-fallback. Scriptet oppretter
-kontoen med nologin, tildeler minst 65536 subuid/subgid uten overlapp, setter
-hjemmets mode, aktiverer linger og åpner porten permanent i firewalld.
-Alle kontroller gir tydelige feil. En uventet ekvivalens som begynner med
-`/var/lib/myproduct` gir stopp og må fjernes manuelt før klargjøring.
+`prepare-host.sh --port <port>` is idempotent and requires an integer 1024–65535.
+It reads no config and has no example fallback. The script creates
+the account with nologin, assigns at least 65536 subuid/subgid without overlap, sets
+the home mode, enables linger and opens the port permanently in firewalld.
+Every check gives a clear error. An unexpected equivalence starting with
+`/var/lib/myproduct` stops the script and must be removed manually before preparing.
 
-Systembrukeren får ikke de vanlige HOME_DIR-reglene fra container-selinux.
-Lageret bruker derfor ekvivalensen
-`/var/lib/myproduct/.local/share/containers = /var/lib/containers`, som beskrevet
-[i Podmans feilsøkingsguide punkt 11](https://github.com/containers/podman/blob/main/troubleshooting.md#11-changing-the-location-of-the-graphroot-leads-to-permission-denied).
-Overlay, overlay-layers og overlay-images har container_ro_file_t;
-overlay-containers har container_var_lib_t; voluminnhold har container_file_t.
+The system user does not get the usual HOME_DIR rules from container-selinux.
+Storage therefore uses the equivalence
+`/var/lib/myproduct/.local/share/containers = /var/lib/containers`, as described
+[in Podman's troubleshooting guide, item 11](https://github.com/containers/podman/blob/main/troubleshooting.md#11-changing-the-location-of-the-graphroot-leads-to-permission-denied).
+Overlay, overlay-layers and overlay-images have container_ro_file_t;
+overlay-containers has container_var_lib_t; volume content has container_file_t.
 
-Scriptet preoppretter `.config/cni/net.d`, cni.lock og brukerens Quadlet-katalog
-før første Podman-kall. Dette forebygger runtime-typen på config-stiene som ble
-observert i run-6. Det merker hjemmet med storage ekskludert, og bare selve
-storage-katalogen uten rekursjon. **Kjør aldri restorecon -R eller -F på et fylt
-lager.** Scriptet endrer ikke SELinux/fapolicyd sin enforcing-tilstand.
+The script creates `.config/cni/net.d`, cni.lock and the user's Quadlet directory
+before the first Podman call. This prevents the runtime type on the config paths that was
+observed in run-6. It labels the home with storage excluded, and only the storage
+directory itself without recursion. **Never run restorecon -R or -F on populated
+storage.** The script does not change the enforcing state of SELinux or fapolicyd.
 
-Akseptansesteg 07 sammenligner faktiske typer mot selinux.matchpathcon. Utenfor
-storage skal `restorecon -n -v -R -e <storage> /var/lib/myproduct` gi tom output.
-Lagerets separate dry-run logges alltid og hver linje må passe en begrunnet,
-navngitt regel; ukjente linjer gir FAIL. Se [SELinux-diagnosen](acceptance/SELINUX-DIAGNOSIS.md).
-Ingen AVC/USER_AVC/FANOTIFY-avvisninger tillates. Rootless bruker en vanlig
-vertssocket på port 1024 eller høyere; lab-filteret avgrenser til lab-subnettet.
+Acceptance step 07 compares actual types with selinux.matchpathcon. Outside
+storage, `restorecon -n -v -R -e <storage> /var/lib/myproduct` must give empty output.
+The separate storage dry run is always logged, and each line must match a justified,
+named rule; unknown lines give FAIL. See the [SELinux diagnosis](acceptance/SELINUX-DIAGNOSIS.md).
+No AVC/USER_AVC/FANOTIFY denials are allowed. Rootless uses a normal
+host socket on port 1024 or higher; the lab filter restricts access to the lab subnet.
 
-Sertifikatgenereringen ovenfor er for demo/test. I ekte produksjon utstedes
-sertifikatene utenfor målmaskinen og leveres til stiene i config. CA-ens private
-nøkkel skal ikke kopieres dit.
+The certificate generation above is for demo/test. In real production the
+certificates are issued outside the target machine and delivered to the paths in the config. The CA's private
+key must not be copied there.
 
-`install` leser config.yaml i hjemmet fra brukerdatabasen (`pwd.getpwuid`).
-Alle prod-stier følger dette hjemmet; install avviser en satt `$HOME` som
-avviker, for eksempel ved feil sudo-konfigurasjon. `prepare` leser fortsatt config i repo-roten.
-Relative stier i `SECRET_FILES` og `VOLUME_FILES` regnes fra config-filens
-katalog. Absolutte stier og `~` virker som før. Dermed kan eksempelconfigens
-stier brukes uendret både i dev og prod.
+`install` reads config.yaml from the home in the user database (`pwd.getpwuid`).
+All prod paths follow this home; install rejects a set `$HOME` that
+differs, for example from a wrong sudo configuration. `prepare` still reads the config in the repo root.
+Relative paths in `SECRET_FILES` and `VOLUME_FILES` are resolved from the config file's
+directory. Absolute paths and `~` work as before. The example config's
+paths can therefore be used unchanged in both dev and prod.
 
-`install` avviser root, kontrollerer runtime-katalogen og rendrer YAML. Hvis
-`XDG_RUNTIME_DIR` mangler, brukes `/run/user/<euid>`. En satt variabel må være
-nøyaktig denne stien; avvik avvises før rendering. Manglende katalog gir en
-feil med hint om linger. Deretter kjøres `podman load -i images/images.tar`
-og `podman image exists` i tjenestebrukerens lager. Først etter vellykket
-image-kontroll skrives filarkiver og Quadlet-filer, og `systemctl --user`
-kjører daemon-reload, restart og is-active. `prepare` er uendret.
+`install` rejects root, checks the runtime directory and renders the YAML. If
+`XDG_RUNTIME_DIR` is missing, `/run/user/<euid>` is used. A set variable must be
+exactly this path; a mismatch is rejected before rendering. A missing directory gives an
+error with a hint about linger. Then `podman load -i images/images.tar`
+and `podman image exists` run in the service user's storage. Only after a successful
+image check are the file archives and Quadlet files written, and `systemctl --user`
+runs daemon-reload, restart and is-active. `prepare` is unchanged.
 
 ```text
-/var/lib/myproduct/                         0700, eid av myproduct
-├── config.yaml                            0600, brukes av alle versjoner
-├── generated-certificates/                 0700, varige nøkler og passord
-├── PKI/private/                            0700, demo-CA
+/var/lib/myproduct/                         0700, owned by myproduct
+├── config.yaml                            0600, used by all versions
+├── generated-certificates/                 0700, persistent keys and passwords
+├── PKI/private/                            0700, demo CA
 ├── .config/containers/systemd/
 │   ├── myproduct.kube                     0644
 │   ├── myproduct.network                  0644
-│   └── myproduct.yaml                     0600 (inkluderer secrets)
-├── .local/share/containers/storage/        images, volumer og databaser
-├── files/                                 0700; tar-arkiver 0600
-└── releases/myproduct-<versjon>/            kode, manifester og images; kan slettes
+│   └── myproduct.yaml                     0600 (includes secrets)
+├── .local/share/containers/storage/        images, volumes and databases
+├── files/                                 0700; tar archives 0600
+└── releases/myproduct-<version>/            code, manifests and images; can be deleted
 ```
 
-`myproduct.network` oppretter nettverket automatisk og gir hovedtjenesten en
-avhengighet til `myproduct-network.service`. Alle pods beholder
-`restartPolicy: Always`. Bruker-Quadlet bruker `WantedBy=default.target` og
-linger for oppstart uten innlogging. Podman 5.x legger til
-`podman-user-wait-network-online.service`; kontroller generatoren som brukeren:
+`myproduct.network` creates the network automatically and gives the main service a
+dependency on `myproduct-network.service`. All pods keep
+`restartPolicy: Always`. The user Quadlet uses `WantedBy=default.target` and
+linger to start without a login. Podman 5.x adds
+`podman-user-wait-network-online.service`; check the generator as the user:
 
 ```sh
-# Bruk denne funksjonen også til Podman-kommandoene ved drift/avinstallering.
+# Use this function for the Podman commands in operations/uninstall as well.
 as_product() {
     sudo -H -u myproduct bash -c '
         cd "$HOME" || exit
@@ -366,26 +367,26 @@ as_product() {
 as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
 
-`myproduct.kube` gir én tjeneste, `myproduct.service`, for alle pods. Hver
-installasjon, også en oppgradering, restarter alle pods og databasene.
-Tjenesten feiler hvis en pod feiler ved oppstart. Det er ingen startrekkefølge
-mellom pods; appene prøver å koble til databasen i 60 sekunder. Det er én
-installasjon per tjenestebruker, med faste navn på tjenesten og nettverket.
-`systemctl is-active` viser tjenestens tilstand og garanterer ikke at hver
-container kjører. Ved driftskontroll må også containerstatus og HTTPS/e2e
-kontrolleres; tjenesten kan være aktiv selv om én container er stoppet.
+`myproduct.kube` gives one service, `myproduct.service`, for all pods. Every
+installation, including an upgrade, restarts all pods and the databases.
+The service fails if a pod fails at startup. There is no start order
+between pods; the apps try to connect to the database for 60 seconds. There is one
+installation per service user, with fixed names for the service and the network.
+`systemctl is-active` shows the service's state and does not guarantee that every
+container is running. Operational checks must also check container status and HTTPS/e2e;
+the service can be active even if one container is stopped.
 
-### Oppgradering
+### Upgrade
 
-Config, nøkler, passord, CA og Podman-lageret tilhører installasjonen, ikke en
-release. **Ikke kjør generate-certificates.sh ved oppgradering**, og ikke kopier
-ny eksempelconfig over eksisterende config. PostgreSQL setter passordet bare
-ved første initialisering, demobrukerne beholder sine gamle passordhasher,
-og klientene må fortsatt stole på samme CA. Scriptets sperre mot eksisterende
-nøkler beholdes også når `--root` brukes.
+Config, keys, passwords, CA and the Podman storage belong to the installation, not to a
+release. **Do not run generate-certificates.sh when upgrading**, and do not copy
+a new example config over the existing config. PostgreSQL sets the password only
+at first initialization, the demo users keep their old password hashes,
+and the clients must keep trusting the same CA. The script's guard against existing
+keys also applies when `--root` is used.
 
-Hvis en ny app krever et nytt databasepassord, opprett bare den nye filen før
-installasjonen. Eksempel for en ny `new-app-db`-id (bytt navn i både config og manifest):
+If a new app needs a new database password, create only the new file before
+the installation. Example for a new `new-app-db` id (rename it in both config and manifest):
 
 ```sh
 sudo -H -u myproduct bash -c '
@@ -397,14 +398,14 @@ sudo -H -u myproduct bash -c '
 sudoedit /var/lib/myproduct/config.yaml
 ```
 
-`set -C` nekter å overskrive en eksisterende passordfil. Legg den nye stien til
-under `SECRET_FILES`, og oppdater andre config-verdier den nye appen trenger.
-Nye signerings-/klientsertifikater utstedes separat, i ekte prod av ekstern CA,
-og leveres som tjenestebrukeren med `umask 077` til nye stier. Oppdater også
-Duendes offentlige klientsertifikat/klientkonfigurasjon ved behov. Ikke erstatt
-eksisterende CA, DB-passord, demopassord eller nøkler ved å kjøre hele generatoren.
+`set -C` refuses to overwrite an existing password file. Add the new path
+under `SECRET_FILES`, and update any other config values the new app needs.
+New signing/client certificates are issued separately, in real prod by an external CA,
+and delivered as the service user with `umask 077` to new paths. Also update
+Duende's public client certificate/client configuration when needed. Do not replace
+the existing CA, database passwords, demo passwords or keys by running the whole generator.
 
-Kjør fra katalogen med det nye arkivet og checksum-filen:
+Run from the directory with the new archive and checksum file:
 
 ```sh
 old_version=0.1.0
@@ -421,9 +422,9 @@ sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$
 sudo systemctl --user -M myproduct@ is-active myproduct.service
 ```
 
-Kontroller at installasjonen lyktes, at tjenesten er aktiv og at alle
-containere kjører. Hvis noe feiler, stopp her og behold gammel trust. Etter
-vellykket installasjon og kontroll fjernes trust for den gamle releasen:
+Check that the installation succeeded, that the service is active and that all
+containers are running. If anything fails, stop here and keep the old trust. After
+a successful installation and check, remove the trust for the old release:
 
 ```sh
 sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py" --trust-file myproduct
@@ -431,53 +432,53 @@ sudo fapolicyd-cli --update
 wait_trust "$release/deploy.py" "/var/lib/myproduct/releases/myproduct-$old_version/deploy.py"
 ```
 
-Etter vellykket oppgradering kan gamle release-kataloger slettes når deres
-trust er fjernet. Behold `/var/lib/myproduct/config.yaml`,
-`generated-certificates/`, `PKI/`, `files/` og Podman-lageret, også ved sletting
-av releaser. Ta sikkerhetskopi av varig tilstand, inkludert databasene.
-`PKI/private/ca.key` på verten er bare for demo; i ekte prod utstedes
-sertifikatene eksternt og leveres til `generated-certificates/` uten CA-nøkkelen.
+After a successful upgrade, old release directories can be deleted once their
+trust has been removed. Keep `/var/lib/myproduct/config.yaml`,
+`generated-certificates/`, `PKI/`, `files/` and the Podman storage, also when deleting
+releases. Back up the persistent state, including the databases.
+`PKI/private/ca.key` on the host is only for the demo; in real prod the
+certificates are issued externally and delivered to `generated-certificates/` without the CA key.
 
-### fapolicyd og rootless
+### fapolicyd and rootless
 
-Checksum-kontrollen inne i bundlen kjøres som root: labens policy tillater
-root med et betrodd RPM-program å lese også Python-filer. Deretter legges bare
-den verifiserte `deploy.py` til i trust-databasen, slik at Python kjørt som
-`myproduct` kan lese den. Gjenta checksum og trust for hver ny utpakket versjon.
-Shell-script kjøres med `bash`, som leser filene uten direkte scriptkjøring.
-Ingen kataloger, container-runtime eller private nøkler legges til i trust.
+The checksum check inside the bundle runs as root: the lab's policy allows
+root with a trusted RPM program to read Python files too. Then only
+the verified `deploy.py` is added to the trust database, so that Python running as
+`myproduct` can read it. Repeat the checksum and trust for every newly unpacked version.
+Shell scripts run with `bash`, which reads the files without executing scripts directly.
+No directories, container runtime or private keys are added to the trust.
 
-På OL9.8-laben feiler selv `sudo crun --version` med fapolicyd regel 5.
-Audit viser cruns `open_tree` på `/proc/self/exe`, `mount_setattr` og `execveat`,
-deretter `exe=/` og avvisninger ved åpning av biblioteker. Dette støtter
-forklaringen om kjøring fra en løsrevet mount som fapolicyd ikke har observert,
-slik at prosessen klassifiseres som direkte startet dynamisk laster.
-[Red Hat beskriver samme symptom](https://access.redhat.com/solutions/7072618).
+On the OL9.8 lab even `sudo crun --version` fails with fapolicyd rule 5.
+The audit shows crun's `open_tree` on `/proc/self/exe`, `mount_setattr` and `execveat`,
+then `exe=/` and denials when opening libraries. This supports
+the explanation that crun runs from a detached mount that fapolicyd has not observed,
+so the process is classified as a directly started dynamic loader.
+[Red Hat describes the same symptom](https://access.redhat.com/solutions/7072618).
 
-Rootless-modellen bruker et eget mount-namespace. Med labens
-`allow_filesystem_mark = 0` forventes containerne å være utenfor fapolicyds
-observasjon; dette er ikke en godkjenning av innholdet fra fapolicyd.
-SELinux forblir Enforcing. Denne forklaringen må skilles fra faktisk
-prod-verifikasjon: akseptansetest og audit skal dokumentere hva som virker på
-målmaskinen. Ingen crun-regler, brede trust-regler eller binærendringer brukes.
+The rootless model uses its own mount namespace. With the lab's
+`allow_filesystem_mark = 0`, the containers are expected to be outside fapolicyd's
+observation; this is not an approval of their content by fapolicyd.
+SELinux stays Enforcing. This explanation must be kept separate from actual
+prod verification: the acceptance test and audit document what works on
+the target machine. No crun rules, broad trust rules or binary changes are used.
 
-## Secrets på disk og avinstallering
+## Secrets on disk and uninstalling
 
-Podman kube play skriver Secret-innhold til navngitte volumer under
-`/var/lib/myproduct/.local/share/containers/storage/volumes/<secret-navn>/_data/`.
-Hjemmet er 0700, men private nøkler og passord blir liggende etter `kube down`
-eller stopp. Filer fjernet fra Secret-definisjonen kan fortsatt ligge i volumet;
-definerte filer overskrives. Secret-, PVC- og ConfigMap-navn må være unike.
-`defaultMode: 0400` beskytter private nøkler inne i containeren, men sletter ikke
-data fra vertens disk.
+Podman kube play writes Secret content to named volumes under
+`/var/lib/myproduct/.local/share/containers/storage/volumes/<secret-name>/_data/`.
+The home is 0700, but private keys and passwords stay after `kube down`
+or stop. Files removed from the Secret definition can still remain in the volume;
+defined files are overwritten. Secret, PVC and ConfigMap names must be unique.
+`defaultMode: 0400` protects private keys inside the container, but does not delete
+data from the host's disk.
 
-Stopp tjenesten før et Secret-volum slettes. Kommandoene nedenfor utføres av
-operatøren. Gjenta trust-sletting for hver installert release som skal fjernes:
+Stop the service before deleting a Secret volume. The operator runs the commands
+below. Repeat the trust removal for every installed release that is removed:
 
 ```sh
 sudo systemctl --user -M myproduct@ stop myproduct.service
 as_product podman volume ls
-# Eksempel; slett bare identifiserte volumer som ikke skal bevares.
+# Example; delete only identified volumes that are not to be kept.
 as_product podman volume rm identity-signing
 sudo fapolicyd-cli --file delete "$release/deploy.py" --trust-file myproduct
 sudo fapolicyd-cli --update
@@ -486,12 +487,12 @@ sudo systemctl --user -M myproduct@ daemon-reload
 sudo loginctl disable-linger myproduct
 ```
 
-Secret-volumene er `identity-signing`, `identity-client-certificate`,
+The Secret volumes are `identity-signing`, `identity-client-certificate`,
 `identity-database-password`, `identity-demo-users`, `todo-database-password`
-og `web-tls`. Behold database-/appdatavolumer med mindre de bevisst skal slettes.
-Ikke slå på `KubeDownForce`: det kan også slette databasevolumene.
-Når alle data bevisst skal fjernes, kan administrator stoppe brukerinstansen,
-slette brukeren/hjemmet og fjerne SELinux-ekvivalensen:
+and `web-tls`. Keep the database/app data volumes unless they are deliberately deleted.
+Do not enable `KubeDownForce`: it can delete the database volumes too.
+When all data is deliberately to be removed, an administrator can stop the user instance,
+delete the user/home and remove the SELinux equivalence:
 
 ```sh
 sudo systemctl stop "user@$(id -u myproduct).service"
@@ -499,6 +500,6 @@ sudo userdel -r myproduct
 sudo semanage fcontext -d /var/lib/myproduct/.local/share/containers
 ```
 
-Volumsletting eller `userdel` garanterer ikke fysisk sletting fra disk eller
-sikkerhetskopier. Installasjonsflyten forutsetter en ren prod-vert. Bruk [akseptansetesten](acceptance/README.md)
-for prod-verifikasjon med systemd og reboot.
+Deleting volumes or running `userdel` does not guarantee physical deletion from disk or
+backups. The installation flow assumes a clean prod host. Use the [acceptance test](acceptance/README.md)
+for prod verification with systemd and reboot.

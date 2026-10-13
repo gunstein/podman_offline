@@ -41,12 +41,12 @@ SCP = [
 
 
 def stamp():
-    """Returner nåværende UTC-tid i ISO-format for loggene."""
+    """Return the current UTC time in ISO format for the logs."""
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def validate(config):
-    """Valider labens VM-er, adresser, subnett, navn og HTTPS-port."""
+    """Validate the lab VMs, addresses, subnet, names and HTTPS port."""
     for role in ("DEV", "PROD"):
         ipaddress.IPv4Address(config[role + "_IP"])
         if not re.fullmatch(r"[1-9][0-9]*", config[role + "_VMID"]):
@@ -74,10 +74,10 @@ def validate(config):
 
 
 class Run:
-    """Utfør én uforanderlig akseptansekjøring med logger og første-feil-stopp."""
+    """Perform one immutable acceptance run with logs and stop at the first failure."""
 
     def __init__(self, run_id, config):
-        """Opprett en ny, privat run-mappe og initialiser kjøringens tilstand."""
+        """Create a new, private run folder and initialize the run state."""
         self.id = run_id
         self.config_file = config
         self.folder = RUNS / run_id
@@ -97,7 +97,7 @@ class Run:
         self.warnings = set()
 
     def write(self, text):
-        """Skriv til stegets logg etter å ha maskert kjente hemmeligheter."""
+        """Write to the step log after masking known secrets."""
         for value in self.redactions:
             text = text.replace(value, "[REDACTED]")
         if self.log:
@@ -105,7 +105,7 @@ class Run:
             self.log.flush()
 
     def log_streams(self, stdout, stderr, log_stdout=True):
-        """Logg adskilte strømmer og navngi SSH-advarsler uten å vise private hashverdier."""
+        """Log separate streams and name warnings without showing private hash values."""
         stdout, stderr = stdout or "", stderr or ""
         if isinstance(stdout, bytes):
             stdout = stdout.decode(errors="replace")
@@ -122,7 +122,7 @@ class Run:
         self.write("\n[stderr]\n" + stderr + "\n")
 
     def command(self, args, script=None, timeout=3600, log_stdout=True):
-        """Logg adskilte strømmer, avvis feilstatus og returner bare stdout."""
+        """Log separate streams, reject a failing status and return only stdout."""
         self.write("$ " + " ".join(shlex.quote(str(a)) for a in args) + "\n")
         if script:
             self.write("# stdin script:\n" + script + "\n")
@@ -150,17 +150,17 @@ class Run:
         return result.stdout or ""
 
     def host(self, role):
-        """Returner SSH-bruker og adresse for den valgte VM-rollen."""
+        """Return the SSH user and address for the chosen VM role."""
         return self.cfg["SSH_USER"] + "@" + self.cfg[role + "_IP"]
 
     def ssh(self, role, script, timeout=3600, log_stdout=True):
-        """Kjør et script via SSH og samle output i stegets logg."""
+        """Run a script over SSH and collect its output in the step log."""
         return self.command(
             SSH + [self.host(role), "bash -se"], script, timeout, log_stdout
         )
 
     def guest(self, role, action, version="", log_stdout=True, old_version=""):
-        """Kjør et fast VM-steg via SSH med parametre for denne kjøringen."""
+        """Run a fixed VM step over SSH with this run's parameters."""
         args = [
             action,
             self.id,
@@ -179,7 +179,7 @@ class Run:
         return self.ssh(role, prefix + script, log_stdout=log_stdout)
 
     def step(self, name, action):
-        """Kjør ett steg én gang, logg utfallet og stopp ved første feil."""
+        """Run one step once, log the outcome and stop at the first failure."""
         print("START " + name, flush=True)
         started = stamp()
         clock = time.monotonic()
@@ -212,7 +212,7 @@ class Run:
             raise RuntimeError("STOP at " + name) from None
 
     def readiness(self):
-        """Kontroller ren checkout, labtilgang og profiler før VM-ene endres."""
+        """Check a clean checkout, lab access and profiles before the VMs change."""
         self.cfg = env_file(self.config_file)
         validate(self.cfg)
         for program in ("git", "ssh", "scp"):
@@ -275,7 +275,7 @@ class Run:
         )
 
     def wait_ssh(self, role, old_boot=None):
-        """Vent på SSH og eventuelt en boot-ID som avviker fra den forrige."""
+        """Wait for SSH and, if given, a boot ID that differs from the previous one."""
         deadline = time.monotonic() + 240
         while time.monotonic() < deadline:
             args = SSH + [self.host(role), "cat /proc/sys/kernel/random/boot_id"]
@@ -297,7 +297,7 @@ class Run:
         raise RuntimeError("SSH/new boot did not become ready: " + role)
 
     def reset(self, role):
-        """Tilbakestill en VM til snapshot og registrer ren tilstand etter oppstart."""
+        """Roll a VM back to its snapshot and record the clean state after boot."""
         endpoint = "/nodes/{node}/qemu/" + self.cfg[role + "_VMID"]
         status = self.pve.request("GET", endpoint + "/status/current")["status"]
         if status != "stopped":
@@ -314,7 +314,7 @@ class Run:
         self.meta[role.lower() + "_facts"] = self.guest(role, "clean")
 
     def source(self):
-        """Send en Git-bundle av valgt HEAD til dev-VM-en og klon den der."""
+        """Send a Git bundle of the chosen HEAD to the dev VM and clone it there."""
         source = self.folder / "source.bundle"
         self.command(["git", "-C", ROOT, "bundle", "create", source, "HEAD"])
         base = "podman-offline-acceptance/" + self.id
@@ -323,7 +323,7 @@ class Run:
         self.guest("DEV", "clone")
 
     def transfer(self, version=None):
-        """Overfør valgt produktbundle via kontrolleren og registrer SHA256."""
+        """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["version"]
         archive = "myproduct-" + version + "-offline.tar.gz"
@@ -349,14 +349,14 @@ class Run:
         self.guest("PROD", "unpack", version)
 
     def boot_id(self, output):
-        """Valider en boot-ID fra stdout uten å godta advarsler eller tomme svar."""
+        """Validate a boot ID from stdout without accepting warnings or empty output."""
         boot = output.strip()
         if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot):
             raise RuntimeError("Invalid or empty boot-ID on stdout")
         return boot
 
     def persistent_state(self, phase):
-        """Sammenlign private hashverdier og logg bare filnavn og likt/endret."""
+        """Compare private hash values and log only file names and same/changed."""
         try:
             state = json.loads(self.guest("PROD", "persistent-state", log_stdout=False))
         except (ValueError, TypeError):
@@ -392,7 +392,7 @@ class Run:
             same = before["files_sha256"].get(name) == state["files_sha256"].get(name)
             if name == "PKI/private/ca.crt":
                 same = same and before["ca_der_sha256"] == state["ca_der_sha256"]
-            comparisons[name] = "likt" if same else "endret"
+            comparisons[name] = "same" if same else "changed"
             self.write(name + ": " + comparisons[name] + "\n")
         self.meta["persistent_" + phase] = comparisons
         if phase == "after" and state != before:
@@ -401,7 +401,7 @@ class Run:
             )
 
     def upgrade(self):
-        """Bygg og installer ny versjon, og kontroller varig tilstand og e2e."""
+        """Build and install a new version, and check persistent state and e2e."""
         version = self.meta["version"]
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
             raise RuntimeError("Upgrade test requires a three-part numeric VERSION")
@@ -423,7 +423,7 @@ class Run:
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
 
     def credentials(self):
-        """Flytt CA og demo-passord via private runtime-filer uten å logge innhold."""
+        """Move the CA and demo passwords through private runtime files without logging content."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
         runtime = output.strip()
@@ -461,7 +461,7 @@ class Run:
             )
 
     def cleanup(self):
-        """Slett overførte runtime-hemmeligheter, også når fjernoppryddingen feiler."""
+        """Delete transferred runtime secrets, even when the remote cleanup fails."""
         try:
             if self.dev_private:
                 self.guest("DEV", "cleanup")
@@ -472,7 +472,7 @@ class Run:
 
     def finalize(self):
         # Read-only audit evidence is required even after a failed prod step.
-        """Samle lesende prod-audit og rydd hemmeligheter, også etter første feil."""
+        """Collect read-only prod audit and clean up secrets, also after the first failure."""
         if self.prod_ready:
             try:
                 action = "audit-check" if self.finished else "audit"
@@ -485,14 +485,14 @@ class Run:
             print(str(error), file=sys.stderr)
 
     def reboot(self):
-        """Bestill prod-reboot og registrer at SSH kommer tilbake med ny boot-ID."""
+        """Schedule a prod reboot and record that SSH returns with a new boot ID."""
         old = self.boot_id(self.guest("PROD", "boot"))
         self.meta["prod_boot_before_reboot"] = old
         self.guest("PROD", "reboot")
         self.meta["prod_boot_after_reboot"] = self.wait_ssh("PROD", old)
 
     def execute(self):
-        """Kjør hele akseptanseløpet i fast rekkefølge uten å gjenta feilede steg."""
+        """Run the whole acceptance flow in a fixed order without repeating failed steps."""
         self.step("00-readiness", self.readiness)
         for role in ("DEV", "PROD"):
             self.step("01-reset-" + role.lower(), lambda r=role: self.reset(r))
@@ -546,7 +546,7 @@ class Run:
         self.finished = True
 
     def report(self):
-        """Generer rapport og bevis; bare fullført, feilfri kjøring gir CLEAN PASS."""
+        """Generate report and evidence; only a complete, error-free run gives CLEAN PASS."""
         records = [
             json.loads(line)
             for line in (self.folder / "record.jsonl").read_text().splitlines()
@@ -564,7 +564,7 @@ class Run:
             "",
             "Warnings: " + ("; ".join(sorted(self.warnings)) or "none recorded"),
             "",
-            "Persistent files: only names and likt/endret are recorded; hashes remain in memory.",
+            "Persistent files: only names and same/changed are recorded; hashes remain in memory.",
             "",
             "Metadata recorded by the runner:",
             fence + "json",
@@ -605,7 +605,7 @@ class Run:
 
 
 def main():
-    """Start en ny run-id og produser rapport og opprydding også ved feil."""
+    """Start a new run ID and produce report and cleanup even on failure."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
     parser.add_argument(

@@ -122,7 +122,7 @@ def callback():
 @app.errorhandler(OAuthError)
 def oauth_error(error):
     app.logger.warning("OIDC rejected: %s", error.error)
-    return "Innlogging feilet. Gå tilbake og prøv igjen.", 400
+    return "Sign-in failed. Go back and try again.", 400
 
 
 @app.get("/auth/me")
@@ -138,7 +138,7 @@ def logout():
 
 @app.get("/livez")
 def livez():
-    """Svar lokalt uten database eller innlogging for containerens liveness-probe."""
+    """Answer locally, without database or sign-in, for the container liveness probe."""
     return "", 204
 
 

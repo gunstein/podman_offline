@@ -212,9 +212,7 @@ data: {image: ignored}
             "manifests/bad.yaml",
             "spec:\n  initContainers:\n  - image: team/app:1\n",
         )
-        with self.assertRaisesRegex(
-            bundle.BundleError, "team/app:1.*fullt kvalifisert"
-        ):
+        with self.assertRaisesRegex(bundle.BundleError, "team/app:1.*fully qualified"):
             bundle.build()
         self.assertEqual(old.read_text(), "previous build")
         self.process.assert_not_called()
@@ -242,10 +240,10 @@ data: {image: ignored}
 
     def test_no_images_or_no_manifests(self):
         manifest = self.write("manifests/app.yaml", "---\nkind: ConfigMap\n")
-        with self.assertRaisesRegex(bundle.BundleError, "Ingen images"):
+        with self.assertRaisesRegex(bundle.BundleError, "No images"):
             bundle.build()
         manifest.unlink()
-        with self.assertRaisesRegex(bundle.BundleError, "Ingen images"):
+        with self.assertRaisesRegex(bundle.BundleError, "No images"):
             bundle.build()
         self.process.assert_not_called()
 

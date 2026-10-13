@@ -14,7 +14,7 @@ spec.loader.exec_module(smoke)
 
 
 def main():
-    """Opprett eller verifiser varige Todo-markører og tilgangsskille per bruker."""
+    """Create or verify persistent Todo markers and per-user access separation."""
     action, filename, run_id = sys.argv[1:]
     path = Path(filename)
     if action == "create":

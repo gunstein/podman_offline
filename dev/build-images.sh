@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Bygg demoens app-images og hent PostgreSQL med lokale manifestnavn.
+# Build the demo app images and pull PostgreSQL with the local manifest names.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Applisten og taggen må følge manifestene; bundle finner images automatisk.
+# The app list and tag must follow the manifests; the bundle finds images automatically.
 for app in identity todo-backend todo-frontend help proxy; do
     podman build -t "localhost/myproduct-$app:0.1.0" -f "apps/$app/Containerfile" "apps/$app"
 done
