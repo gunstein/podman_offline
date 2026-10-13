@@ -136,6 +136,12 @@ def logout():
     return "", 204
 
 
+@app.get("/livez")
+def livez():
+    """Svar lokalt uten database eller innlogging for containerens liveness-probe."""
+    return "", 204
+
+
 @app.get("/api/health")
 def health():
     with connect() as db:

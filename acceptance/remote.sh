@@ -175,20 +175,101 @@ PY
     esac
     echo "PASS: public pull failed (exit $status)"
 }
-# Kontroller aktiv tjeneste og alle forventede appcontainere.
+# Vent på alle manifestdefinerte appcontainere og deres Podman-helsestatus.
 healthy() {
     user_service is-active myproduct.service
-    as_product podman ps --all --pod
-    as_product podman ps -a --format json | python3 -c '
-import json, sys
-rows = json.load(sys.stdin)
-names = ("myproduct-identity-postgres-db", "myproduct-todo-postgres-db",
-         "myproduct-identity-app", "myproduct-todo-backend",
-         "myproduct-todo-frontend", "myproduct-help-web", "myproduct-proxy-nginx")
-for name in names:
-    found = [c for c in rows if name in c["Names"]]
-    assert len(found) == 1 and found[0]["State"] == "running", name
-print("PASS: all seven application containers running")'
+    as_product python3 - <<'HEALTHY'
+import json
+import pathlib
+import subprocess
+import sys
+import time
+import yaml
+
+
+def podman(arguments):
+    """Les Podman-stdout uten privat inspect-innhold, og logg stderr ved alle utfall."""
+    result = subprocess.run(["podman"] + arguments, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True,
+                            check=False, timeout=10)
+    print(result.stderr or "", end="", file=sys.stderr)
+    if result.returncode:
+        raise RuntimeError("Podman-kontroll feilet: exit " + str(result.returncode))
+    return result.stdout
+
+
+def expected_containers(path):
+    """Les unike app- og init-containernavn fra installert Pod-YAML."""
+    expected, init = set(), set()
+    with path.open() as stream:
+        for doc in yaml.safe_load_all(stream):
+            if not isinstance(doc, dict) or doc.get("kind") != "Pod":
+                continue
+            pod = doc["metadata"]["name"]
+            for group, target in (("containers", expected), ("initContainers", init)):
+                for container in doc["spec"].get(group, []):
+                    name = pod + "-" + container["name"]
+                    if name in expected or name in init:
+                        raise RuntimeError("Duplisert forventet containernavn: " + name)
+                    target.add(name)
+    if not expected:
+        raise RuntimeError("Ingen appcontainere i installert YAML")
+    return expected, init
+
+
+def states(expected, init):
+    """Krev eksakt containerinventar og returner bare offentlige helsetilstandsfelt."""
+    ids = podman(["ps", "-aq"]).splitlines()
+    if not ids or any(not value.strip() for value in ids):
+        raise RuntimeError("Manglende containerinventar")
+    rows = json.loads(podman(["inspect", "--format", "json"] + ids))
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("Ugyldig inspect-liste")
+    found = {}
+    for row in rows:
+        if type(row["IsInfra"]) is not bool or type(row["IsService"]) is not bool:
+            raise RuntimeError("Ugyldige inventarflagg")
+        if row["IsInfra"] or row["IsService"]:
+            continue
+        name = row["Name"]
+        if name in init:
+            continue
+        if name not in expected or name in found:
+            raise RuntimeError("Ukjent eller duplisert container: " + str(name))
+        state = row["State"]
+        running, health = state["Status"], state["Health"]["Status"]
+        if not isinstance(running, str) or health not in ("starting", "healthy", "unhealthy"):
+            raise RuntimeError("Ugyldig helsestatus: " + name)
+        found[name] = (running, health)
+    if set(found) != expected:
+        raise RuntimeError("Mangler containere: " + ", ".join(sorted(expected - set(found))))
+    return found
+
+
+def main():
+    """Vent inntil 150 sekunder på healthy; avvis inventar-, kommando- og parsefeil straks."""
+    expected, init = expected_containers(pathlib.Path.home() / ".config/containers/systemd/myproduct.yaml")
+    deadline = time.monotonic() + 150
+    while True:
+        current = states(expected, init)
+        for name, (running, health) in sorted(current.items()):
+            print("HEALTH {} state={} health={}".format(name, running, health), flush=True)
+            if running != "running" or health == "unhealthy":
+                raise RuntimeError("Containeren er ikke frisk: " + name)
+        if all(health == "healthy" for _, health in current.values()):
+            print("PASS: alle {} appcontainere kjører og er healthy".format(len(expected)))
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Helsestatus fortsatt starting etter 150s")
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+HEALTHY
 }
 # Vent på backend gjennom HTTPS-proxyen før autentiserte markørkontroller.
 wait_backend() {
@@ -726,6 +807,102 @@ if __name__ == "__main__":
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         raise SystemExit("FAIL: " + str(error))
 CRASH
+    healthy
+    wait_backend
+    ;;
+hang)
+    python3 - <<'HANG'
+import json
+import shlex
+import subprocess
+import sys
+import time
+
+CONTAINER = "myproduct-todo-backend"
+
+
+def product_command(arguments):
+    """Bygg et Podman-kall som tjenestebrukeren fra riktig hjem og runtime."""
+    return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+            'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
+            "bash"] + arguments
+
+
+def command(arguments):
+    """Returner stdout uten å logge inspect-innhold og behold stderr også ved feil."""
+    print("$ " + " ".join(shlex.quote(arg) for arg in arguments))
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=10)
+    print(result.stderr or "", end="", file=sys.stderr)
+    if result.returncode:
+        raise RuntimeError("Hengtest-kommando feilet: exit " + str(result.returncode))
+    return result.stdout
+
+
+def inspect_container():
+    """Parse inspect-JSON og valider bare feltene som brukes til krasjkontrollen."""
+    try:
+        rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise ValueError("Forventet én container")
+        state = rows[0]["State"]
+        result = {"Pid": state["Pid"], "Running": state["Running"],
+                  "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
+                  "StoppedByUser": state.get("StoppedByUser", False),
+                  "Health": state["Health"]["Status"]}
+        if (type(result["Pid"]) is not int or result["Pid"] < 0
+                or type(result["Running"]) is not bool
+                or (result["Running"] and result["Pid"] <= 1)
+                or type(result["RestartCount"]) is not int or result["RestartCount"] < 0
+                or type(result["StoppedByUser"]) is not bool
+                or result["Health"] not in ("healthy", "starting", "unhealthy")
+                or not isinstance(result["StartedAt"], str) or not result["StartedAt"].strip()):
+            raise ValueError("Ugyldige tilstandsfelt")
+    except (ValueError, KeyError, TypeError):
+        raise RuntimeError("Ugyldig eller tom container-tilstand fra inspect") from None
+    return result
+
+
+def main():
+    """Frys alle vertsprosesser én gang og krev unhealthy fulgt av én frisk restart."""
+    before = inspect_container()
+    if not before["Running"] or before["StoppedByUser"] or before["Health"] != "healthy":
+        raise RuntimeError("Containeren må være healthy før hengtesten")
+    print("BEFORE " + json.dumps(before, sort_keys=True), flush=True)
+    top = command(product_command(["podman", "top", CONTAINER, "hpid"]))
+    lines = top.splitlines()
+    if not lines or lines[0].strip().upper() != "HPID":
+        raise RuntimeError("Ugyldig PID-liste fra podman top")
+    pids = [line.strip() for line in lines[1:]]
+    if (not pids or any(not pid.isdigit() or int(pid) <= 1 for pid in pids)
+            or len(set(pids)) != len(pids) or str(before["Pid"]) not in pids):
+        raise RuntimeError("Ugyldige verts-PID-er fra podman top")
+    for pid in pids:
+        command(["sudo", "-n", "kill", "-STOP", pid])
+    deadline, unhealthy = time.monotonic() + 240, False
+    while time.monotonic() < deadline:
+        after = inspect_container()
+        print("AFTER " + json.dumps(after, sort_keys=True), flush=True)
+        unhealthy = unhealthy or after["Health"] == "unhealthy"
+        if after["StoppedByUser"]:
+            raise RuntimeError("StoppedByUser ble satt under hengtesten")
+        if after["RestartCount"] > before["RestartCount"] + 1:
+            raise RuntimeError("Containeren restartet mer enn én gang")
+        if (unhealthy and after["Running"] and after["Health"] == "healthy"
+                and after["RestartCount"] == before["RestartCount"] + 1
+                and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
+            print("PASS: unhealthy fulgt av én automatisk restart til healthy")
+            return
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+    raise RuntimeError("Ingen verifisert frisk restart etter heng innen 240s")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+HANG
     healthy
     wait_backend
     ;;

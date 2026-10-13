@@ -8,3 +8,15 @@ spec:
   - name: web
     image: localhost/myproduct-help:0.1.0
     imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8080/
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3

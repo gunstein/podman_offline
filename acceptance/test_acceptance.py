@@ -25,6 +25,44 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
+def shell_code(source, function=None, heredoc=None, action=None):
+    """Hent navngitt shellkode eller heredoc uten avhengighet til kommentarer og innrykk."""
+    if heredoc:
+        match = re.search(r"<<-?['\"]?" + re.escape(heredoc) + r"['\"]?\s*\n", source)
+        if not match:
+            raise ValueError("Mangler heredoc: " + heredoc)
+        end = re.search(
+            r"^" + re.escape(heredoc) + r"\s*$", source[match.end() :], re.MULTILINE
+        )
+        if not end:
+            raise ValueError("Uavsluttet heredoc: " + heredoc)
+        return source[match.end() : match.end() + end.start()]
+    pattern = (
+        r"^" + re.escape(function) + r"\(\)\s*\{"
+        if function
+        else r"^" + re.escape(action or "") + r"\)\s*$"
+    )
+    match = re.search(pattern, source, re.MULTILINE)
+    if not match:
+        raise ValueError("Mangler shellkode: " + str(function or action))
+    lines = source[match.start() :].splitlines(keepends=True)
+    tag, result = None, []
+    for line in lines:
+        result.append(line)
+        if tag:
+            if line.strip() == tag:
+                tag = None
+            continue
+        marker = re.search(r"<<-?['\"]?(\w+)['\"]?", line)
+        if marker:
+            tag = marker.group(1)
+        elif (function and re.match(r"^}\s*$", line)) or (
+            action and line.strip() == ";;"
+        ):
+            return "".join(result) if function else "".join(result[1:-1])
+    raise ValueError("Uavsluttet shellkode: " + str(function or action))
+
+
 class HarnessTests(unittest.TestCase):
     """Test kjøringens stoppregler, hemmeligheter og livssyklus uten labtilgang."""
 
@@ -214,11 +252,7 @@ class HarnessTests(unittest.TestCase):
     def boot_service_fixture(self, states):
         """Kjør ekte venteløkke med stubbet systemctl og uten tidsforsinkelse."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        function = remote[
-            remote.index("wait_boot_service() {") : remote.index(
-                "# Bekreft blokkert internett"
-            )
-        ]
+        function = shell_code(remote, function="wait_boot_service")
         state_file, calls = self.root / "boot-states", self.root / "boot-calls"
         state_file.write_text("\n".join(states) + "\n")
         calls.write_text("")
@@ -281,7 +315,7 @@ sleep() { :; }
     def test_audit_uses_separate_streams_and_locale_date(self):
         """Bekreft datoformat, adskilte audit-strømmer og streng feilbehandling."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        code = remote.split("<<'AUDIT'\n", 1)[1].split("\nAUDIT", 1)[0]
+        code = shell_code(remote, heredoc="AUDIT")
         self.assertIn(
             'LC_ALL=C date -d "$run_started"',
             remote.replace("@$run_started", "$run_started"),
@@ -418,9 +452,7 @@ sleep() { :; }
     ):
         """Lag isolasjonssteget med lokale stubber for nett, sudo og verktøy."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        function = remote[
-            remote.index("offline() {") : remote.index("# Kontroller aktiv tjeneste")
-        ]
+        function = shell_code(remote, function="offline")
         stubs = """
 # Simuler sudo og Podman med valgt pull-status uten privilegier.
 sudo() {
@@ -501,7 +533,9 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
     def test_empty_resource_stdout_does_not_hide_failed_command(self):
         """Avvis feil i ressurskommandoen før en tom stdout kan godtas."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        block = remote.split("clean)\n    facts\n", 1)[1].split("    if [[ $role", 1)[0]
+        block = re.sub(
+            r"^\s*facts\s*$", "", shell_code(remote, action="clean"), flags=re.MULTILINE
+        )
         stubs = "podman() { echo 'resource warning' >&2; return 7; }\n"
         result = subprocess.run(
             ["bash", "-eu", "-c", stubs + block],
@@ -524,11 +558,7 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
     def trust_helper(self):
         """Hent ventefunksjonen som deles av VM-prosedyren og README."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        return (
-            remote.split("# Vent lesende på eksakte trust-stier", 1)[1]
-            .split("# Valider VM-rollens", 1)[0]
-            .split("\n", 1)[1]
-        )
+        return shell_code(remote, function="wait_trust")
 
     def run_trust_wait(self, outputs, exit_code=0):
         """Kjør lesende trust-venting mot sekvensielle databasefixtures uten ventetid."""
@@ -629,7 +659,7 @@ wait_trust /new/deploy.py /old/deploy.py
         """Kjør README- eller VM-prosedyren med stubbede trust- og installasjonskall."""
         if source == "remote":
             remote = Path(__file__).with_name("remote.sh").read_text()
-            code = remote.split("\nupgrade)\n", 1)[1].split("\n    ;;", 1)[0]
+            code = shell_code(remote, action="upgrade")
         else:
             readme = (
                 Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
@@ -771,6 +801,10 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             for line in (self.harness.folder / "record.jsonl").read_text().splitlines()
         ]
         expected = [
+            "09-crash",
+            "09-markers-crash",
+            "09-hang",
+            "09-markers-hang",
             "09-reboot",
             "09-wait-boot-service",
             "09-offline-after-reboot",
@@ -785,7 +819,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "10-e2e-upgrade",
             "10-markers-upgrade",
         ]
-        self.assertEqual(records[records.index("09-reboot") :], expected)
+        self.assertEqual(records[records.index("09-crash") :], expected)
         self.assertEqual(
             self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 3
         )
@@ -793,9 +827,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_persistent_snapshot_hashes_config_pki_and_files_without_content(self):
         """Bekreft filhashdekning uten at hemmelig filinnhold skrives ut."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        code = remote.split("    as_product python3 - <<'HASHES'\n", 1)[1].split(
-            "\nHASHES\n", 1
-        )[0]
+        code = shell_code(remote, heredoc="HASHES")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             private = b"synthetic-secret-that-must-not-be-printed"
@@ -860,9 +892,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_product_commands_enter_service_home_and_set_runtime(self):
         """Bekreft tjenestebrukerens cwd, HOME og runtime ved sudo-kjøring."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        function = remote[
-            remote.index("as_product() {") : remote.index("user_service() {")
-        ]
+        function = shell_code(remote, function="as_product")
         home = self.root / "service home"
         home.mkdir(mode=0o700)
         operator = self.root / "operator-private"
@@ -901,9 +931,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_missing_service_home_stops_before_command(self):
         """Bekreft at et manglende tjenestehjem stopper kommandoen."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        function = remote[
-            remote.index("as_product() {") : remote.index("user_service() {")
-        ]
+        function = shell_code(remote, function="as_product")
         script = (
             'sudo() { shift 4; "$@"; }\n' + function + "as_product echo SHOULD_NOT_RUN"
         )
@@ -952,7 +980,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_guest_security_profile_checks(self):
         """Bekreft aksept og avvisning av VM-rollenes sikkerhetsprofiler."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        function = remote[remote.index("profile() {") : remote.index("facts() {")]
+        function = shell_code(remote, function="profile")
         stubs = """
 getenforce() { echo "$selinux_value"; }
 systemctl() {
@@ -988,13 +1016,232 @@ systemctl() {
                 )
 
 
+class HealthTests(unittest.TestCase):
+    """Test manifeststyrt helse og streng inventarkontroll uten Podman."""
+
+    def setUp(self):
+        """Last helsekontrollen og erstatt bare prosesskall og klokke."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        self.namespace: dict = {"__name__": "fixture"}
+        exec(  # noqa: S102 - repository-owned heredoc under test
+            compile(shell_code(remote, heredoc="HEALTHY"), "HEALTHY", "exec"),
+            self.namespace,
+        )
+        self.now = 0
+        self.namespace["time"] = types.SimpleNamespace(
+            monotonic=lambda: self.now, sleep=self.advance
+        )
+
+    def advance(self, seconds):
+        """Flytt testklokken uten faktisk venting."""
+        self.now += seconds
+
+    def row(self, name="pod-app", health="healthy"):
+        """Lag inspect-fixture med privat felt som aldri skal logges."""
+        return {
+            "Name": name,
+            "IsInfra": False,
+            "IsService": False,
+            "State": {"Status": "running", "Health": {"Status": health}},
+            "Config": {"Env": ["PRIVATE=DO_NOT_LOG"]},
+        }
+
+    def run_health(self, rows, exit_code=0):
+        """Kjør venteløkken med stubbet inventar, stdout og stderr."""
+        self.namespace["expected_containers"] = lambda path: ({"pod-app"}, set())
+
+        def run(arguments, **kwargs):
+            """Returner bare kontrollerte inspect-data eller container-ID-er."""
+            output = json.dumps(rows) if "inspect" in arguments else "id\n"
+            return subprocess.CompletedProcess(
+                arguments, exit_code, output, "Warning: fixture\n"
+            )
+
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(subprocess, "run", side_effect=run),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            self.namespace["main"]()
+        return output.getvalue(), errors.getvalue()
+
+    def test_healthy_and_warning_pass_without_private_output(self):
+        """Godta korrekt inventar med healthy og logg stderr separat."""
+        output, errors = self.run_health([self.row()])
+        self.assertIn("health=healthy", output)
+        self.assertIn("Warning: fixture", errors)
+        self.assertNotIn("DO_NOT_LOG", output + errors)
+
+    def test_missing_extra_duplicate_and_unhealthy_fail(self):
+        """Avvis feil inventar og unhealthy straks."""
+        for rows in (
+            [],
+            [self.row("other")],
+            [self.row(), self.row("other")],
+            [self.row(), self.row()],
+            [self.row(health="unhealthy")],
+        ):
+            with self.subTest(rows=rows), self.assertRaises(RuntimeError):
+                self.run_health(rows)
+
+    def test_starting_times_out(self):
+        """Avvis vedvarende starting etter 150 sekunder."""
+        with self.assertRaisesRegex(RuntimeError, "150s"):
+            self.run_health([self.row(health="starting")])
+        self.assertEqual(self.now, 150)
+
+    def test_command_and_parse_errors_fail_immediately(self):
+        """Avvis feilstatus og ugyldige inspect-felt uten retry."""
+        with self.assertRaises(RuntimeError):
+            self.run_health([self.row()], exit_code=7)
+        with self.assertRaises(KeyError):
+            self.run_health([{}])
+        self.assertEqual(self.now, 0)
+
+    def test_expected_names_follow_manifest_including_new_app(self):
+        """Les navn fra faktiske manifester og ta automatisk med en ny app."""
+        repo = Path(__file__).resolve().parent.parent
+        text = "\n---\n".join(
+            path.read_text() for path in sorted((repo / "manifests").glob("*.yaml"))
+        )
+        text += "\n---\nkind: Pod\nmetadata: {name: extra}\nspec:\n  containers: [{name: app}]\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "installed.yaml"
+            path.write_text(text)
+            names, init = self.namespace["expected_containers"](path)
+        self.assertEqual(len(names), 8)
+        self.assertIn("extra-app", names)
+        self.assertFalse(init)
+
+
+class HangTests(unittest.TestCase):
+    """Test SIGSTOP og helsestyrt restart med stubbet Podman og signaler."""
+
+    def setUp(self):
+        """Last hengkontrollen og bruk en virtuell 240-sekundersklokke."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        self.namespace: dict = {"__name__": "fixture"}
+        exec(  # noqa: S102 - repository-owned heredoc under test
+            compile(shell_code(remote, heredoc="HANG"), "HANG", "exec"), self.namespace
+        )
+        self.now, self.calls = 0, []
+        self.namespace["time"] = types.SimpleNamespace(
+            monotonic=lambda: self.now, sleep=self.advance
+        )
+
+    def advance(self, seconds):
+        """Flytt testklokken uten virkelig venting."""
+        self.now += seconds
+
+    def state(
+        self, pid=1200, count=0, started="before", stopped=False, health="healthy"
+    ):
+        """Lag begrenset inspect-fixture med kontrollerbare restart- og helsefelt."""
+        return {
+            "RestartCount": count,
+            "State": {
+                "Pid": pid,
+                "Running": True,
+                "StartedAt": started,
+                "StoppedByUser": stopped,
+                "Health": {"Status": health},
+            },
+            "Config": {"Env": ["PRIVATE=DO_NOT_LOG"]},
+        }
+
+    def run_hang(self, after, top="HPID\n1200\n1201\n"):
+        """Kjør hengtesten med kontrollerte tilstander uten å fryse vertsprosesser."""
+        pending = [self.state(), self.state(health="unhealthy"), after]
+
+        def run(arguments, **kwargs):
+            """Returner top/inspect og registrer SIGSTOP uten å sende signal."""
+            self.calls.append(arguments)
+            if "inspect" in arguments:
+                row = pending.pop(0) if len(pending) > 1 else pending[0]
+                output = json.dumps([row])
+            elif "top" in arguments:
+                output = top
+            else:
+                self.assertEqual(arguments[:4], ["sudo", "-n", "kill", "-STOP"])
+                output = ""
+            return subprocess.CompletedProcess(arguments, 0, output, "")
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(subprocess, "run", side_effect=run),
+            contextlib.redirect_stdout(output),
+        ):
+            self.namespace["main"]()
+        return output.getvalue()
+
+    def test_valid_restart_passes_and_stops_every_process_once(self):
+        """Krev observert unhealthy, ny prosess og healthy etter én restart."""
+        output = self.run_hang(self.state(pid=1300, count=1, started="after"))
+        self.assertIn("PASS: unhealthy", output)
+        self.assertNotIn("DO_NOT_LOG", output)
+        signals = [call for call in self.calls if "-STOP" in call]
+        self.assertEqual(
+            signals,
+            [
+                ["sudo", "-n", "kill", "-STOP", "1200"],
+                ["sudo", "-n", "kill", "-STOP", "1201"],
+            ],
+        )
+        self.assertFalse(any("pause" in call or "-CONT" in call for call in self.calls))
+
+    def test_unchanged_count_or_pid_times_out(self):
+        """Avvis restart uten økt teller eller endret PID."""
+        for after in (
+            self.state(pid=1300, started="after"),
+            self.state(count=1, started="after"),
+        ):
+            with (
+                self.subTest(after=after),
+                self.assertRaisesRegex(RuntimeError, "240s"),
+            ):
+                self.now = 0
+                self.run_hang(after)
+            self.assertEqual(self.now, 240)
+
+    def test_multiple_restarts_and_user_stop_fail(self):
+        """Avvis flere restarter og StoppedByUser selv med healthy."""
+        for after in (
+            self.state(pid=1300, count=2, started="after"),
+            self.state(pid=1300, count=1, started="after", stopped=True),
+        ):
+            with self.subTest(after=after), self.assertRaises(RuntimeError):
+                self.run_hang(after)
+
+    def test_invalid_top_fails_before_signal(self):
+        """Avvis tomme eller farlige verts-PID-er før SIGSTOP."""
+        for top in (
+            "",
+            "HPID\n1\n",
+            "HPID\nbad\n",
+            "HPID\n1201\n",
+            "HPID\n1200\n1200\n",
+        ):
+            with self.subTest(top=top), self.assertRaises(RuntimeError):
+                self.calls = []
+                self.run_hang(self.state(), top)
+            self.assertFalse(any("-STOP" in call for call in self.calls))
+
+    def test_hang_action_checks_health_and_proxy_after_restart(self):
+        """Krev helsekontroll og HTTPS-klargjøring før markørsjekken."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = shell_code(remote, action="hang")
+        self.assertIn("HANG\n    healthy\n    wait_backend\n", block)
+        self.assertNotIn("podman kill", block)
+
+
 class CrashTests(unittest.TestCase):
     """Test uventet prosesskrasj med stubbet inspect, signal og klokke."""
 
     def setUp(self):
         """Last krasjstegets Python-kode uten å kjøre kommandoer på verten."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        code = remote.split("    python3 - <<'CRASH'\n", 1)[1].split("\nCRASH\n", 1)[0]
+        code = shell_code(remote, heredoc="CRASH")
         self.namespace: dict = {"__name__": "fixture"}
         exec(compile(code, "remote.sh:CRASH", "exec"), self.namespace)  # noqa: S102 - repository-owned heredoc under test
         self.now = 0
@@ -1115,12 +1362,10 @@ class CrashTests(unittest.TestCase):
     def test_crash_checks_containers_then_https_health(self):
         """Kontroller at vellykket restart følges av container- og proxyhelse."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        block = remote.split("\ncrash)\n", 1)[1].split("\nreboot)", 1)[0]
+        block = shell_code(remote, action="crash")
         self.assertNotIn("podman kill", block)
         self.assertIn("CRASH\n    healthy\n    wait_backend\n", block)
-        function = remote[
-            remote.index("wait_backend() {") : remote.index('case "$action" in\n')
-        ]
+        function = shell_code(remote, function="wait_backend")
         script = """set -eu
 state=/var/lib/myproduct
 prod_host=myproduct-proxy
@@ -1160,9 +1405,7 @@ class SelinuxTests(unittest.TestCase):
     def setUp(self):
         """Last heredoc-kontrollen med syntetisk policy og faktiske run-6-linjer."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        self.code = remote.split(
-            "    sudo -n python3 - \"$upper_dirs\" <<'LABELS'\n", 1
-        )[1].split("\nLABELS\n", 1)[0]
+        self.code = shell_code(remote, heredoc="LABELS")
         self.policy = types.SimpleNamespace(
             matchpathcon=mock.Mock(side_effect=self.matchpathcon)
         )

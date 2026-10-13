@@ -8,6 +8,16 @@ spec:
   - name: nginx
     image: localhost/myproduct-proxy:0.1.0
     imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - sh
+        - -c
+        - wget -q -O /dev/null --no-check-certificate https://127.0.0.1:${HTTPS_PORT}/livez
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
     envFrom:
     - configMapRef:
         name: myproduct-settings

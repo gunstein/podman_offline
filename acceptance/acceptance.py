@@ -529,7 +529,7 @@ class Run:
         self.step("08-e2e", lambda: self.guest("DEV", "prod-e2e"))
         self.step("08-markers", lambda: self.guest("DEV", "markers-create"))
         self.step("09-stop", lambda: self.guest("PROD", "stop"))
-        for action in ("start", "restart", "crash"):
+        for action in ("start", "restart", "crash", "hang"):
             self.step("09-" + action, lambda a=action: self.guest("PROD", a))
             self.step(
                 "09-markers-" + action, lambda: self.guest("DEV", "markers-check")

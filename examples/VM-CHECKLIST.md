@@ -127,3 +127,16 @@ finnes i [akseptansetesten](../acceptance/README.md).
 
    Dato og tid er separate argumenter. `%x` under C-lokalen gir formatet som
    VM-ens ausearch krever. Ta med avvisninger også når funksjonstestene passerer.
+
+Helsesjekker: se alle containere med `as_product podman ps`, og les hver status
+med `as_product podman inspect --format '{{.State.Health.Status}}' <container>`.
+Alle appcontainere skal være running og healthy. InitialDelay 90 sekunder dekker
+oppstarten; starting er forventet i inntil 90 sekunder etter hver start, før neste
+sjekk lykkes. Kjør ved behov `as_product podman healthcheck run <container>`.
+
+Akseptansens `09-hang` fryser backendens vertsprosesser med SIGSTOP, etter at
+PID-ene er lest med `podman top myproduct-todo-backend hpid`. Den krever unhealthy,
+nøyaktig én automatisk restart, ny PID/starttid og healthy innen 240 sekunder,
+uten StoppedByUser. Etterpå kontrolleres alle manifestdefinerte containere,
+HTTPS og markører. Ikke bruk podman pause/stop/kill eller manuell SIGCONT;
+ved feil stoppes testen og bare lesende diagnose utføres.

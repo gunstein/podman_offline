@@ -8,6 +8,18 @@ spec:
   - name: db
     image: localhost/myproduct-postgres:17.11
     imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - todo
+        - -d
+        - todo
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
     env:
     - name: POSTGRES_DB
       value: todo

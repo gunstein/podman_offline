@@ -117,6 +117,41 @@ passerer med både PyYAML 5.4.1 og 6.0.3. Ruff, Pyright og kontroll av Python
 3.6-kompatibilitet for deploy/bundle/testene var rene ved denne dev-kjøringen.
 Dette dokumenterer ikke prod-Quadlet eller reboot.
 
+## Helsesjekker
+
+Alle sju appcontainere har én exec-basert `livenessProbe`, håndhevet av Podman:
+
+| Container | Lokal kontroll |
+| --- | --- |
+| identity-postgres-db / todo-postgres-db | `pg_isready` med samme bruker og database som PostgreSQL-miljøvariablene. |
+| identity-app | Bash `/dev/tcp` krever HTTP 200 fra `127.0.0.1:8080/identity/health`. |
+| todo-backend | Python `urllib.request` krever HTTP 204 fra `127.0.0.1:8000/livez`, uten database eller innlogging. |
+| todo-frontend / help-web | BusyBox `wget` mot egen `127.0.0.1:8080/`. |
+| proxy-nginx | BusyBox `wget` mot egen HTTPS `/livez`, med `HTTPS_PORT` fra miljøet og uten sertifikatkontroll. |
+
+Liveness avhenger aldri av andre pods. `/api/health` sjekker fortsatt databasen
+for kontroll/e2e; den brukes ikke som probe. Proxyens `/livez` returnerer 204
+lokalt og ruter aldri til backendens `/livez`.
+
+`initialDelaySeconds: 90` dekker oppstarten, inkludert appenes opptil 60 sekunders
+venting på databasen. Podman kjører ingen sjekk i denne perioden; status er
+`starting` i inntil 90 sekunder etter hver start, og blir `healthy` etter neste
+vellykkede sjekk. Proben kjøres hvert 30. sekund med timeout 5 sekunder; tre
+feil på rad gir `unhealthy` og automatisk restart med `restartPolicy: Always`.
+Ingen readiness-probe eller HEALTHCHECK i Containerfile brukes.
+
+Med `as_product` definert som i prod-veiledningen:
+
+```sh
+as_product podman ps
+as_product podman inspect --format '{{.State.Health.Status}}' myproduct-todo-backend
+as_product podman healthcheck run myproduct-todo-backend
+```
+
+En manuell sjekk i startperioden hoppes også over. `systemctl is-active` er
+fortsatt ingen helsesjekk for enkeltcontainere. Rootless Podman bruker transient-
+timere i tjenestebrukerens systemd-instans; linger må være aktiv.
+
 ## Legge til en app
 
 Et manifest i `manifests/` gjør appens image synlig for bundle-byggingen.
@@ -127,11 +162,13 @@ database og OIDC trengs bare for apper som bruker dem.
 | --- | --- |
 | Kode og image | `apps/<app>/Containerfile`; legg app og riktig tagg til i `dev/build-images.sh`, eller bygg/pull imaget manuelt. |
 | Pod | `manifests/NN-<app>.yaml`: fullt image-navn, `imagePullPolicy: Never`, `restartPolicy: Always`. |
+| Helsesjekk | Én lokal exec-basert `livenessProbe` per container: initialDelay 90, period 30, timeout 5, failureThreshold 3. Init-containere har ingen probe. |
+| Produkttester | Oppdater de faste ressurstallene i `test_real_product_manifests_render_with_dummy_files` i `tests/test_deploy.py`; `tests/test_health.py` kontrollerer alle prober automatisk. |
 | Proxy-rute | Ny `location` i `apps/proxy/default.conf`; bygg proxy-imaget på nytt. |
 | Database | Egen postgres-pod etter mønster fra `30-identity-postgres.yaml`/`40-todo-postgres.yaml`, PVC i `20-storage.yaml`, passordfil og `SECRET_FILES` i config. For nye installasjoner oppdateres også `scripts/generate-certificates.sh`. |
 | OIDC | Klient, redirect-URI og scope i `apps/identity/Program.cs`; klientsertifikat og Secret/PVC i config og manifest. Bygg identity-imaget på nytt. |
 | E2E | Ny kontroll i `dev/smoke-test.py`, kalt fra `main`; prøv frontend-JavaScript i nettleser. |
-| Akseptanse | Oppdater containernavn og antall i `healthy()` i `acceptance/remote.sh`, og legg til nødvendige DB-/OIDC-kontroller. |
+| Akseptanse | `healthy()` i `acceptance/remote.sh` leser navn fra installert YAML; legg til nødvendige DB-/OIDC- og e2e-kontroller. |
 | Dokumentasjon | Oppdater appoversikt, Secret-volumer ved avinstallering, `acceptance/README.md` og `examples/VM-CHECKLIST.md`. |
 
 Kjør enhetstester, `./deploy prepare` og dev-e2e før du bygger bundlen.

@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 72 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
+De 82 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
 opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
 
 ## Prod-operatør og audit-bevis
@@ -331,3 +331,21 @@ Trust-oppdateringer kontrolleres med avgrenset, lesende venting: `--update`
 varsler daemonen uten å vente på ferdig database. Før installasjon kreves den
 nye stien, og etter oppgradering kreves også at den gamle stien er fjernet.
 Databaseinnhold og hashverdier skrives ikke til loggen.
+
+## Containerhelse og hengtest
+
+`healthy()` leser forventede `<pod>-<container>`-navn fra installert YAML,
+avviser manglende, ekstra eller dupliserte appcontainere og krever `running`
+og `State.Health.Status=healthy`. Infra-/servicecontainere og manifestdefinerte
+init-containere er unntatt. Helsekontrollen venter inntil 150 sekunder;
+kommando-/parsefeil og unhealthy stopper straks. `initialDelaySeconds: 90`
+dekker oppstarten. Status er starting i inntil 90 sekunder etter hver start,
+og healthy først når neste sjekk lykkes.
+
+`09-hang` følger `09-crash` og markørsjekken: inspect registrerer PID, starttid,
+restart-teller og helse. Alle verts-PID-er fra `podman top ... hpid` får SIGSTOP,
+uten pause/stop/kill via Podman. Innen 240 sekunder kreves observert unhealthy,
+nøyaktig én restart med ny PID/starttid, StoppedByUser=false og til slutt healthy.
+Deretter kontrolleres alle containere, HTTPS-backend og `09-markers-hang`.
+Ingen SIGCONT eller reparasjon brukes ved feil. Samme helsekrav gjelder etter
+reboot og oppgradering, og sluttaudit må fortsatt være uten avvisninger.

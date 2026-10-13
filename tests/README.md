@@ -27,7 +27,7 @@ Lint/type/vermin er utviklingsverktøy, ikke nye runtime-avhengigheter.
 Testene bruker Python 3.6-kompatibel syntaks og standardbibliotek-API-er.
 ## Images fra manifestene
 
-87 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
+90 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
 Image-testene dekker Pod/Deployment, init-containere, flere filer/dokumenter,
 flow-maps, duplikater, fulle navn og forventede valideringsfeil. Bundle-testene
 kontrollerer én sortert multi-image-save, navnelisten, tar-innhold og checksums.
@@ -82,3 +82,8 @@ Bundle-testen inkluderer de to prod-scriptene og utelukker dev/-katalogen.
 Manifestfeil testes med filsti og image-feil med containernavn. En separat
 test rendrer de faktiske produktmanifestene med eksempelconfig og dummyfiler,
 uten Podman, og kontrollerer ressurser og image-navn.
+
+`test_health.py` krever én exec-liveness-probe i hvert faktisk appmanifest,
+med initialDelay 90, period 30, timeout 5 og failureThreshold 3. Init-containere
+har ingen probe. Backendens /livez og autentiseringsvakt prøves isolert uten
+appimport, database eller appavhengigheter.
