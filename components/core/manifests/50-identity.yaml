@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: core-identity
+spec:
+  restartPolicy: Always
+  containers:
+  - name: app
+    image: localhost/myproduct-identity:0.2.0
+    imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /identity/health HTTP/1.0\r\nHost:
+          localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r -t 2 status <&3;
+          [[ $status == "HTTP/1.1 200 "* || $status == "HTTP/1.0 200 "* ]]'
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    envFrom:
+    - secretRef:
+        name: core-api-secrets
+    - configMapRef:
+        name: core-settings
+    env:
+    - name: DATABASE_HOST
+      value: core-identity-postgres
+    volumeMounts:
+    - name: signing
+      mountPath: /run/secrets/signing
+      readOnly: true
+    - name: clients
+      mountPath: /clients
+      readOnly: true
+    - name: password
+      mountPath: /run/secrets/database
+      readOnly: true
+    - name: users
+      mountPath: /run/secrets/users
+      readOnly: true
+    - name: protection
+      mountPath: /data/protection
+  volumes:
+  - name: signing
+    secret:
+      secretName: core-identity-signing
+      defaultMode: 256
+      items:
+      - key: identity.crt
+        path: identity.crt
+      - key: identity.key
+        path: identity.key
+  - name: clients
+    persistentVolumeClaim:
+      claimName: core-clients
+  - name: password
+    secret:
+      secretName: core-database-password
+      items:
+      - key: password
+        path: password
+  - name: users
+    secret:
+      secretName: core-demo-users
+  - name: protection
+    persistentVolumeClaim:
+      claimName: core-identity-protection

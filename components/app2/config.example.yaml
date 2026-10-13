@@ -1,0 +1,9 @@
+PUBLIC_ORIGIN: https://myproduct-proxy:8443
+IP_ADDRESS: 127.0.0.1
+HTTPS_PORT: 8443
+SECRET_FILES:
+  app2-database-password:
+  - generated-certificates/database
+VOLUME_FILES:
+  app2-signing:
+  - generated-certificates/todo

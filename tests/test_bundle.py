@@ -403,6 +403,59 @@ data: {image: ignored}
         )
         self.assertFalse(bundle.DIST.exists())
 
+    def test_component_bundles_include_only_selected_components_and_images(self):
+        """Build three independent archives with matching core versions and no local state."""
+        self.write(
+            "bundles.yaml", "app1: [core, app1]\napp2: [core, app2]\nhelp: [help]\n"
+        )
+        self.write("CORE_VERSION", "1.0.0\n")
+        for component in ("core", "app1", "app2", "help"):
+            self.write(
+                "components/" + component + "/manifests/pod.yaml",
+                yaml.safe_dump(
+                    {
+                        "kind": "Pod",
+                        "spec": {
+                            "containers": [{"image": "localhost/" + component + ":1"}]
+                        },
+                    }
+                ),
+            )
+            self.write(
+                "components/" + component + "/config.example.yaml", "HTTPS_PORT: 8443\n"
+            )
+            self.write(
+                "components/" + component + "/config.yaml", "PRIVATE: do-not-bundle\n"
+            )
+        bundle.build()
+        for name, components in (
+            ("app1", ("core", "app1")),
+            ("app2", ("core", "app2")),
+            ("help", ("help",)),
+        ):
+            with tarfile.open(
+                str(bundle.DIST / ("myproduct-" + name + "-1.2.3-offline.tar.gz"))
+            ) as archive:
+                prefix = "myproduct-" + name + "-1.2.3/"
+                members = {
+                    member.name[len(prefix) :] for member in archive.getmembers()
+                }
+                stream = archive.extractfile(prefix + "images/images.txt")
+                assert stream is not None
+                self.assertEqual(
+                    stream.read().decode().splitlines(),
+                    sorted("localhost/" + component + ":1" for component in components),
+                )
+                for component in ("core", "app1", "app2", "help"):
+                    self.assertEqual(
+                        "components/" + component + "/manifests/pod.yaml" in members,
+                        component in components,
+                    )
+                    self.assertNotIn(
+                        "components/" + component + "/config.yaml", members
+                    )
+                self.assertIn("CORE_VERSION", members)
+
     def test_sha256_reads_more_than_one_chunk(self):
         path = self.root / "large.bin"
         data = bytes(range(256)) * 8193

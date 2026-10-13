@@ -1,0 +1,3 @@
+app1: [core, app1]
+app2: [core, app2]
+help: [help]

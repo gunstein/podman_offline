@@ -222,9 +222,9 @@ There are two source modes, determined by the full manifest name:
   not replace a failed pull; neither helper nor bundling builds registry images.
 
 The demo remains locally buildable, and `apps/` keeps its source code. For
-Artifactory deployments, build/publish the images in your external image pipeline
+container registry deployments, build/publish the images in your external image pipeline
 and put their exact registry/project/repository/tag names in the manifests,
-including the PostgreSQL mirror. No actual Artifactory addresses are assumed here.
+including the PostgreSQL mirror. No actual container registry addresses are assumed here.
 
 Prefer full original names, for example `registry.example.com/team/app:1.2.3`,
 and `imagePullPolicy: Never`. `localhost/myapp:1.0.0` and names with a registry port

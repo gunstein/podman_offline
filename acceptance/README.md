@@ -124,12 +124,12 @@ The product's offline bundle uses prepared localhost/ demo images and pulls any
 registry names before saving. Dev build and pull are separate steps; the demo
 still builds its app images from source in every clean run.
 
-For a private Artifactory deployment, VM-1's build user must already have a
+For a private container registry deployment, VM-1's build user must already have a
 working `podman login <registry>` and public CA certificate under
 `~/.config/containers/certs.d/<registry-host[:port]>/ca.crt` (or the system
 `/etc/containers/certs.d` equivalent) in the clean dev profile. Never put an
 auth file, password or registry token in lab.env, Git or evidence. The default
-demo needs no private registry credentials; real Artifactory authentication and
+demo needs no private registry credentials; real container registry authentication and
 repository paths are not tested by the temporary registry scenario below.
 
 The steps run in a fixed order: clean start, isolation, dev, bundle, installation,

@@ -1,0 +1,21 @@
+PUBLIC_ORIGIN: https://myproduct-proxy:8443
+IP_ADDRESS: 127.0.0.1
+HTTPS_PORT: 8443
+GENERATED_SECRETS:
+- generated-certificates/app/ApiResources__0__ApiSecrets__0__Value
+SECRET_FILES:
+  core-api-secrets:
+  - generated-certificates/app
+  core-identity-signing:
+  - generated-certificates/identity
+  core-database-password:
+  - generated-certificates/identity-db
+  core-demo-users:
+  - generated-certificates/users
+  core-web-tls:
+  - generated-certificates/web
+VOLUME_FILES:
+  core-routes:
+  - ../routes
+  core-clients:
+  - ../clients

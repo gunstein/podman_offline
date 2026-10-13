@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: core-proxy
+spec:
+  restartPolicy: Always
+  containers:
+  - name: nginx
+    image: localhost/myproduct-proxy:0.2.0
+    imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - sh
+        - -c
+        - wget -q -O /dev/null --no-check-certificate https://127.0.0.1:${HTTPS_PORT}/livez
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    envFrom:
+    - configMapRef:
+        name: core-settings
+    ports:
+    - containerPort: '@@HTTPS_PORT@@'
+      hostPort: '@@HTTPS_PORT@@'
+      hostIP: '@@IP_ADDRESS@@'
+      protocol: TCP
+    volumeMounts:
+    - name: tls
+      mountPath: /run/secrets/web
+      readOnly: true
+    - name: routes
+      mountPath: /routes
+      readOnly: true
+  volumes:
+  - name: tls
+    secret:
+      secretName: core-web-tls
+      defaultMode: 256
+      items:
+      - key: web.crt
+        path: web.crt
+      - key: web.key
+        path: web.key
+  - name: routes
+    persistentVolumeClaim:
+      claimName: core-routes
