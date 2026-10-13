@@ -128,6 +128,44 @@ class ComponentTests(DeployFixture):
             deploy.install()
         self.process.assert_not_called()
 
+    def test_core_version_missing_equal_newer_and_older(self):
+        """Apply all four core version decisions without touching running services."""
+        self.assertTrue(deploy.core_upgrade_needed("1.0.0"))
+        self.write("home/installed/core", "1.2.3\n")
+        self.assertFalse(deploy.core_upgrade_needed("1.2.3"))
+        self.assertTrue(deploy.core_upgrade_needed("1.10.0"))
+        with self.assertRaisesRegex(deploy.DeployError, "downgrade refused"):
+            deploy.core_upgrade_needed("1.2.2")
+
+    def test_equal_core_is_not_rewritten_or_restarted(self):
+        """Keep equal-version core YAML, secrets and service unchanged during app install."""
+        deploy.install()
+        core_yaml = deploy.component_paths("core")[2]
+        before = core_yaml.read_bytes(), core_yaml.stat().st_mtime_ns
+        self.process.reset_mock()
+        deploy.install()
+        self.assertEqual((core_yaml.read_bytes(), core_yaml.stat().st_mtime_ns), before)
+        restarts = [
+            call.args[0]
+            for call in self.process.call_args_list
+            if "restart" in call.args[0]
+        ]
+        self.assertEqual(
+            restarts, [["systemctl", "--user", "restart", "myproduct-app1.service"]]
+        )
+
+    def test_core_downgrade_fails_before_any_command_or_generated_file(self):
+        """Reject an older app bundle's core before touching private or runtime state."""
+        self.write("home/installed/core", "2.0.0\n")
+        self.write(
+            "home/core/config.yaml",
+            "HTTPS_PORT: 8443\nGENERATED_SECRETS: [generated/token]\n",
+        )
+        with self.assertRaisesRegex(deploy.DeployError, "downgrade refused"):
+            deploy.install()
+        self.process.assert_not_called()
+        self.assertFalse((deploy.HOME / "core/generated/token").exists())
+
     def test_existing_network_is_kept_and_a_conflict_fails(self):
         """Install the shared network idempotently and refuse another definition."""
         deploy.install()

@@ -710,6 +710,29 @@ def bundle_components():
     return expected
 
 
+def version_number(value):
+    """Parse a three-part numeric version for deterministic core comparisons."""
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+        raise DeployError(
+            "Versions must contain three numeric parts: major.minor.patch"
+        )
+    return tuple(int(part) for part in value.split("."))
+
+
+def core_upgrade_needed(version):
+    """Install missing/newer core, retain an equal core and reject downgrades."""
+    requested = version_number(version)
+    marker = HOME / "installed/core"
+    if not marker.is_file():
+        return True
+    installed = version_number(marker.read_text().strip())
+    if requested < installed:
+        raise DeployError(
+            f"Core downgrade refused: requested {version}, installed {marker.read_text().strip()}"
+        )
+    return requested > installed
+
+
 def component_paths(component):
     """Return one component's persistent config, archives and Quadlet paths."""
     state = HOME / component
@@ -725,6 +748,17 @@ def install_components():
     """Validate the selected components and images before writing scoped services."""
     production_environment()
     components = bundle_components()
+    version_number((ROOT / "VERSION").read_text().strip())
+    source_components = list(components)
+    if "core" in components and not core_upgrade_needed(
+        (ROOT / "CORE_VERSION").read_text().strip()
+    ):
+        components.remove("core")
+    for component in source_components:
+        for path in sorted(
+            (ROOT / "components" / component / "manifests").glob("*.yaml")
+        ):
+            check_component_names(load_yaml_all(path), component, path)
     if components == ["help"] and not (HOME / "installed/core").is_file():
         raise DeployError("Install an app bundle with core before installing help")
     network = QUADLET_DIR / "myproduct.network"
