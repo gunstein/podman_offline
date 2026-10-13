@@ -283,7 +283,7 @@ def volume_claims(volumes, files_dir):
 
 
 def references(value, found):
-    """Find every Secret and PVC name used by the manifests."""
+    """Find Secret, PVC and ConfigMap references used by the manifests."""
     if isinstance(value, dict):
         secret = value.get("secret")
         if isinstance(secret, dict) and "secretName" in secret:
@@ -293,10 +293,15 @@ def references(value, found):
         if isinstance(claim, dict) and "claimName" in claim:
             found.add(("PersistentVolumeClaim", claim["claimName"]))
 
-        for key in ("secretKeyRef", "secretRef"):
+        config_map = value.get("configMap")
+        if isinstance(config_map, dict) and "name" in config_map:
+            found.add(("ConfigMap", config_map["name"]))
+
+        for key in ("secretKeyRef", "secretRef", "configMapRef", "configMapKeyRef"):
             ref = value.get(key)
             if isinstance(ref, dict) and "name" in ref:
-                found.add(("Secret", ref["name"]))
+                kind = "ConfigMap" if key.startswith("configMap") else "Secret"
+                found.add((kind, ref["name"]))
 
         for item in value.values():
             references(item, found)
@@ -308,7 +313,7 @@ def references(value, found):
     return found
 
 
-def check_links(docs, from_config):
+def check_links(docs, from_config, sources=None):
     """Validate unique volume names and links between config and manifests."""
     defined = [
         (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
@@ -324,14 +329,23 @@ def check_links(docs, from_config):
             "Podman creates one volume per name, so names must be unique across kinds"
         )
 
-    defined = {(kind, name) for kind, name in defined if kind != "ConfigMap"}
+    defined = set(defined)
     used = references(docs, set())
 
     for kind, name in sorted(used - set(defined)):
-        group = SECRET_FILES if kind == "Secret" else VOLUME_FILES
+        source = ""
+        if sources:
+            for doc, path in zip(docs, sources):
+                if path and (kind, name) in references(doc, set()):
+                    source = f"{path}: "
+                    break
+        if kind == "ConfigMap":
+            hint = "Define it in a manifest"
+        else:
+            group = SECRET_FILES if kind == "Secret" else VOLUME_FILES
+            hint = f"Add it under {group} in config.yaml or in a manifest"
         raise DeployError(
-            f"A manifest uses {kind} {name!r}, but it does not exist. "
-            f"Add it under {group} in config.yaml or in a manifest"
+            f"{source}A manifest uses {kind} {name!r}, but it does not exist. {hint}"
         )
 
     for key, where in sorted(from_config.items()):
@@ -340,6 +354,36 @@ def check_links(docs, from_config):
                 f"{where} in config.yaml is not used by any manifest. "
                 "Check that the id matches secretName/claimName in the manifest"
             )
+
+
+def check_pod_spec(value):
+    """Validate offline pull policy and mounts within each pod specification."""
+    if isinstance(value, dict):
+        spec = value.get("spec") or {}
+        volumes = {
+            volume.get("name")
+            for volume in spec.get("volumes", [])
+            if isinstance(volume, dict)
+        }
+        for group in ("containers", "initContainers"):
+            for container in spec.get(group, []):
+                if not isinstance(container, dict):
+                    raise DeployError(f"{group} entries must be maps")
+                name = container.get("name", "<unnamed>")
+                if container.get("imagePullPolicy") != "Never":
+                    raise DeployError(
+                        f"Container {name!r} ({group}) must use imagePullPolicy: Never"
+                    )
+                for mount in container.get("volumeMounts", []):
+                    if not isinstance(mount, dict) or mount.get("name") not in volumes:
+                        raise DeployError(
+                            f"Container {name!r} ({group}) mounts an undefined volume: {mount.get('name') if isinstance(mount, dict) else mount!r}"
+                        )
+        for child in value.values():
+            check_pod_spec(child)
+    elif isinstance(value, list):
+        for child in value:
+            check_pod_spec(child)
 
 
 def render(files_dir=None, write_archives=True, config_path=None):
@@ -354,6 +398,7 @@ def render(files_dir=None, write_archives=True, config_path=None):
     volumes = load_file_group(config, VOLUME_FILES, config_path.parent)
 
     docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
+    sources: list = [None] * len(docs)
 
     for path in sorted(MANIFESTS.glob("*.yaml")):
         try:
@@ -363,6 +408,7 @@ def render(files_dir=None, write_archives=True, config_path=None):
                 if document is not None
             ]
             for doc in rendered:
+                check_pod_spec(doc)
                 if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
                     data = doc.get("data") or {}
                     if not isinstance(data, dict):
@@ -375,12 +421,13 @@ def render(files_dir=None, write_archives=True, config_path=None):
         except DeployError as error:
             raise DeployError(f"{path}: {error}") from None
         docs += rendered
+        sources.extend([path] * len(rendered))
 
     from_config = {("Secret", i): f"{SECRET_FILES}.{i}" for i in secrets}
     from_config.update(
         {("PersistentVolumeClaim", i): f"{VOLUME_FILES}.{i}" for i in volumes}
     )
-    check_links(docs, from_config)
+    check_links(docs, from_config, sources)
 
     text = yaml.safe_dump_all(docs, sort_keys=False)
 

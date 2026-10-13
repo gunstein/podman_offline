@@ -135,10 +135,12 @@ class DeployFixture(unittest.TestCase):
                     "kind": "Pod",
                     "spec": {
                         "containers": [
-                            {"image": "@@APP_IMAGE@@"},
-                            {"image": "localhost/app:1"},
+                            {"image": "@@APP_IMAGE@@", "imagePullPolicy": "Never"},
+                            {"image": "localhost/app:1", "imagePullPolicy": "Never"},
                         ],
-                        "initContainers": [{"image": "localhost/init:1"}],
+                        "initContainers": [
+                            {"image": "localhost/init:1", "imagePullPolicy": "Never"}
+                        ],
                     },
                 }
             ],
@@ -478,6 +480,100 @@ class LinkTests(unittest.TestCase):
             + self.refs("PersistentVolumeClaim", "data"),
             {},
         )
+
+
+class ManifestValidationTests(DeployFixture):
+    """Validate offline policies and object links in real rendered manifests."""
+
+    def pod(self, group="containers", mount="data", policy: object = "Never"):
+        """Build a minimal pod spec with one mounted ConfigMap volume."""
+        return document(
+            "Pod",
+            "app",
+            spec={
+                "volumes": [{"name": "data", "configMap": {"name": "settings"}}],
+                group: [
+                    {
+                        "name": "worker",
+                        "image": "localhost/app:1",
+                        "imagePullPolicy": policy,
+                        "volumeMounts": [{"name": mount, "mountPath": "/data"}],
+                    }
+                ],
+            },
+        )
+
+    def test_configmap_reference_forms_accept_later_definition(self):
+        """Resolve envFrom, env key and volume ConfigMaps across sorted files."""
+        doc = self.pod()
+        container = doc["spec"]["containers"][0]
+        container["envFrom"] = [{"configMapRef": {"name": "settings"}}]
+        container["env"] = [
+            {
+                "name": "VALUE",
+                "valueFrom": {"configMapKeyRef": {"name": "settings", "key": "value"}},
+            }
+        ]
+        self.manifest([doc], "10-app.yaml")
+        self.manifest(
+            [document("ConfigMap", "settings", data={"value": "ok"})],
+            "90-settings.yaml",
+        )
+        self.assertIn("settings", deploy.render())
+
+    def test_missing_configmap_forms_report_source(self):
+        """Reject every missing ConfigMap reference with the originating filename."""
+        for reference in (
+            {"configMapRef": {"name": "missing"}},
+            {"configMapKeyRef": {"name": "missing", "key": "value"}},
+            {"configMap": {"name": "missing"}},
+        ):
+            with self.subTest(reference=reference):
+                self.manifest([document("Pod", "app", spec=reference)], "10-app.yaml")
+                with self.assertRaisesRegex(
+                    deploy.DeployError, "10-app.yaml.*ConfigMap.*missing"
+                ):
+                    deploy.render()
+                self.assertFalse(deploy.BUILD.exists())
+
+    def test_mounts_and_never_policy_accept_containers_and_init(self):
+        """Validate regular and init containers in Pod and nested Deployment specs."""
+        self.manifest([document("ConfigMap", "settings")], "90-settings.yaml")
+        for group in ("containers", "initContainers"):
+            with self.subTest(group=group):
+                pod = self.pod(group)
+                deployment = document(
+                    "Deployment", "app", spec={"template": {"spec": pod["spec"]}}
+                )
+                self.manifest([pod, deployment], "10-app.yaml")
+                deploy.render(write_archives=False)
+
+    def test_unknown_mounts_report_file_and_container(self):
+        """Reject mounts absent from the pod volumes in both container groups."""
+        for group in ("containers", "initContainers"):
+            with self.subTest(group=group):
+                self.manifest([self.pod(group, mount="missing")], "10-app.yaml")
+                with self.assertRaisesRegex(
+                    deploy.DeployError, "10-app.yaml.*worker.*undefined volume.*missing"
+                ):
+                    deploy.render()
+                self.assertFalse(deploy.BUILD.exists())
+
+    def test_missing_or_online_pull_policies_report_file(self):
+        """Require Never for every regular/init container, including omitted policies."""
+        for group in ("containers", "initContainers"):
+            for policy in (None, "Always", "IfNotPresent"):
+                with self.subTest(group=group, policy=policy):
+                    pod = self.pod(group, policy=policy)
+                    if policy is None:
+                        del pod["spec"][group][0]["imagePullPolicy"]
+                    self.manifest([pod], "10-app.yaml")
+                    with self.assertRaisesRegex(
+                        deploy.DeployError,
+                        "10-app.yaml.*worker.*imagePullPolicy: Never",
+                    ):
+                        deploy.render()
+                    self.assertFalse(deploy.BUILD.exists())
 
 
 class RenderTests(DeployFixture):

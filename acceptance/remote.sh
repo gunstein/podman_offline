@@ -840,7 +840,7 @@ def command(arguments):
 
 
 def inspect_container():
-    """Parse inspect JSON and validate only the fields the check uses."""
+    """Parse inspect JSON and validate the hang test state fields."""
     try:
         rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
@@ -879,22 +879,30 @@ def main():
         raise RuntimeError("Invalid host PIDs from podman top")
     for pid in pids:
         command(["sudo", "-n", "kill", "-STOP", pid])
-    deadline, unhealthy = time.monotonic() + 240, False
+    deadline, unhealthy = time.monotonic() + 300, False
     while time.monotonic() < deadline:
         after = inspect_container()
         print("AFTER " + json.dumps(after, sort_keys=True), flush=True)
         unhealthy = unhealthy or after["Health"] == "unhealthy"
-        if after["StoppedByUser"]:
-            raise RuntimeError("StoppedByUser was set during the hang test")
+        stopping_original = (
+            after["Health"] == "unhealthy" and not after["Running"]
+            and after["RestartCount"] == before["RestartCount"]
+            and after["StartedAt"] == before["StartedAt"]
+            and after["Pid"] in (0, before["Pid"])
+        )
+        # A health-triggered Stop sets this flag before cleanup restarts the container.
+        if after["StoppedByUser"] and not stopping_original:
+            raise RuntimeError("StoppedByUser outside the original unhealthy stop phase")
         if after["RestartCount"] > before["RestartCount"] + 1:
             raise RuntimeError("The container restarted more than once")
-        if (unhealthy and after["Running"] and after["Health"] == "healthy"
+        if (unhealthy and after["Running"] and not after["StoppedByUser"]
+                and after["Health"] == "healthy"
                 and after["RestartCount"] == before["RestartCount"] + 1
                 and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
             print("PASS: unhealthy followed by one automatic restart to healthy")
             return
         time.sleep(min(2, max(0, deadline - time.monotonic())))
-    raise RuntimeError("No verified healthy restart after the hang within 240s")
+    raise RuntimeError("No verified healthy restart after the hang within 300s")
 
 
 if __name__ == "__main__":

@@ -34,23 +34,22 @@ class ProbeTests(unittest.TestCase):
                 self.assertNotIn("readinessProbe", container)
                 continue
             count += 1
-            for key, period, timeout, failures in (("livenessProbe", 30, 5, 3),):
-                with self.subTest(
-                    path=path.name, container=container["name"], probe=key
-                ):
-                    probe = container[key]
-                    self.assertNotIn("httpGet", probe)
-                    self.assertNotIn("tcpSocket", probe)
-                    self.assertNotIn("readinessProbe", container)
-                    self.assertNotIn("startupProbe", container)
-                    self.assertEqual(probe["initialDelaySeconds"], 90)
-                    self.assertEqual(probe["periodSeconds"], period)
-                    self.assertEqual(probe["timeoutSeconds"], timeout)
-                    self.assertEqual(probe["failureThreshold"], failures)
-                    command = probe["exec"]["command"]
-                    self.assertTrue(command)
-                    self.assertTrue(all(isinstance(arg, str) for arg in command))
-                    self.assertNotIn("@@", " ".join(command))
+            with self.subTest(
+                path=path.name, container=container["name"], probe="livenessProbe"
+            ):
+                probe = container["livenessProbe"]
+                self.assertNotIn("httpGet", probe)
+                self.assertNotIn("tcpSocket", probe)
+                self.assertNotIn("readinessProbe", container)
+                self.assertNotIn("startupProbe", container)
+                self.assertEqual(probe["initialDelaySeconds"], 90)
+                self.assertEqual(probe["periodSeconds"], 30)
+                self.assertEqual(probe["timeoutSeconds"], 5)
+                self.assertEqual(probe["failureThreshold"], 3)
+                command = probe["exec"]["command"]
+                self.assertTrue(command)
+                self.assertTrue(all(isinstance(arg, str) for arg in command))
+                self.assertNotIn("@@", " ".join(command))
         self.assertGreater(count, 0)
 
     def test_backend_probe_uses_livez_not_database_health(self):
@@ -60,10 +59,9 @@ class ProbeTests(unittest.TestCase):
             for _, _, container in self.containers()
             if container["name"] == "backend"
         )
-        for key in ("livenessProbe",):
-            command = " ".join(backend[key]["exec"]["command"])
-            self.assertIn("127.0.0.1:8000/livez", command)
-            self.assertNotIn("/api/health", command)
+        command = " ".join(backend["livenessProbe"]["exec"]["command"])
+        self.assertIn("127.0.0.1:8000/livez", command)
+        self.assertNotIn("/api/health", command)
 
     def test_livez_is_anonymous_and_does_not_connect_to_database(self):
         """Execute liveness/auth functions without importing the app or its dependencies."""

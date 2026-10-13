@@ -136,7 +136,12 @@ check succeeds. When needed, run `as_product podman healthcheck run <container>`
 
 The acceptance step `09-hang` freezes the backend's host processes with SIGSTOP, after
 reading the PIDs with `podman top myproduct-todo-backend hpid`. It requires unhealthy,
-exactly one automatic restart, a new PID/start time and healthy within 240 seconds,
+exactly one automatic restart, a new PID/start time and healthy within 300 seconds,
 without StoppedByUser. Afterwards all manifest-defined containers,
 HTTPS and markers are checked. Do not use podman pause/stop/kill or a manual SIGCONT;
 on failure the test stops and only read-only diagnosis is done.
+
+The hang-test limit is 300 seconds: 3 × (30 s interval + 5 s timeout) + 10 s stop + 90 s start period + 30 s
+for the first healthy check is about 235 s; 300 s leaves a scheduling margin.
+The temporary stop flag on the original non-running unhealthy process is allowed;
+`StoppedByUser` must be false after restart.

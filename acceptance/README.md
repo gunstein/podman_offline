@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 82 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 85 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Prod operator and audit evidence
@@ -344,8 +344,16 @@ and healthy only once the next check succeeds.
 
 `09-hang` follows `09-crash` and the marker check: inspect records PID, start time,
 restart count and health. Every host PID from `podman top ... hpid` gets SIGSTOP,
-without pause/stop/kill through Podman. Within 240 seconds it requires an observed unhealthy,
+without pause/stop/kill through Podman. Within 300 seconds it requires an observed unhealthy,
 exactly one restart with a new PID/start time, StoppedByUser=false and finally healthy.
 Then all containers, the HTTPS backend and `09-markers-hang` are checked.
 No SIGCONT or repair is used on failure. The same health requirement applies after
 reboot and upgrade, and the final audit must still be free of denials.
+
+The hang-test limit is 300 seconds: 3 × (30 s interval + 5 s timeout) + 10 s stop + 90 s start period + 30 s
+for the first healthy check is about 235 s; 300 s leaves a scheduling margin.
+The temporary stop flag on the original non-running unhealthy process is allowed;
+`StoppedByUser` must be false after restart.
+
+The English baseline is supplemented with the previously verified run-16 stop-flag
+transition handling; `StoppedByUser` must be false on the restarted process.

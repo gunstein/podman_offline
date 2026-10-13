@@ -503,3 +503,9 @@ sudo semanage fcontext -d /var/lib/myproduct/.local/share/containers
 Deleting volumes or running `userdel` does not guarantee physical deletion from disk or
 backups. The installation flow assumes a clean prod host. Use the [acceptance test](acceptance/README.md)
 for prod verification with systemd and reboot.
+
+Manifest validation checks ConfigMap references (envFrom, env key and volume),
+volumeMount names within each pod, and `imagePullPolicy: Never` on every container
+and init-container. Errors include the manifest path; validation finishes before
+volume import archives are written. The hang acceptance test allows 300 seconds
+for failure detection, automatic restart and the new 90-second start period.

@@ -1117,7 +1117,7 @@ class HangTests(unittest.TestCase):
     """Test SIGSTOP and a health-driven restart with stubbed Podman and signals."""
 
     def setUp(self):
-        """Load the hang check and use a virtual 240-second clock."""
+        """Load the hang check and use a virtual 300-second clock."""
         remote = Path(__file__).with_name("remote.sh").read_text()
         self.namespace: dict = {"__name__": "fixture"}
         exec(  # noqa: S102 - repository-owned heredoc under test
@@ -1133,14 +1133,20 @@ class HangTests(unittest.TestCase):
         self.now += seconds
 
     def state(
-        self, pid=1200, count=0, started="before", stopped=False, health="healthy"
+        self,
+        pid=1200,
+        count=0,
+        started="before",
+        stopped=False,
+        health="healthy",
+        running=True,
     ):
         """Build a limited inspect fixture with controllable restart and health fields."""
         return {
             "RestartCount": count,
             "State": {
                 "Pid": pid,
-                "Running": True,
+                "Running": running,
                 "StartedAt": started,
                 "StoppedByUser": stopped,
                 "Health": {"Status": health},
@@ -1148,9 +1154,13 @@ class HangTests(unittest.TestCase):
             "Config": {"Env": ["PRIVATE=DO_NOT_LOG"]},
         }
 
-    def run_hang(self, after, top="HPID\n1200\n1201\n"):
+    def run_hang(self, after, top="HPID\n1200\n1201\n", phases=None):
         """Run the hang test with controlled states without freezing host processes."""
-        pending = [self.state(), self.state(health="unhealthy"), after]
+        pending = (
+            [self.state()]
+            + (phases if phases is not None else [self.state(health="unhealthy")])
+            + [after]
+        )
 
         def run(arguments, **kwargs):
             """Return top/inspect and record SIGSTOP without sending a signal."""
@@ -1188,6 +1198,47 @@ class HangTests(unittest.TestCase):
         )
         self.assertFalse(any("pause" in call or "-CONT" in call for call in self.calls))
 
+    def test_health_stop_flag_clears_after_one_restart(self):
+        """Allow the observed temporary stop flag only on the original unhealthy process."""
+        phases = [
+            self.state(health="unhealthy", stopped=True, running=False),
+            self.state(pid=0, health="unhealthy", stopped=True, running=False),
+            self.state(pid=1300, count=1, started="after", health="starting"),
+        ]
+        output = self.run_hang(
+            self.state(pid=1300, count=1, started="after"), phases=phases
+        )
+        self.assertIn('"StoppedByUser": true', output)
+        self.assertIn("PASS: unhealthy", output)
+
+    def test_stop_flag_outside_original_unhealthy_stop_fails(self):
+        """Reject a user-stop flag outside the original unhealthy stop phase."""
+        phases = [
+            self.state(stopped=True, running=False),
+            self.state(health="unhealthy", stopped=True),
+            self.state(pid=1300, health="unhealthy", stopped=True, running=False),
+            self.state(
+                started="other", health="unhealthy", stopped=True, running=False
+            ),
+            self.state(
+                pid=1300, count=1, started="after", health="starting", stopped=True
+            ),
+        ]
+        for phase in phases:
+            with (
+                self.subTest(phase=phase),
+                self.assertRaisesRegex(RuntimeError, "StoppedByUser"),
+            ):
+                self.run_hang(
+                    self.state(pid=1300, count=1, started="after"), phases=[phase]
+                )
+
+    def test_original_unhealthy_stop_without_restart_times_out(self):
+        """Fail on timeout when the allowed stop phase never becomes a restart."""
+        with self.assertRaisesRegex(RuntimeError, "300s"):
+            self.run_hang(self.state(health="unhealthy", stopped=True, running=False))
+        self.assertEqual(self.now, 300)
+
     def test_unchanged_count_or_pid_times_out(self):
         """Reject a restart without an increased count or a changed PID."""
         for after in (
@@ -1196,11 +1247,11 @@ class HangTests(unittest.TestCase):
         ):
             with (
                 self.subTest(after=after),
-                self.assertRaisesRegex(RuntimeError, "240s"),
+                self.assertRaisesRegex(RuntimeError, "300s"),
             ):
                 self.now = 0
                 self.run_hang(after)
-            self.assertEqual(self.now, 240)
+            self.assertEqual(self.now, 300)
 
     def test_multiple_restarts_and_user_stop_fail(self):
         """Reject several restarts and StoppedByUser even with healthy."""
