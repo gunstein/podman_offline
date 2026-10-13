@@ -121,14 +121,15 @@ def journal_events(output):
 
 
 def unit_state(name, output):
-    """Project selected properties and only the expected Podman healthcheck command."""
+    """Project loaded launcher state or mark removed transient units unavailable."""
     values = {}
     for line in output.splitlines():
         key, separator, value = line.partition("=")
         if not separator or key not in PROPERTIES or key in values:
             raise RuntimeError("Invalid systemd properties in launch diagnostics")
         values[key] = value
-    if set(values) != set(PROPERTIES):
+    missing = set(PROPERTIES) - set(values)
+    if missing and not (values.get("LoadState") == "not-found" and missing == {"ExecStart"}):
         raise RuntimeError("Missing systemd properties in launch diagnostics")
     result = {"unit": name}
     for key, value in values.items():
@@ -140,6 +141,9 @@ def unit_state(name, output):
             result[key] = value
         else:
             raise RuntimeError("Invalid systemd state value in launch diagnostics")
+    if result["LoadState"] == "not-found":
+        return {"unit": name, "LoadState": "not-found",
+                "evidence": "unavailable: transient unit removed"}
     return result
 
 

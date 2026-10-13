@@ -192,7 +192,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 94 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 98 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Prod operator and audit evidence
@@ -261,6 +261,12 @@ environments and raw inspect data are never logged. A command or parsing error
 fails the diagnostic check, while the final audit is still collected.
 An audit record with `exe=systemd`, `comm=(podman)` and no PATH does not by itself
 identify the target executable or prove a crun failure.
+
+Historical transient units may have been removed by Podman cleanup. A
+`LoadState=not-found` response without ExecStart is recorded as unavailable
+execution evidence; systemd's default success/zero fields are not logged as
+proof of a successful launch. Loaded units still require every selected property.
+Other missing fields or malformed output fail the diagnostic check.
 
 ## Persistent state and upgrade
 

@@ -1214,6 +1214,73 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Missing systemd properties"):
             self.namespace["unit_state"](self.unit, "Result=success")
 
+    def removed_properties(self):
+        """Return the actual property shape of run-19's removed transient service."""
+        return (
+            "MainPID=0\nResult=success\nExecMainPID=0\nExecMainCode=0\n"
+            "ExecMainStatus=0\nLoadState=not-found\nActiveState=inactive\nSubState=dead"
+        )
+
+    def test_removed_transient_unit_has_unavailable_execution_evidence(self):
+        """Accept run-19's absent ExecStart without presenting default values as success."""
+        result = self.namespace["unit_state"](self.unit, self.removed_properties())
+        self.assertEqual(
+            result,
+            {
+                "unit": self.unit,
+                "LoadState": "not-found",
+                "evidence": "unavailable: transient unit removed",
+            },
+        )
+        self.assertNotIn("Result", result)
+        self.assertNotIn("ExecMainStatus", result)
+        self.assertNotIn("ExecStart", result)
+
+    def test_loaded_unit_missing_execstart_still_fails(self):
+        """Require ExecStart for a loaded service despite the historical-unit exception."""
+        output = self.removed_properties().replace(
+            "LoadState=not-found", "LoadState=loaded"
+        )
+        with self.assertRaisesRegex(RuntimeError, "Missing systemd properties"):
+            self.namespace["unit_state"](self.unit, output)
+
+    def test_removed_unit_missing_another_required_property_still_fails(self):
+        """Keep strict validation of the remaining fields on removed transient services."""
+        output = self.removed_properties().replace("ExecMainPID=0\n", "")
+        with self.assertRaisesRegex(RuntimeError, "Missing systemd properties"):
+            self.namespace["unit_state"](self.unit, output)
+
+    def test_historical_cleanup_does_not_prevent_current_launcher_collection(self):
+        """Collect current ExecStart after recording unavailable historical launcher state."""
+        current = "b" * 64 + "-456.service"
+        expected = "/usr/bin/podman healthcheck run " + "b" * 64
+        properties = (
+            "{ path=/usr/bin/podman ; argv[]=" + expected + " ; ignore_errors=no ; }"
+        )
+        event = json.dumps({"MESSAGE": self.unit + ": Failed with result 'exit-code'"})
+        self.namespace["command"] = mock.Mock(
+            side_effect=[
+                "0 boot-id\n",
+                event,
+                current + " loaded active exited\n",
+                self.removed_properties(),
+                self.properties(properties),
+            ]
+        )
+        out = io.StringIO()
+        with (
+            mock.patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=995)),
+            mock.patch("sys.argv", ["diagnostics", "123"]),
+            mock.patch.object(Path, "read_text", return_value="boot-id"),
+            contextlib.redirect_stdout(out),
+        ):
+            self.namespace["main"]()
+        self.assertIn(
+            '"evidence": "unavailable: transient unit removed"', out.getvalue()
+        )
+        self.assertIn(expected, out.getvalue())
+        self.assertIn("PASS: read-only launcher diagnostics collected", out.getvalue())
+
     def test_command_failure_keeps_stderr_and_never_logs_raw_stdout(self):
         """Fail on a nonzero status even with valid-looking stdout and retain stderr."""
         out, err = io.StringIO(), io.StringIO()
