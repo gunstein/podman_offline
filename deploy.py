@@ -10,6 +10,8 @@ import base64
 import os
 import pwd
 import re
+import secrets
+import string
 import subprocess
 import sys
 import tarfile
@@ -31,6 +33,7 @@ SERVICE = "myproduct.service"
 
 SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
+GENERATED_SECRETS = "GENERATED_SECRETS"
 
 # Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
 # start, so they must stay in the service user's home directory.
@@ -90,8 +93,8 @@ def load_config(path):
         if not isinstance(key, str):
             raise DeployError("All keys in config.yaml must be strings")
 
-        if key in (SECRET_FILES, VOLUME_FILES):
-            continue  # validated in load_file_group()
+        if key in (SECRET_FILES, VOLUME_FILES, GENERATED_SECRETS):
+            continue  # File groups and generated paths validate their own structures.
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise DeployError(
@@ -107,6 +110,61 @@ def load_config(path):
         )
 
     return config
+
+
+def generate_secrets(config, base_dir):
+    """Create missing private secret files once, within the config directory."""
+    entries = config.get(GENERATED_SECRETS, [])
+    if not isinstance(entries, list) or not all(
+        isinstance(entry, str) for entry in entries
+    ):
+        raise DeployError(f"{GENERATED_SECRETS} must be a list of relative file paths")
+    base = base_dir.resolve()
+    paths = []
+    for entry in entries:
+        relative = Path(entry)
+        if relative.is_absolute() or ".." in relative.parts or not relative.name:
+            raise DeployError(
+                f"{GENERATED_SECRETS}: {entry!r} must stay under the config directory"
+            )
+        path = (base / relative).resolve()
+        try:
+            path.relative_to(base)
+        except ValueError:
+            raise DeployError(
+                f"{GENERATED_SECRETS}: {entry!r} resolves outside the config directory"
+            ) from None
+        paths.append(path)
+    for path in paths:
+        if path.exists():
+            if not path.is_file() or path.stat().st_size == 0:
+                raise DeployError(
+                    f"Generated secret file {path} is empty or not a regular file"
+                )
+            continue
+        missing, parent = [], path.parent
+        while not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700, exist_ok=True)
+        path.parent.chmod(0o700)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            if not path.is_file() or path.stat().st_size == 0:
+                raise DeployError(
+                    f"Generated secret file {path} is empty or not a regular file"
+                ) from None
+            continue
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(
+                "".join(
+                    secrets.choice(string.ascii_letters + string.digits)
+                    for _ in range(32)
+                )
+            )
+        print(f"[OK] Generated secret file {path}")
 
 
 def replace(value, config):
@@ -394,6 +452,7 @@ def render(files_dir=None, write_archives=True, config_path=None):
 
     files_dir = files_dir or BUILD / "files"
     config = load_config(config_path)
+    generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, SECRET_FILES, config_path.parent)
     volumes = load_file_group(config, VOLUME_FILES, config_path.parent)
 

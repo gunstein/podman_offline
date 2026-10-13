@@ -357,3 +357,8 @@ The temporary stop flag on the original non-running unhealthy process is allowed
 
 The English baseline is supplemented with the previously verified run-16 stop-flag
 transition handling; `StoppedByUser` must be false on the restarted process.
+
+The demo generates one additional persistent API-secret file through
+GENERATED_SECRETS. Step 07 checks its 0600 mode, its private parent directory,
+and delivery through identity envFrom by checking length only. The persistent
+file comparison after upgrade includes this file without logging hashes or values.

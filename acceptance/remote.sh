@@ -511,6 +511,8 @@ paths = {
  "/var/lib/myproduct": 0o700,
  "/var/lib/myproduct/config.yaml": 0o600,
  "/var/lib/myproduct/generated-certificates": 0o700,
+ "/var/lib/myproduct/generated-certificates/app": 0o700,
+ "/var/lib/myproduct/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value": 0o600,
  "/var/lib/myproduct/PKI/private": 0o700,
  "/var/lib/myproduct/.config/containers/systemd/myproduct.yaml": 0o600,
  "/var/lib/myproduct/.config/containers/systemd/myproduct.kube": 0o644,
@@ -693,6 +695,10 @@ LABELS
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     audit_events check
+    # Expand inside the container so the host never reads the secret value.
+    # shellcheck disable=SC2016
+    as_product podman exec myproduct-identity-app bash -c 'test "${#ApiResources__0__ApiSecrets__0__Value}" -eq 32'
+    echo 'PASS: generated API secret delivered through envFrom without logging its value'
     as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
     as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.

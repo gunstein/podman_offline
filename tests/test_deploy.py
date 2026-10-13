@@ -482,6 +482,146 @@ class LinkTests(unittest.TestCase):
         )
 
 
+class GeneratedSecretTests(DeployFixture):
+    """Test one-time private files and their existing SECRET_FILES delivery."""
+
+    def configure_generated(self):
+        """Add a generated file and a manifest envFrom Secret reference."""
+        self.config["GENERATED_SECRETS"] = ["generated-certificates/app/key"]
+        self.config["SECRET_FILES"] = {"app-secrets": ["generated-certificates/app"]}
+        self.write_config()
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "generated",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "app",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                                "envFrom": [{"secretRef": {"name": "app-secrets"}}],
+                            }
+                        ]
+                    },
+                )
+            ],
+            "30-generated.yaml",
+        )
+        return self.root / "generated-certificates/app/key"
+
+    def test_prepare_creates_private_alphanumeric_file_without_logging_value(self):
+        """Generate 32 characters once and deliver their bytes through SECRET_FILES."""
+        path = self.configure_generated()
+        deploy.prepare()
+        value = path.read_bytes()
+        self.assertEqual(len(value), 32)
+        self.assertTrue(
+            all(
+                chr(byte) in deploy.string.ascii_letters + deploy.string.digits
+                for byte in value
+            ),
+            "Invalid generated characters",
+        )
+        self.assertEqual(self.mode(path), 0o600)
+        self.assertEqual(self.mode(path.parent), 0o700)
+        self.assertEqual(self.mode(path.parent.parent), 0o700)
+        output = self.stdout.getvalue() + self.stderr.getvalue()
+        self.assertIn(str(path), output)
+        self.assertTrue(value.decode("ascii") not in output, "Generated value leaked")
+        docs = list(yaml.safe_load_all((deploy.BUILD / "install.yaml").read_text()))
+        secret = next(doc for doc in docs if doc["kind"] == "Secret")
+        self.assertTrue(
+            base64.b64decode(secret["data"]["key"]) == value, "Secret bytes differ"
+        )
+        deploy.prepare()
+        self.assertTrue(
+            path.read_bytes() == value, "Repeated prepare changed the secret"
+        )
+        self.process.assert_not_called()
+
+    def test_install_keeps_existing_home_secret_across_releases(self):
+        """Preserve home secrets on repeated install independently of dev/release paths."""
+        self.install_fixture()
+        self.config["VOLUME_FILES"] = {"uploads": ["files/message.txt"]}
+        dev_path = self.configure_generated()
+        deploy.prepare()
+        dev_value = dev_path.read_bytes()
+        prod_config = dict(self.config)
+        prod_config["VOLUME_FILES"] = {"uploads": ["../files/message.txt"]}
+        self.write("home/config.yaml", yaml.safe_dump(prod_config))
+        deploy.generate_secrets(self.config, deploy.HOME)
+        prod_path = deploy.HOME / "generated-certificates/app/key"
+        before = prod_path.read_bytes()
+        deploy.install()
+        deploy.install()
+        self.assertTrue(
+            prod_path.read_bytes() == before, "Install changed the persistent secret"
+        )
+        self.assertTrue(
+            dev_path.read_bytes() == dev_value, "Install changed the dev secret"
+        )
+        output = self.stdout.getvalue() + self.stderr.getvalue()
+        self.assertTrue(before.decode("ascii") not in output, "Install logged a secret")
+
+    def test_empty_or_directory_path_is_not_regenerated(self):
+        """Reject empty files and directory targets without replacing them."""
+        path = self.configure_generated()
+        self.write("generated-certificates/app/key", b"")
+        with self.assertRaisesRegex(deploy.DeployError, "empty"):
+            deploy.prepare()
+        self.assertEqual(path.stat().st_size, 0)
+        path.unlink()
+        path.mkdir()
+        with self.assertRaisesRegex(deploy.DeployError, "regular file"):
+            deploy.prepare()
+        self.assertTrue(path.is_dir())
+
+    def test_escaping_paths_and_symlink_parents_are_rejected(self):
+        """Reject lexical traversal, absolute paths and resolved symlink escapes."""
+        outside = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        (self.root / "outside-link").symlink_to(outside, target_is_directory=True)
+        for entry in (
+            "../key",
+            "nested/../key",
+            str(outside / "key"),
+            "outside-link/key",
+            "",
+            ".",
+        ):
+            with self.subTest(entry=entry):
+                with self.assertRaisesRegex(deploy.DeployError, "config directory"):
+                    deploy.generate_secrets({"GENERATED_SECRETS": [entry]}, self.root)
+                self.assertFalse((outside / "key").exists())
+
+    def test_invalid_list_and_entries_are_rejected(self):
+        """Require a list of relative path strings for GENERATED_SECRETS."""
+        for entries in (None, "key", {}, 1, [False], [1]):
+            error = self.assertRaisesRegex(deploy.DeployError, "list")
+            with self.subTest(entries=entries), error:
+                deploy.generate_secrets({"GENERATED_SECRETS": entries}, self.root)
+
+    def test_exclusive_creation_preserves_a_concurrent_nonempty_file(self):
+        """Use O_EXCL and retain a file created by another writer before open."""
+        path = self.configure_generated()
+        value = os.urandom(32)
+        original = os.open
+
+        def race(target, flags, mode):
+            """Simulate a competing creator without exposing its random contents."""
+            if Path(target) == path:
+                self.assertTrue(flags & os.O_EXCL)
+                self.assertEqual(mode, 0o600)
+                path.write_bytes(value)
+                raise FileExistsError()
+            return original(target, flags, mode)
+
+        with mock.patch.object(os, "open", side_effect=race):
+            deploy.generate_secrets(self.config, self.root)
+        self.assertTrue(path.read_bytes() == value, "Concurrent file was overwritten")
+
+
 class ManifestValidationTests(DeployFixture):
     """Validate offline policies and object links in real rendered manifests."""
 
@@ -608,7 +748,7 @@ class RenderTests(DeployFixture):
         docs = list(yaml.safe_load_all(deploy.render(write_archives=False)))
         kinds = [doc["kind"] for doc in docs]
         self.assertEqual(kinds.count("Pod"), 6)
-        self.assertEqual(kinds.count("Secret"), 6)
+        self.assertEqual(kinds.count("Secret"), 7)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 4)
         self.assertEqual(kinds.count("ConfigMap"), 1)
         self.assertEqual(len(deploy.find_images(docs)), 6)

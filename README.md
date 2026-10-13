@@ -118,6 +118,26 @@ pass with both PyYAML 5.4.1 and 6.0.3. Ruff, Pyright and the Python 3.6
 compatibility check for deploy/bundle/tests were clean in that dev run.
 This does not document the prod Quadlet or reboot.
 
+## Generated secrets
+
+`GENERATED_SECRETS` is an optional list of relative file paths, resolved from the
+config directory. Before reading `SECRET_FILES`, both prepare and install create
+missing files with 32 random alphanumeric characters. Files are created exclusively
+with mode 0600 and private parent directories (0700). A nonempty existing file is
+kept unchanged; an empty file is an error, never a request to regenerate it.
+Absolute paths, `..` and symlinks escaping the config directory are rejected.
+Only the created filename is logged.
+
+The demo config generates `generated-certificates/app/ApiResources__0__ApiSecrets__0__Value`.
+`SECRET_FILES.app-secrets` imports that directory, and identity receives it through
+`envFrom.secretRef`. This demonstrates delivery of an API-style environment secret;
+the demo identity still configures its scopes and clients in code.
+
+Back up `generated-certificates/` with the other persistent files, including these
+values. If paths are placed elsewhere under the config directory, include those
+files in backup too. Keep prod config in the service user's home, outside releases.
+Generated values are retained across upgrades; no Podman secret API is added.
+
 ## Health checks
 
 All seven app containers have one exec-based `livenessProbe`, enforced by Podman:
@@ -385,21 +405,20 @@ at first initialization, the demo users keep their old password hashes,
 and the clients must keep trusting the same CA. The script's guard against existing
 keys also applies when `--root` is used.
 
-If a new app needs a new database password, create only the new file before
-the installation. Example for a new `new-app-db` id (rename it in both config and manifest):
+To add a generated secret during an upgrade, edit the persistent config and add
+only the new path under `GENERATED_SECRETS`, then reference its directory or file
+under `SECRET_FILES` and use the id in the manifest. For example:
 
-```sh
-sudo -H -u myproduct bash -c '
-    set -euC
-    umask 077
-    mkdir -p "$HOME/generated-certificates/new-app-db"
-    openssl rand -hex 32 > "$HOME/generated-certificates/new-app-db/password"
-'
-sudoedit /var/lib/myproduct/config.yaml
+```yaml
+GENERATED_SECRETS:
+  - generated-certificates/new-app-db/password
+SECRET_FILES:
+  new-app-db: [generated-certificates/new-app-db]
 ```
 
-`set -C` refuses to overwrite an existing password file. Add the new path
-under `SECRET_FILES`, and update any other config values the new app needs.
+Keep existing entries when editing config. The next install creates the missing
+file once; this replaces the manual `openssl rand` recipe for new generated values.
+Never replace an existing database password to add a new app.
 New signing/client certificates are issued separately, in real prod by an external CA,
 and delivered as the service user with `umask 077` to new paths. Also update
 Duende's public client certificate/client configuration when needed. Do not replace
