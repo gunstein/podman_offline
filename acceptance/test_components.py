@@ -96,6 +96,54 @@ class ComponentHarnessTests(unittest.TestCase):
         self.harness.upgrade()
         self.harness.transfer.assert_called_once_with("0.2.1")
 
+    def run_upgrade_build(self, corrupt=False):
+        """Run the real upgrade action against scoped fixture archives and Git/build stubs."""
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / "VERSION").write_text("0.2.0\n")
+            build = source / "build-bundle.sh"
+            build.write_text(
+                '#!/usr/bin/env bash\n# Create only the three scoped upgrade artifacts for the test.\nset -euo pipefail\nversion=$(cat VERSION)\nfor bundle in app1 app2 help; do\n    mkdir -p dist "build/bundle/myproduct-$bundle-$version/images"\n    archive="myproduct-$bundle-$version-offline.tar.gz"\n    printf fixture > "dist/$archive"\n    (cd dist && sha256sum "$archive" > "$archive.sha256")\n    printf \'localhost/upgrade-fixture:1\\n\' > "build/bundle/myproduct-$bundle-$version/images/images.txt"\ndone\n'
+                + (
+                    "printf damaged >> dist/myproduct-app1-0.2.1-offline.tar.gz\n"
+                    if corrupt
+                    else ""
+                )
+            )
+            build.chmod(0o700)
+            stubs = 'git() { if [[ "$*" == "diff --name-only" ]]; then echo VERSION; fi; }\n'
+            code = base.shell_code(REMOTE, action="upgrade-bundle")
+            result = subprocess.run(
+                ["bash", "-se"],
+                input="set -euo pipefail\nsrc="
+                + str(source)
+                + "\nrequested_version=0.2.1\n"
+                + stubs
+                + code,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual((source / "VERSION").read_text(), "0.2.1\n")
+            self.assertFalse(
+                (source / "dist/myproduct-0.2.1-offline.tar.gz.sha256").exists()
+            )
+            return result
+
+    def test_upgrade_build_checks_scoped_app1_archive(self):
+        """Accept three scoped artifacts without requiring the obsolete monolithic filename."""
+        result = self.run_upgrade_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("myproduct-app1-0.2.1-offline.tar.gz: OK", result.stdout)
+        self.assertIn("localhost/upgrade-fixture:1", result.stdout)
+
+    def test_upgrade_build_bad_checksum_stops_before_image_list(self):
+        """Reject a damaged app1 upgrade before printing or transferring its image list."""
+        result = self.run_upgrade_build(corrupt=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAILED", result.stdout)
+        self.assertNotIn("localhost/upgrade-fixture:1", result.stdout)
+
     def test_sibling_change_stops_before_later_e2e(self):
         """Reject a changed sibling observation before reporting upgrade checks as passed."""
 

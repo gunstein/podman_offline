@@ -218,7 +218,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 131 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 133 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Registry source acceptance
@@ -475,3 +475,7 @@ app2/help remain available. Each bundle has its own deploy.py trust file; shared
 core is reused on an equal CORE_VERSION. Run-23 proves the previous monolithic
 layout only. Component runtime results are recorded in new runs, never inferred
 from it. See the root README for fresh installation and retained-data uninstall.
+
+Upgrade-build regressions execute the named remote action with only scoped
+app1/app2/help artifacts. The app1 checksum must pass before its image list is
+read; a damaged archive stops the action. The monolithic filename is not used.

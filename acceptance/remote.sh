@@ -636,7 +636,7 @@ upgrade-bundle)
     test "$changed" = VERSION
     git diff -- VERSION
     ./build-bundle.sh
-    (cd dist && sha256sum -c "myproduct-$requested_version-offline.tar.gz.sha256")
+    (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
     ;;
 prepare-host)

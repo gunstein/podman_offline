@@ -28,7 +28,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 
 ## Images from the manifests
 
-142 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+145 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
 The image tests cover Pod/Deployment, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
@@ -101,7 +101,7 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 131 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 133 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
@@ -134,3 +134,6 @@ Component acceptance regressions cover both install orders, help-alone without
 state writes, all three archive transfers, app1-only upgrade, cross-file inventory
 collisions, untouched sibling observations/trust and retained-data uninstall.
 The cross-app SSO CLI regression withholds callback details on failure.
+
+Malformed PUBLIC_ORIGIN regressions cover both core rendering and public client
+staging, pre-generation refusal and CLI diagnostics without supplied values.
