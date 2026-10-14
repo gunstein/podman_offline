@@ -188,7 +188,7 @@ def main(base, run):
     for name in ("scripts", "quadlet"):
         shutil.copytree(ROOT / name, fixture / name)
     (fixture / "VERSION").write_text("0.0.0\n")
-    (fixture / "config.example.yaml").write_text("HTTPS_PORT: 8443\n")
+    (fixture / "config.defaults.yaml").write_text("HTTPS_PORT: 8443\n")
     private = Path(
         tempfile.mkdtemp(prefix="registry-test-", dir=os.environ["XDG_RUNTIME_DIR"])
     )

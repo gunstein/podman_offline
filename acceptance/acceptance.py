@@ -80,6 +80,7 @@ class Run:
         """Create a new, private run folder and initialize the run state."""
         self.id = run_id
         self.first_app = first_app
+        self.help_only = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -356,7 +357,8 @@ class Run:
 
     def transfer_bundles(self):
         """Transfer all three scoped bundles before testing independent installations."""
-        for bundle in ("app1", "app2", "help"):
+        bundles = ("app1", "help") if self.help_only else ("app1", "app2", "help")
+        for bundle in bundles:
             self.transfer(bundle=bundle)
 
     def boot_id(self, output):
@@ -466,6 +468,97 @@ class Run:
         self.step("10-persistent-after", lambda: self.persistent_state("after"))
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
+
+    def upgrade_core(self):
+        """Verify a newer shared core and reject an older core before persistent changes."""
+        parts = self.meta["version"].split(".")
+        parts[-1] = str(int(parts[-1]) + 3)
+        version = ".".join(parts)
+        self.meta["core_upgrade_release"] = version
+        self.step(
+            "10-core-siblings-before",
+            lambda: self.guest("PROD", "core-siblings-before"),
+        )
+        self.step("10-core-before", lambda: self.guest("PROD", "core-before"))
+        self.step(
+            "10-core-build", lambda: self.guest("DEV", "core-upgrade-bundle", version)
+        )
+        self.step("10-core-transfer", lambda: self.transfer(version))
+        self.step(
+            "10-core-install", lambda: self.guest("PROD", "core-upgrade", version)
+        )
+        self.step("10-core-after", lambda: self.guest("PROD", "core-after", version))
+        self.step(
+            "10-core-siblings-after", lambda: self.guest("PROD", "core-siblings-after")
+        )
+        self.step("10-core-persistent", lambda: self.persistent_state("after"))
+        self.step("10-core-e2e", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("10-core-markers", lambda: self.guest("DEV", "markers-check"))
+        self.step(
+            "10-core-downgrade",
+            lambda: self.guest(
+                "PROD",
+                "core-downgrade",
+                version,
+                old_version=self.meta["upgrade_version"],
+            ),
+        )
+        self.step("10-core-e2e-after-refusal", lambda: self.guest("DEV", "prod-e2e"))
+        self.step(
+            "10-core-retire",
+            lambda: self.guest(
+                "PROD", "core-retire", version, old_version=self.meta["upgrade_version"]
+            ),
+        )
+        self.step(
+            "10-core-final-siblings", lambda: self.guest("PROD", "core-siblings-after")
+        )
+
+    def upgrade_help(self):
+        """Transfer only a new help image/content release; unchanged route forbids core restart."""
+        version = self.meta["version"]
+        parts = version.split(".")
+        parts[-1] = str(int(parts[-1]) + 2)
+        new_version = ".".join(parts)
+        self.meta["help_upgrade_version"] = new_version
+        self.step(
+            "10-help-before",
+            lambda: self.guest("PROD", "help-siblings-before", bundle="help"),
+        )
+        self.step(
+            "10-help-build",
+            lambda: self.guest(
+                "DEV", "help-upgrade-bundle", new_version, bundle="help"
+            ),
+        )
+        self.step("10-help-transfer", lambda: self.transfer(new_version, bundle="help"))
+        self.step(
+            "10-help-install",
+            lambda: self.guest("PROD", "help-upgrade", new_version, bundle="help"),
+        )
+        self.step(
+            "10-help-content",
+            lambda: self.guest("PROD", "help-content", new_version, bundle="help"),
+        )
+        self.step(
+            "10-help-after",
+            lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
+        )
+        self.step("10-help-persistent", lambda: self.persistent_state("after"))
+        e2e = "app1-e2e" if self.help_only else "prod-e2e"
+        markers = "app1-markers-check" if self.help_only else "markers-check"
+        self.step("10-help-e2e", lambda: self.guest("DEV", e2e))
+        self.step("10-help-markers", lambda: self.guest("DEV", markers))
+        self.step(
+            "10-help-retire",
+            lambda: self.guest(
+                "PROD", "help-retire", new_version, old_version=version, bundle="help"
+            ),
+        )
+        self.step(
+            "10-help-retired-siblings",
+            lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
+        )
 
     def credentials(self):
         """Move the CA and demo passwords through private runtime files without logging content."""
@@ -577,11 +670,10 @@ class Run:
         self.step(
             "06-help-alone", lambda: self.guest("PROD", "help-alone", bundle="help")
         )
-        for bundle in (
-            self.first_app,
-            "app2" if self.first_app == "app1" else "app1",
-            "help",
-        ):
+        order = [self.first_app, "app2" if self.first_app == "app1" else "app1", "help"]
+        if self.help_only:
+            order = ["app1", "help"]
+        for bundle in order:
             self.step(
                 "06-install-" + bundle,
                 lambda b=bundle: self.guest("PROD", "install", bundle=b),
@@ -591,6 +683,14 @@ class Run:
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)
+        if self.help_only:
+            self.step("08-app1-e2e", lambda: self.guest("DEV", "app1-e2e"))
+            self.step(
+                "08-app1-markers", lambda: self.guest("DEV", "app1-markers-create")
+            )
+            self.upgrade_help()
+            self.finished = True
+            return
         self.step("08-e2e", lambda: self.guest("DEV", "prod-e2e"))
         self.step("08-shared-login", lambda: self.guest("DEV", "shared-login"))
         self.step("08-markers", lambda: self.guest("DEV", "markers-create"))
@@ -613,7 +713,9 @@ class Run:
         self.step("09-check-after-reboot", lambda: self.guest("PROD", "check"))
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
+        self.upgrade_help()
         self.upgrade()
+        self.upgrade_core()
         self.step("10-uninstall-app1", lambda: self.guest("PROD", "uninstall"))
         self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
         self.step("10-e2e-uninstall", lambda: self.guest("DEV", "survivor-e2e"))
@@ -688,12 +790,18 @@ def main():
         "--config", default="~/.config/podman-offline-acceptance/lab.env"
     )
     parser.add_argument("--first-app", choices=["app1", "app2"], default="app1")
+    parser.add_argument(
+        "--help-only",
+        action="store_true",
+        help="Install app1/core then help and upgrade only help",
+    )
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
     os.umask(0o077)
     run = Run(args.run, args.config, args.first_app)
+    run.help_only = args.help_only
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

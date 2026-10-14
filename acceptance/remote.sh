@@ -70,35 +70,34 @@ prepare_release() {
 }
 # Create only missing component configs and credentials; upgrades reuse them.
 install_configuration() {
-    local component components
+    local component components existing
     if [[ $bundle == help ]]; then components=help; else components="core $bundle"; fi
     for component in $components; do
-        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
-        as_product python3 - "$product/components/$component/config.example.yaml" "$state/$component/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
-import os
+        existing=0
+        if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
+        as_product python3 "$product/deploy.py" init-config "$component"
+        if [[ $existing == 0 && $component == core ]]; then
+        as_product python3 - "$state/core/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import pathlib
 import sys
 import yaml
 
 
 def main():
-    """Create a private component config once, preserving every existing config."""
-    path = pathlib.Path(sys.argv[2])
-    if path.exists():
-        print("PASS: existing config retained: " + str(path))
-        return
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with open(sys.argv[1]) as stream:
+    """Edit newly initialized core explicitly before initializing dependents."""
+    path = pathlib.Path(sys.argv[1])
+    with path.open() as stream:
         config = yaml.safe_load(stream)
-    config.update(IP_ADDRESS=sys.argv[3], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[4], sys.argv[5]), HTTPS_PORT=int(sys.argv[5]))
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as stream:
+    config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
+    with path.open("w") as stream:
         yaml.safe_dump(config, stream)
-    print("PASS: private config created: " + str(path))
+    print("PASS: initial core settings edited: " + str(path))
 
 
 main()
 CONFIG
+        fi
+        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
     done
 }
 # Collect audit with separate streams and accept only the documented empty result.
@@ -595,8 +594,8 @@ pull-images) cd "$src"; ./dev/pull-images.sh;;
 registry-test) cd "$src"; python3 acceptance/registry_test.py "$base" "$run";;
 dev-up)
     cd "$src"
-    cp config.example.yaml config.yaml
-    chmod 600 config.yaml
+    cp config/dev.yaml.example config/dev.yaml
+    chmod 600 config/dev.yaml
     ./dev/dev.sh up
     ;;
 venv)
@@ -638,6 +637,144 @@ upgrade-bundle)
     ./build-bundle.sh
     (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
+    ;;
+help-upgrade-bundle|core-upgrade-bundle)
+    cd "$src"
+    [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle"
+    python3 - <<'HELP_BUILD'
+import os
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+import bundle
+
+version = os.environ["HELP_RELEASE_VERSION"]
+source = Path.cwd()
+with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
+    release = Path(directory) / "release"
+    subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(source), str(release)], check=True)
+    (release / "VERSION").write_text(version + "\n")
+    kind = os.environ["RELEASE_KIND"]
+    if kind == "help":
+        manifest = next((release / "components/help/manifests").glob("*.yaml"))
+        text, count = re.subn(r"localhost/myproduct-help:[0-9]+\.[0-9]+\.[0-9]+", "localhost/myproduct-help:" + version, manifest.read_text())
+        if count != 1:
+            raise SystemExit("FAIL: expected exactly one help image")
+        manifest.write_text(text)
+        content = release / "apps/help/index.html"
+        if "</body>" not in content.read_text():
+            raise SystemExit("FAIL: missing help content insertion point")
+        content.write_text(content.read_text().replace("</body>", "<p>help-release-" + version + "</p></body>"))
+        subprocess.run(["podman", "build", "-t", "localhost/myproduct-help:" + version,
+                        "-f", str(release / "apps/help/Containerfile"), str(release / "apps/help")], check=True)
+    else:
+        core_parts = (release / "CORE_VERSION").read_text().strip().split(".")
+        core_parts[-1] = str(int(core_parts[-1]) + 1)
+        (release / "CORE_VERSION").write_text(".".join(core_parts) + "\n")
+    bundle.ROOT = release
+    bundle.STAGE = source / "build/help-upgrade"
+    bundle.DIST = source / "dist"
+    if kind == "help":
+        bundle.build_release(version, "help", ["help"])
+    else:
+        bundle.build_release(version, "app1", ["core", "app1"])
+
+HELP_BUILD
+    (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
+    cat "build/help-upgrade/myproduct-$bundle-$requested_version/images/images.txt"
+    ;;
+help-upgrade|core-upgrade)
+    prepare_release
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    healthy
+    wait_trust "$product/deploy.py"
+    if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
+    ;;
+core-before|core-after|core-downgrade)
+    as_product python3 - "$action" "$state/core-lifecycle.json" "$product" "$state/releases/myproduct-app1-$old_version" <<'CORE_LIFECYCLE'
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def observe():
+    root = Path.home()
+    paths = []
+    for directory in ("core", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
+        paths.extend(path for path in (root / directory).rglob("*") if path.is_file())
+    files = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    names = ["core-identity-postgres-db", "core-identity-app", "core-proxy-nginx"]
+    if sys.argv[1] == "core-downgrade":
+        for component in ("app1", "app2"):
+            if (root / "installed" / component).is_file():
+                names.extend([component + "-postgres-db", component + "-todo-backend", component + "-todo-frontend"])
+        if (root / "installed/help").is_file():
+            names.append("help-web-web")
+    containers = {}
+    for name in names:
+        result = subprocess.run(["podman", "inspect", "--format", "json", name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True)
+        rows = json.loads(result.stdout)
+        if len(rows) != 1 or rows[0]["Name"] != name:
+            raise SystemExit("FAIL: invalid core inventory")
+        state = rows[0]["State"]
+        if state["Status"] != "running" or state["Health"]["Status"] != "healthy" or type(state["Pid"]) is not int or state["Pid"] <= 1 or not isinstance(state["StartedAt"], str) or not state["StartedAt"] or type(rows[0]["RestartCount"]) is not int or rows[0]["RestartCount"] < 0:
+            raise SystemExit("FAIL: core is not healthy")
+        containers[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"]}
+    return {"files": files, "containers": containers, "version": (root / "installed/core").read_text().strip()}
+
+
+def main():
+    action, snapshot, release, old_release = sys.argv[1:]
+    current = observe()
+    path = Path(snapshot)
+    if action == "core-before":
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(current, stream)
+    elif action == "core-after":
+        before = json.loads(path.read_text())
+        expected = (Path(release) / "CORE_VERSION").read_text().strip()
+        if current["version"] != expected or current["version"] == before["version"]:
+            raise SystemExit("FAIL: core version was not upgraded")
+        for name, old in before["containers"].items():
+            new = current["containers"][name]
+            if new["Pid"] == old["Pid"] or new["StartedAt"] == old["StartedAt"]:
+                raise SystemExit("FAIL: expected explicit core restart")
+    else:
+        # The previous app bundle is still verified/trusted; refuse its older core.
+        result = subprocess.run(["python3", str(Path(old_release) / "deploy.py"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        if result.returncode != 1 or "Core downgrade refused" not in result.stderr or "+ podman" in result.stdout:
+            raise SystemExit("FAIL: older core was not refused before image operations")
+        if observe() != current:
+            raise SystemExit("FAIL: downgrade refusal changed persistent files or core processes")
+    print("PASS: " + action + "; private state and inspect contents withheld")
+
+
+try:
+    main()
+except (OSError, ValueError, TypeError, KeyError, subprocess.CalledProcessError):
+    raise SystemExit("FAIL: invalid core lifecycle observation")
+CORE_LIFECYCLE
+    ;;
+help-content)
+    content=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --fail --silent --show-error --max-time 10 "https://$prod_host:$port/help/")
+    grep -Fq "help-release-$requested_version" <<< "$content"
+    echo 'PASS: new help content served via verified HTTPS'
+    ;;
+help-retire|core-retire)
+    old_release="$state/releases/myproduct-$bundle-$old_version"
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --update
+    wait_trust "$product/deploy.py" "$old_release/deploy.py"
+    as_product rm -rf -- "$old_release"
+    sudo -n test ! -e "$old_release"
+    echo "PASS: old $bundle release and its own trust retired after verification"
     ;;
 prepare-host)
     cd "$base"
@@ -1008,7 +1145,7 @@ API_SECRET
     fi
     echo 'PASS: journal contains no pull attempts'
     ;;
-prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers)
+prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers|app1-e2e|app1-markers-create|app1-markers-check)
     cd "$src"
     export PUBLIC_ORIGIN="https://$prod_host:$port" CONNECT_IP="$prod_ip"
     export SMOKE_CA_FILE="$private/ca.crt" SMOKE_PASSWORD_DIR="$private"
@@ -1017,12 +1154,14 @@ prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers
     else
         apps="app1 app2"
         if [[ $action == survivor-* ]]; then apps=app2; fi
+        if [[ $action == app1-* ]]; then apps=app1; fi
         for app in $apps; do
             export APP_BASE_PATH=/$app
-            if [[ $action == prod-e2e || $action == survivor-e2e ]]; then
+            if [[ $action == prod-e2e || $action == survivor-e2e || $action == app1-e2e ]]; then
                 .venv-smoke/bin/python dev/smoke-test.py
             else
-                operation=${action#markers-}
+                operation=${action#app1-}
+                operation=${operation#markers-}
                 if [[ $action == survivor-markers ]]; then operation=check; fi
                 .venv-smoke/bin/python acceptance/markers.py "$operation" "$base/markers-$app.json" "$run"
             fi
@@ -1239,8 +1378,13 @@ HANG
     healthy
     wait_backend
     ;;
-siblings-before|siblings-after)
-    sudo -n python3 - "$action" "$base/siblings.json" <<'SIBLINGS'
+siblings-before|siblings-after|help-siblings-before|help-siblings-after|core-siblings-before|core-siblings-after)
+    observation="$base/siblings.json"
+    if [[ $action == core-siblings-* ]]; then observation="$base/core-siblings.json"; fi
+    mode=app1
+    if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
+    sudo -n python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
+import hashlib
 import json
 import os
 import pathlib
@@ -1262,7 +1406,15 @@ def observe():
     """Project sibling process identity, version markers and their exact trust records."""
     prefix = ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
               'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
+    help_upgrade = len(sys.argv) > 3 and sys.argv[3] == "help"
+    components = ["app2", "help"]
     names = ["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend", "help-web-web"]
+    if help_upgrade:
+        components = ["core", "app1"]
+        names = ["core-identity-postgres-db", "core-identity-app", "core-proxy-nginx", "app1-postgres-db", "app1-todo-backend", "app1-todo-frontend"]
+        if pathlib.Path("/var/lib/myproduct/installed/app2").is_file():
+            components.append("app2")
+            names.extend(["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend"])
     rows = json.loads(command(prefix + ["podman", "inspect", "--format", "json"] + names))
     if not isinstance(rows, list) or len(rows) != len(names):
         raise SystemExit("FAIL: incomplete sibling inspect list")
@@ -1278,26 +1430,41 @@ def observe():
         observed[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": row["RestartCount"]}
     trust = command(["fapolicyd-cli", "--dump-db"])
     records = sorted(line for line in trust.splitlines()
-                     if any("/releases/myproduct-" + component + "-" in line for component in ("app2", "help")))
-    if len(records) != 2:
+                     if any("/releases/myproduct-" + component + "-" in line for component in (["app1", "app2"] if help_upgrade else ["app2", "help"])))
+    if len(records) != (len(components) - 1 if help_upgrade else 2):
         raise SystemExit("FAIL: expected one trust entry per sibling bundle")
     versions = {name: (pathlib.Path("/var/lib/myproduct/installed") / name).read_text()
-                for name in ("app2", "help")}
-    return {"containers": observed, "trust": records, "versions": versions}
+                for name in components}
+    result = {"containers": observed, "trust": records, "versions": versions}
+    if help_upgrade:
+        root = pathlib.Path("/var/lib/myproduct")
+        files = []
+        for component in components:
+            files.append(root / component / "config.yaml")
+            for directory in ("generated-certificates", "files"):
+                files.extend(path for path in (root / component / directory).rglob("*") if path.is_file())
+            for suffix in (".yaml", ".kube"):
+                files.append(root / ".config/containers/systemd" / ("myproduct-" + component + suffix))
+        result["state"] = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+        network = json.loads(command(prefix + ["podman", "network", "inspect", "myproduct"]))
+        if not isinstance(network, list) or len(network) != 1 or not network[0].get("id"):
+            raise SystemExit("FAIL: invalid shared network observation")
+        result["network"] = network[0]["id"]
+    return result
 
 
 def main():
     """Compare untouched app2/help process identities, version markers and trust entries."""
     path = pathlib.Path(sys.argv[2])
     current = observe()
-    if sys.argv[1] == "siblings-before":
+    if sys.argv[1].endswith("siblings-before"):
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as stream:
             json.dump(current, stream)
     elif json.loads(path.read_text()) != current:
-        raise SystemExit("FAIL: app2/help process identity, version or trust changed")
+        raise SystemExit("FAIL: sibling/core process identity, version, state, network or trust changed")
     print("SIBLINGS " + json.dumps(current["containers"], sort_keys=True))
-    print("PASS: sibling versions and trust " + ("recorded" if sys.argv[1] == "siblings-before" else "unchanged"))
+    print("PASS: sibling versions and trust " + ("recorded" if sys.argv[1].endswith("siblings-before") else "unchanged"))
 
 
 try:

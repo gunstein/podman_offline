@@ -423,6 +423,24 @@ class VolumeTests(DeployFixture):
                 with stream:
                     self.assertEqual(stream.read(), b"\x00\xff")
 
+    def test_archive_checksums_ignore_timestamps_but_detect_content_changes(self):
+        """Equivalent staged registrations have identical bytes despite fresh file/dir times."""
+        source = self.write("stage/app1/client.json", "public-client")
+        output = deploy.BUILD / "files"
+        volumes = {"core-clients": [source.parent]}
+        deploy.write_file_archives(volumes, output)
+        archive = output / "core-clients.tar"
+        before = archive.read_bytes()
+        os.utime(str(source), (10, 10))
+        os.utime(str(source.parent), (20, 20))
+        deploy.write_file_archives(volumes, output)
+        self.assertEqual(archive.read_bytes(), before)
+        with tarfile.open(str(archive)) as tar:
+            self.assertTrue(all(member.mtime == 0 for member in tar.getmembers()))
+        source.write_text("changed-public-client")
+        deploy.write_file_archives(volumes, output)
+        self.assertNotEqual(archive.read_bytes(), before)
+
     def test_existing_archive_permissions_are_restricted(self):
         item = self.write("item")
         output = deploy.BUILD / "files"
@@ -803,12 +821,13 @@ class RenderTests(DeployFixture):
                 self.assertFalse(deploy.BUILD.exists())
 
     def test_real_product_manifests_render_with_dummy_files(self):
-        """Render the demo's real manifest set and example config with local dummy files."""
+        """Render the demo manifests with merged defaults and local dummy files."""
         repo = Path(__file__).resolve().parent.parent
         docs = []
         for component in ("core", "app1", "app2", "help"):
-            config = deploy.load_config(
-                repo / "components" / component / "config.example.yaml"
+            config = deploy.merge_config(
+                repo / "config/common.defaults.yaml",
+                repo / "components" / component / "config.defaults.yaml",
             )
             base = self.root / "state" / component
             for group in ("SECRET_FILES", "VOLUME_FILES"):

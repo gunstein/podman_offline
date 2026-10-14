@@ -40,7 +40,7 @@ def shell_code(source, function=None, heredoc=None, action=None):
     pattern = (
         r"^" + re.escape(function) + r"\(\)\s*\{"
         if function
-        else r"^" + re.escape(action or "") + r"\)\s*$"
+        else r"^(?:[^()\n]*\|)?" + re.escape(action or "") + r"(?:\|[^()\n]*)?\)\s*$"
     )
     match = re.search(pattern, source, re.MULTILINE)
     if not match:
@@ -820,6 +820,17 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "09-check-after-reboot",
             "09-e2e-after-reboot",
             "09-markers-after-reboot",
+            "10-help-before",
+            "10-help-build",
+            "10-help-transfer",
+            "10-help-install",
+            "10-help-content",
+            "10-help-after",
+            "10-help-persistent",
+            "10-help-e2e",
+            "10-help-markers",
+            "10-help-retire",
+            "10-help-retired-siblings",
             "10-siblings-before",
             "10-build-upgrade",
             "10-transfer-upgrade",
@@ -829,6 +840,20 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "10-persistent-after",
             "10-e2e-upgrade",
             "10-markers-upgrade",
+            "10-core-siblings-before",
+            "10-core-before",
+            "10-core-build",
+            "10-core-transfer",
+            "10-core-install",
+            "10-core-after",
+            "10-core-siblings-after",
+            "10-core-persistent",
+            "10-core-e2e",
+            "10-core-markers",
+            "10-core-downgrade",
+            "10-core-e2e-after-refusal",
+            "10-core-retire",
+            "10-core-final-siblings",
             "10-uninstall-app1",
             "10-check-uninstall",
             "10-e2e-uninstall",

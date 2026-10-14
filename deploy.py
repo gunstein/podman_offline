@@ -28,7 +28,7 @@ HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
 MANIFESTS = ROOT / "manifests"
-CONFIG = ROOT / "config.yaml"
+CONFIG = ROOT / "config.yaml"  # Standalone manifest fixtures only.
 
 QUADLET_TEMPLATE = ROOT / "quadlet" / "myproduct.kube"
 QUADLET_DIR = HOME / ".config/containers/systemd"
@@ -87,11 +87,11 @@ def load_yaml_all(path):
         return list(yaml.load_all(f, Loader=UniqueKeyLoader))
 
 
-def load_config(path):
-    """Read config and validate key types, value types and the HTTPS port."""
+def config_layer(path):
+    """Read one mapping, rejecting duplicate keys without exposing YAML values."""
     try:
         config = load_yaml(path)
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, TypeError) as error:
         mark = getattr(error, "problem_mark", None)
         location = f" at line {mark.line + 1}" if mark is not None else ""
         problem = getattr(error, "problem", "") or ""
@@ -101,26 +101,152 @@ def load_config(path):
     if not isinstance(config, dict):
         raise DeployError(f"{path} must contain KEY: value pairs")
 
+    return config
+
+
+def validate_config(config, path):
+    """Validate the complete config; individual merge layers may be incomplete."""
     for key, value in config.items():
         if not isinstance(key, str):
-            raise DeployError("All keys in config.yaml must be strings")
+            raise DeployError(f"All keys in {path} must be strings")
 
         if key in (SECRET_FILES, VOLUME_FILES, GENERATED_SECRETS):
             continue  # File groups and generated paths validate their own structures.
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise DeployError(
-                f"{key} in config.yaml must be a string or an integer, "
+                f"{key} in {path} must be a string or an integer, "
                 f"got type {type(value).__name__}. Put text in quotes."
             )
 
     port = config.get("HTTPS_PORT")
     if not isinstance(port, int) or not 1 <= port <= MAX_PORT:
         raise DeployError(
-            f"HTTPS_PORT in config.yaml must be an integer 1-{MAX_PORT} without quotes"
+            f"HTTPS_PORT in {path} must be an integer 1-{MAX_PORT} without quotes"
         )
 
     return config
+
+
+def load_config(path):
+    """Production loads only the authoritative materialized file."""
+    return validate_config(config_layer(path), path)
+
+
+def merge_config(*paths, overrides=None):
+    """Merge mappings at the top level, in order, then validate the result."""
+    config = {}
+    for path in paths:
+        config.update(config_layer(path))
+    config.update(overrides or {})
+    return validate_config(config, paths[-1])
+
+
+def component_defaults(component, overrides=None, dev=False):
+    """Build complete config from common, component and explicit local overrides."""
+    paths = [
+        ROOT / "config/common.defaults.yaml",
+        ROOT / "components" / component / "config.defaults.yaml",
+    ]
+    local = ROOT / "config/dev.yaml"
+    if dev and (local.exists() or local.is_symlink()):
+        paths.append(local)
+    config = merge_config(*paths, overrides=overrides)
+    materialized = (BUILD / "dev" if dev else HOME) / component / "config.yaml"
+    validate_component_config(config, component, materialized)
+    return config
+
+
+def validate_component_config(config, component, path, check_placeholders=True):
+    """Require shared values and every whole-value manifest placeholder before writes."""
+    required = {"PUBLIC_ORIGIN", "HTTPS_PORT"}
+
+    def collect(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, str):
+            match = PH.fullmatch(value)
+            if match:
+                required.add(match[1])
+
+    if check_placeholders:
+        for manifest in sorted(
+            (ROOT / "components" / component / "manifests").glob("*.yaml")
+        ):
+            collect(load_yaml_all(manifest))
+    # PUBLIC_HOSTNAME is derived from the validated origin for core rendering.
+    if component == "core":
+        required.discard("PUBLIC_HOSTNAME")
+    for key in sorted(required):
+        if key not in config:
+            raise DeployError(
+                f"Missing {key} in {path}; add it explicitly before installation"
+            )
+    public_origin(config["PUBLIC_ORIGIN"], path)
+    check_component_config_names(config, component, path)
+    generated_secret_paths(config, path.parent)
+    for group in (SECRET_FILES, VOLUME_FILES):
+        mapping = config.get(group, {})
+        if not isinstance(mapping, dict):
+            raise DeployError(f"{group} in {path} must be a map")
+        for name, entries in mapping.items():
+            if (
+                not isinstance(name, str)
+                or not ID.fullmatch(name)
+                or not isinstance(entries, list)
+                or not entries
+                or any(not isinstance(entry, str) or not entry for entry in entries)
+            ):
+                raise DeployError(f"{group} in {path} must be id: [list of paths]")
+
+
+def init_config(component):
+    """Exclusively materialize one bundled config; never create private input files."""
+    production_environment()
+    if component not in bundle_components():
+        raise DeployError(f"Component {component} is not included in this bundle")
+    target = HOME / component / "config.yaml"
+    for path in [target] + list(target.parents):
+        if path.is_symlink():
+            raise DeployError(f"Refuse symlinked config path: {path}")
+    if target.exists():
+        print(
+            f"[OK] Existing config retained unchanged: {target}; install validates it"
+        )
+        return
+    overrides = {}
+    core_path = component_paths("core")[0]
+    if (
+        component != "core"
+        and (HOME / "installed/core").exists()
+        and not core_path.exists()
+    ):
+        raise DeployError(
+            f"Missing {core_path}; restore installed core config before initializing {component}"
+        )
+    if component != "core" and core_path.exists():
+        core = load_config(core_path)
+        validate_component_config(
+            core,
+            "core",
+            core_path,
+            check_placeholders=not (HOME / "installed/core").is_file(),
+        )
+        overrides = {key: core[key] for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")}
+    config = component_defaults(component, overrides=overrides)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target.parent.chmod(0o700)
+    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        yaml.safe_dump(config, stream, sort_keys=False)
+    print(
+        f"[OK] Initialized {target}; edit config and prepare credentials before install"
+    )
 
 
 def public_origin(value, path):
@@ -325,11 +451,12 @@ def secret_documents(secrets):
 
 
 def normalize(info):
-    """Normalize tar ownership to root and file modes to 0644 or 0755."""
+    """Normalize ownership, modes and timestamps for stable import checksums."""
     info.uid = 0
     info.gid = 0
     info.uname = "root"
     info.gname = "root"
+    info.mtime = 0
     info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
     return info
 
@@ -546,6 +673,8 @@ def render(
         config["PUBLIC_HOSTNAME"] = public_origin(
             config["PUBLIC_ORIGIN"], config_path
         ).hostname
+    if component:
+        validate_component_config(config, component, config_path)
     generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, SECRET_FILES, config_path.parent)
     volume_config = dict(config)
@@ -582,7 +711,7 @@ def render(
                     'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'
                 )
         except DeployError as error:
-            raise DeployError(f"{path}: {error}") from None
+            raise DeployError(f"{path} (config {config_path}): {error}") from None
         docs += rendered
         sources.extend([path] * len(rendered))
 
@@ -590,7 +719,10 @@ def render(
     from_config.update(
         {("PersistentVolumeClaim", i): f"{VOLUME_FILES}.{i}" for i in volumes}
     )
-    check_links(docs, from_config, sources)
+    try:
+        check_links(docs, from_config, sources)
+    except DeployError as error:
+        raise DeployError(f"{config_path}: {error}") from None
 
     text = yaml.safe_dump_all(docs, sort_keys=False)
 
@@ -607,23 +739,11 @@ def render(
 
 def prepare_components():
     """Render all source components with private dev state and shared imported registrations."""
-    config = load_config(CONFIG)
     state = BUILD / "dev"
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     for component in ("core", "app1", "app2", "help"):
         target = state / component / "config.yaml"
-        settings = (
-            load_yaml(target)
-            if target.is_file()
-            else load_yaml(ROOT / "components" / component / "config.example.yaml")
-        )
-        settings.update(
-            {
-                key: value
-                for key, value in config.items()
-                if key not in (SECRET_FILES, VOLUME_FILES, GENERATED_SECRETS)
-            }
-        )
+        settings = component_defaults(component, dev=True)
         write_private(target, yaml.safe_dump(settings, sort_keys=False))
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
         imports, updates = registration_stage(
@@ -649,7 +769,11 @@ def prepare_components():
 
 def prepare():
     """Write validated dev YAML and import archives without running Podman."""
-    if (ROOT / "components").is_dir() and not (ROOT / "bundle.yaml").exists():
+    if (ROOT / "components").is_dir():
+        if (ROOT / "bundle.yaml").exists():
+            raise DeployError(
+                "Run prepare from the source checkout; production bundles use persistent config with install"
+            )
         prepare_components()
         return
     output = BUILD / "install.yaml"
@@ -1076,7 +1200,25 @@ def install_components():
         ):
             check_component_names(load_yaml_all(path), component, path)
         config_path = component_paths(component)[0]
-        check_component_config_names(load_config(config_path), component, config_path)
+        validate_component_config(
+            load_config(config_path),
+            component,
+            config_path,
+            check_placeholders=component in components,
+        )
+    core_path = component_paths("core")[0]
+    core = load_config(core_path)
+    validate_component_config(
+        core, "core", core_path, check_placeholders="core" in components
+    )
+    for component in source_components:
+        if component == "core":
+            continue
+        path = component_paths(component)[0]
+        config = load_config(path)
+        for key in ("PUBLIC_ORIGIN", "HTTPS_PORT"):
+            if config[key] != core[key]:
+                raise DeployError(f"{key} in {path} must match {core_path}")
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
@@ -1167,7 +1309,12 @@ def uninstall(component=None, delete_data=False):
 
 def main():
     """Run the chosen deploy command and return an exit code for expected errors."""
-    commands = {"prepare": prepare, "install": install, "uninstall": uninstall}
+    commands = {
+        "prepare": prepare,
+        "install": install,
+        "uninstall": uninstall,
+        "init-config": init_config,
+    }
     args = sys.argv[1:]
     removing = bool(args and args[0] == "uninstall")
     valid_remove = removing and args[1:] in (
@@ -1176,12 +1323,25 @@ def main():
         ["--delete-data"],
         ["core", "--delete-data"],
     )
-    if not args or args[0] not in commands or (not valid_remove and len(args) != 1):
-        print("Usage: ./deploy prepare|install|uninstall [core] [--delete-data]")
+    initializing = bool(args and args[0] == "init-config" and len(args) == 2)
+    if (
+        not args
+        or args[0] not in commands
+        or (
+            not valid_remove
+            and not initializing
+            and (len(args) != 1 or args[0] == "init-config")
+        )
+    ):
+        print(
+            "Usage: ./deploy prepare|install|uninstall [core] [--delete-data] | init-config <component>"
+        )
         return 2
 
     try:
-        if removing:
+        if initializing:
+            init_config(args[1])
+        elif removing:
             uninstall(
                 "core" if "core" in args[1:] else None, "--delete-data" in args[1:]
             )

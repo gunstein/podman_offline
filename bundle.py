@@ -84,17 +84,27 @@ def pull_images(images):
 def generated_secret_guard(config_dirs=None):
     """Reject copies of declared local secrets, including symlink aliases."""
     secrets = set()
-    for path in [
-        directory / name
-        for directory in (config_dirs or [ROOT])
-        for name in ("config.yaml", "config.example.yaml")
-    ]:
+    sources = []
+    # Standalone manifest fixtures keep explicit root-level config; products do not.
+    if not (ROOT / "components").is_dir():
+        sources.extend(
+            [(ROOT / "config.yaml", ROOT), (ROOT / "config.defaults.yaml", ROOT)]
+        )
+    for directory in config_dirs or [ROOT]:
+        if directory == ROOT:
+            continue
+        base = ROOT / "build/dev" / directory.name
+        sources.append((directory / "config.defaults.yaml", base))
+        # A local complete config is private state, not a configuration layer.
+        sources.append((directory / "config.yaml", directory))
+        sources.append((base / "config.yaml", base))
+        sources.append((ROOT / "config/common.defaults.yaml", base))
+        sources.append((ROOT / "config/dev.yaml", base))
+    for path, base in sources:
         if path.exists():
             try:
-                config = deploy.load_yaml(path)
-                if not isinstance(config, dict):
-                    raise deploy.DeployError("Config must be a mapping")
-                secrets.update(deploy.generated_secret_paths(config, path.parent))
+                config = deploy.config_layer(path)
+                secrets.update(deploy.generated_secret_paths(config, base))
             except (deploy.DeployError, yaml.YAMLError):
                 raise BundleError(
                     f"Cannot validate generated secret paths in {path}"
@@ -109,7 +119,11 @@ def generated_secret_guard(config_dirs=None):
                     raise BundleError(
                         f"Cannot bundle generated secret via {Path(directory) / name}"
                     )
-        return []
+        return [
+            name
+            for name in names
+            if name == "__pycache__" or name.endswith((".pyc", ".pyo"))
+        ]
 
     return guard
 
@@ -133,7 +147,7 @@ def build_release(version, bundle_name=None, components=None):
         if directories
         else manifest_images()
     )
-    guard = generated_secret_guard([ROOT] + directories)
+    guard = generated_secret_guard([ROOT] + sorted((ROOT / "components").glob("*")))
     guard(
         ROOT,
         [
@@ -141,7 +155,7 @@ def build_release(version, bundle_name=None, components=None):
             "deploy.py",
             "VERSION",
             "README.md",
-            "config.example.yaml",
+            "config.defaults.yaml",
             "manifests",
             "scripts",
             "quadlet",
@@ -156,7 +170,7 @@ def build_release(version, bundle_name=None, components=None):
         "deploy.py",
         "VERSION",
         "README.md",
-    ] + (["config.example.yaml"] if not components else ["CORE_VERSION"]):
+    ] + (["config.defaults.yaml"] if not components else ["CORE_VERSION"]):
         shutil.copy2(ROOT / filename, target / filename)
 
     for component, directory in zip(components or [], directories):
@@ -165,7 +179,7 @@ def build_release(version, bundle_name=None, components=None):
         destination.mkdir()
         for entry in (
             "manifests",
-            "config.example.yaml",
+            "config.defaults.yaml",
             "route.conf",
             "client.yaml",
             "files",
@@ -179,6 +193,11 @@ def build_release(version, bundle_name=None, components=None):
             else:
                 shutil.copy2(source, destination / entry)
     if components:
+        (target / "config").mkdir()
+        guard(ROOT / "config", ["common.defaults.yaml"])
+        shutil.copy2(
+            ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
+        )
         (target / "bundle.yaml").write_text(
             yaml.safe_dump({"name": bundle_name, "components": components}),
             encoding="utf-8",
@@ -248,7 +267,7 @@ def build():
         ):
             raise BundleError("Invalid bundle component definition")
     manifest_images()
-    guard = generated_secret_guard()
+    guard = generated_secret_guard([ROOT] + sorted((ROOT / "components").glob("*")))
     guard(ROOT, ["files", "manifests", "scripts", "quadlet"])
     shutil.rmtree(STAGE, ignore_errors=True)
     for name, components in definitions.items():

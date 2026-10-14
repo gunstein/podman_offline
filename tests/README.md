@@ -28,7 +28,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 
 ## Images from the manifests
 
-145 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+164 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
 The image tests cover Pod/Deployment, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
@@ -71,8 +71,8 @@ are written to the system instance's Quadlet directory. The bundle test includes
 The acceptance harness's local tests also check that the sudo commands change
 the working directory before install/Podman, without root, Podman or network.
 
-Persistent config is tested separately from the release config: install uses the home from the user database, prepare
-uses the repo root, and relative secret/volume paths follow the config directory.
+Persistent config is tested separately from the release config: install uses the home from the user database, component prepare
+merges common/component defaults with optional local dev overrides, and relative secret/volume paths follow the config directory.
 The certificate tests check --root, the default root, file modes, the host name
 and that a repeated generation is rejected without changing any files.
 
@@ -85,7 +85,7 @@ The runtime tests reject every XDG_RUNTIME_DIR value other than /run/user/<euid>
 The bundle test includes the two prod scripts and excludes the dev/ directory.
 
 Manifest errors are tested with the file path and image errors with the container name. A separate
-test renders the real product manifests with the example config and dummy files,
+test renders the real product manifests with merged defaults and dummy files,
 without Podman, and checks resources and image names.
 
 `test_health.py` requires one exec liveness probe in every real app manifest,
@@ -101,7 +101,7 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 133 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 139 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
@@ -137,3 +137,26 @@ The cross-app SSO CLI regression withholds callback details on failure.
 
 Malformed PUBLIC_ORIGIN regressions cover both core rendering and public client
 staging, pre-generation refusal and CLI diagnostics without supplied values.
+
+
+## Explicit configuration layers
+
+`test_config.py` covers common/component/override precedence, whole-map/list
+replacement, incomplete layers and duplicate keys, authoritative persistent config,
+changed release defaults, missing required placeholders before writes, exclusive
+initialization with private modes, symlink rejection, inherited core common values,
+and regenerated dev output with retained credentials/data. Existing standalone
+fixtures still test their explicit `config.yaml` paths separately.
+
+Bundle regressions cover the new defaults files, exclusion of dev/private config
+and bytecode, and generated-secret symlink aliases resolved from materialized dev
+folders for all new config sources. Component lifecycle tests require exactly the
+expected restart set for both help registration cases and protect sibling files
+through newer-core upgrades and older-core refusal in both app orders.
+
+
+Import-archive regression tests normalize timestamps in addition to ownership and
+modes. Fresh staging-directory/file timestamps cannot change an archive checksum,
+while changed file contents must change its bytes. This keeps unchanged public
+core imports stable across controlled core upgrades without excluding them from
+persistent-state comparisons.

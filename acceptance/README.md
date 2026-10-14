@@ -187,8 +187,9 @@ an explicit health wait, with no unknown, missing or duplicate app containers al
 The two Todo instances get full HTTPS e2e and independent Alice/Bob markers.
 The shared-login step signs in once per direction and proves that the other app
 uses that identity session without another password form, keeps app cookies scoped,
-and cannot read the first app's database rows. Only app1 is upgraded. All private
-persistent file hashes must remain identical; only names and same/changed are logged.
+and cannot read the first app's database rows. Help is upgraded independently,
+then app1 with equal core, then app1 with newer core. All private config/credential
+hashes must remain identical; only names and same/changed are logged.
 Before/after observations require app2/help PID, StartedAt and RestartCount, their
 version markers and their own trust records to be unchanged. App1 is then
 uninstalled with data retained: its route returns 404 and app2/help e2e, markers,
@@ -218,7 +219,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 133 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 139 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Registry source acceptance
@@ -346,15 +347,22 @@ SHA256 fingerprint (DER) and the file hashes for config, certificates, passwords
 only in memory for comparison. The evidence shows file names and “same/changed”,
 without hash values or file content.
 
-After the life cycle and reboot, step 10 increments the patch part of VERSION only in VM-1's
-working copy. The Git diff and the new version are recorded; no commit or other
-code changes are made. Three scoped bundles are rebuilt, and only the new app1 bundle is transferred with a separate SHA256 in
-the report. The upgrade follows the README: checksums, trust of the new deploy.py,
-install as the service user and a health check before the old trust is removed. No generation
-or config copying. The test requires unchanged file hashes and CA, full e2e
-with the originally transferred passwords, preserved todo markers and that the old
-trust is gone. Step 11 collects the audit and cleans up transferred secrets.
-If an earlier step stops, the upgrade is not tested.
+After the life cycle and reboot, step 10 first builds a new help image/content
+release in a temporary clone. Only its help bundle is built/transferred. Core and
+app processes, versions, protected files, network and other bundles’ trust must
+remain unchanged. Verified HTTPS content, e2e and markers gate retirement of the
+old help release/trust.
+
+The app1-only regression then increments VERSION in VM-1's working copy and
+retains CORE_VERSION. Three scoped bundles are rebuilt, but only app1 is
+transferred; app2/help process identity, versions and trust must remain unchanged.
+A final temporary clone increments CORE_VERSION and builds/transfers an app1
+bundle. Core must change version and restart, while app2/help remain untouched.
+The prior trusted app1 release must refuse its older core before image operations,
+with all managed files and services preserved. Both apps’ e2e and markers run
+after upgrade and after refusal. No configuration initialization or credential
+generation occurs during any upgrade. Step 11 collects audit and cleans up
+transferred secrets. A failed step stops all later operations.
 
 Checks A–E run again after reboot and upgrade. The hash comparison
 covers each component config, generated-certificates and files, plus shared PKI/private, routes and clients. Both the e2e and
@@ -376,8 +384,10 @@ SSH polling after rollback/reboot and the explicit isolation probes accept
 expected failing statuses. The pull probe inspects only its own stderr for a specific
 network error; stdout and stderr are never merged into a machine-readable answer.
 
-Hash values for persistent files stay only in the controller's memory during
-the run. Logs, report and evidence contain only file names and
+The full persistent-state comparison keeps hashes only in controller memory.
+Focused lifecycle observations also use private mode-0600 baseline files on the
+target, alongside the existing private process/trust snapshots. Logs, report and
+evidence contain only file names and
 “same/changed” from the comparison. The command reads the files for hashing and
 never writes file content. The overview below describes where
 command output is parsed; it is documentation, not automatic test evidence.
@@ -479,3 +489,41 @@ from it. See the root README for fresh installation and retained-data uninstall.
 Upgrade-build regressions execute the named remote action with only scoped
 app1/app2/help artifacts. The app1 checksum must pass before its image list is
 read; a damaged archive stops the action. The monolithic filename is not used.
+
+
+## Help-only upgrade regression
+
+```sh
+python3 acceptance/acceptance.py --run CONFIG-HELP-UNIQUE --help-only run
+```
+
+This uses the same two configured disposable snapshots and authorization as a
+full run. It installs app1/core then help and verifies health. It builds a newer
+help release with a new image tag and `help-release-<version>` content marker,
+packages and transfers only that help bundle, then installs on the existing host.
+HTTPS must serve the marker. Core/app1 PID, start time and restart count must
+remain identical, as must versions, config, credentials, imports, installed YAML,
+network ID and other bundles’ trust. App1 e2e and persistent task markers must
+pass. Only then does it retire old help trust and delete the old help release.
+An unchanged route permits no core restart. Focused product tests separately
+require exactly one core restart for a changed route, without a core version
+upgrade or app1 restart.
+
+Both full installation orders remain covered and include this help upgrade before
+the existing app1-only upgrade and sibling checks. Dev config uses
+`config/dev.yaml`; production setup calls the real `init-config` command, edits
+core before initializing dependents and retains configs during upgrades.
+Harness tests stub guest calls and verify sequencing and failure gates; only a
+completed target-machine run proves offline install, TLS, health and trust behavior.
+
+
+The full flows also build a newer `CORE_VERSION` in an app1 bundle, require a
+changed core PID/start time and updated core marker, retain app2/help observations
+and private state, and rerun both apps’ e2e and task markers. Reinstalling the prior
+trusted app1 release must refuse its older core before image commands or any
+persistent mutation, followed by successful e2e. Old own trust is retired only
+after those checks. Product tests additionally exercise both app orders with
+newer/older core and exact expected service restarts.
+
+Current config/lifecycle results and their exact verification limits are recorded
+in [CONFIG-VERIFICATION.md](CONFIG-VERIFICATION.md).

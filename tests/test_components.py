@@ -14,7 +14,7 @@ from test_deploy import DeployFixture, document
 import deploy
 
 
-class ComponentTests(DeployFixture):
+class ComponentFixture(DeployFixture):
     """Exercise independent component services with temporary persistent state."""
 
     def setUp(self):
@@ -30,7 +30,10 @@ class ComponentTests(DeployFixture):
         self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
         self.write("images/images.tar")
         for component in ("core", "app1"):
-            self.write("home/" + component + "/config.yaml", "HTTPS_PORT: 8443\n")
+            self.write(
+                "home/" + component + "/config.yaml",
+                "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+            )
             self.component_manifest(component)
 
     def component_manifest(self, component, name=None):
@@ -54,6 +57,10 @@ class ComponentTests(DeployFixture):
             ),
         )
 
+
+class ComponentTests(ComponentFixture):
+    """Exercise independent component services with temporary persistent state."""
+
     def test_prefix_guard_rejects_each_resource_kind(self):
         """Reject unprefixed names while allowing each component's own objects."""
         for kind in ("Pod", "Secret", "PersistentVolumeClaim", "ConfigMap"):
@@ -70,7 +77,7 @@ class ComponentTests(DeployFixture):
         """Perform namespace preflight before generating even a missing private file."""
         self.write(
             "home/core/config.yaml",
-            "HTTPS_PORT: 8443\nGENERATED_SECRETS: [generated/token]\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\n",
         )
         self.component_manifest("core", "wrong-pod")
         with self.assertRaisesRegex(deploy.DeployError, "10-pod.yaml.*core-"):
@@ -82,11 +89,11 @@ class ComponentTests(DeployFixture):
         """Preflight every component config before rendering any component secrets."""
         self.write(
             "home/core/config.yaml",
-            "HTTPS_PORT: 8443\nGENERATED_SECRETS: [generated/token]\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\n",
         )
         self.write(
             "home/app1/config.yaml",
-            "HTTPS_PORT: 8443\nSECRET_FILES: {other-token: [missing]}\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES: {other-token: [missing]}\n",
         )
         with self.assertRaisesRegex(deploy.DeployError, "config.yaml.*app1-"):
             deploy.install()
@@ -97,7 +104,7 @@ class ComponentTests(DeployFixture):
         """Reject an unprefixed config Secret without generating private material."""
         self.write(
             "home/core/config.yaml",
-            "HTTPS_PORT: 8443\nGENERATED_SECRETS: [generated/token]\nSECRET_FILES: {other-token: [generated/token]}\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\nSECRET_FILES: {other-token: [generated/token]}\n",
         )
         with self.assertRaisesRegex(deploy.DeployError, "config.yaml.*core-"):
             deploy.install()
@@ -149,6 +156,22 @@ class ComponentTests(DeployFixture):
             deploy.install()
         self.process.assert_not_called()
 
+    def test_app2_installs_missing_core_on_a_fresh_host(self):
+        """App2 supplies shared core on a host without installed markers or core output."""
+        self.write("bundle.yaml", "name: app2\ncomponents: [core, app2]\n")
+        self.component_manifest("app2")
+        self.write(
+            "home/app2/config.yaml",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+        )
+        deploy.install()
+        self.assertEqual((deploy.HOME / "installed/core").read_text(), "1.0.0\n")
+        self.assertTrue(deploy.component_paths("core")[2].is_file())
+        calls = [call.args[0] for call in self.process.call_args_list]
+        self.assertIn(
+            ["systemctl", "--user", "restart", "myproduct-core.service"], calls
+        )
+
     def test_core_version_missing_equal_newer_and_older(self):
         """Apply all four core version decisions without touching running services."""
         self.assertTrue(deploy.core_upgrade_needed("1.0.0"))
@@ -163,6 +186,11 @@ class ComponentTests(DeployFixture):
         deploy.install()
         core_yaml = deploy.component_paths("core")[2]
         before = core_yaml.read_bytes(), core_yaml.stat().st_mtime_ns
+        # Incoming equal-version core content must not replace installed core files.
+        incoming = self.component_manifest("core", "core-release-changed")
+        document = deploy.load_yaml(incoming)
+        document["spec"]["hostname"] = "@@NEW_CORE_SETTING@@"
+        incoming.write_text(yaml.safe_dump(document))
         self.process.reset_mock()
         deploy.install()
         self.assertEqual((core_yaml.read_bytes(), core_yaml.stat().st_mtime_ns), before)
@@ -175,12 +203,26 @@ class ComponentTests(DeployFixture):
             restarts, [["systemctl", "--user", "restart", "myproduct-app1.service"]]
         )
 
+        # Once core is selected for upgrade, a newly required key must be added manually.
+        self.write("CORE_VERSION", "2.0.0\n")
+        self.write(
+            "components/core/config.defaults.yaml",
+            "NEW_CORE_SETTING: incoming-default\n",
+        )
+        self.process.reset_mock()
+        with self.assertRaisesRegex(
+            deploy.DeployError, "NEW_CORE_SETTING.*core/config.yaml"
+        ):
+            deploy.install()
+        self.process.assert_not_called()
+        self.assertEqual((core_yaml.read_bytes(), core_yaml.stat().st_mtime_ns), before)
+
     def test_core_downgrade_fails_before_any_command_or_generated_file(self):
         """Reject an older app bundle's core before touching private or runtime state."""
         self.write("home/installed/core", "2.0.0\n")
         self.write(
             "home/core/config.yaml",
-            "HTTPS_PORT: 8443\nGENERATED_SECRETS: [generated/token]\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\n",
         )
         with self.assertRaisesRegex(deploy.DeployError, "downgrade refused"):
             deploy.install()
@@ -335,13 +377,19 @@ class ComponentTests(DeployFixture):
         shutil.rmtree(self.root / "components")
         repo = Path(__file__).resolve().parent.parent
         shutil.copytree(repo / "components", self.root / "components")
+        shutil.copytree(
+            repo / "config",
+            self.root / "config",
+            ignore=shutil.ignore_patterns("dev.yaml"),
+        )
         self.write(
-            "config.yaml",
+            "config/dev.yaml",
             "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nIP_ADDRESS: 127.0.0.1\n",
         )
         for component in ("core", "app1", "app2", "help"):
-            config = deploy.load_config(
-                repo / "components" / component / "config.example.yaml"
+            config = deploy.merge_config(
+                repo / "config/common.defaults.yaml",
+                repo / "components" / component / "config.defaults.yaml",
             )
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for entries in config.get(group, {}).values():
@@ -469,6 +517,145 @@ class ComponentTests(DeployFixture):
         self.assertFalse(any("--all" in args or "--force" in args for args in calls))
         self.assertFalse((deploy.HOME / "app1").exists())
         self.assertTrue((deploy.HOME / "core/config.yaml").exists())
+
+    def test_help_upgrade_restart_policy_for_unchanged_and_changed_routes(self):
+        """An unchanged route retains core; a changed route restarts only help and core."""
+        deploy.install()
+        self.component_manifest("help")
+        self.write(
+            "home/help/config.yaml",
+            "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\n",
+        )
+        route = self.write(
+            "components/help/route.conf", "location /help/ { return 200; }\n"
+        )
+        self.write("bundle.yaml", "name: help\ncomponents: [help]\n")
+        deploy.install()
+        self.write("VERSION", "1.2.4\n")
+        self.component_manifest("help")
+        core_marker = (deploy.HOME / "installed/core").read_bytes()
+        app_marker = (deploy.HOME / "installed/app1").read_bytes()
+        core_yaml = deploy.component_paths("core")[2].read_bytes()
+        core_config = (deploy.HOME / "core/config.yaml").read_bytes()
+        app_config = (deploy.HOME / "app1/config.yaml").read_bytes()
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                if changed:
+                    route.write_text("location /help/ { return 201; }\n")
+                self.process.reset_mock()
+                deploy.install()
+                restarts = [
+                    call.args[0][-1]
+                    for call in self.process.call_args_list
+                    if call.args[0][:3] == ["systemctl", "--user", "restart"]
+                ]
+                self.assertEqual(
+                    restarts,
+                    ["myproduct-help.service"]
+                    + (["myproduct-core.service"] if changed else []),
+                )
+                self.assertEqual(
+                    (deploy.HOME / "installed/core").read_bytes(), core_marker
+                )
+                self.assertEqual(
+                    (deploy.HOME / "installed/app1").read_bytes(), app_marker
+                )
+                self.assertEqual(
+                    deploy.component_paths("core")[2].read_bytes(), core_yaml
+                )
+                self.assertEqual(
+                    (deploy.HOME / "core/config.yaml").read_bytes(), core_config
+                )
+                self.assertEqual(
+                    (deploy.HOME / "app1/config.yaml").read_bytes(), app_config
+                )
+                self.assertEqual(
+                    (deploy.HOME / "installed/help").read_text(), "1.2.4\n"
+                )
+
+    def test_newer_core_preserves_sibling_state_in_both_app_orders(self):
+        """A newer shared core replaces core output while every sibling file remains intact."""
+        for first, second in (("app1", "app2"), ("app2", "app1")):
+            with self.subTest(first=first):
+                self.component_manifest(first)
+                self.component_manifest(second)
+                for component in (first, second):
+                    self.write(
+                        "home/" + component + "/config.yaml",
+                        "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\n",
+                    )
+                self.write("CORE_VERSION", "1.0.0\n")
+                self.write(
+                    "bundle.yaml",
+                    "name: " + first + "\ncomponents: [core, " + first + "]\n",
+                )
+                if (deploy.HOME / "installed/core").exists():
+                    (deploy.HOME / "installed/core").unlink()
+                deploy.install()
+                credentials = self.write(
+                    "home/" + first + "/generated-certificates/token",
+                    "sibling-credential",
+                    0o600,
+                )
+                data = self.write(
+                    "home/" + first + "/data/marker", "sibling-data", 0o600
+                )
+                paths = [
+                    credentials,
+                    data,
+                    deploy.HOME / first / "config.yaml",
+                    deploy.HOME / "installed" / first,
+                    deploy.component_paths(first)[2],
+                    deploy.component_paths(first)[3],
+                ]
+                before = {
+                    path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths
+                }
+                self.write("CORE_VERSION", "1.1.0\n")
+                self.write(
+                    "bundle.yaml",
+                    "name: " + second + "\ncomponents: [core, " + second + "]\n",
+                )
+                self.process.reset_mock()
+                deploy.install()
+                self.assertEqual(
+                    {
+                        path: (path.read_bytes(), path.stat().st_mtime_ns)
+                        for path in paths
+                    },
+                    before,
+                )
+                self.assertEqual(
+                    (deploy.HOME / "installed/core").read_text(), "1.1.0\n"
+                )
+                restarts = [
+                    call.args[0][-1]
+                    for call in self.process.call_args_list
+                    if call.args[0][:3] == ["systemctl", "--user", "restart"]
+                ]
+                self.assertEqual(
+                    restarts,
+                    ["myproduct-" + second + ".service", "myproduct-core.service"],
+                )
+                # Reject a subsequent older release before any operation or persistent write.
+                snapshot = {
+                    path: (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in deploy.HOME.rglob("*")
+                    if path.is_file()
+                }
+                self.write("CORE_VERSION", "1.0.0\n")
+                self.process.reset_mock()
+                with self.assertRaisesRegex(deploy.DeployError, "downgrade refused"):
+                    deploy.install()
+                self.process.assert_not_called()
+                self.assertEqual(
+                    {
+                        path: (path.read_bytes(), path.stat().st_mtime_ns)
+                        for path in deploy.HOME.rglob("*")
+                        if path.is_file()
+                    },
+                    snapshot,
+                )
 
     def test_existing_network_is_kept_and_a_conflict_fails(self):
         """Install the shared network idempotently and refuse another definition."""

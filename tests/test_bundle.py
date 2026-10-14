@@ -42,7 +42,7 @@ class BundleTests(unittest.TestCase):
             "deploy": '#!/bin/sh\nexec python3 deploy.py "$@"\n',
             "deploy.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",
-            "config.example.yaml": "HTTPS_PORT: 8443\n",
+            "config.defaults.yaml": "HTTPS_PORT: 8443\n",
             "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
             "scripts/prepare-host.sh": "#!/bin/sh\nexit 0\n",
             "dev/dev.sh": "#!/bin/sh\nexit 0\n",
@@ -118,7 +118,7 @@ class BundleTests(unittest.TestCase):
                     "deploy",
                     "deploy.py",
                     "README.md",
-                    "config.example.yaml",
+                    "config.defaults.yaml",
                     "scripts/generate-certificates.sh",
                     "scripts/prepare-host.sh",
                     "quadlet/myproduct.kube",
@@ -184,7 +184,7 @@ class BundleTests(unittest.TestCase):
 
     def test_generated_secret_under_shipped_files_is_rejected(self):
         """Refuse a bundle that would copy a declared generated secret."""
-        for config in ("config.yaml", "config.example.yaml"):
+        for config in ("config.yaml", "config.defaults.yaml"):
             with self.subTest(config=config):
                 self.write(config, "GENERATED_SECRETS: [files/private/token]\n")
                 self.write("files/private/token", "synthetic-private-value")
@@ -403,12 +403,43 @@ data: {image: ignored}
         )
         self.assertFalse(bundle.DIST.exists())
 
+    def test_component_default_and_dev_generated_paths_guard_materialized_aliases(self):
+        """Reject symlink copies of generated dev secrets declared by every new source."""
+        component = self.root / "components/app1"
+        for source in (
+            "config/common.defaults.yaml",
+            "components/app1/config.defaults.yaml",
+            "components/app1/config.yaml",
+            "config/dev.yaml",
+            "build/dev/app1/config.yaml",
+        ):
+            with self.subTest(source=source):
+                path = self.write(source, "GENERATED_SECRETS: [private/token]\n")
+                secret_base = (
+                    "components/app1"
+                    if source == "components/app1/config.yaml"
+                    else "build/dev/app1"
+                )
+                secret = self.write(
+                    secret_base + "/private/token", "private-generated-value"
+                )
+                alias = self.root / "files/alias"
+                alias.parent.mkdir(exist_ok=True)
+                alias.symlink_to(secret)
+                guard = bundle.generated_secret_guard([self.root, component])
+                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                    guard(alias.parent, [alias.name])
+                alias.unlink()
+                path.unlink()
+        self.process.assert_not_called()
+
     def test_component_bundles_include_only_selected_components_and_images(self):
         """Build three independent archives with matching core versions and no local state."""
         self.write(
             "bundles.yaml", "app1: [core, app1]\napp2: [core, app2]\nhelp: [help]\n"
         )
         self.write("CORE_VERSION", "1.0.0\n")
+        self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")
         for component in ("core", "app1", "app2", "help"):
             self.write(
                 "components/" + component + "/manifests/pod.yaml",
@@ -422,7 +453,8 @@ data: {image: ignored}
                 ),
             )
             self.write(
-                "components/" + component + "/config.example.yaml", "HTTPS_PORT: 8443\n"
+                "components/" + component + "/config.defaults.yaml",
+                "HTTPS_PORT: 8443\n",
             )
             self.write(
                 "components/" + component + "/config.yaml", "PRIVATE: do-not-bundle\n"
@@ -453,6 +485,18 @@ data: {image: ignored}
                     )
                     self.assertNotIn(
                         "components/" + component + "/config.yaml", members
+                    )
+                self.assertIn("config/common.defaults.yaml", members)
+                self.assertNotIn("config/dev.yaml", members)
+                self.assertFalse(
+                    any(
+                        "__pycache__" in name or name.endswith(".pyc")
+                        for name in members
+                    )
+                )
+                for component in components:
+                    self.assertIn(
+                        "components/" + component + "/config.defaults.yaml", members
                     )
                 self.assertIn("CORE_VERSION", members)
                 checksum = archive.extractfile(prefix + "checksums.sha256")

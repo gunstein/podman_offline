@@ -160,6 +160,101 @@ class ComponentHarnessTests(unittest.TestCase):
         )
         self.assertFalse(self.harness.finished)
 
+    def test_help_upgrade_transfers_only_help_and_retires_after_all_checks(self):
+        """A genuine content/image upgrade cannot retire old trust before HTTPS/e2e checks."""
+        self.harness.step = mock.Mock(side_effect=lambda name, action: action())
+        self.harness.upgrade_help()
+        self.harness.transfer.assert_called_once_with("0.2.2", bundle="help")
+        calls = self.harness.guest.call_args_list
+        actions = [call.args[1] for call in calls]
+        self.assertLess(
+            actions.index("help-siblings-before"), actions.index("help-upgrade")
+        )
+        self.assertLess(actions.index("help-upgrade"), actions.index("help-content"))
+        self.assertLess(
+            actions.index("help-siblings-after"), actions.index("help-retire")
+        )
+        self.assertLess(actions.index("prod-e2e"), actions.index("help-retire"))
+        self.assertLess(actions.index("markers-check"), actions.index("help-retire"))
+        self.assertEqual(actions[-1], "help-siblings-after")
+        self.harness.persistent_state.assert_called_once_with("after")
+        build = base.shell_code(REMOTE, action="help-upgrade-bundle")
+        self.assertIn('bundle.build_release(version, "help", ["help"])', build)
+        self.assertIn('"localhost/myproduct-help:" + version', build)
+        self.assertIn('"<p>help-release-" + version', build)
+        self.assertNotIn("./build-bundle.sh", build)
+
+    def test_core_upgrade_checks_siblings_e2e_and_downgrade_before_retirement(self):
+        """New core changes deliberately while siblings remain; old core refuses before writes."""
+        self.harness.meta["upgrade_version"] = "0.2.1"
+        self.harness.step = mock.Mock(side_effect=lambda name, action: action())
+        self.harness.upgrade_core()
+        self.harness.transfer.assert_called_once_with("0.2.3")
+        actions = [call.args[1] for call in self.harness.guest.call_args_list]
+        self.assertLess(
+            actions.index("core-siblings-before"), actions.index("core-upgrade")
+        )
+        self.assertLess(actions.index("core-upgrade"), actions.index("core-after"))
+        self.assertLess(actions.index("core-siblings-after"), actions.index("prod-e2e"))
+        self.assertLess(actions.index("core-downgrade"), actions.index("core-retire"))
+        self.assertEqual(actions.count("prod-e2e"), 2)
+        self.assertEqual(actions[-1], "core-siblings-after")
+        call = next(
+            call
+            for call in self.harness.guest.call_args_list
+            if call.args[1] == "core-downgrade"
+        )
+        self.assertEqual(call.kwargs["old_version"], "0.2.1")
+
+    def test_help_upgrade_failure_preserves_old_release_and_trust(self):
+        """Any content, sibling or e2e failure stops before old help trust is removed."""
+        for failure in (
+            "help-content",
+            "help-siblings-after",
+            "prod-e2e",
+            "markers-check",
+        ):
+            with self.subTest(failure=failure):
+                self.harness.guest.reset_mock()
+
+                def guest(role, action, *args, failure=failure, **kwargs):
+                    if action == failure:
+                        raise RuntimeError("verification failed")
+
+                self.harness.guest.side_effect = guest
+                self.harness.step = mock.Mock(side_effect=lambda name, action: action())
+                with self.assertRaisesRegex(RuntimeError, "verification failed"):
+                    self.harness.upgrade_help()
+                self.assertNotIn(
+                    "help-retire",
+                    [call.args[1] for call in self.harness.guest.call_args_list],
+                )
+
+    def test_help_only_run_installs_app1_then_help_without_second_app(self):
+        """Keep a focused target scenario alongside both full installation orders."""
+        self.harness.help_only = True
+        self.harness.step = mock.Mock(side_effect=lambda name, action: action())
+        self.harness.execute()
+        calls = self.harness.guest.call_args_list
+        self.assertEqual(
+            [call.kwargs["bundle"] for call in calls if call.args[1] == "install"],
+            ["app1", "help"],
+        )
+        actions = [call.args[1] for call in calls]
+        self.assertIn("app1-e2e", actions)
+        self.assertIn("app1-markers-check", actions)
+        self.assertIn("help-upgrade", actions)
+        self.assertNotIn("upgrade", actions)
+        self.assertEqual(
+            self.harness.transfer.call_args_list,
+            [
+                mock.call(bundle="app1"),
+                mock.call(bundle="help"),
+                mock.call("0.2.2", bundle="help"),
+            ],
+        )
+        self.assertTrue(self.harness.finished)
+
     def test_guest_parameter_carries_bundle_without_changing_other_arguments(self):
         """Include the validated bundle selection in stdin arguments for fixed remote steps."""
         self.harness.cfg = {
@@ -322,6 +417,146 @@ class ComponentObservationTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 code["main"]()
+
+    def test_core_lifecycle_requires_restart_and_preserves_state_on_downgrade(self):
+        """Reject unchanged core identity and any mutation during an older-core refusal."""
+        code = guest_code("CORE_LIFECYCLE")
+        before = {
+            "containers": {
+                "core-proxy-nginx": {
+                    "Pid": 1234,
+                    "StartedAt": "before",
+                    "RestartCount": 0,
+                }
+            },
+            "files": {"core/config.yaml": "private-hash"},
+            "version": "0.2.0",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "core.json"
+            snapshot.write_text(json.dumps(before))
+            (root / "CORE_VERSION").write_text("0.2.1\n")
+            current: dict = dict(before, version="0.2.1")
+            code["observe"] = lambda: current
+            with (
+                mock.patch.object(
+                    code["sys"],
+                    "argv",
+                    ["guest", "core-after", str(snapshot), str(root), str(root)],
+                ),
+                self.assertRaisesRegex(SystemExit, "expected explicit core restart"),
+            ):
+                code["main"]()
+            current["containers"] = {
+                "core-proxy-nginx": {
+                    "Pid": 9999,
+                    "StartedAt": "after",
+                    "RestartCount": 0,
+                }
+            }
+            with (
+                mock.patch.object(
+                    code["sys"],
+                    "argv",
+                    ["guest", "core-after", str(snapshot), str(root), str(root)],
+                ),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                code["main"]()
+            self.assertNotIn("private-hash", output.getvalue())
+            result = subprocess.CompletedProcess(
+                [], 1, "", "ERROR: Core downgrade refused"
+            )
+            with (
+                mock.patch.object(
+                    code["sys"],
+                    "argv",
+                    ["guest", "core-downgrade", str(snapshot), str(root), str(root)],
+                ),
+                mock.patch.object(subprocess, "run", return_value=result),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code["main"]()
+                code["observe"] = mock.Mock(
+                    side_effect=[current, dict(current, files={})]
+                )
+                with self.assertRaisesRegex(SystemExit, "changed persistent"):
+                    code["main"]()
+                code["observe"] = lambda: current
+                result.stdout = "+ podman load images.tar"
+                with self.assertRaisesRegex(SystemExit, "before image operations"):
+                    code["main"]()
+
+    def test_help_siblings_compare_core_identity_state_network_and_other_trust(self):
+        """Unchanged route permits no arbitrary core restart or mutation of protected fields."""
+        code = guest_code("SIBLINGS")
+        before = {
+            "containers": {
+                "core-proxy-nginx": {
+                    "Pid": 1234,
+                    "StartedAt": "before",
+                    "RestartCount": 0,
+                }
+            },
+            "versions": {"core": "0.2.0", "app1": "0.2.0"},
+            "trust": ["app1 trust"],
+            "state": {"app1/config.yaml": "private-hash"},
+            "network": "network-id",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "help.json"
+            code["observe"] = lambda: before
+            with (
+                mock.patch.object(
+                    code["sys"],
+                    "argv",
+                    ["guest", "help-siblings-before", str(path), "help"],
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code["main"]()
+            for key, value in (
+                (
+                    "containers",
+                    {
+                        "core-proxy-nginx": {
+                            "Pid": 9999,
+                            "StartedAt": "after",
+                            "RestartCount": 0,
+                        }
+                    },
+                ),
+                ("state", {}),
+                ("versions", {"core": "0.2.1"}),
+                ("network", "other"),
+                ("trust", []),
+            ):
+                with self.subTest(key=key):
+                    code["observe"] = lambda key=key, value=value: dict(
+                        before, **{key: value}
+                    )
+                    with (
+                        mock.patch.object(
+                            code["sys"],
+                            "argv",
+                            ["guest", "help-siblings-after", str(path), "help"],
+                        ),
+                        self.assertRaisesRegex(SystemExit, "changed"),
+                    ):
+                        code["main"]()
+            code["observe"] = lambda: before
+            with (
+                mock.patch.object(
+                    code["sys"],
+                    "argv",
+                    ["guest", "help-siblings-after", str(path), "help"],
+                ),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                code["main"]()
+            self.assertNotIn("private-hash", output.getvalue())
+            self.assertNotIn("app1 trust", output.getvalue())
 
     def test_uninstall_checks_retained_data_and_inactive_route_before_e2e(self):
         """Keep survivor health and retired route/data/network checks in the removal step."""

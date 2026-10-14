@@ -20,7 +20,7 @@ identity users but have separate OIDC clients, database volumes and session
 cookies. With all components installed there are 8 pods and 10 app containers.
 The root path `/` returns 404; use `/app1/` or `/app2/`.
 
-`components/<name>/` holds manifests, an example config and any route/client
+`components/<name>/` holds manifests, component defaults and any route/client
 registration. `bundles.yaml` defines the three bundle selections. `VERSION`
 versions app/help releases; `CORE_VERSION` independently versions shared core.
 All Pod, Secret, PVC and ConfigMap names must start with their component prefix;
@@ -33,20 +33,99 @@ install missing core, retain equal core, upgrade newer core and refuse older cor
 Changed public routes or OIDC clients restart core even when its version is equal.
 This causes a short shared sign-in/proxy interruption; app2/help services and data
 are not restarted by an app1 upgrade. Unchanged registrations leave equal core
-untouched. There is no start order between pods in one component; apps retry their
+untouched. Equal core keeps its installed files and does not adopt incoming
+core manifest requirements. New required keys are checked when that component
+is actually upgraded. There is no start order between pods in one component; apps retry their
 databases for up to 60 seconds.
 
 This component layout is for fresh installations. It does not automatically
 migrate the former monolithic 0.1.x data/config or remove its service. Preserve
 that data and plan an explicit migration before replacing an existing deployment.
 
+## Configuration and initialization
+
+| File | Role |
+| --- | --- |
+| `config/common.defaults.yaml` | Shared defaults for initialization and dev |
+| `config/dev.yaml.example` | Small example of local dev overrides |
+| `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
+| `components/<component>/config.defaults.yaml` | Component-specific defaults, including secret and volume references |
+| `/var/lib/myproduct/<component>/config.yaml` | Authoritative persistent production config |
+
+Initialization and dev use exactly one merge rule: common defaults first,
+component defaults next, explicit overrides last. Merge is at the top level.
+A later value replaces the entire earlier value, including `SECRET_FILES`,
+`VOLUME_FILES` and `GENERATED_SECRETS` maps/lists; no recursive merge or list
+concatenation takes place. Duplicate YAML keys are rejected in each source file.
+Individual layers may be incomplete; the complete merged result is validated.
+Dev overrides apply to all rendered components, with no per-component override
+syntax. A missing dev file means no overrides; an invalid existing file fails.
+`IP_ADDRESS` belongs to core because only its proxy binds the host address.
+
+From a verified, unpacked bundle, run as the service user:
+
+```sh
+as_product python3 "$release/deploy.py" init-config core
+# Or, from the release directory as myproduct: ./deploy init-config core
+```
+
+Only components included in that bundle may be initialized. The command writes
+one complete persistent config, mode 0600 in a private 0700 component directory,
+without generating secrets, copying certificates, loading images or starting
+services. Symlink paths are rejected. An existing file is retained exactly,
+even if empty or invalid; installation still validates it.
+
+On a fresh app install, initialize core, edit its common settings, then initialize
+the app. Prepare certificates/credentials with the existing certificate script,
+edit component-specific settings, then install. When a core config already
+exists, app/help initialization explicitly uses only its actual `PUBLIC_ORIGIN`
+and `HTTPS_PORT` as final overrides. Other core settings are never copied.
+An invalid core config or missing shared setting fails instead of falling back
+to release defaults. If core is installed but its config file is missing, restore
+that authoritative file from a private backup before initializing a new component. A help bundle cannot install core or run without installed
+core. Installation rejects inconsistent shared values; it never rewrites config
+to resolve a mismatch.
+
+Production install and upgrade read only persistent component config. Release
+defaults are never merged into it, and config is never overwritten or extended
+automatically. Existing complete files continue to work unchanged. If a new
+release needs an absent key, install fails before image operations with the
+persistent file path and key name, without its value. Before retrying, back up
+that file privately and explicitly add the required key using `sudoedit`; consult
+the release’s defaults and notes for its type and meaning. Add shared changes
+consistently to core and dependents. Defaults are examples for this manual step,
+not an automatic migration mechanism. Explicit edits take effect when that
+component is rendered during installation. An equal-core app/help install keeps
+installed core YAML/Quadlet; use a controlled newer-core release to apply changes
+that require rendering core again. Public route/client imports are updated
+independently and can restart core without upgrading its version.
+
+Relative paths in all three file settings resolve from the materialized config
+folder: `/var/lib/myproduct/<component>/` in production and
+`build/dev/<component>/` in dev, never from the defaults file. Existing absolute
+and `~` paths remain supported for secret/volume inputs. Generated secrets must
+stay confined to that component’s config folder, including through symlinks.
+Initialization writes path references only; credentials must be prepared separately.
+
+Manifests are rendered before Podman sees them. Whole-value placeholders such as
+`Clients__0__AllowedCorsOrigins__0: '@@ALLOWED_CORS_ORIGIN@@'` require a complete
+config value, for example `ALLOWED_CORS_ORIGIN: "https://example.test"`.
+They preserve YAML types; ConfigMap data is converted to text. Partial string
+interpolation and `envsubst` are not supported. Missing values identify their key
+and config file without exposing secret values.
+
+Standalone manifest fixtures in `examples/` and registry acceptance retain their
+explicit fixture `config.yaml` and persistent `~/config.yaml` paths. These are
+separate from the product’s component config model. Historical reports under `~/podman-offline-acceptance-runs/` may retain old
+config names; those evidence files are not rewritten.
+
 ## Run locally
 
 ```sh
 ./dev/build-images.sh
 ./dev/pull-images.sh
-cp config.example.yaml config.yaml   # edit common dev settings if needed
-chmod 600 config.yaml
+cp config/dev.yaml.example config/dev.yaml   # optional local overrides
+chmod 600 config/dev.yaml
 ./dev/dev.sh up
 python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
@@ -57,8 +136,13 @@ APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
 
 The dev helper creates missing demo credentials under `build/dev/`, reuses them
 on subsequent starts, and runs `./deploy prepare` followed by `podman kube play`.
-Prepare reads the repo's `config.yaml`; per-component dev config, keys and import
-archives live under `build/dev/<component>/`. `build/install.yaml` is private
+Run `./deploy prepare` from the source checkout; product bundles reject dev
+prepare and use persistent config through install. Standalone fixtures retain
+their explicit prepare flow. Component prepare merges common defaults, component
+defaults and optional `config/dev.yaml`.
+The local overrides apply to every rendered component. Generated config under
+`build/dev/<component>/` is output, never an input layer; credentials and data
+are retained between renders. Keys and import archives also live there. `build/install.yaml` is private
 (0600). Down preserves data volumes. Do not delete dev credentials while keeping
 the corresponding database volumes: their initialized passwords would differ.
 The default HTTPS name is `myproduct-proxy:8443`; the smoke test maps it locally
@@ -99,12 +183,14 @@ unreleased version; published release tags must remain immutable.
 (cd dist && sha256sum -c ./*.sha256)
 ```
 
-One invocation creates all three bundles. Each contains only its components,
+One invocation creates all three bundles. Each contains
+`config/common.defaults.yaml`, its components’ `config.defaults.yaml`, only its
+components,
 `deploy`/`deploy.py`, scripts, Quadlet templates, version metadata and its own
 `images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
 Checksums cover all shipped files. Apps/dev/tests/examples/acceptance and local
 config, passwords and keys are not shipped. Optional component `files/` is for
-public product payloads. Declarations in local/example configs prevent generated
+public product payloads. Declarations in common/component defaults and local/materialized dev config prevent generated
 secrets from being copied into bundles, including through symlink aliases. Keep
 private files out of shipped directories and retain their declarations.
 
@@ -124,7 +210,9 @@ preserve int/string types; ConfigMap data becomes text.
 
 `SECRET_FILES: {id: [paths]}` encodes files into Secrets (about 375 kB per id).
 Directories expand one level; nested directories are not allowed for Secrets.
-`VOLUME_FILES` creates private import tar archives and PVCs. Podman imports at
+`VOLUME_FILES` creates private import tar archives and PVCs. Import archives
+normalize ownership, modes and timestamps (mtime 0), so identical imported
+content has a stable checksum across fresh staging directories. Podman imports at
 start, overwriting matching files while preserving app-created/unlisted files.
 Symlinks in product output/state paths are refused to prevent sibling writes.
 
@@ -282,13 +370,14 @@ sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file "myproduct-$bundle"
 sudo fapolicyd-cli --update
 wait_trust "$release/deploy.py"
+as_product python3 "$release/deploy.py" init-config core
+sudoedit /var/lib/myproduct/core/config.yaml
+# Set core PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS before initializing the app.
+as_product python3 "$release/deploy.py" init-config "$bundle"
 for component in core "$bundle"; do
     as_product bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$component" myproduct-proxy
-    if ! sudo test -e "/var/lib/myproduct/$component/config.yaml"; then
-        sudo install -o myproduct -g myproduct -m 0600 "$release/components/$component/config.example.yaml" "/var/lib/myproduct/$component/config.yaml"
-    fi
 done
-sudoedit /var/lib/myproduct/core/config.yaml /var/lib/myproduct/app1/config.yaml
+sudoedit "/var/lib/myproduct/$bundle/config.yaml"
 sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
 sudo systemctl --user -M myproduct@ status myproduct-core.service myproduct-app1.service
 ```
@@ -301,15 +390,24 @@ home and runtime, renders, loads/verifies images, writes component imports/units
 and calls `systemctl --user`. It does not wait for health; do the checks below.
 
 To add app2, repeat checksum/unpack/trust with `bundle=app2`, initialize only app2
-credentials/config (keep core's existing config), edit it to match core and install.
-To add help, repeat with `bundle=help`; copy only its missing config and install.
+config with `as_product python3 "$release/deploy.py" init-config app2`, prepare its
+credentials, edit component-specific settings and install. Keep existing core config.
+To add help, repeat with `bundle=help`; run `as_product python3 "$release/deploy.py" init-config help` and install.
 Help needs no new credentials. These installs update shared routing/client imports
 and restart core, while retaining the other app's service/data.
 
 ## Upgrade and uninstall
 
+Help can be upgraded alone: transfer only the new help archive/checksum, verify
+and trust its deploy.py in the help trust file, install, verify healthy services
+and new HTTPS help content, then retire the old help release/trust entry. App
+bundles need no retransmission. With an unchanged route, core is not restarted.
+A changed help route restarts core explicitly, without changing core version or
+restarting app services.
+
+
 For an upgrade, verify/unpack/trust the new bundle as above, using the same own
-trust file. Reuse persistent config and credentials: do not copy example config
+trust file. Reuse persistent config and credentials: do not copy defaults
 or generate a new CA/password set. Install and check health/e2e first. Only after
 success remove the old own trust entry, leaving other bundles' trust untouched:
 
@@ -394,7 +492,7 @@ be recorded separately and old evidence is never changed.
 | --- | --- |
 | Component/bundle | Add component manifests/config, bundle selection and validated names/services/state paths. Extend the fixed demo component IDs and dependencies deliberately. |
 | Image | Add apps/<app>/Containerfile for a local myproduct image, or publish a full registry tag; image lists come from manifests. |
-| Config | Update the component config.example.yaml and its existing prod config; never overwrite existing credentials. |
+| Config | Update common/component defaults for future initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
 | Proxy/OIDC | Own route.conf/client.yaml and public certificate; registrations go through imported core volumes and current indexes. |

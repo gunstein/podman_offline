@@ -1,3 +1,5 @@
+/config/dev.yaml
+# Legacy standalone local config
 /config.yaml
 /generated-certificates/
 /PKI/private/

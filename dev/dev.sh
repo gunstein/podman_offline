@@ -4,11 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in
     up)
-        if [[ ! -f config.yaml ]]; then install -m 0600 config.example.yaml config.yaml; fi
+        if [[ ! -e config/dev.yaml && ! -L config/dev.yaml ]]; then install -m 0600 config/dev.yaml.example config/dev.yaml; fi
         hostname=$(python3 - <<'DEV_HOST'
 from urllib.parse import urlsplit
 import deploy
-print(urlsplit(deploy.load_config(deploy.CONFIG)["PUBLIC_ORIGIN"]).hostname)
+print(urlsplit(deploy.component_defaults("core", dev=True)["PUBLIC_ORIGIN"]).hostname)
 DEV_HOST
 )
         for component in core app1 app2 help; do
