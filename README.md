@@ -110,6 +110,10 @@ private files out of shipped directories and retain their declarations.
 
 ## Config, secrets and persistence
 
+`PUBLIC_ORIGIN` must be an HTTPS origin with no credentials, path, query or fragment.
+Invalid values are rejected with the config path and field name; their contents
+are never included in the error.
+
 Prod reads `~/core/config.yaml`, `~/app1/config.yaml`, `~/app2/config.yaml` and
 `~/help/config.yaml`. Relative `SECRET_FILES`/`VOLUME_FILES` paths are resolved
 from that config's directory; absolute paths and `~` are supported. Config keys

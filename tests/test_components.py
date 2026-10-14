@@ -1,9 +1,12 @@
 """Test component namespace and rootless isolation without Podman or systemd."""
 
+import contextlib
+import io
 import json
 import shutil
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 import yaml
 from test_deploy import DeployFixture, document
@@ -249,6 +252,72 @@ class ComponentTests(DeployFixture):
         )
         with self.assertRaisesRegex(deploy.DeployError, "Invalid public client"):
             deploy.registration_stage(["app1"], work)
+
+    def test_public_origin_accepts_https_and_redacts_invalid_values(self):
+        """Keep valid hostnames while rejecting malformed origins without their contents."""
+        parsed = deploy.public_origin("https://example.test:8443/", "config.yaml")
+        self.assertEqual(parsed.hostname, "example.test")
+        self.assertEqual(parsed.geturl(), "https://example.test:8443")
+        values = (
+            "https://synthetic-credential＠example.test",
+            "https://[synthetic-credential",
+            "https://user:synthetic-credential@example.test",
+            "https://example.test/?synthetic-credential",
+            "https://example.test/#synthetic-credential",
+            "https://example.test/synthetic-credential",
+            "http://synthetic-credential.example.test",
+            1234,
+        )
+        for value in values:
+            failure = self.assertRaisesRegex(
+                deploy.DeployError, "PUBLIC_ORIGIN.*config.yaml"
+            )
+            with self.subTest(value=value), failure as caught:
+                deploy.public_origin(value, "config.yaml")
+            self.assertNotIn("synthetic-credential", str(caught.exception))
+            self.assertIsNone(caught.exception.__cause__)
+
+    def test_core_origin_failure_precedes_generation_and_cli_does_not_echo_value(self):
+        """Reject a malformed core origin before writes and keep CLI stderr free of its value."""
+        secret = "synthetic-credential"
+        self.write(
+            "home/core/config.yaml",
+            yaml.safe_dump(
+                {
+                    "HTTPS_PORT": 8443,
+                    "PUBLIC_ORIGIN": "https://" + secret + "＠example.test",
+                    "GENERATED_SECRETS": ["generated/token"],
+                }
+            ),
+        )
+        output, errors = io.StringIO(), io.StringIO()
+        arguments = mock.patch.object(deploy.sys, "argv", ["deploy", "install"])
+        capture = contextlib.redirect_stdout(output)
+        diagnostics = contextlib.redirect_stderr(errors)
+        with arguments, capture, diagnostics:
+            self.assertEqual(deploy.main(), 1)
+        self.assertIn("PUBLIC_ORIGIN", errors.getvalue())
+        self.assertIn("config.yaml", errors.getvalue())
+        self.assertNotIn(secret, output.getvalue() + errors.getvalue())
+        self.assertFalse((deploy.HOME / "core/generated/token").exists())
+        self.process.assert_not_called()
+
+    def test_registration_origin_failure_does_not_echo_value_or_write_live_state(self):
+        """Reject a malformed shared origin during client staging without exposing it."""
+        work = self.registration_fixture()
+        origin = "https://synthetic-credential＠example.test"
+        for component in ("core", "app1"):
+            self.write(
+                "home/" + component + "/config.yaml",
+                yaml.safe_dump({"HTTPS_PORT": 8443, "PUBLIC_ORIGIN": origin}),
+            )
+        with self.assertRaisesRegex(
+            deploy.DeployError, "PUBLIC_ORIGIN.*app1/config.yaml"
+        ) as caught:
+            deploy.registration_stage(["app1"], work)
+        self.assertNotIn("synthetic-credential", str(caught.exception))
+        self.assertFalse((deploy.HOME / "routes").exists())
+        self.assertFalse((deploy.HOME / "clients").exists())
 
     def test_equal_core_images_are_still_verified(self):
         """Verify bundled core image names even when the equal core service is retained."""

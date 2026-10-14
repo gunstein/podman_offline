@@ -123,6 +123,29 @@ def load_config(path):
     return config
 
 
+def public_origin(value, path):
+    """Validate an HTTPS origin without exposing its supplied value in errors."""
+    message = f"PUBLIC_ORIGIN in {path} must be an HTTPS origin without credentials, path or query"
+    if not isinstance(value, str):
+        raise DeployError(message)
+    try:
+        address = urlsplit(value.rstrip("/"))
+        hostname = address.hostname
+    except ValueError:
+        raise DeployError(message) from None
+    if (
+        address.scheme != "https"
+        or not hostname
+        or address.path
+        or address.query
+        or address.fragment
+        or address.username is not None
+        or address.password is not None
+    ):
+        raise DeployError(message)
+    return address
+
+
 def generated_secret_paths(config, base_dir):
     """Resolve declared secret paths without generating or reading their contents."""
     entries = config.get(GENERATED_SECRETS, [])
@@ -520,10 +543,9 @@ def render(
             check_component_names(load_yaml_all(path), component, path)
         check_component_config_names(config, component, config_path)
     if component == "core" and "PUBLIC_ORIGIN" in config:
-        origin = config.get("PUBLIC_ORIGIN")
-        if not isinstance(origin, str) or not urlsplit(origin).hostname:
-            raise DeployError(f"PUBLIC_ORIGIN in {config_path} must be an HTTPS origin")
-        config["PUBLIC_HOSTNAME"] = urlsplit(origin).hostname
+        config["PUBLIC_HOSTNAME"] = public_origin(
+            config["PUBLIC_ORIGIN"], config_path
+        ).hostname
     generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, SECRET_FILES, config_path.parent)
     volume_config = dict(config)
@@ -893,24 +915,10 @@ def registration_stage(components, directory, home=None):
                 raise DeployError(
                     f"Expected a public PEM certificate in {certificate}"
                 ) from None
-            if not isinstance(config.get("PUBLIC_ORIGIN"), str):
-                raise DeployError(
-                    f"PUBLIC_ORIGIN in {component} config must be an HTTPS origin"
-                )
+            public_origin(
+                config.get("PUBLIC_ORIGIN"), component_paths(component, home)[0]
+            )
             origin = config["PUBLIC_ORIGIN"].rstrip("/")
-            address = urlsplit(origin)
-            if (
-                address.scheme != "https"
-                or not address.hostname
-                or address.path
-                or address.query
-                or address.fragment
-                or address.username
-                or address.password
-            ):
-                raise DeployError(
-                    "PUBLIC_ORIGIN must be an HTTPS origin without credentials, path or query"
-                )
             prefix = "clients/" + component + "/"
             updates[prefix + "client.crt"] = certificate_bytes
             updates[prefix + "client.json"] = json.dumps(
