@@ -1,12 +1,24 @@
 # Backlog
 
-Planned work, not implemented behavior. The deploy refactor is the first priority;
-the requested scope is preserved verbatim below. Each item requires separate
-implementation and verification.
+Planned work, not implemented behavior. Each item requires separate implementation
+and verification. Recommended order: establish the test baseline, rename core to
+platform (item 8), extract Identity (item 9), then perform the deploy refactor
+(item 1). Item numbers are stable references, not execution priority.
+
+The full agent task descriptions for items 8 and 9 are preserved below, with
+heading levels adjusted for this document. The later clarification in item 9
+supersedes item 8's bundled-platform assumptions: platform is to be a separate
+bundle with explicit dependencies, and app bundles must not embed it. Do not
+reintroduce the older bundle model while renaming. Inspect the actual repository
+baseline before implementation; these tasks are not claims of completed work.
+
+The refactor must preserve the behavior and naming established by items 8 and 9;
+its original core terminology below is historical scope, not an instruction to
+restore core or merge Identity back into platform.
 
 ## 1. Deploy maintainability refactor
 
-Status: planned.
+Status: planned; after items 8 and 9 and a verified test baseline.
 
 Refactor the deploy implementation for maintainability without redesigning the architecture or changing behavior.
 
@@ -185,3 +197,521 @@ Status: follow up when adding another PostgreSQL image or mount layout.
 Review source for items 6–7 and the expanded upgrade scenario: static code review
 of `improvements-0-2` through `87f4e98`. These are follow-up requirements and
 verification gaps, not evidence of completed runtime support.
+
+## 8. Rename core to platform
+
+Status: planned; before item 9 and the deploy refactor. The later separate-bundle clarification above takes precedence over the original bundle assumptions in this task.
+
+Gi den delte komponenten `core` navnet `platform` i `gunstein/podman_offline`.
+
+Dette er en avgrenset navneendring. Behold arkitektur, funksjonalitet, sikkerhetskontroller og komponentisolasjon. Ikke gjennomfør modulrefaktoreringen samtidig.
+
+### 1. Mål og begrepsbruk
+
+Bruk `platform` om den delte komponenten som inneholder Identity, identitetsdatabasen og HTTPS-proxyen.
+
+App1, app2 og help skal fortsatt ha samme avhengighet til denne komponenten som de i dag har til core.
+
+Omdøpingen skal være konsekvent i aktiv kode, konfigurasjon, manifester, tester og dokumentasjon.
+
+### 2. Kartlegg alle berørte navn før endringer
+
+Undersøk blant annet:
+
+- `components/core/`.
+- `CORE_VERSION`.
+- Bundle-definisjoner og descriptors.
+- Funksjoner, variabler og feilmeldinger.
+- Persistent komponentmappe og installed-markør.
+- Quadlet-/systemd-navn.
+- Pod-, Secret-, PVC- og ConfigMap-navn.
+- Hostnames og `DB_HOST`.
+- Registrerings- og importarkivnavn.
+- Sertifikatgenerering og tilhørende filstier.
+- Dev-script, acceptance-script og fixtures.
+- README, verifikasjonsrapporter og backlog.
+
+Skill mellom navn som tilhører komponenten, eksterne begreper og historiske referanser. Ikke bruk ukritisk global søk-og-erstatt.
+
+### 3. Ønsket navngivning
+
+Bruk blant annet:
+
+```text
+components/platform/
+PLATFORM_VERSION
+
+/var/lib/myproduct/platform/config.yaml
+/var/lib/myproduct/installed/platform
+
+myproduct-platform.service
+myproduct-platform.kube
+myproduct-platform.yaml
+```
+
+Ressurser med komponentprefikset `core-` skal få `platform-`, eksempelvis:
+
+```text
+platform-identity
+platform-identity-postgres
+platform-identity-data
+platform-database-password
+platform-routes
+platform-clients
+```
+
+Oppdater alle referanser til de omdøpte ressursene.
+
+Behold navn som ikke trenger å endres:
+
+- Produktnavnet `myproduct`.
+- Det delte nettverket `myproduct`.
+- App1/app2/help og deres egne ressurser.
+- Offentlige URL-paths som `/identity/`, `/app1/`, `/app2/` og `/help/`.
+- Databasebrukere og databasenavn, eksempelvis `identity`.
+- OIDC-klient-ID-er og scopes.
+- Image-repositorier som ikke inneholder komponentnavnet.
+
+Ikke endre credentials eller sertifikatinnhold bare fordi komponenten får nytt navn.
+
+### 4. Bundle-modell og kommandoer
+
+Bundle-modellen skal bli:
+
+```yaml
+app1: [platform, app1]
+app2: [platform, app2]
+help: [help]
+```
+
+Behold de tre eksisterende bundle-typene og deres filnavnmønstre:
+
+```text
+myproduct-app1-<version>-offline.tar.gz
+myproduct-app2-<version>-offline.tar.gz
+myproduct-help-<version>-offline.tar.gz
+```
+
+Det skal ikke opprettes en separat platform-bundle.
+
+Behold rotkommandoene. Oppdater komponentargumentene:
+
+```sh
+./deploy init-config platform
+./deploy uninstall platform
+./deploy uninstall platform --delete-data
+```
+
+Gamle `core`-argumenter skal ikke utføre utilsiktede operasjoner. Gi en tydelig melding om nytt navn dersom de brukes.
+
+Platform skal fortsatt:
+
+- Installeres sammen med første app.
+- Beholdes ved lik platform-versjon, med eksisterende regler for registreringsendringer og restart.
+- Oppgraderes ved nyere platform-versjon.
+- Avvise nedgradering.
+- Ikke kunne avinstalleres mens app1, app2 eller help krever den.
+
+### 5. Eksisterende installasjoner og migrering
+
+Omdøpingen berører persistente ressursnavn. Den må ikke føre til at en eksisterende database erstattes av et nytt tomt volum uten at operatøren forstår det.
+
+Denne oppgaven gir ikke tillatelse til å slette, resette eller migrere eksisterende produksjonsstate automatisk.
+
+Bruk følgende avgrensning:
+
+- Implementer den nye navngivningen for nye installasjoner.
+- Ikke implementer automatisk migrering fra `core` til `platform`.
+- Oppdag gammel core-layout og avvis operasjoner som ellers kan opprette en parallell platform-installasjon eller påvirke gammel state.
+- Feil før generering av nye secrets, image-operasjoner, skriving av installert config/registreringer eller endringer i tjenester.
+- Gi en tydelig melding om at gammel installasjon krever en separat migreringsprosedyre eller en eksplisitt ny installasjon.
+- Avvis også blandet core/platform-state fremfor å gjette hvilken som er autoritativ.
+
+Kontrollen må ikke bare bruke installed-markøren. Undersøk relevante gamle config-/tjenestefiler og persistente databasevolumer, siden avinstallasjon kan ha beholdt data.
+
+Hold kontrollen konkret og avgrenset til produktets kjente ressurser. Feil ved nødvendige tilstandskontroller skal ikke tolkes som fravær.
+
+Behold gamle filer og volumer urørt ved avvisning. Ikke legg til en automatisk «cleanup»-funksjon.
+
+Dokumenter kompatibilitetsbruddet tydelig. Eksisterende installasjoner skal fortsatt kunne administreres med sin tidligere release.
+
+### 6. Versjonering
+
+Ikke publiser endringen under samme releaseversjon som eksisterende layout.
+
+Oppdater `VERSION` og den nye `PLATFORM_VERSION` i tråd med prosjektets versjoneringspraksis, og forklar at navneendringen påvirker oppgraderingskompatibilitet.
+
+Ikke endre image-tags dersom image-innholdet er uendret. Hvis image-innhold faktisk må endres, bruk nye tags og behold prinsippet om immutable release-tags.
+
+### 7. Tester
+
+Oppdater eksisterende tester til den nye navngivningen uten å svekke assertions.
+
+Verifiser minst:
+
+- Korrekte platform-prefikser og referanser i rendret YAML.
+- Initialisering av platform-config.
+- App-config arver de riktige felles verdiene fra platform.
+- App1 og app2 kan hver være første installerte app.
+- Help alene avvises.
+- Lik, nyere og eldre `PLATFORM_VERSION` håndteres som før.
+- Help-only og app-only upgrade beholder upåvirkede komponenter.
+- Databasepassord og databasevolumer er koblet korrekt.
+- Platform-uninstall blokkeres når dependenter finnes.
+- `--delete-data` bare retter seg mot valgt komponents ressurser.
+- Bundle-innhold, image-utvalg og checksums er korrekte.
+- Gammel core-layout og blandet layout avvises uten endringer.
+- Gamle core-databasevolumer oppdages selv om installed-markøren mangler.
+- Feil ved tilstandskontroll gir kontrollert avvisning.
+
+Behold historiske fixtures og historiske release-kilder når de faktisk skal representere gammel kode.
+
+En test som tidligere oppgraderte fra en core-basert release kan ikke bare gis nye navn og fortsatt hevde å teste den historiske oppgraderingen. Behold relevant historisk dekning, men test tydelig avvisning ved denne nye kompatibilitetsgrensen.
+
+### 8. Dokumentasjon og opprydding
+
+Oppdater aktive beskrivelser, kommandoer, filstier og diagrammer til `platform`.
+
+Søk gjennom hele repoet etter relevante forekomster av `core`, `CORE_VERSION` og `core-`.
+
+Forklar bevisst beholdte forekomster, eksempelvis:
+
+- Gammel-layout-deteksjon.
+- Historiske fixtures.
+- Tidligere verifikasjonsrapporter.
+- Dokumenterte migreringsbegrensninger.
+
+Ikke omskriv gamle testresultater eller historisk evidence slik at det ser ut som de ble kjørt med platform-layout.
+
+Oppdater backlog med eventuell fremtidig migreringsoppgave. Ikke bland den inn i modulrefaktoreringen.
+
+### 9. Verifikasjon og rapport
+
+Kjør:
+
+- Alle produkttester.
+- Alle acceptance-harness-tester.
+- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller.
+
+Behold Python 3.6-kompatibilitet for host-verktøyene.
+
+Kjør relevante nye installasjons- og livssyklusscenarioer i det etablerte labmiljøet dersom dette er tilgjengelig og autorisert. Ikke slett eksisterende state eller reset andre miljøer.
+
+Skill mellom lokale tester, harness-tester og faktiske målmaskinkjøringer.
+
+Rapporter:
+
+1. Hvilke navn og filer som er endret.
+2. Hvilke navn som bevisst er beholdt.
+3. Hvordan gammel og blandet layout oppdages og avvises.
+4. Konsekvensen for eksisterende installasjoner.
+5. Versjonsendringer.
+6. Testresultater og verifikasjonshull.
+7. Arbeid som er utsatt, særlig eventuell migrering.
+
+Foretrekk enkel og konsekvent navngivning fremfor et generisk alias- eller kompatibilitetsrammeverk.
+
+## 9. Extract Identity into a separate component and bundle
+
+Status: planned; after the naming change in item 8 and before the deploy refactor. Platform and Identity are separate bundles with explicit dependencies.
+
+Skill Identity ut av `platform` som en egen komponent med en egen separat offline-bundle i `gunstein/podman_offline`.
+
+Dette er en funksjonell oppdeling som skal gjøres før den planlagte modulrefaktoreringen. Ikke gjennomfør modulrefaktoreringen samtidig.
+
+### 1. Undersøk dagens løsning først
+
+Les gjeldende kode, bundle-definisjoner, avhengighetsmodell, tester og dokumentasjon.
+
+Platform er allerede ment som en separat bundle. Ikke ta utgangspunkt i den tidligere modellen hvor app-bundler inkluderte core/platform.
+
+Gjenbruk eksisterende mekanismer for komponenter, bundles, versjoner og avhengigheter. Ikke innfør et parallelt system eller et generisk plugin-rammeverk.
+
+Registrer baseline-commit og kjør eksisterende produkt- og acceptance-harness-tester før endringer.
+
+### 2. Ønsket ansvarsdeling
+
+Etter oppdelingen skal:
+
+| Komponent | Ansvar |
+|---|---|
+| `platform` | HTTPS-proxy, proxyens TLS-materiale og offentlige ruteregistreringer |
+| `identity` | IdentityServer, identitetsdatabase, databasepassord, signeringsmateriale, Data Protection-state, demobrukere og OIDC-klientregistreringer |
+| `app1` | App1, egen database og egne credentials |
+| `app2` | App2, egen database og egne credentials |
+| `help` | Hjelpeinnhold og egen ruteregistrering |
+
+Behold eksisterende eierskap og sikre livssyklusregler for delt nettverk og eventuell felles demo-CA. Ikke slett eller regenerer felles materiale som følge av oppdelingen.
+
+Kartlegg alle eksisterende ressurser og filer før flytting, slik at ingen persistent state blir glemt.
+
+### 3. Separate bundles og eksplisitte avhengigheter
+
+Bruk følgende logiske modell:
+
+| Bundle | Innhold | Avhengigheter |
+|---|---|---|
+| `platform` | Platform-komponenten | Ingen |
+| `identity` | Identity-komponenten | Platform |
+| `app1` | App1-komponenten | Platform og identity |
+| `app2` | App2-komponenten | Platform og identity |
+| `help` | Help-komponenten | Platform |
+
+Hver bundle skal bare inneholde egne komponentressurser og nødvendige images, i tillegg til felles deploy-kode og nødvendige metadata/defaults.
+
+App-bundler skal ikke inkludere eller installere platform/identity automatisk. Identity-bundlen skal ikke inkludere platform.
+
+Manglende avhengighet skal gi en tydelig feil. Ikke forsøk nettverksnedlasting eller automatisk installasjon fra andre release-mapper.
+
+Oppdater eksisterende bundle-bygging slik at alle definerte bundles produseres, inkludert separat identity-bundle, med prosjektets etablerte filnavnmønster.
+
+### 4. Versjoner og kompatibilitet
+
+Identity skal kunne versjoneres og oppgraderes uavhengig av platform og appene.
+
+Bruk eksisterende versjoneringsmodell. Hvis denne bruker separate versjonsfiler, innfør en tilsvarende `IDENTITY_VERSION`. Ikke opprett et nytt versjoneringssystem hvis repoet allerede har en egnet modell.
+
+Avhengigheter skal ha eksplisitte, dokumenterte versjonskrav. Gjenbruk eksisterende syntaks og sammenligningsregler. Hvis slike krav ikke finnes, innfør den minste mekanismen som dekker behovet, og begrunn valget.
+
+Valider:
+
+- At avhengighetene er installert.
+- At deres versjoner tilfredsstiller innkommende bundles krav.
+- At oppgradering av platform eller identity fortsatt tilfredsstiller kravene til installerte dependenter.
+
+Oppbevar nødvendig avhengighetsmetadata som installert state. Kontrollene skal ikke avhenge av at gamle release-mapper fortsatt finnes.
+
+Ikke anta kompatibilitet bare fordi en versjon er nyere.
+
+Behold eksisterende regler for reinstallasjon og nedgradering der de fortsatt er relevante. Dokumenter eventuelle nødvendige endringer.
+
+Alle avhengighets- og versjonsavvisninger skal skje før secret-generering, image-load, skriving av registreringer/tjenestefiler eller restart.
+
+### 5. Skill ruteregistreringer fra OIDC-klientregistreringer
+
+I dagens samlede løsning kan begge registreringstypene påvirke samme komponent. Etter oppdelingen skal eierskapet være tydelig:
+
+- Platform konsumerer offentlige ruter.
+- Identity konsumerer offentlige OIDC-klientregistreringer.
+- Appene eier sine private klientnøkler og leverer bare offentlig klientmetadata og sertifikat til identity.
+- Identity registrerer sin egen offentlige route hos platform.
+- Help registrerer bare en route hos platform.
+
+Behold indeksmekanismen som hindrer at gamle filer i importvolumer holder fjernede ruter eller klienter aktive.
+
+Restartbeslutninger skal være separate:
+
+| Endring | Forventet påvirkning |
+|---|---|
+| Bare app-route endres | Platform oppdateres/restartes |
+| Bare OIDC-klientregistrering endres | Identity oppdateres/restartes |
+| Begge endres | Begge berørte komponenter oppdateres/restartes |
+| Ingen registrering endres | Ingen unødvendig restart av platform/identity |
+| Help-route endres | Platform påvirkes, identity beholdes |
+| Identity oppgraderes uten endret offentlig route | Identity påvirkes, platform beholdes |
+
+Appenes containere skal ikke restartes bare fordi platform eller identity restartes. Et kort avbrudd i tilgjengelighet eller innlogging er noe annet enn restart av appene.
+
+Ikke legg til nye registreringskommandoer hvis eksisterende installasjonsflyt kan håndtere dette tydelig.
+
+### 6. Behold den offentlige innloggingskontrakten
+
+Oppdelingen skal ikke samtidig endre:
+
+- `/identity/`.
+- Offentlig issuer-URL.
+- Appenes klient-ID-er og scopes.
+- Redirect-URI-er.
+- `/app1/`, `/app2/` og `/help/`.
+- Appenes cookie-navn og paths.
+
+Oppdater interne hostnames og upstream-referanser der det er nødvendig.
+
+Platform skal kunne kjøre og betjene help uten at identity er installert. Proxykonfigurasjonen må ikke kreve at en fraværende identity-tjeneste kan DNS-resolves ved oppstart.
+
+Verifiser fortsatt delt innlogging mellom app1 og app2.
+
+### 7. Config, secrets og database
+
+Identity skal få egen komponentconfig og persistent mappe:
+
+```text
+components/identity/config.defaults.yaml
+/var/lib/myproduct/identity/config.yaml
+```
+
+Følg eksisterende configmodell:
+
+- Defaults brukes ved initialisering og dev.
+- Produksjon bruker autoritativ persistent komponentconfig.
+- Upgrade overskriver ikke eksisterende config.
+
+Identity skal arve relevante felles verdier fra installert platform ved config-initialisering, etter samme etablerte prinsipp som øvrige dependenter.
+
+Flytt identity-spesifikke DB-innstillinger, Secret-/volumdefinisjoner og generated-secret-oppføringer ut av platform.
+
+Behold:
+
+- Én persistent kilde for hvert databasepassord.
+- Samsvar mellom PostgreSQL-server og klient.
+- Beskyttelse mot å generere nytt passord når database-state allerede finnes.
+- Runtime-bygging av `ConnectionStrings__Default`.
+- Korrekt escaping og sikker feilhåndtering.
+- Eksisterende databasebruker og databasenavn hvis det ikke finnes en nødvendig grunn til å endre dem.
+
+Ikke innfør passordrotasjon, databaseprivilegium-endringer eller schema-migrering i denne oppgaven.
+
+### 8. Eksisterende installasjoner: ikke migrer automatisk
+
+Oppdelingen berører persistent identitetsdatabase, credentials, signeringsnøkler, Data Protection-state og klientregistreringer.
+
+Denne oppgaven gir ikke tillatelse til automatisk flytting, sletting eller reinitialisering av eksisterende installert state.
+
+Implementer ny layout for nye installasjoner. Oppdag eksisterende layout hvor identity fortsatt inngår i platform, og avvis inkompatibel installasjon/oppgradering før endringer.
+
+Kontrollen skal også håndtere:
+
+- Beholdte databasevolumer uten installed-markør.
+- Blandet gammel og ny layout.
+- Delvis eksisterende credentials eller tjenestefiler.
+- Feil ved nødvendige tilstandskontroller.
+
+Ikke bruk eksistensen av platform alene som tegn på gammel layout; platform er også en gyldig selvstendig komponent i den nye modellen.
+
+Gi en tydelig melding om at den gamle layouten krever en separat migreringsprosedyre eller eksplisitt ny installasjon. La eksisterende state være urørt og fortsatt administrerbar med tidligere release.
+
+Ikke lag tom identitetsdatabase eller nye signeringsnøkler som skjult erstatning for gammel state.
+
+Dokumenter kompatibilitetsbruddet og før eventuell migrering som egen backlog-oppgave.
+
+### 9. Avinstallasjon
+
+Avhengigheter skal styre avinstallasjon:
+
+- Identity kan ikke fjernes mens installerte apper krever den.
+- Help skal ikke blokkere avinstallasjon av identity.
+- Platform kan ikke fjernes mens identity, app1, app2 eller help krever den.
+
+Når en app fjernes:
+
+- Fjern dens route fra platform.
+- Fjern dens offentlige OIDC-klientregistrering fra identity.
+- Oppdater/restart bare de berørte tjenestene.
+- Behold andre komponenters registreringer, tjenester og data.
+
+Når identity fjernes uten dependenter:
+
+- Fjern dens route fra platform.
+- Behold platform og eventuell help.
+- Behold identity-data som standard.
+
+`--delete-data` skal bare slette valgt komponents egne data. Delt nettverk, felles CA og andre komponenters credentials skal ikke slettes.
+
+### 10. Dev og bundling
+
+Dev skal bruke samme komponentdeling og registreringsmodell som produksjon, selv om dev-helperen starter hele demosystemet samlet.
+
+Oppdater image-bygging, image-utvalg og bundling etter behov.
+
+Behold:
+
+- Manifestdrevet image-utvalg.
+- `imagePullPolicy: Never`.
+- Ekskludering av privat state og bytecode.
+- Checksums for alle leverte filer.
+- Eksisterende fapolicyd- og SELinux-modell.
+
+Identity-bundlen skal kunne transporteres og oppgraderes alene uten at platform- eller app-bundler må overføres på nytt.
+
+Ikke endre immutable image-tags uten å bygge tilsvarende nye images.
+
+### 11. Tester
+
+Oppdater eksisterende tester uten å svekke sikkerhets- eller isolasjonskontroller. Legg til fokuserte tester for:
+
+#### Installasjon og avhengigheter
+
+- Platform kan installeres alene.
+- Platform og help fungerer uten identity.
+- Identity uten platform avvises før endringer.
+- App uten identity avvises før endringer.
+- Begge apprekkefølger fungerer etter platform og identity.
+- Manglende og inkompatible avhengigheter gir tydelige feil.
+- Oppgradering som bryter installerte dependenters versjonskrav avvises.
+
+#### Registreringer og restart
+
+- Bare route-endring påvirker platform.
+- Bare klientendring påvirker identity.
+- Begge endringer påvirker begge.
+- Uendrede registreringer gir ingen unødvendig restart.
+- Fjernede ruter/klienter er ikke aktive gjennom gamle importfiler.
+
+#### Selvstendig identity-upgrade
+
+Legg til et reelt acceptance-scenario som:
+
+1. Installerer platform, identity og begge apper.
+2. Oppretter brukerdata og verifiserer innlogging.
+3. Bygger og overfører bare en nyere identity-bundle.
+4. Installerer denne.
+5. Verifiserer at ny identity-versjon og nytt image faktisk kjører.
+6. Verifiserer innlogging og appenes databaseoperasjoner.
+7. Verifiserer at identity-data og eksisterende credentials er beholdt.
+8. Verifiserer at platform og appenes versjoner, tjenesteprosesser og konfigurasjon er uendret når registreringene ikke er endret.
+
+Bruk en observerbar endring eller image-identitet som bevis; en oppdatert versjonsmarkør alene er ikke tilstrekkelig.
+
+#### Avinstallasjon og gammel state
+
+- Identity-avinstallasjon blokkeres av apper, men ikke help.
+- Platform-avinstallasjon blokkeres av dependenter.
+- Data beholdes som standard.
+- Eksplisitt sletting er avgrenset til riktig komponent.
+- Gammel samlet platform/identity-layout og blandet layout avvises uten endringer.
+
+Behold relevant eksisterende dekning for help-only upgrade, app-only upgrade, offline installasjon, reboot og persistens. Tilpass forventningene til separate bundles.
+
+### 12. Dokumentasjon
+
+Oppdater README og relevant arkitektur-/testdokumentasjon slik at det er enkelt å forstå:
+
+- Hva hver komponent eier.
+- Hva hver bundle inneholder.
+- Installasjonsrekkefølgen.
+- Hvordan avhengigheter og versjonskrav kontrolleres.
+- Hvem som konsumerer ruter og OIDC-klienter.
+- Hvilke endringer som restarter hvilke tjenester.
+- Hvordan identity oppgraderes alene.
+- Hvilken state som er persistent.
+- Hvorfor gammel samlet layout ikke oppgraderes automatisk.
+
+Oppdater aktive kommandoeksempler og fjern foreldede antakelser om at app-bundler inneholder platform.
+
+Ikke omskriv historiske verifikasjonsrapporter som om de ble kjørt med den nye arkitekturen.
+
+### 13. Verifikasjon og leveranse
+
+Kjør:
+
+- Alle produkttester.
+- Alle acceptance-harness-tester.
+- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller.
+
+Behold Python 3.6-kompatibilitet for host-verktøyene.
+
+Kjør relevante faktiske acceptance-scenarioer i etablert labmiljø dersom dette er tilgjengelig og autorisert. Ikke reset eller endre andre miljøer.
+
+Skill tydelig mellom lokale tester, harness-tester og målmaskinkjøringer. Hvis labkjøring ikke kan utføres, rapporter hvilke garantier som fortsatt er uverifisert.
+
+Rapporter:
+
+1. Ny komponent- og bundle-struktur.
+2. Ressurser og state som har fått ny eier.
+3. Avhengighets- og versjonsmodellen.
+4. Restartreglene for ruter og klienter.
+5. Konsekvensen for eksisterende installasjoner.
+6. Testresultater og verifikasjonshull.
+7. Utsatt arbeid, særlig migrering og modulrefaktorering.
+
+Hold funksjonell oppdeling og senere modulrefaktorering adskilt. Foretrekk eksplisitte, enkle regler fremfor generelle abstraksjoner.
