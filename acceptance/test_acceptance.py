@@ -688,6 +688,100 @@ wait_trust /new/deployment/ /old/deployment/
         )
         self.assertIn(self.trust_helper().strip(), readme)
 
+    def test_prepare_release_retries_trust_in_a_new_process(self):
+        """Reuse extracted files after checksum, add, update or live trust failures."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        code = shell_code(remote, function="prepare_release") + self.trust_helper()
+        stubs = r"""
+sha256sum() { echo archive-check >> "$base/calls"; }
+as_product() {
+    mkdir -p "$product/deployment"
+    touch "$product/deployment/__main__.py" "$product/deployment/common.py"
+    echo extract >> "$base/calls"
+}
+sudo() {
+    shift
+    case "$1" in
+        test) "$@";;
+        bash)
+            echo release-check >> "$base/calls"
+            [[ $failure != checksum ]];;
+        find) shift; command find "$@";;
+        fapolicyd-cli)
+            case "$2" in
+                --file)
+                    [[ $* == "fapolicyd-cli --file add $product/deployment/ --trust-file myproduct-app1" ]] || return 9
+                    echo add >> "$base/calls"
+                    if [[ $failure == add ]]; then return 7; fi
+                    if [[ $failure == partial ]]; then return 1; fi
+                    if [[ -f $base/trusted ]]; then return 1; fi
+                    touch "$base/trusted";;
+                --update)
+                    echo update >> "$base/calls"
+                    [[ $failure != update ]] || return 8
+                    touch "$base/updated";;
+                --dump-db)
+                    echo wait >> "$base/calls"
+                    if [[ -f $base/trusted && -f $base/updated && $failure != wait ]]; then
+                        printf 'file %s 123 %064d\n' "$product/deployment/__main__.py" 0
+                        printf 'file %s 123 %064d\n' "$product/deployment/common.py" 0
+                    elif [[ $failure == partial ]]; then
+                        printf 'file %s 123 %064d\n' "$product/deployment/__main__.py" 0
+                    else
+                        printf 'file /unrelated/file 123 %064d\n' 0
+                    fi;;
+                *) return 9;;
+            esac;;
+        *) return 9;;
+    esac
+}
+sleep() { :; }
+timeout() { shift; "$@"; }
+prepare_release
+"""
+        for failure in ("checksum", "add", "partial", "update", "wait"):
+            with self.subTest(failure=failure):
+                base = self.root / failure
+                base.mkdir()
+                (base / "myproduct-app1-0.4.3-offline.tar.gz").touch()
+                prefix = (
+                    "set -euo pipefail\nbase="
+                    + shlex.quote(str(base))
+                    + '\nstate="$base/state"\nproduct="$state/releases/myproduct-app1-0.4.3"\n'
+                    + "bundle=app1\nversion=0.4.3\nfailure=$1\n"
+                )
+
+                def attempt(stage, script=prefix + code + stubs):
+                    return subprocess.run(
+                        ["bash", "-c", script, "retry-test", stage],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+
+                first = attempt(failure)
+                self.assertNotEqual(first.returncode, 0)
+                self.assertTrue((base / "state/releases/myproduct-app1-0.4.3").is_dir())
+                calls = (base / "calls").read_text().splitlines()
+                if failure == "checksum":
+                    self.assertEqual(
+                        calls, ["archive-check", "extract", "release-check"]
+                    )
+                elif failure == "add":
+                    self.assertEqual(first.returncode, 7)
+                    self.assertNotIn("update", calls)
+                elif failure == "update":
+                    self.assertEqual(first.returncode, 8)
+                    self.assertNotIn("wait", calls)
+                for _ in range(2):
+                    (base / "calls").write_text("")
+                    retry = attempt("none")
+                    self.assertEqual(retry.returncode, 0, retry.stderr)
+                    self.assertEqual(
+                        (base / "calls").read_text().splitlines(),
+                        ["archive-check", "release-check", "add", "update", "wait"],
+                    )
+
     def trust_procedure(self, source, install_status=0, health_status=0):
         """Run the README or VM procedure with stubbed trust and install calls."""
         if source == "remote":

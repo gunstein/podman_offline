@@ -305,6 +305,15 @@ kept in the database for inspection. The HTTP tests do not run JavaScript in a b
 
 ## Local checks of the test harness
 
+Release preparation verifies the archive and extracted checksums before adding
+trust for that bundle's `deployment/` directory. It repeats add/update/wait even
+when the release directory already exists, so a failed trust registration or
+update can be retried without extracting again. An add status of 1 (nothing new
+after duplicate removal) is accepted only if update succeeds and the live trust
+check confirms every package file. Other add errors stop immediately; incomplete
+live trust still fails. This separate helper fix addresses the retry limitation
+recorded in DEPLOY-REFACTOR.md; it does not change deploy's lifecycle retry state.
+
 ```sh
 python3 -m unittest discover -s acceptance -p 'test_*.py'
 bash -n acceptance/remote.sh

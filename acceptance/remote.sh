@@ -55,17 +55,20 @@ INSTALLED
 }
 # Verify and trust only this bundle's release, reusing an already prepared release.
 prepare_release() {
+    local trust_status=0
     cd "$base"
     archive="myproduct-$bundle-$version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
     if ! sudo -n test -d "$product"; then
         # shellcheck disable=SC2024
         as_product tar xzf - -C "$state/releases" < "$archive"
-        sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-        sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "myproduct-$bundle"
-        sudo -n fapolicyd-cli --update
     fi
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+    # Retry trust even after a previous attempt extracted the release successfully.
+    sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "myproduct-$bundle" || trust_status=$?
+    # add returns 1 when all files are already listed. Require complete live trust below.
+    if [[ $trust_status != 0 && $trust_status != 1 ]]; then return "$trust_status"; fi
+    sudo -n fapolicyd-cli --update
     wait_trust "$product/deployment/"
 }
 # Create only missing component configs and credentials; upgrades reuse them.
