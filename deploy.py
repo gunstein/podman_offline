@@ -235,6 +235,7 @@ def init_config(component):
         raise DeployError("core was renamed to platform; use init-config platform")
     if component not in bundle_components():
         raise DeployError(f"Component {component} is not included in this bundle")
+    check_pending("init-config", component)
     if component != "platform":
         component_dependencies(component)
     target = HOME / component / "config.yaml"
@@ -1098,6 +1099,7 @@ def validate_platform_requirement(requirement):
 
 def component_dependencies(component):
     """Validate fixed component dependencies and installed dependents before writes."""
+    check_pending("install", component)
     requires = load_yaml(ROOT / "bundle.yaml")["requires"]
     for dependency, requirement in requires.items():
         marker = HOME / "installed" / dependency
@@ -1335,6 +1337,11 @@ def registration_stage(components, directory, home=None):
                 if path.suffix == ".conf":
                     shutil.copy2(path, directory / name / path.name)
             elif path.is_dir() and path.name in ("app1", "app2"):
+                if (
+                    path.name in components
+                    and (ROOT / "components" / path.name / "client.yaml").is_file()
+                ):
+                    continue  # Rebuild the incoming client even after a partial prior write.
                 target = directory / name / path.name
                 target.mkdir()
                 for filename in ("client.json", "client.crt"):
@@ -1458,6 +1465,140 @@ def component_imports(component, imports, config=None):
     return selected or None
 
 
+def pending_path():
+    """Keep retry metadata outside releases; never traverse a symlinked state path."""
+    path = HOME / "pending-operation.json"
+    if any(parent.is_symlink() for parent in [path] + list(path.parents)):
+        raise DeployError("Refuse symlinked pending-operation state")
+    return path
+
+
+def load_pending():
+    """Accept only the small, component-scoped install/uninstall retry record."""
+    path = pending_path()
+    if not path.exists():
+        return None
+    try:
+        if not path.is_file() or path.stat().st_mode & 0o077:
+            raise ValueError("private regular file required")
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            raise TypeError("record required")
+        operation = state.get("operation")
+        keys = {"operation", "component", "owners"}
+        if operation == "uninstall":
+            keys.update(("delete_data", "volumes", "stopped"))
+        elif operation != "install":
+            raise ValueError("operation")
+        component = state.get("component")
+        if (
+            set(state) != keys
+            or not isinstance(component, str)
+            or component not in COMPONENTS
+        ):
+            raise ValueError("component/fields")
+        owners = state["owners"]
+        allowed = {
+            "app1": {"identity", "platform"},
+            "app2": {"identity", "platform"},
+            "identity": {"platform"},
+            "help": {"platform"},
+            "platform": set(),
+        }[component]
+        if (
+            not isinstance(owners, list)
+            or any(not isinstance(owner, str) for owner in owners)
+            or len(set(owners)) != len(owners)
+            or not set(owners) <= allowed
+        ):
+            raise ValueError("owners")
+        if operation == "uninstall":
+            volumes = state["volumes"]
+            if (
+                type(state["delete_data"]) is not bool
+                or type(state["stopped"]) is not bool
+                or not isinstance(volumes, list)
+                or any(
+                    not isinstance(name, str)
+                    or not ID.fullmatch(name)
+                    or not name.startswith(component + "-")
+                    for name in volumes
+                )
+                or len(set(volumes)) != len(volumes)
+            ):
+                raise ValueError("uninstall fields")
+        elif not owners:
+            raise ValueError("empty install work")
+    except (OSError, ValueError, TypeError, UnicodeError):
+        raise DeployError("Invalid pending-operation state; no changes made") from None
+    return state
+
+
+def check_pending(operation, component, delete_data=False):
+    """Reject conflicting lifecycle commands; resume only the recorded operation."""
+    state = load_pending()
+    if state is None:
+        return None
+    if state["operation"] != operation or state["component"] != component:
+        flag = " --delete-data" if state.get("delete_data") else ""
+        raise DeployError(
+            "Pending "
+            + state["operation"]
+            + " for "
+            + state["component"]
+            + "; finish with that component's bundle: ./deploy "
+            + state["operation"]
+            + flag
+        )
+    if operation == "uninstall" and state["delete_data"] != delete_data:
+        raise DeployError("Pending uninstall requires the same --delete-data choice")
+    return state
+
+
+def sync_pending_directory():
+    """Make journal replacement/removal durable before proceeding to side effects."""
+    descriptor = os.open(str(HOME), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def save_pending(state):
+    """Atomically replace private metadata; an interrupted write retains the old record."""
+    path = pending_path()
+    descriptor, temporary = tempfile.mkstemp(prefix=".pending-", dir=str(HOME))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(state, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, str(path))
+        sync_pending_directory()
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def clear_pending():
+    """Remove only the successfully completed current operation's record."""
+    pending_path().unlink()
+    sync_pending_directory()
+
+
+def registration_changes(updates, home=None):
+    """Compare before writing so unfinished owners can be recorded first."""
+    changed = set()
+    for relative, data in updates.items():
+        target = (home or HOME) / relative
+        if target.is_symlink():
+            raise DeployError("Refuse symlinked public registration output")
+        if not target.is_file() or target.read_bytes() != data:
+            changed.add("platform" if relative.startswith("routes/") else "identity")
+    return changed
+
+
 def install_component_plan(components, source_components, imports, updates):
     """Apply a preflighted plan after validating images, changing only selected components."""
     network = QUADLET_DIR / "myproduct.network"
@@ -1494,7 +1635,16 @@ def install_component_plan(components, source_components, imports, updates):
             raise DeployError(
                 f"Image {image} is unavailable after load (exit {error.returncode})"
             ) from None
-    changed = write_registrations(updates)
+    pending = check_pending("install", source_components[0])
+    changed = registration_changes(updates) | set(pending["owners"] if pending else [])
+    if changed:
+        pending = {
+            "operation": "install",
+            "component": source_components[0],
+            "owners": sorted(changed),
+        }
+        save_pending(pending)
+    write_registrations(updates)
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     if not network.exists():
         network.write_text(network_text, encoding="utf-8")
@@ -1533,6 +1683,13 @@ def install_component_plan(components, source_components, imports, updates):
         service = "myproduct-" + component + ".service"
         run("systemctl", "--user", "restart", service)
         run("systemctl", "--user", "is-active", "--quiet", service)
+        if pending and component in pending["owners"]:
+            pending["owners"].remove(component)
+            if pending["owners"]:
+                save_pending(pending)
+            else:
+                clear_pending()
+                pending = None
     for component in components:
         version = (ROOT / VERSION_FILES.get(component, "VERSION")).read_text().strip()
         write_private(HOME / "installed" / component, version + "\n")
@@ -1609,16 +1766,16 @@ def install():
 
 
 def uninstall(component=None, delete_data=False):
-    """Remove one scoped service and registration, preserving data unless explicitly requested."""
+    """Resume one scoped uninstall from validated metadata, even after removing its YAML."""
     production_environment()
     reject_legacy_layout()
-    selected = bundle_components()
-    own = selected[0]
+    own = bundle_components()[0]
     component = component or own
     if component != own:
         raise DeployError("This bundle can only uninstall its own component")
+    state = check_pending("uninstall", component, delete_data)
     marker = HOME / "installed" / component
-    if not marker.is_file():
+    if state is None and not marker.is_file():
         raise DeployError(f"Component {component} is not installed")
     dependents = [
         name
@@ -1631,63 +1788,90 @@ def uninstall(component=None, delete_data=False):
         )
     reject_legacy_layout(volumes=True)
     _, _, output, quadlet = component_paths(component)
-    documents = load_yaml_all(output)
-    check_component_names(documents, component, output)
-    volumes = [
-        doc["metadata"]["name"]
-        for doc in documents
-        if isinstance(doc, dict)
-        and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
-    ]
-    run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
-    for path in (output, quadlet):
-        path.unlink()
-    changed = set()
     route = HOME / "routes" / (component + ".conf")
-    if route.is_file():
-        route.unlink()
-        changed.add("platform")
     client = HOME / "clients" / component
+    for path in (
+        output,
+        quadlet,
+        route,
+        client,
+        marker,
+        HOME / "dependencies" / (component + ".json"),
+    ):
+        if any(parent.is_symlink() for parent in [path] + list(path.parents)):
+            raise DeployError("Refuse symlinked uninstall state or output paths")
+    if state is None:
+        documents = load_yaml_all(output)
+        check_component_names(documents, component, output)
+        volumes = sorted(
+            {
+                doc["metadata"]["name"]
+                for doc in documents
+                if isinstance(doc, dict)
+                and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
+            }
+        )
+        if any(
+            not ID.fullmatch(name) or not name.startswith(component + "-")
+            for name in volumes
+        ):
+            raise DeployError("Invalid component volume name for uninstall")
+        # Validate every public input before saving the plan or stopping/deleting anything.
+        with tempfile.TemporaryDirectory(
+            prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+        ) as directory:
+            registration_stage([], Path(directory))
+        owners = set()
+        if route.is_file():
+            owners.add("platform")
+        if client.exists():
+            owners.add("identity")
+        state = {
+            "operation": "uninstall",
+            "component": component,
+            "delete_data": delete_data,
+            "volumes": volumes,
+            "stopped": False,
+            "owners": sorted(
+                owner
+                for owner in owners
+                if owner != component and (HOME / "installed" / owner).is_file()
+            ),
+        }
+        save_pending(state)
+    if not state["stopped"]:
+        run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
+        state["stopped"] = True
+        save_pending(state)
+    for path in (output, quadlet, route):
+        if path.exists():
+            path.unlink()
     if client.exists():
-        changed.add("identity")
-        if client.is_symlink():
-            raise DeployError("Refuse symlinked client registration")
         shutil.rmtree(client)
-    marker.unlink()
-    dependency = HOME / "dependencies" / (component + ".json")
-    if dependency.exists():
-        dependency.unlink()
-    if changed:
+    run("systemctl", "--user", "daemon-reload")
+    if state["owners"]:
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
             imports, _ = registration_stage([], Path(directory))
             for owner in ("identity", "platform"):
-                if (
-                    owner in changed
-                    and owner != component
-                    and (HOME / "installed" / owner).is_file()
-                ):
-                    write_file_archives(
-                        component_imports(owner, imports) or {},
-                        component_paths(owner)[1],
+                if owner not in state["owners"]:
+                    continue
+                component_paths(owner)
+                if not (HOME / "installed" / owner).is_file():
+                    raise DeployError(
+                        "Pending registration owner is not installed: " + owner
                     )
-                    run(
-                        "systemctl",
-                        "--user",
-                        "restart",
-                        "myproduct-" + owner + ".service",
-                    )
-                    run(
-                        "systemctl",
-                        "--user",
-                        "is-active",
-                        "--quiet",
-                        "myproduct-" + owner + ".service",
-                    )
-    run("systemctl", "--user", "daemon-reload")
+                write_file_archives(
+                    component_imports(owner, imports) or {}, component_paths(owner)[1]
+                )
+                service = "myproduct-" + owner + ".service"
+                run("systemctl", "--user", "restart", service)
+                run("systemctl", "--user", "is-active", "--quiet", service)
+                state["owners"].remove(owner)
+                save_pending(state)
     if delete_data:
-        for name in volumes:
+        for name in state["volumes"]:
             result = subprocess.run(  # noqa: UP022 - Python 3.6
                 ["podman", "volume", "exists", name],
                 check=False,
@@ -1698,7 +1882,12 @@ def uninstall(component=None, delete_data=False):
                 run("podman", "volume", "rm", name)
             elif result.returncode != 1:
                 raise DeployError(f"Cannot check volume {name} before deletion")
-        shutil.rmtree(HOME / component)
+        if (HOME / component).exists():
+            shutil.rmtree(HOME / component)
+    for path in (marker, HOME / "dependencies" / (component + ".json")):
+        if path.exists():
+            path.unlink()
+    clear_pending()
     print(
         f"[OK] Uninstalled {component}; shared network retained; data {'deleted' if delete_data else 'preserved'}"
     )

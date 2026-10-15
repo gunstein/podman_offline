@@ -23,25 +23,6 @@ class IdentityTests(ComponentFixture):
             if path.is_file()
         }
 
-    def imports_fixture(self):
-        for component, group, relative in (
-            ("platform", "platform-routes", "../routes"),
-            ("identity", "identity-clients", "../clients"),
-        ):
-            config = deploy.load_config(deploy.HOME / component / "config.yaml")
-            config["VOLUME_FILES"] = {group: [relative]}
-            self.write("home/" + component + "/config.yaml", yaml.safe_dump(config))
-            path = self.root / "components" / component / "manifests/10-pod.yaml"
-            pod = yaml.safe_load(path.read_text())
-            pod["spec"]["volumes"] = [
-                {"name": "imports", "persistentVolumeClaim": {"claimName": group}}
-            ]
-            path.write_text(yaml.safe_dump(pod))
-            self.write(deploy.VERSION_FILES[component], "1.1.0\n")
-            self.select(component)
-            deploy.install()
-        self.select("app1")
-
     def restarts(self):
         return [
             call.args[0][-1]

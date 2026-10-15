@@ -4,12 +4,12 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Retry-safe install and uninstall (item 13)](#13-retry-safe-install-and-uninstall).
-2. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+1. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
 
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
 platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
-path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)).
+path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), and
+retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -910,7 +910,7 @@ with item 9 before implementing a procedure.
 
 Status: implemented in 0.4.1; fresh-install lab verification pending. See
 [credential-path verification](acceptance/CREDENTIAL-PATHS.md). The deploy
-refactor (item 1) follows the retry-safety fix (item 13).
+refactor (item 1) is next.
 This task uses fresh state only and requires no migration or backward compatibility.
 The full agent message follows, with heading levels adjusted for this document.
 
@@ -1101,7 +1101,8 @@ Foretrekk en enkel, konsekvent navneendring fremfor nye abstraksjoner.
 
 ## 13. Retry-safe install and uninstall
 
-Status: planned; next implementation, before the deploy refactor (item 1).
+Status: implemented in 0.4.2; local failure-injection verification passed, real
+Podman/systemd behavior remains unverified here. See [retry verification](acceptance/RETRY-SAFETY.md).
 This is a bounded correctness fix for retrying failed operations, not a transaction
 framework or module refactor. The full agent message follows, with Markdown
 formatting adjusted for this document.

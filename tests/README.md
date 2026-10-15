@@ -1,3 +1,15 @@
+# Lifecycle retries (0.4.2)
+
+`test_retry.py` invokes `retry_driver.py` in a fresh Python interpreter for each
+attempt against the same persistent test home. Actual deploy/files/import archives
+run unchanged; only environment checks and Podman/systemd transport are stubbed.
+It covers failed/crashed installs, partially written registrations, failed owner
+checks/imports, resumable uninstalls, partial volume deletion and invalid/conflicting
+retry state. Existing four-way route/client restart tests remain in place.
+See [RETRY-SAFETY.md](../acceptance/RETRY-SAFETY.md) for results and limitations.
+
+---
+
 # Credential paths (0.4.1)
 
 Active tests use fresh `credentials/` state. Config tests initialize real defaults

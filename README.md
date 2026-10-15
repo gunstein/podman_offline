@@ -309,7 +309,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.1
+version=0.4.2
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -450,6 +450,24 @@ retained data and database operations before retiring old Identity trust. An
 unchanged Identity route leaves platform running; app services remain running.
 Platform/app bundles need no retransmission. Installed apps' Identity requirements
 must allow the requested version.
+
+Failed lifecycle commands can be repeated from the same component's verified,
+trusted bundle. Retry `./deploy install`, or repeat `./deploy uninstall` with
+exactly the original `--delete-data` choice. The private
+`~/pending-operation.json` records unfinished registration owners or the scoped
+uninstall plan before relevant changes. Required imports are rebuilt and owners
+restart until the existing `is-active` check succeeds. Confirmed owners are
+removed from pending work individually; uninstall remains resumable after its
+YAML or data has been removed. Config and credentials remain untouched unless
+the original uninstall explicitly requested data deletion.
+
+An unfinished operation blocks other component installs/uninstalls and config
+initialization, with a message naming the component and command to finish first.
+A changed deletion flag, invalid record or symlinked state is refused. Do not
+delete/edit the pending file to bypass the check. Run one lifecycle command at a
+time; the record is retry metadata, not a concurrency lock or rollback mechanism.
+It cannot reconstruct unknown partial operations performed by older installers.
+See [retry verification](acceptance/RETRY-SAFETY.md) for coverage and limits.
 
 Help can be upgraded alone: transfer only the new help archive/checksum, verify
 and trust its deploy.py in the help trust file, install, verify healthy services
