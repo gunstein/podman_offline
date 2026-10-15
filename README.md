@@ -105,9 +105,11 @@ services. Symlink paths are rejected. An existing file is retained exactly,
 even if empty or invalid; installation still validates it.
 
 On a fresh host, initialize platform from its own bundle, edit its settings, prepare
-its credentials and install it. Next initialize and install Identity from its own
-bundle before either app. Prepare each component’s certificates/credentials with the certificate script,
-edit component-specific settings, then install. When a platform config already
+its credentials and install it. For app1/app2, next initialize and install Identity
+from its own bundle before either app. For a platform/help-only setup, install
+help after platform; Identity and the apps are not required. Prepare each
+component’s certificates/credentials with the certificate script, edit
+component-specific settings, then install. When a platform config already
 exists, Identity/app/help initialization explicitly uses only its actual `PUBLIC_ORIGIN`
 and `HTTPS_PORT` as final overrides. Other platform settings are never copied.
 An invalid platform config or missing shared setting fails instead of falling back
@@ -301,7 +303,12 @@ Local Todo logout clears only that app's session; shared identity SSO remains.
 
 ## First production installation
 
-Run as the operator with sudo. Choose an app bundle first; help alone fails.
+Run as the operator with sudo. Install the `platform` bundle first.
+For an app installation, install `identity` next, then `app1` and/or `app2` in
+either order. For a platform/help-only installation, install `help` after
+`platform`; help requires neither Identity nor either app. Platform can also
+remain installed on its own.
+
 `--port`, every `HTTPS_PORT` and the port in `PUBLIC_ORIGIN` must agree.
 The archive is opened by the operator and streamed to myproduct, which cannot
 read the operator's private home. No `cd` by the operator into the 0700 service
@@ -420,7 +427,7 @@ sudoedit "/var/lib/myproduct/$bundle/config.yaml"
 as_product bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$bundle" myproduct-proxy
 sudoedit "/var/lib/myproduct/$bundle/config.yaml"
 sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
-sudo systemctl --user -M myproduct@ status myproduct-platform.service myproduct-app1.service
+sudo systemctl --user -M myproduct@ status "myproduct-$bundle.service"
 ```
 
 Set IP_ADDRESS in platform to the target's host IP. Set PUBLIC_ORIGIN/HTTPS_PORT
@@ -430,14 +437,16 @@ resolve that same HTTPS name internally. Each install validates the user databas
 home and runtime, renders, loads/verifies images, writes component imports/units
 and calls `systemctl --user`. It does not wait for health; do the checks below.
 
-After platform, repeat checksum/unpack/trust with `bundle=identity` and
-`IDENTITY_VERSION`; initialize Identity, prepare its credentials and install.
-Then repeat with `bundle=app1` and `VERSION`; initialize and install only app1.
-To add app2, repeat checksum/unpack/trust with `bundle=app2`, initialize only app2
-config with `as_product python3 "$release/deploy.py" init-config app2`, prepare its
-credentials, edit component-specific settings and install. Keep existing platform config.
-To add help, repeat with `bundle=help`; run `as_product python3 "$release/deploy.py" init-config help` and install.
-Help needs no new credentials. These installs update shared routing/client imports
+For app1/app2, after platform repeat checksum/unpack/trust with `bundle=identity`
+and `IDENTITY_VERSION`; initialize Identity, prepare its credentials and install.
+Then repeat with `bundle=app1` or `bundle=app2` and `VERSION`, in either order;
+initialize that app's config, prepare its credentials, edit its component-specific
+settings and install. Keep existing platform and Identity config.
+
+For help, including a platform/help-only setup, repeat after platform with
+`bundle=help` and `VERSION`; run
+`as_product python3 "$release/deploy.py" init-config help` and install. Identity
+and the apps can be omitted. Help needs no new credentials. These installs update shared routing/client imports
 and restart their changed owners (platform for routes, Identity for clients),
 while retaining the other app's service/data.
 
