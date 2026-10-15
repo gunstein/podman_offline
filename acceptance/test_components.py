@@ -42,6 +42,7 @@ class ComponentHarnessTests(unittest.TestCase):
         self.harness = base.runner.Run("components", "unused")
         self.harness.meta["version"] = "0.3.0"
         self.harness.meta["platform_version"] = "0.3.0"
+        self.harness.meta["identity_version"] = "0.4.0"
         for name in (
             "readiness",
             "reset",
@@ -67,7 +68,9 @@ class ComponentHarnessTests(unittest.TestCase):
                 installs = [
                     call.kwargs["bundle"] for call in calls if call.args[1] == "install"
                 ]
-                self.assertEqual(installs, ["platform", first, second, "help"])
+                self.assertEqual(
+                    installs, ["platform", "identity", first, second, "help"]
+                )
                 actions = [call.args[1] for call in calls]
                 self.assertLess(actions.index("help-alone"), actions.index("install"))
                 self.assertLess(
@@ -90,7 +93,10 @@ class ComponentHarnessTests(unittest.TestCase):
         self.harness.transfer_bundles()
         self.assertEqual(
             self.harness.transfer.call_args_list,
-            [mock.call(bundle=name) for name in ("platform", "app1", "app2", "help")],
+            [
+                mock.call(bundle=name)
+                for name in ("platform", "identity", "app1", "app2", "help")
+            ],
         )
         self.harness.transfer.reset_mock()
         self.harness.step = mock.Mock(side_effect=lambda name, action: action())
@@ -180,7 +186,7 @@ class ComponentHarnessTests(unittest.TestCase):
         self.assertEqual(actions[-1], "help-siblings-after")
         self.harness.persistent_state.assert_called_once_with("after")
         build = base.shell_code(REMOTE, action="help-upgrade-bundle")
-        self.assertIn('bundle.build_release(version, "help", ["help"])', build)
+        self.assertIn("bundle.build_release(version, kind, [kind])", build)
         self.assertIn('"localhost/myproduct-help:" + version', build)
         self.assertIn('"<p>help-release-" + version', build)
         self.assertNotIn("./build-bundle.sh", build)
@@ -245,7 +251,7 @@ class ComponentHarnessTests(unittest.TestCase):
         calls = self.harness.guest.call_args_list
         self.assertEqual(
             [call.kwargs["bundle"] for call in calls if call.args[1] == "install"],
-            ["platform", "app1", "help"],
+            ["platform", "identity", "app1", "help"],
         )
         actions = [call.args[1] for call in calls]
         self.assertIn("app1-e2e", actions)
@@ -256,6 +262,7 @@ class ComponentHarnessTests(unittest.TestCase):
             self.harness.transfer.call_args_list,
             [
                 mock.call(bundle="platform"),
+                mock.call(bundle="identity"),
                 mock.call(bundle="app1"),
                 mock.call(bundle="help"),
                 mock.call("0.3.2", bundle="help"),
@@ -288,13 +295,16 @@ class ComponentObservationTests(unittest.TestCase):
             root = Path(directory)
             units = root / ".config/containers/systemd"
             units.mkdir(parents=True)
-            for name in ("platform", "app1", "app2", "help"):
+            for name in ("platform", "identity", "app1", "app2", "help"):
                 (units / ("myproduct-" + name + ".yaml")).write_text(
                     "kind: Pod\nmetadata: {name: "
                     + name
                     + "-pod}\nspec:\n  containers: [{name: app}]\n"
                 )
-            names = {name + "-pod-app" for name in ("platform", "app1", "app2", "help")}
+            names = {
+                name + "-pod-app"
+                for name in ("platform", "identity", "app1", "app2", "help")
+            }
             rows = [
                 {
                     "Name": name,
@@ -315,7 +325,7 @@ class ComponentObservationTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 code["main"]()
-            self.assertIn("all 4 app containers", output.getvalue())
+            self.assertIn("all 5 app containers", output.getvalue())
             rows.pop()
             with (
                 mock.patch.object(Path, "home", return_value=root),
@@ -687,8 +697,8 @@ class DatabaseHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             (home / "installed").mkdir()
-            (home / "installed/platform").write_text("0.2.1\n")
-            password = home / "platform/generated-certificates/identity-db/password"
+            (home / "installed/identity").write_text("0.4.0\n")
+            password = home / "identity/generated-certificates/identity-db/password"
             password.parent.mkdir(parents=True)
             password.write_text("private-password\n")
             exposed = subprocess.CompletedProcess([], 0, "private-password", "")
@@ -700,10 +710,17 @@ class DatabaseHarnessTests(unittest.TestCase):
             self.assertNotIn("private-password", str(failure.exception))
             clean = subprocess.CompletedProcess([], 0, "Database started", "")
             with (
-                mock.patch.object(subprocess, "run", return_value=clean),
+                mock.patch.object(subprocess, "run", return_value=clean) as process,
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 namespace["logs_safe"](home)
+            self.assertEqual(
+                [call.args[0] for call in process.call_args_list],
+                [
+                    ["podman", "logs", "identity-server-app"],
+                    ["podman", "logs", "identity-postgres-db"],
+                ],
+            )
 
 
 if __name__ == "__main__":

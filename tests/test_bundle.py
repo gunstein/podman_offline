@@ -437,11 +437,12 @@ data: {image: ignored}
         """Build three independent archives with matching platform versions and no local state."""
         self.write(
             "bundles.yaml",
-            "platform: [platform]\napp1: [app1]\napp2: [app2]\nhelp: [help]\n",
+            "platform: [platform]\nidentity: [identity]\napp1: [app1]\napp2: [app2]\nhelp: [help]\n",
         )
         self.write("PLATFORM_VERSION", "1.0.0\n")
+        self.write("IDENTITY_VERSION", "1.1.0\n")
         self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")
-        for component in ("platform", "app1", "app2", "help"):
+        for component in ("platform", "identity", "app1", "app2", "help"):
             self.write(
                 "components/" + component + "/manifests/pod.yaml",
                 yaml.safe_dump(
@@ -463,6 +464,7 @@ data: {image: ignored}
         bundle.build()
         for name, components in (
             ("platform", ("platform",)),
+            ("identity", ("identity",)),
             ("app1", ("app1",)),
             ("app2", ("app2",)),
             ("help", ("help",)),
@@ -474,7 +476,11 @@ data: {image: ignored}
                         "myproduct-"
                         + name
                         + "-"
-                        + ("1.0.0" if name == "platform" else "1.2.3")
+                        + (
+                            {"platform": "1.0.0", "identity": "1.1.0"}.get(
+                                name, "1.2.3"
+                            )
+                        )
                         + "-offline.tar.gz"
                     )
                 )
@@ -483,7 +489,7 @@ data: {image: ignored}
                     "myproduct-"
                     + name
                     + "-"
-                    + ("1.0.0" if name == "platform" else "1.2.3")
+                    + ({"platform": "1.0.0", "identity": "1.1.0"}.get(name, "1.2.3"))
                     + "/"
                 )
                 members = {
@@ -495,7 +501,7 @@ data: {image: ignored}
                     stream.read().decode().splitlines(),
                     sorted("localhost/" + component + ":1" for component in components),
                 )
-                for component in ("platform", "app1", "app2", "help"):
+                for component in ("platform", "identity", "app1", "app2", "help"):
                     self.assertEqual(
                         "components/" + component + "/manifests/pod.yaml" in members,
                         component in components,
@@ -520,7 +526,7 @@ data: {image: ignored}
                 assert version_file is not None
                 self.assertEqual(
                     version_file.read().decode().strip(),
-                    "1.0.0" if name == "platform" else "1.2.3",
+                    {"platform": "1.0.0", "identity": "1.1.0"}.get(name, "1.2.3"),
                 )
                 descriptor_file = archive.extractfile(prefix + "bundle.yaml")
                 assert descriptor_file is not None
@@ -528,9 +534,13 @@ data: {image: ignored}
                 self.assertEqual(descriptor["components"], [name])
                 self.assertEqual(
                     descriptor["requires"],
-                    {}
-                    if name == "platform"
-                    else {"platform": {"min": "1.0.0", "before": "2.0.0"}},
+                    {
+                        dependency: {
+                            "min": "1.1.0" if dependency == "identity" else "1.0.0",
+                            "before": "2.0.0",
+                        }
+                        for dependency in bundle.deploy.DEPENDENCIES[name]
+                    },
                 )
                 checksum = archive.extractfile(prefix + "checksums.sha256")
                 assert checksum is not None

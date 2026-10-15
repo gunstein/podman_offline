@@ -1,3 +1,15 @@
+# Current test baseline (Identity split 0.4.0)
+
+Five separate bundles implement the fixed platform/Identity/app/help dependency
+graph. `test_identity.py` covers independent versions, exact route/client restart
+ownership, help without Identity, retained combined-layout refusal and scoped
+Identity deletion. Bundle tests inspect real archives and checksums. See
+[IDENTITY-SPLIT.md](../acceptance/IDENTITY-SPLIT.md) for current results and lab gaps.
+Host code and product tests retain Python 3.6 compatibility. Commands below remain
+valid; earlier baseline counts and runtime evidence are historical.
+
+---
+
 # Current test baseline (platform 0.3.0)
 
 The active component is `platform`, shipped in its own offline bundle. The current

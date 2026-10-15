@@ -373,16 +373,16 @@ installed_components() { echo platform; }
             "PKI/private/web.ext",
             "app1/files/app1-signing.tar",
             "platform/generated-certificates/client/todo-client.crt",
-            "platform/generated-certificates/identity-db/password",
-            "platform/generated-certificates/identity/identity.crt",
-            "platform/generated-certificates/identity/identity.key",
+            "identity/generated-certificates/identity-db/password",
+            "identity/generated-certificates/identity/identity.crt",
+            "identity/generated-certificates/identity/identity.key",
             "app1/generated-certificates/database/password",
             "app1/generated-certificates/todo/ca.crt",
             "app1/generated-certificates/todo/session-key",
             "app1/generated-certificates/todo/todo-client.crt",
             "app1/generated-certificates/todo/todo-client.key",
-            "platform/generated-certificates/users/alice-password",
-            "platform/generated-certificates/users/bob-password",
+            "identity/generated-certificates/users/alice-password",
+            "identity/generated-certificates/users/bob-password",
             "platform/generated-certificates/web/web.crt",
             "platform/generated-certificates/web/web.key",
         )
@@ -744,6 +744,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         """Confirm the upgrade order and reuse of the original passwords."""
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["platform_version"] = "0.1.0"
+        self.harness.meta["identity_version"] = "0.1.0"
         self.harness.persistent_before = self.state_fixture()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture()))
         self.harness.transfer = mock.Mock()
@@ -769,6 +770,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         """Confirm a stop before e2e when the upgrade changes persistent state."""
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["platform_version"] = "0.1.0"
+        self.harness.meta["identity_version"] = "0.1.0"
         self.harness.persistent_before = self.state_fixture()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture("b")))
         self.harness.transfer = mock.Mock()
@@ -783,6 +785,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         """Confirm that a failed upgrade stops later checks."""
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["platform_version"] = "0.1.0"
+        self.harness.meta["identity_version"] = "0.1.0"
         self.harness.transfer = mock.Mock()
         self.harness.guest = mock.Mock(
             side_effect=["baseline", "built", RuntimeError("install failed")]
@@ -796,6 +799,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         """Confirm that prod checks are repeated after reboot and upgrade."""
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["platform_version"] = "0.1.0"
+        self.harness.meta["identity_version"] = "0.1.0"
         self.harness.readiness = mock.Mock()
         self.harness.reset = mock.Mock()
         self.harness.source = mock.Mock()
@@ -859,6 +863,19 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "10-platform-e2e-after-refusal",
             "10-platform-retire",
             "10-platform-final-siblings",
+            "10-identity-siblings-before",
+            "10-identity-before",
+            "10-identity-build",
+            "10-identity-transfer",
+            "10-identity-install",
+            "10-identity-image-data",
+            "10-identity-siblings-after",
+            "10-identity-persistent",
+            "10-identity-e2e",
+            "10-identity-markers",
+            "10-identity-database",
+            "10-identity-retire",
+            "10-identity-final-siblings",
             "10-database-auth",
             "10-uninstall-app1",
             "10-check-uninstall",
@@ -922,6 +939,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         """Stop immediately at the first pre-reboot launcher audit failure."""
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["platform_version"] = "0.1.0"
+        self.harness.meta["identity_version"] = "0.1.0"
         for name in (
             "readiness",
             "reset",
@@ -978,6 +996,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.private.mkdir(mode=0o700)
         self.harness.meta["version"] = "0.1.0"
         self.harness.meta["platform_version"] = "0.1.0"
+        self.harness.meta["identity_version"] = "0.1.0"
         self.harness.cfg = {
             "SSH_USER": "operator",
             "PROD_IP": "192.0.2.2",

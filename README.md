@@ -12,53 +12,64 @@ Planned work is tracked in [BACKLOG.md](BACKLOG.md).
 
 | Bundle | Components | Dependencies | Public paths |
 | --- | --- | --- | --- |
-| `myproduct-platform-<v>-offline.tar.gz` | platform | none | `/identity/` |
-| `myproduct-app1-<v>-offline.tar.gz` | app1 | platform | `/app1/` |
-| `myproduct-app2-<v>-offline.tar.gz` | app2 | platform | `/app2/` |
+| `myproduct-platform-<v>-offline.tar.gz` | platform | none | HTTPS proxy and routing |
+| `myproduct-identity-<v>-offline.tar.gz` | identity | platform | `/identity/` |
+| `myproduct-app1-<v>-offline.tar.gz` | app1 | platform + identity | `/app1/` |
+| `myproduct-app2-<v>-offline.tar.gz` | app2 | platform + identity | `/app2/` |
 | `myproduct-help-<v>-offline.tar.gz` | help | platform | `/help/` |
 
-Platform contains identity, its PostgreSQL pod and the HTTPS proxy. Each Todo has
-its own PostgreSQL pod, plus frontend and backend in one pod. Both apps share
-identity users but have separate OIDC clients, database volumes and session
-cookies. With all components installed there are 8 pods and 10 app containers.
-The root path `/` returns 404; use `/app1/` or `/app2/`.
+Platform owns the HTTPS proxy, web TLS and public route imports. Identity owns
+IdentityServer, its PostgreSQL database, signing keys, API secret, demo users,
+Data Protection and public client registrations. Each Todo owns its PostgreSQL
+pod, frontend/backend pod, private client key and session material. Both apps
+share Identity users but have separate clients, database volumes and cookies.
+With all components installed there are 8 pods and 10 app containers. The root
+path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 
-`components/<name>/` holds manifests, component defaults and any route/client
-registration. `bundles.yaml` defines four separate bundle selections. `VERSION`
-versions app/help releases; `PLATFORM_VERSION` independently versions shared platform.
-All Pod, Secret, PVC and ConfigMap names must start with their component prefix;
-the renderer rejects other names before generating files.
+`components/<name>/` holds manifests, defaults and public route/client
+registrations. `bundles.yaml` defines five separate bundles. `VERSION` versions
+app/help releases; `PLATFORM_VERSION` and `IDENTITY_VERSION` independently version
+the two shared components. All Pod, Secret, PVC and ConfigMap names must start
+with their component prefix; the renderer rejects other names before writes.
 
-There is one Quadlet service per component: `myproduct-platform`, `myproduct-app1`,
-`myproduct-app2` and `myproduct-help`. The identical `myproduct.network` is shared,
-installed idempotently and never removed by uninstalling one bundle. Install platform
-first, then any apps/help. App bundles never embed, load or upgrade platform images.
-Only a platform bundle upgrades platform; it retains equal versions and refuses downgrades.
-Changed public routes or OIDC clients restart platform even when its version is equal.
-This causes a short shared sign-in/proxy interruption; app2/help services and data
-are not restarted by an app1 upgrade. Unchanged registrations leave equal platform
-untouched. Equal platform keeps its installed files and does not adopt incoming
-platform manifest requirements. New required keys are checked when that component
-is actually upgraded. There is no start order between pods in one component; apps retry their
-databases for up to 60 seconds.
+Each component has its own `myproduct-<component>` Quadlet service. The identical
+`myproduct.network` is shared and never removed by component uninstall. Install
+platform, then Identity, then either app. Help needs only platform; the proxy
+starts without Identity DNS. Bundles contain only their own resources and images.
+Only a component's own bundle upgrades it. Equal shared versions retain installed
+files, newer versions upgrade and downgrades refuse. New required settings are
+checked when that component is rendered. Apps retry their databases for 60 seconds.
 
-Release 0.3.0 renames the shared component from `core` to `platform` and makes
-platform a separate bundle. It is for fresh installations. Existing core files,
-markers, unit files or retained core volumes cause a refusal before secrets,
-image operations or installed-state writes. Mixed core/platform layouts are also
-refused. No data, credentials or certificates are automatically renamed, migrated
-or deleted. Continue managing retained installations with their previous release;
-a separate migration procedure is future work. Monolithic 0.1.x state likewise
-requires a separately planned migration.
+| Registration change | Shared service restarted |
+| --- | --- |
+| Public route only | platform |
+| OIDC metadata/public certificate only | identity |
+| Both | identity and platform |
+| Neither | neither |
 
-Each app/help `bundle.yaml` declares an inclusive minimum and exclusive upper
-platform version, for example `requires: {platform: {min: 0.3.0, before: 0.4.0}}`.
-For 0.x, a minor series is compatible; for 1.x and later, the declared major series
-is compatible. These are explicit release contracts, not acceptance of every newer
-version. Installed requirements are retained privately under `dependencies/`,
-independent of disposable release directories. A platform upgrade must satisfy
-all installed dependents. Missing, malformed or incompatible metadata refuses
-before mutation. Identity remains in platform until backlog item 9.
+The selected app itself restarts on install. Public indexes control active
+registrations even when old files remain in imported volumes. An app's private
+client key never goes to Identity. Issuer, public paths, client IDs, scopes and
+cookies retain their existing values.
+
+Release 0.4.0 separates Identity from the former combined platform of 0.3.0.
+It requires a fresh installation. Concrete old core/combined platform config,
+credentials, services, version markers or retained volumes cause refusal before
+secret generation, image loading or installed-state writes. Missing markers do
+not bypass volume checks; failed checks also refuse. Mixed/partial layouts are
+refused. No data, keys or credentials are automatically migrated or deleted.
+Manage retained installations with their previous release pending a separately
+reviewed migration procedure. Monolithic 0.1.x likewise needs a separate plan.
+
+Every `bundle.yaml` declares exact dependencies with inclusive `min` and exclusive
+`before` ranges, for example `{platform: {min: 0.4.0, before: 0.5.0}, identity:
+{min: 0.4.0, before: 0.5.0}}` for app1/app2. For 0.x, compatibility follows the
+minor series; for 1.x and later, the declared major series. Installed requirements
+are retained privately under `dependencies/`, independently of old release
+directories. Incoming dependencies and every installed dependent's range must
+allow a shared upgrade. Missing, malformed or incompatible metadata refuses
+before mutation. See [Identity verification](acceptance/IDENTITY-SPLIT.md) for
+coverage, local evidence and pending lab commands.
 
 ## Configuration and initialization
 
@@ -94,9 +105,10 @@ services. Symlink paths are rejected. An existing file is retained exactly,
 even if empty or invalid; installation still validates it.
 
 On a fresh host, initialize platform from its own bundle, edit its settings, prepare
-its credentials and install it. Then initialize the app from its own bundle. Prepare certificates/credentials with the existing certificate script,
+its credentials and install it. Next initialize and install Identity from its own
+bundle before either app. Prepare each component’s certificates/credentials with the certificate script,
 edit component-specific settings, then install. When a platform config already
-exists, app/help initialization explicitly uses only its actual `PUBLIC_ORIGIN`
+exists, Identity/app/help initialization explicitly uses only its actual `PUBLIC_ORIGIN`
 and `HTTPS_PORT` as final overrides. Other platform settings are never copied.
 An invalid platform config or missing shared setting fails instead of falling back
 to release defaults. If platform is installed but its config file is missing, restore
@@ -116,7 +128,7 @@ not an automatic migration mechanism. Explicit edits take effect when that
 component is rendered during installation. An equal-platform app/help install keeps
 installed platform YAML/Quadlet; use a controlled newer-platform release to apply changes
 that require rendering platform again. Public route/client imports are updated
-independently and can restart platform without upgrading its version.
+independently and restart their respective owners without upgrading their versions.
 
 Relative paths in all three file settings resolve from the materialized config
 folder: `/var/lib/myproduct/<component>/` in production and
@@ -201,7 +213,7 @@ unreleased version; published release tags must remain immutable.
 (cd dist && sha256sum -c ./*.sha256)
 ```
 
-One invocation creates all four bundles. Each contains
+One invocation creates all five bundles. Each contains
 `config/common.defaults.yaml`, its components’ `config.defaults.yaml`, only its
 components,
 `deploy`/`deploy.py`, scripts, Quadlet templates, version metadata and its own
@@ -218,7 +230,7 @@ private files out of shipped directories and retain their declarations.
 Invalid values are rejected with the config path and field name; their contents
 are never included in the error.
 
-Prod reads `~/platform/config.yaml`, `~/app1/config.yaml`, `~/app2/config.yaml` and
+Prod reads `~/platform/config.yaml`, `~/identity/config.yaml`, `~/app1/config.yaml`, `~/app2/config.yaml` and
 `~/help/config.yaml`. Relative `SECRET_FILES`/`VOLUME_FILES` paths are resolved
 from that config's directory; absolute paths and `~` are supported. Config keys
 are strings, ordinary values are text/integers and `HTTPS_PORT` is an integer.
@@ -245,7 +257,7 @@ Back these files up with all other persistent state. See the
 
 ```text
 /var/lib/myproduct/                         service-user home, 0700
-├── platform/, app1/, app2/, help/
+├── platform/, identity/, app1/, app2/, help/
 │   ├── config.yaml                        0600, retained across releases
 │   ├── generated-certificates/            0700, keys/passwords retained
 │   └── files/                             0700; import archives 0600
@@ -264,8 +276,8 @@ collects public registrations into current route/client indexes. Only those
 indexes are used at runtime: Podman imports do not delete removed files, so stale
 files left in volumes must not keep an uninstalled route/client active.
 
-The certificate script creates the shared demo CA, platform certificate pairs and
-demo-user passwords once. Deploy generates database passwords separately. Each app gets
+The certificate script creates the shared demo CA and platform web TLS pair once.
+Identity owns its signing pair and demo-user passwords. Deploy generates database passwords separately. Each app gets
 its own client private key/certificate and database password. Database passwords,
 session keys and API keys use GENERATED_SECRETS. Identity receives only public client certificates. Its signing
 key is a Secret; each Todo's private signing/session material is in its own PVC.
@@ -286,7 +298,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.3.0
+version=0.4.0
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -390,7 +402,7 @@ sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
 sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file "myproduct-$bundle"
 sudo fapolicyd-cli --update
 wait_trust "$release/deploy.py"
-# Start with bundle=platform. Later repeat this block for app1, app2 and help.
+# Start with bundle=platform, then identity, then app1/app2; help needs only platform.
 as_product python3 "$release/deploy.py" init-config "$bundle"
 sudoedit "/var/lib/myproduct/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
@@ -407,16 +419,26 @@ resolve that same HTTPS name internally. Each install validates the user databas
 home and runtime, renders, loads/verifies images, writes component imports/units
 and calls `systemctl --user`. It does not wait for health; do the checks below.
 
-After platform, repeat checksum/unpack/trust with `bundle=app1` and VERSION for
-app1; initialize and install only app1.
+After platform, repeat checksum/unpack/trust with `bundle=identity` and
+`IDENTITY_VERSION`; initialize Identity, prepare its credentials and install.
+Then repeat with `bundle=app1` and `VERSION`; initialize and install only app1.
 To add app2, repeat checksum/unpack/trust with `bundle=app2`, initialize only app2
 config with `as_product python3 "$release/deploy.py" init-config app2`, prepare its
 credentials, edit component-specific settings and install. Keep existing platform config.
 To add help, repeat with `bundle=help`; run `as_product python3 "$release/deploy.py" init-config help` and install.
 Help needs no new credentials. These installs update shared routing/client imports
-and restart platform, while retaining the other app's service/data.
+and restart their changed owners (platform for routes, Identity for clients),
+while retaining the other app's service/data.
 
 ## Upgrade and uninstall
+
+Identity can be upgraded alone: transfer the newer Identity archive/checksum,
+verify/unpack/trust it, retain `~/identity/config.yaml` and all credentials, and
+install from that bundle. Verify new running image/content, login, both apps'
+retained data and database operations before retiring old Identity trust. An
+unchanged Identity route leaves platform running; app services remain running.
+Platform/app bundles need no retransmission. Installed apps' Identity requirements
+must allow the requested version.
 
 Help can be upgraded alone: transfer only the new help archive/checksum, verify
 and trust its deploy.py in the help trust file, install, verify healthy services
@@ -460,10 +482,11 @@ as_product python3 "$release/deploy.py" uninstall --delete-data
 
 Choose one of those commands. Default uninstall retains data/config/credentials
 for reinstall. It removes only the own service, version marker, route and public
-client; platform reloads the remaining registrations. Network and sibling data/units
+client; only the changed registration owners reload their imports. Network and sibling data/units
 are retained. Remove the own deploy.py trust entries after uninstall and update
-the trust database. Platform is retained while any app or help remains; after removing
-all dependents, use `uninstall platform` (optionally `--delete-data`) from the platform bundle.
+the trust database. Identity cannot be removed while either app remains; help
+does not block it. Platform cannot be removed while Identity, apps or help remain.
+After removing dependents, uninstall Identity and platform from their own bundles.
 
 Podman Secret contents also remain in named volumes after down/stop; removed
 Secret keys can remain there. The private home/storage restricts host access.
@@ -515,7 +538,7 @@ be recorded separately and old evidence is never changed.
 | Config | Update common/component defaults for future initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
-| Proxy/OIDC | Own route.conf/client.yaml and public certificate; registrations go through imported platform volumes and current indexes. |
+| Proxy/OIDC | Own route.conf/client.yaml and public certificate; routes go to platform imports, public client metadata to Identity imports, through current indexes. |
 | Tests | Update real resource counts in tests/test_deploy.py and app-specific assertions; probe tests discover every manifest. |
 | E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
 | Docs | Update overview, install/uninstall dependencies, tests/README and acceptance/README. |
@@ -539,7 +562,7 @@ or complete connection string is rendered into YAML or written to disk.
 
 | Owner | DB host | User / database | Persistent password below component directory | Secret / key | PostgreSQL volume | Client |
 | --- | --- | --- | --- | --- | --- | --- |
-| platform | platform-identity-postgres | identity / identity | generated-certificates/identity-db/password | platform-database-password / password | platform-identity-data | Identity |
+| identity | identity-postgres | identity / identity | generated-certificates/identity-db/password | identity-database-password / password | identity-data | Identity |
 | app1 | app1-postgres | todo / todo | generated-certificates/database/password | app1-database-password / password | app1-data | app1 Todo backend |
 | app2 | app2-postgres | todo / todo | generated-certificates/database/password | app2-database-password / password | app2-data | app2 Todo backend |
 
@@ -604,8 +627,8 @@ existing database.
 The 0.2.0-to-0.2.1 manual database-config upgrade applies only to the former core
 layout. Its original instructions and evidence are retained at
 [commit 511099e](https://github.com/gunstein/podman_offline/tree/511099e7e056d0d18c4ade95067c30a54c48bec4).
-Do not apply those steps as a migration to platform 0.3.0: this release explicitly
-refuses retained core state. See [PLATFORM-RENAME.md](acceptance/PLATFORM-RENAME.md)
+Do not apply those steps as a migration to 0.4.0: this release explicitly
+refuses retained core and combined platform/Identity state. See [IDENTITY-SPLIT.md](acceptance/IDENTITY-SPLIT.md)
 for the compatibility boundary and lab commands.
 
 Credentials in the runtime environment are sensitive: do not dump environment,

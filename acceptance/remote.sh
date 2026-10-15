@@ -13,7 +13,7 @@ run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
 bundle=${12:-app1}
-[[ $bundle == platform || $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
+[[ $bundle == platform || $bundle == identity || $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
 state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
@@ -42,7 +42,7 @@ def main():
     """Return installed component names after strict name and version validation."""
     names = []
     for path in sorted((pathlib.Path.home() / "installed").glob("*")):
-        if path.name not in ("platform", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
+        if path.name not in ("platform", "identity", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
             raise SystemExit("FAIL: invalid installed component marker")
         names.append(path.name)
     if not names or "platform" not in names:
@@ -650,14 +650,17 @@ import sys
 from pathlib import Path
 
 root = Path.home()
-new_paths = [root / "platform", root / "installed/platform", root / "dependencies",
+new_paths = [root / "platform", root / "identity", root / "installed/platform", root / "installed/identity", root / "dependencies",
              root / ".config/containers/systemd/myproduct-platform.yaml",
-             root / ".config/containers/systemd/myproduct-platform.kube"]
+             root / ".config/containers/systemd/myproduct-platform.kube",
+             root / ".config/containers/systemd/myproduct-identity.yaml",
+             root / ".config/containers/systemd/myproduct-identity.kube"]
 
 def no_parallel_platform():
     if any(path.exists() or path.is_symlink() for path in new_paths):
         raise SystemExit("FAIL: parallel platform files exist on retained core host")
-    for volume in ("platform-identity-data", "platform-identity-protection", "platform-routes", "platform-clients"):
+    for volume in ("platform-identity-data", "platform-identity-protection", "platform-routes", "platform-clients",
+                   "identity-data", "identity-protection", "identity-clients"):
         check = subprocess.run(["podman", "volume", "exists", volume], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, check=False, timeout=30)
         if check.returncode != 1:
@@ -704,7 +707,7 @@ upgrade-bundle)
     (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
     ;;
-help-upgrade-bundle|platform-upgrade-bundle)
+help-upgrade-bundle|platform-upgrade-bundle|identity-upgrade-bundle)
     cd "$src"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
     export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle"
@@ -735,26 +738,117 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
         content.write_text(content.read_text().replace("</body>", "<p>help-release-" + version + "</p></body>"))
         subprocess.run(["podman", "build", "-t", "localhost/myproduct-help:" + version,
                         "-f", str(release / "apps/help/Containerfile"), str(release / "apps/help")], check=True)
+    elif kind == "identity":
+        (release / "IDENTITY_VERSION").write_text(version + "\n")
+        program = release / "apps/identity/Program.cs"
+        marker = 'new { status = "ok" }'
+        if program.read_text().count(marker) != 1:
+            raise SystemExit("FAIL: expected one Identity health marker")
+        program.write_text(program.read_text().replace(marker, 'new { status = "ok", release = "' + version + '" }'))
+        manifest = release / "components/identity/manifests/50-identity.yaml"
+        text, count = re.subn(r"localhost/myproduct-identity:[0-9]+\.[0-9]+\.[0-9]+", "localhost/myproduct-identity:" + version, manifest.read_text())
+        if count != 1:
+            raise SystemExit("FAIL: expected one Identity image")
+        manifest.write_text(text)
+        subprocess.run(["podman", "build", "-t", "localhost/myproduct-identity:" + version,
+                        "-f", str(release / "apps/identity/Containerfile"), str(release / "apps/identity")], check=True)
     else:
         (release / "PLATFORM_VERSION").write_text(version + "\n")
     bundle.ROOT = release
     bundle.STAGE = source / "build/help-upgrade"
     bundle.DIST = source / "dist"
-    if kind == "help":
-        bundle.build_release(version, "help", ["help"])
-    else:
-        bundle.build_release(version, "platform", ["platform"])
+    bundle.build_release(version, kind, [kind])
 
 HELP_BUILD
     (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
     cat "build/help-upgrade/myproduct-$bundle-$requested_version/images/images.txt"
     ;;
-help-upgrade|platform-upgrade)
+help-upgrade|platform-upgrade|identity-upgrade)
     prepare_release
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     healthy
     wait_trust "$product/deploy.py"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
+    ;;
+identity-before|identity-after)
+    as_product python3 - "$action" "$requested_version" <<'IDENTITY_STATE'
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def command(arguments):
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=30)
+    if result.returncode:
+        raise RuntimeError("Identity observation failed")
+    return result.stdout
+
+
+def observe():
+    root = Path.home() / "identity"
+    paths = [root / "config.yaml"] + [path for path in (root / "generated-certificates").rglob("*") if path.is_file()]
+    required = ("identity-db/password", "identity/identity.key", "identity/identity.crt")
+    if any(not (root / "generated-certificates" / name).is_file() for name in required):
+        raise RuntimeError("Missing Identity credential evidence")
+    files = {str(path.relative_to(root)): {"hash": hashlib.sha256(path.read_bytes()).hexdigest(), "mode": path.stat().st_mode & 0o777} for path in paths}
+    volumes = {}
+    for name in ("identity-data", "identity-protection"):
+        rows = json.loads(command(["podman", "volume", "inspect", name]))
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise RuntimeError("Incomplete Identity volume evidence")
+        volumes[name] = {key: rows[0][key] for key in ("Name", "Mountpoint", "CreatedAt")}
+    rows = json.loads(command(["podman", "inspect", "--format", "json", "identity-server-app"]))
+    if not isinstance(rows, list) or len(rows) != 1 or rows[0]["Name"] != "identity-server-app":
+        raise RuntimeError("Incomplete Identity image evidence")
+    row = rows[0]
+    if row["State"]["Status"] != "running" or row["State"]["Health"]["Status"] != "healthy" or not row["Image"]:
+        raise RuntimeError("Identity is not healthy")
+    return {"files": files, "volumes": volumes, "image": row["Image"].replace("sha256:", ""), "image_name": row["ImageName"]}
+
+
+def main():
+    snapshot = Path.home() / "identity-lifecycle.json"
+    state = observe()
+    if sys.argv[1] == "identity-before":
+        fd = os.open(str(snapshot), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(state, stream)
+    else:
+        before = json.loads(snapshot.read_text())
+        version = sys.argv[2]
+        image = "localhost/myproduct-identity:" + version
+        if state["files"] != before["files"] or state["volumes"] != before["volumes"]:
+            raise RuntimeError("Identity credentials, config or data volumes changed")
+        if (Path.home() / "installed/identity").read_text().strip() != version:
+            raise RuntimeError("Identity version marker missing")
+        image_id = command(["podman", "image", "inspect", "--format", "{{.Id}}", image]).strip().replace("sha256:", "")
+        if state["image_name"] != image or state["image"] == before["image"] or state["image"] != image_id:
+            raise RuntimeError("Rebuilt Identity image is not actually running")
+        result = command(["podman", "exec", "identity-server-app", "bash", "-c",
+                          'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /identity/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n" >&3; cat <&3'])
+        if '"release":"' + version + '"' not in result:
+            raise RuntimeError("New Identity application content is not observable")
+    print("PASS: " + sys.argv[1] + "; credential/data/image evidence verified; private values withheld")
+
+
+try:
+    main()
+except Exception:
+    raise SystemExit("FAIL: Identity lifecycle verification (details withheld)") from None
+IDENTITY_STATE
+    ;;
+help-without-identity)
+    healthy
+    sudo -n test ! -e "$state/installed/identity"
+    sudo -n test ! -e "$state/identity"
+    curl --noproxy '*' --cacert <(as_product cat "$state/PKI/private/ca.crt") \
+        --resolve "$prod_host:$port:$prod_ip" --fail --silent --show-error --max-time 10 \
+        --output /dev/null "https://$prod_host:$port/help/"
+    echo 'PASS: platform/help are healthy without Identity installed or DNS-resolvable'
     ;;
 platform-before|platform-after|platform-downgrade)
     as_product python3 - "$action" "$state/platform-lifecycle.json" "$product" "$state/releases/myproduct-platform-$old_version" <<'PLATFORM_LIFECYCLE'
@@ -769,11 +863,13 @@ import sys
 def observe():
     root = Path.home()
     paths = []
-    for directory in ("platform", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
+    for directory in ("platform", "identity", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
         paths.extend(path for path in (root / directory).rglob("*") if path.is_file())
     files = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-    names = ["platform-identity-postgres-db", "platform-identity-app", "platform-proxy-nginx"]
+    names = ["platform-proxy-nginx"]
     if sys.argv[1] == "platform-downgrade":
+        if (root / "installed/identity").is_file():
+            names.extend(["identity-server-app", "identity-postgres-db"])
         for component in ("app1", "app2"):
             if (root / "installed" / component).is_file():
                 names.extend([component + "-postgres-db", component + "-todo-backend", component + "-todo-frontend"])
@@ -831,7 +927,7 @@ help-content)
     grep -Fq "help-release-$requested_version" <<< "$content"
     echo 'PASS: new help content served via verified HTTPS'
     ;;
-help-retire|platform-retire)
+help-retire|platform-retire|identity-retire)
     old_release="$state/releases/myproduct-$bundle-$old_version"
     sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
     sudo -n fapolicyd-cli --update
@@ -867,7 +963,7 @@ def main():
     if result.returncode != 1 or result.stderr.strip() != "ERROR: Install the separate platform bundle before installing help":
         raise SystemExit("FAIL: help-alone did not refuse the missing platform")
     home = pathlib.Path.home()
-    if any((home / name).exists() for name in ("installed", "platform", "app1", "app2", "help", "routes", "clients")):
+    if any((home / name).exists() for name in ("installed", "platform", "identity", "app1", "app2", "help", "routes", "clients")):
         raise SystemExit("FAIL: help-alone changed persistent component state")
     print("PASS: help-alone refused missing platform without component writes")
 
@@ -899,7 +995,7 @@ def main():
     """Hash private persistent files for the controller without printing their contents."""
     root = pathlib.Path.home()
     paths = []
-    for component in ("platform", "app1", "app2", "help"):
+    for component in ("platform", "identity", "app1", "app2", "help"):
         config = root / component / "config.yaml"
         if config.is_file():
             paths.append(config)
@@ -987,12 +1083,12 @@ print("PASS: correct secret connects; sibling password authentication rejected")
 
 
 def logs_safe(home):
-    credentials, containers = [], ["platform-identity-app", "platform-identity-postgres-db"]
-    for component, relative in (("platform", "identity-db"), ("app1", "database"), ("app2", "database")):
+    credentials, containers = [], ["identity-server-app", "identity-postgres-db"]
+    for component, relative in (("identity", "identity-db"), ("app1", "database"), ("app2", "database")):
         if not (home / "installed" / component).exists():
             continue
         credentials.append((home / component / "generated-certificates" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
-        if component != "platform":
+        if component != "identity":
             containers += [component + "-todo-backend", component + "-postgres-db"]
     for container in containers:
         result = subprocess.run(["podman", "logs", container], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1006,7 +1102,7 @@ def logs_safe(home):
 def main():
     home = pathlib.Path.home()
     logs_safe(home)
-    result = subprocess.run(["podman", "exec", "platform-identity-app", "dotnet", "Identity.dll", "--database-check"],
+    result = subprocess.run(["podman", "exec", "identity-server-app", "dotnet", "Identity.dll", "--database-check"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
     if result.returncode or "verified via ConnectionStrings__Default" not in result.stdout:
         raise RuntimeError("Identity runtime environment connection check failed")
@@ -1248,14 +1344,14 @@ LABELS
 import subprocess
 from pathlib import Path
 
-SECRET_FILE = Path("/var/lib/myproduct/platform/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
+SECRET_FILE = Path("/var/lib/myproduct/identity/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
 
 
 def main():
     """Compare source bytes to the delivered secret without printing either value."""
     expected = SECRET_FILE.read_bytes()
     result = subprocess.run(
-        ["podman", "exec", "platform-identity-app", "bash", "-c",
+        ["podman", "exec", "identity-server-app", "bash", "-c",
          'printf "%s" "$ApiResources__0__ApiSecrets__0__Value"'],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
     )
@@ -1276,7 +1372,7 @@ API_SECRET
             as_product podman exec "$component-todo-backend" python -c "import socket; socket.create_connection(('$component-postgres',5432),5).close()"
         fi
     done
-    as_product podman exec platform-proxy-nginx wget -qO- http://platform-identity:8080/identity/.well-known/openid-configuration
+    as_product podman exec platform-proxy-nginx wget -qO- http://identity-server:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
     uid=$(id -u myproduct)
     journal=$(sudo -n journalctl _UID="$uid" --since "@$run_started" --no-pager)
@@ -1518,11 +1614,12 @@ HANG
     healthy
     wait_backend
     ;;
-siblings-before|siblings-after|help-siblings-before|help-siblings-after|platform-siblings-before|platform-siblings-after)
+siblings-before|siblings-after|help-siblings-before|help-siblings-after|platform-siblings-before|platform-siblings-after|identity-siblings-before|identity-siblings-after)
     observation="$base/siblings.json"
     if [[ $action == platform-siblings-* ]]; then observation="$base/platform-siblings.json"; fi
     mode=app1
     if [[ $action == platform-siblings-* ]]; then mode=platform; fi
+    if [[ $action == identity-siblings-* ]]; then observation="$base/identity-siblings.json"; mode=identity; fi
     if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
     sudo -n python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
 import hashlib
@@ -1548,14 +1645,17 @@ def observe():
     prefix = ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
               'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
     mode = sys.argv[3] if len(sys.argv) > 3 else "app1"
-    components = {"app1": ["platform", "app2", "help"],
-                  "help": ["platform", "app1", "app2"],
-                  "platform": ["app1", "app2", "help"]}[mode]
+    components = {"app1": ["platform", "identity", "app2", "help"],
+                  "help": ["platform", "identity", "app1", "app2"],
+                  "platform": ["identity", "app1", "app2", "help"],
+                  "identity": ["platform", "app1", "app2", "help"]}[mode]
     components = [name for name in components if pathlib.Path("/var/lib/myproduct/installed", name).is_file()]
     names = []
     for component in components:
         if component == "platform":
-            names.extend(["platform-identity-postgres-db", "platform-identity-app", "platform-proxy-nginx"])
+            names.append("platform-proxy-nginx")
+        elif component == "identity":
+            names.extend(["identity-postgres-db", "identity-server-app"])
         elif component == "help":
             names.append("help-web-web")
         else:

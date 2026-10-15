@@ -92,11 +92,12 @@ class DatabaseTests(DeployFixture):
     def test_production_volume_guard_precedes_images_and_persistent_changes(self):
         self.write(
             "bundle.yaml",
-            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.2.0, before: 0.3.0}}\n",
+            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.4.0, before: 0.5.0}, identity: {min: 0.4.0, before: 0.5.0}}\n",
         )
         self.write("VERSION", "0.2.1\n")
         self.write("PLATFORM_VERSION", "0.2.1\n")
-        self.write("home/installed/platform", "0.2.1\n")
+        self.write("home/installed/platform", "0.4.0\n")
+        self.write("home/installed/identity", "0.4.0\n")
         self.write(
             "home/platform/config.yaml",
             yaml.safe_dump(deploy.component_defaults("platform")),
@@ -116,17 +117,23 @@ class DatabaseTests(DeployFixture):
         """Each README-required DB key is mandatory even when new defaults supply it."""
         self.write(
             "bundle.yaml",
-            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.2.0, before: 0.3.0}}\n",
+            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.4.0, before: 0.5.0}, identity: {min: 0.4.0, before: 0.5.0}}\n",
         )
         self.write("VERSION", "0.2.1\n")
         self.write("PLATFORM_VERSION", "0.2.1\n")
-        self.write("home/installed/platform", "0.2.0\n")
-        platform = deploy.component_defaults("platform")
-        self.write("home/platform/config.yaml", yaml.safe_dump(platform))
-        for component, settings in (("platform", platform), ("app1", self.settings)):
+        self.write("home/installed/platform", "0.4.0\n")
+        self.write("home/installed/identity", "0.4.0\n")
+        self.write("IDENTITY_VERSION", "0.4.1\n")
+        self.write(
+            "home/platform/config.yaml",
+            yaml.safe_dump(deploy.component_defaults("platform")),
+        )
+        identity = deploy.component_defaults("identity")
+        self.write("home/identity/config.yaml", yaml.safe_dump(identity))
+        for component, settings in (("identity", identity), ("app1", self.settings)):
             for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
                 with self.subTest(component=component, key=key):
-                    self.write("home/platform/config.yaml", yaml.safe_dump(platform))
+                    self.write("home/identity/config.yaml", yaml.safe_dump(identity))
                     self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
                     legacy = dict(settings)
                     del legacy[key]
@@ -142,9 +149,10 @@ class DatabaseTests(DeployFixture):
                             {
                                 "name": component,
                                 "components": [component],
-                                "requires": {}
-                                if component == "platform"
-                                else {"platform": {"min": "0.2.0", "before": "0.3.0"}},
+                                "requires": {
+                                    dependency: {"min": "0.4.0", "before": "0.5.0"}
+                                    for dependency in deploy.DEPENDENCIES[component]
+                                },
                             }
                         ),
                     )
@@ -227,7 +235,7 @@ class DatabaseTests(DeployFixture):
         self.assertFalse(self.password.exists())
 
     def test_all_components_share_their_secret_and_public_database_parameters(self):
-        for component in ("platform", "app1", "app2"):
+        for component in ("identity", "app1", "app2"):
             config = deploy.component_defaults(component)
             config["PUBLIC_HOSTNAME"] = "myproduct-proxy"
             docs = []
@@ -238,7 +246,7 @@ class DatabaseTests(DeployFixture):
             pods = [d for d in docs if d.get("kind") == "Pod"]
             server = next(p for p in pods if p["metadata"]["name"].endswith("postgres"))
             client = next(
-                p for p in pods if p["metadata"]["name"].endswith(("identity", "todo"))
+                p for p in pods if p["metadata"]["name"].endswith(("server", "todo"))
             )
             server_env = {
                 e["name"]: e["value"] for e in server["spec"]["containers"][0]["env"]
@@ -261,7 +269,7 @@ class DatabaseTests(DeployFixture):
                 self.assertEqual(
                     volume["secret"]["items"], [{"key": "password", "path": "password"}]
                 )
-            relative = "identity-db" if component == "platform" else "database"
+            relative = "identity-db" if component == "identity" else "database"
             self.assertIn(
                 "generated-certificates/" + relative + "/password",
                 config[deploy.GENERATED_SECRETS],
@@ -286,7 +294,7 @@ class DatabaseTests(DeployFixture):
 
     def test_shared_dev_port_override_does_not_require_a_database_in_help(self):
         self.write("config/dev.yaml", 'DB_PORT: "5544"\n')
-        for component in ("platform", "app1", "app2", "help"):
+        for component in deploy.COMPONENTS:
             self.assertEqual(
                 deploy.component_defaults(component, dev=True)["DB_PORT"], "5544"
             )

@@ -1,0 +1,19 @@
+DB_HOST: identity-postgres
+DB_PORT: '5432'
+DB_USER: identity
+DB_NAME: identity
+GENERATED_SECRETS:
+- generated-certificates/app/ApiResources__0__ApiSecrets__0__Value
+- generated-certificates/identity-db/password
+SECRET_FILES:
+  identity-api-secrets:
+  - generated-certificates/app
+  identity-signing:
+  - generated-certificates/identity
+  identity-database-password:
+  - generated-certificates/identity-db
+  identity-demo-users:
+  - generated-certificates/users
+VOLUME_FILES:
+  identity-clients:
+  - ../clients

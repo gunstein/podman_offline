@@ -45,7 +45,7 @@ class InstallFailureTests(ComponentFixture):
             self.write("home/" + name, "sibling fixture")
         self.write(
             "home/dependencies/app2.json",
-            '{"platform": {"min": "1.0.0", "before": "2.0.0"}}',
+            '{"platform": {"min": "1.0.0", "before": "2.0.0"}, "identity": {"min": "1.0.0", "before": "2.0.0"}}',
         )
         deploy.install()
         self.write("VERSION", "1.2.4\n")

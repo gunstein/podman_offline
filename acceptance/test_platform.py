@@ -35,7 +35,7 @@ class PlatformHarnessTests(unittest.TestCase):
                 code["subprocess"], "run", return_value=mock.Mock(returncode=1)
             ) as host:
                 code["no_parallel_platform"]()
-                self.assertEqual(host.call_count, 4)
+                self.assertEqual(host.call_count, 7)
                 (root / "platform").mkdir()
                 host.reset_mock()
                 with self.assertRaisesRegex(SystemExit, "parallel platform files"):

@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: nginx
-    image: localhost/myproduct-proxy:0.3.0
+    image: localhost/myproduct-proxy:0.4.0
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90

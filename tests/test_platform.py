@@ -163,17 +163,21 @@ class PlatformSafetyTests(ComponentFixture):
         requirement = deploy.HOME / "dependencies/app1.json"
         self.assertEqual(
             json.loads(requirement.read_text()),
-            {"platform": {"min": "1.0.0", "before": "2.0.0"}},
+            {
+                "platform": {"min": "1.0.0", "before": "2.0.0"},
+                "identity": {"min": "1.0.0", "before": "2.0.0"},
+            },
         )
         self.select("platform")
         self.write("PLATFORM_VERSION", "2.0.0\n")
         before = self.snapshot()
         self.process.reset_mock()
-        with self.assertRaisesRegex(deploy.DeployError, "dependency for app1"):
+        with self.assertRaisesRegex(deploy.DeployError, "dependency for identity"):
             deploy.install()
         self.process.assert_not_called()
         self.assertEqual(self.snapshot(), before)
         requirement.unlink()
+        self.write("PLATFORM_VERSION", "1.1.0\n")
         with self.assertRaisesRegex(
             deploy.DeployError, "installed platform requirement"
         ):
@@ -188,7 +192,7 @@ class PlatformSafetyTests(ComponentFixture):
         pod["spec"]["volumes"] = [
             {
                 "name": "data",
-                "persistentVolumeClaim": {"claimName": "platform-identity-data"},
+                "persistentVolumeClaim": {"claimName": "platform-routes"},
             }
         ]
         path.write_text(
@@ -196,13 +200,14 @@ class PlatformSafetyTests(ComponentFixture):
                 [
                     {
                         "kind": "PersistentVolumeClaim",
-                        "metadata": {"name": "platform-identity-data"},
+                        "metadata": {"name": "platform-routes"},
                     },
                     pod,
                 ]
             )
         )
         deploy.install()
+        (deploy.HOME / "installed/identity").unlink()
         sibling = (deploy.HOME / "app1/config.yaml").read_bytes()
         self.process.reset_mock()
         self.process.return_value = subprocess.CompletedProcess([], 0)
@@ -212,9 +217,7 @@ class PlatformSafetyTests(ComponentFixture):
             for call in self.process.call_args_list
             if call.args[0][:3] == ["podman", "volume", "rm"]
         ]
-        self.assertEqual(
-            removals, [["podman", "volume", "rm", "platform-identity-data"]]
-        )
+        self.assertEqual(removals, [["podman", "volume", "rm", "platform-routes"]])
         self.assertEqual((deploy.HOME / "app1/config.yaml").read_bytes(), sibling)
         self.assertFalse((deploy.HOME / "platform").exists())
         self.assertTrue((deploy.QUADLET_DIR / "myproduct.network").exists())

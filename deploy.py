@@ -54,6 +54,17 @@ PH = re.compile(r"^@@([A-Z0-9_]+)@@$")
 MAX_PORT = 65535
 
 
+COMPONENTS = ("platform", "identity", "app1", "app2", "help")
+DEPENDENCIES = {
+    "platform": (),
+    "identity": ("platform",),
+    "app1": ("platform", "identity"),
+    "app2": ("platform", "identity"),
+    "help": ("platform",),
+}
+VERSION_FILES = {"platform": "PLATFORM_VERSION", "identity": "IDENTITY_VERSION"}
+
+
 class DeployError(Exception):
     """Error shown as a single ERROR line without a traceback."""
 
@@ -225,7 +236,7 @@ def init_config(component):
     if component not in bundle_components():
         raise DeployError(f"Component {component} is not included in this bundle")
     if component != "platform":
-        platform_dependencies(component)
+        component_dependencies(component)
     target = HOME / component / "config.yaml"
     for path in [target] + list(target.parents):
         if path.is_symlink():
@@ -865,8 +876,7 @@ def prepare_components():
     state = BUILD / "dev"
     reject_legacy_layout(home=state)
     settings_by_component = {
-        component: component_defaults(component, dev=True)
-        for component in ("platform", "app1", "app2", "help")
+        component: component_defaults(component, dev=True) for component in COMPONENTS
     }
     for component, settings in settings_by_component.items():
         database_preflight(
@@ -876,22 +886,24 @@ def prepare_components():
         )
     reject_legacy_layout(home=state, volumes=True)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for component in ("platform", "app1", "app2", "help"):
+    for component in COMPONENTS:
         target = state / component / "config.yaml"
         settings = settings_by_component[component]
         write_private(target, yaml.safe_dump(settings, sort_keys=False))
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
         imports, updates = registration_stage(
-            ["app1", "app2", "help"], Path(directory), home=state
+            ["identity", "app1", "app2", "help"], Path(directory), home=state
         )
         documents = []
-        for component in ("platform", "app1", "app2", "help"):
+        for component in COMPONENTS:
             text = render(
                 state / component / "files",
                 config_path=state / component / "config.yaml",
                 manifests=ROOT / "components" / component / "manifests",
                 component=component,
-                extra_volumes=imports if component == "platform" else None,
+                extra_volumes=component_imports(
+                    component, imports, settings_by_component[component]
+                ),
             )
             documents.extend(yaml.safe_load_all(text))
         check_links(documents, {})
@@ -1052,23 +1064,18 @@ def bundle_components():
         "requires",
     }:
         raise DeployError(
-            "Invalid bundle.yaml; use a separate platform/app/help bundle"
+            "Invalid bundle.yaml; use a separate platform/identity/app/help bundle"
         )
     name = descriptor["name"]
-    if name not in ("platform", "app1", "app2", "help") or descriptor["components"] != [
-        name
-    ]:
+    if name not in COMPONENTS or descriptor["components"] != [name]:
         raise DeployError(
             "Invalid bundle component selection; platform must be separate"
         )
     requires = descriptor["requires"]
-    if (name == "platform" and requires != {}) or (
-        name != "platform"
-        and (not isinstance(requires, dict) or set(requires) != {"platform"})
-    ):
+    if not isinstance(requires, dict) or set(requires) != set(DEPENDENCIES[name]):
         raise DeployError("Invalid bundle dependencies")
-    if name != "platform":
-        validate_platform_requirement(requires["platform"])
+    for requirement in requires.values():
+        validate_platform_requirement(requirement)
     return [name]
 
 
@@ -1089,41 +1096,56 @@ def validate_platform_requirement(requirement):
         raise DeployError("Empty platform version requirement")
 
 
-def platform_dependencies(component):
-    """Check dependencies before writes, independently of retained release directories."""
-    descriptor = load_yaml(ROOT / "bundle.yaml")
-    if component != "platform":
-        marker = HOME / "installed/platform"
+def component_dependencies(component):
+    """Validate fixed component dependencies and installed dependents before writes."""
+    requires = load_yaml(ROOT / "bundle.yaml")["requires"]
+    for dependency, requirement in requires.items():
+        marker = HOME / "installed" / dependency
         if not marker.is_file():
             raise DeployError(
-                "Install the separate platform bundle before installing " + component
+                "Install the separate "
+                + dependency
+                + " bundle before installing "
+                + component
             )
-        requirements = [(component, descriptor["requires"]["platform"])]
-        requested = version_number(marker.read_text().strip())
-    else:
-        requested = version_number((ROOT / "PLATFORM_VERSION").read_text().strip())
-        requirements = []
-        for name in ("app1", "app2", "help"):
-            if not (HOME / "installed" / name).is_file():
-                continue
-            path = HOME / "dependencies" / (name + ".json")
-            try:
-                requirement = json.loads(path.read_text())["platform"]
-            except (OSError, ValueError, KeyError, TypeError):
-                raise DeployError(
-                    "Missing or invalid installed platform requirement for " + name
-                ) from None
-            requirements.append((name, requirement))
-    for name, requirement in requirements:
-        validate_platform_requirement(requirement)
+        check_version_requirement(
+            dependency, marker.read_text().strip(), requirement, component
+        )
+    requested = (ROOT / VERSION_FILES.get(component, "VERSION")).read_text().strip()
+    for name in COMPONENTS:
         if (
-            not version_number(requirement["min"])
-            <= requested
-            < version_number(requirement["before"])
+            name == component
+            or component not in DEPENDENCIES[name]
+            or not (HOME / "installed" / name).is_file()
         ):
+            continue
+        path = HOME / "dependencies" / (name + ".json")
+        try:
+            installed = json.loads(path.read_text())
+            if not isinstance(installed, dict) or set(installed) != set(
+                DEPENDENCIES[name]
+            ):
+                raise ValueError("dependency keys")
+            for requirement in installed.values():
+                validate_platform_requirement(requirement)
+        except (OSError, ValueError, KeyError, TypeError, DeployError):
             raise DeployError(
-                "Platform version does not satisfy dependency for " + name
-            )
+                "Missing or invalid installed " + component + " requirement for " + name
+            ) from None
+        check_version_requirement(component, requested, installed[component], name)
+
+
+def check_version_requirement(component, version, requirement, dependent):
+    """Use the existing inclusive-minimum/exclusive-upper numeric contract."""
+    validate_platform_requirement(requirement)
+    if (
+        not version_number(requirement["min"])
+        <= version_number(version)
+        < version_number(requirement["before"])
+    ):
+        raise DeployError(
+            component.title() + " version does not satisfy dependency for " + dependent
+        )
 
 
 def reject_legacy_layout(home=None, volumes=False):
@@ -1150,6 +1172,7 @@ def reject_legacy_layout(home=None, volumes=False):
         raise DeployError(
             "Legacy core layout detected; use its previous release. A separate migration procedure or an explicitly fresh installation is required; mixed core/platform state is refused"
         )
+    reject_combined_platform(home)
     if not volumes:
         return
     for name in (
@@ -1157,12 +1180,56 @@ def reject_legacy_layout(home=None, volumes=False):
         "core-identity-protection",
         "core-routes",
         "core-clients",
+        "platform-identity-data",
+        "platform-identity-protection",
+        "platform-clients",
     ):
         if legacy_volume_exists(name):
             raise DeployError(
-                "Legacy core volume detected: "
+                "Legacy core volume/combined platform volume detected: "
                 + name
                 + "; use the previous release or a separate migration procedure; no automatic migration"
+            )
+
+
+def reject_combined_platform(home):
+    """Proxy-only platform is valid; reject concrete signs of its former Identity ownership."""
+    old = [
+        home / "platform/generated-certificates" / name
+        for name in ("identity", "identity-db", "app", "users")
+    ]
+    old.append(home / "platform/files/platform-clients.tar")
+    for path in old:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise DeployError(
+            "Combined platform/Identity layout detected; use its previous release or a separate migration procedure; mixed layouts are refused"
+        )
+    marker = home / "installed/platform"
+    if marker.is_file() and version_number(marker.read_text().strip()) < (0, 4, 0):
+        raise DeployError(
+            "Combined platform/Identity version detected; a separate migration procedure is required"
+        )
+    for path in (
+        home / "platform/config.yaml",
+        home / ".config/containers/systemd/myproduct-platform.yaml",
+    ):
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise DeployError(
+                "Cannot check combined platform/Identity layout; no changes made"
+            ) from None
+        if re.search(
+            r"platform-(?:identity|api-secrets|database-password|demo-users|clients)|generated-certificates/(?:identity-db|identity/|app/|users/)",
+            text,
+        ):
+            raise DeployError(
+                "Combined platform/Identity config or service detected; a separate migration procedure is required"
             )
 
 
@@ -1195,15 +1262,24 @@ def version_number(value):
 
 
 def platform_upgrade_needed(version):
-    """Install missing/newer platform, retain an equal platform and reject downgrades."""
+    """Retain the existing platform comparison entry point."""
+    return shared_upgrade_needed("platform", version)
+
+
+def shared_upgrade_needed(component, version):
+    """Install missing/newer shared components; retain equals and refuse downgrades."""
     requested = version_number(version)
-    marker = HOME / "installed/platform"
+    marker = HOME / "installed" / component
     if not marker.is_file():
         return True
     installed = version_number(marker.read_text().strip())
     if requested < installed:
         raise DeployError(
-            f"Platform downgrade refused: requested {version}, installed {marker.read_text().strip()}"
+            component.title()
+            + " downgrade refused: requested "
+            + version
+            + ", installed "
+            + marker.read_text().strip()
         )
     return requested > installed
 
@@ -1348,13 +1424,13 @@ def registration_stage(components, directory, home=None):
         encoding="utf-8",
     )
     # Imports overwrite files without deleting old entries; only these current indexes are read.
-    imports = {"platform-routes": [routes], "platform-clients": client_dirs + [index]}
+    imports = {"platform-routes": [routes], "identity-clients": client_dirs + [index]}
     return imports, updates
 
 
 def write_registrations(updates, home=None):
-    """Write changed public registrations privately and report whether platform must restart."""
-    changed = False
+    """Write changed public registrations privately and report which registration owners must restart."""
+    changed = set()
     if any(((home or HOME) / relative).is_symlink() for relative in updates):
         raise DeployError("Refuse symlinked public registration output")
     for relative, data in updates.items():
@@ -1364,8 +1440,22 @@ def write_registrations(updates, home=None):
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.parent.chmod(0o700)
         write_private(target, data.decode("utf-8"))
-        changed = True
+        changed.add("platform" if relative.startswith("routes/") else "identity")
     return changed
+
+
+def component_imports(component, imports, config=None):
+    """Route and client archives have separate owners; never cross their PVC namespaces."""
+    selected = {
+        key: value for key, value in imports.items() if key.startswith(component + "-")
+    }
+    if config is not None:
+        selected = {
+            key: value
+            for key, value in selected.items()
+            if key in config.get(VOLUME_FILES, {})
+        }
+    return selected or None
 
 
 def install_component_plan(components, source_components, imports, updates):
@@ -1377,12 +1467,7 @@ def install_component_plan(components, source_components, imports, updates):
     rendered = {}
     for component in components:
         config, files, _, _ = component_paths(component)
-        extra = (
-            imports
-            if component == "platform"
-            and "platform-routes" in load_config(config).get(VOLUME_FILES, {})
-            else None
-        )
+        extra = component_imports(component, imports, load_config(config))
         rendered[component] = render(
             files,
             write_archives=False,
@@ -1396,9 +1481,12 @@ def install_component_plan(components, source_components, imports, updates):
         raise DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
-    if "platform" in source_components and "platform" not in components:
-        for path in sorted((ROOT / "components/platform/manifests").glob("*.yaml")):
-            documents.extend(load_yaml_all(path))
+    for component in source_components:
+        if component not in components:
+            for path in sorted(
+                (ROOT / "components" / component / "manifests").glob("*.yaml")
+            ):
+                documents.extend(load_yaml_all(path))
     for image in find_images(documents):
         try:
             run("podman", "image", "exists", image)
@@ -1413,12 +1501,7 @@ def install_component_plan(components, source_components, imports, updates):
         network.chmod(0o644)
     for component in components:
         config, files, output, quadlet = component_paths(component)
-        extra = (
-            imports
-            if component == "platform"
-            and "platform-routes" in load_config(config).get(VOLUME_FILES, {})
-            else None
-        )
+        extra = component_imports(component, imports, load_config(config))
         render(
             files,
             config_path=config,
@@ -1434,22 +1517,24 @@ def install_component_plan(components, source_components, imports, updates):
             encoding="utf-8",
         )
         quadlet.chmod(0o644)
-    if changed and "platform" not in components:
-        write_file_archives(imports, component_paths("platform")[1])
+    for owner in ("identity", "platform"):
+        if owner in changed and owner not in components:
+            write_file_archives(
+                component_imports(owner, imports) or {}, component_paths(owner)[1]
+            )
     run("systemctl", "--user", "daemon-reload")
-    services = [component for component in components if component != "platform"]
-    if "platform" in components or changed:
-        services.append("platform")
+    services = [component for component in components if component not in VERSION_FILES]
+    services.extend(
+        owner
+        for owner in ("identity", "platform")
+        if owner in components or owner in changed
+    )
     for component in services:
         service = "myproduct-" + component + ".service"
         run("systemctl", "--user", "restart", service)
         run("systemctl", "--user", "is-active", "--quiet", service)
     for component in components:
-        version = (
-            (ROOT / ("PLATFORM_VERSION" if component == "platform" else "VERSION"))
-            .read_text()
-            .strip()
-        )
+        version = (ROOT / VERSION_FILES.get(component, "VERSION")).read_text().strip()
         write_private(HOME / "installed" / component, version + "\n")
         write_private(
             HOME / "dependencies" / (component + ".json"),
@@ -1463,13 +1548,14 @@ def install_components():
     production_environment()
     reject_legacy_layout()
     components = bundle_components()
-    platform_dependencies(components[0])
+    component_dependencies(components[0])
     version_number((ROOT / "VERSION").read_text().strip())
     source_components = list(components)
-    if "platform" in components and not platform_upgrade_needed(
-        (ROOT / "PLATFORM_VERSION").read_text().strip()
-    ):
-        components.remove("platform")
+    for component in tuple(components):
+        if component in VERSION_FILES and not shared_upgrade_needed(
+            component, (ROOT / VERSION_FILES[component]).read_text().strip()
+        ):
+            components.remove(component)
     for component in source_components:
         for path in sorted(
             (ROOT / "components" / component / "manifests").glob("*.yaml")
@@ -1516,7 +1602,7 @@ def install():
         install_components()
     elif (ROOT / "components").is_dir():
         raise DeployError(
-            "Run install from an unpacked platform/app/help bundle, not the source checkout"
+            "Run install from an unpacked platform/identity/app/help bundle, not the source checkout"
         )
     else:
         install_legacy()
@@ -1534,14 +1620,15 @@ def uninstall(component=None, delete_data=False):
     marker = HOME / "installed" / component
     if not marker.is_file():
         raise DeployError(f"Component {component} is not installed")
-    if component == "platform":
-        dependents = [
-            name
-            for name in ("app1", "app2", "help")
-            if (HOME / "installed" / name).is_file()
-        ]
-        if dependents:
-            raise DeployError("Platform is still required by: " + ", ".join(dependents))
+    dependents = [
+        name
+        for name in COMPONENTS
+        if component in DEPENDENCIES[name] and (HOME / "installed" / name).is_file()
+    ]
+    if dependents:
+        raise DeployError(
+            component.title() + " is still required by: " + ", ".join(dependents)
+        )
     reject_legacy_layout(volumes=True)
     _, _, output, quadlet = component_paths(component)
     documents = load_yaml_all(output)
@@ -1555,11 +1642,14 @@ def uninstall(component=None, delete_data=False):
     run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
     for path in (output, quadlet):
         path.unlink()
+    changed = set()
     route = HOME / "routes" / (component + ".conf")
     if route.is_file():
         route.unlink()
+        changed.add("platform")
     client = HOME / "clients" / component
     if client.exists():
+        changed.add("identity")
         if client.is_symlink():
             raise DeployError("Refuse symlinked client registration")
         shutil.rmtree(client)
@@ -1567,14 +1657,34 @@ def uninstall(component=None, delete_data=False):
     dependency = HOME / "dependencies" / (component + ".json")
     if dependency.exists():
         dependency.unlink()
-    if component != "platform":
+    if changed:
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
             imports, _ = registration_stage([], Path(directory))
-            write_file_archives(imports, component_paths("platform")[1])
-        run("systemctl", "--user", "restart", "myproduct-platform.service")
-        run("systemctl", "--user", "is-active", "--quiet", "myproduct-platform.service")
+            for owner in ("identity", "platform"):
+                if (
+                    owner in changed
+                    and owner != component
+                    and (HOME / "installed" / owner).is_file()
+                ):
+                    write_file_archives(
+                        component_imports(owner, imports) or {},
+                        component_paths(owner)[1],
+                    )
+                    run(
+                        "systemctl",
+                        "--user",
+                        "restart",
+                        "myproduct-" + owner + ".service",
+                    )
+                    run(
+                        "systemctl",
+                        "--user",
+                        "is-active",
+                        "--quiet",
+                        "myproduct-" + owner + ".service",
+                    )
     run("systemctl", "--user", "daemon-reload")
     if delete_data:
         for name in volumes:

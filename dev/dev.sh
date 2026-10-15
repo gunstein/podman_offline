@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 import deploy
 # Explicit Podman dependency before certificates, config output or secret creation.
 deploy.reject_legacy_layout(home=deploy.BUILD / "dev", volumes=True)
-for component in ("platform", "app1", "app2"):
+for component in ("identity", "app1", "app2"):
     deploy.database_preflight(
         deploy.component_defaults(component, dev=True),
         deploy.BUILD / "dev" / component / "config.yaml",
@@ -18,7 +18,7 @@ for component in ("platform", "app1", "app2"):
 print(urlsplit(deploy.component_defaults("platform", dev=True)["PUBLIC_ORIGIN"]).hostname)
 DEV_HOST
 )
-        for component in platform app1 app2 help; do
+        for component in platform identity app1 app2 help; do
             bash ./scripts/generate-certificates.sh --root build/dev "$component" "$hostname"
         done
         ./deploy prepare

@@ -36,13 +36,14 @@ class ComponentFixture(DeployFixture):
         self.write("bundle.yaml", "name: app1\ncomponents: [app1]\n")
         self.write("VERSION", "1.2.3\n")
         self.write("PLATFORM_VERSION", "1.0.0\n")
+        self.write("IDENTITY_VERSION", "1.0.0\n")
         self.write(
             "quadlet/myproduct.kube",
             "[Kube]\nYaml=myproduct.yaml\nNetwork=myproduct.network\n",
         )
         self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
         self.write("images/images.tar")
-        for component in ("platform", "app1"):
+        for component in ("platform", "identity", "app1"):
             self.write(
                 "home/" + component + "/config.yaml",
                 "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
@@ -51,6 +52,8 @@ class ComponentFixture(DeployFixture):
 
         self.select("platform")
         deploy.install()
+        self.select("identity")
+        deploy.install()
         self.select("app1")
         self.process.reset_mock()
 
@@ -58,11 +61,10 @@ class ComponentFixture(DeployFixture):
         """Keep release descriptors explicit in this existing lifecycle fixture."""
         if name == "bundle.yaml" and isinstance(contents, str):
             descriptor = yaml.safe_load(contents)
-            descriptor["requires"] = (
-                {}
-                if descriptor["name"] == "platform"
-                else {"platform": {"min": "1.0.0", "before": "2.0.0"}}
-            )
+            descriptor["requires"] = {
+                name: {"min": "1.0.0", "before": "2.0.0"}
+                for name in deploy.DEPENDENCIES[descriptor["name"]]
+            }
             contents = yaml.safe_dump(descriptor)
         return super().write(name, contents, mode)
 
@@ -308,7 +310,7 @@ class ComponentTests(ComponentFixture):
         self.assertEqual(sibling.read_text(), "existing app2 route")
         self.assertEqual(client.read_text(), "existing app2 client")
         self.assertEqual(
-            {path.name for path in imports["platform-clients"]},
+            {path.name for path in imports["identity-clients"]},
             {"app1", "app2", "installed.json"},
         )
         registration = json.loads(updates["clients/app1/client.json"])
@@ -439,7 +441,7 @@ class ComponentTests(ComponentFixture):
             "config/dev.yaml",
             "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nIP_ADDRESS: 127.0.0.1\n",
         )
-        for component in ("platform", "app1", "app2", "help"):
+        for component in deploy.COMPONENTS:
             config = deploy.merge_config(
                 repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",
@@ -460,7 +462,7 @@ class ComponentTests(ComponentFixture):
                     "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
                 )
         for component, relative in (
-            ("platform", "identity-db"),
+            ("identity", "identity-db"),
             ("app1", "database"),
             ("app2", "database"),
         ):

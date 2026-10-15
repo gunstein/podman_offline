@@ -4,11 +4,11 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Extract Identity (item 9)](#9-extract-identity-into-a-separate-component-and-bundle).
-2. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+1. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
 
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
-platform bundle (item 8). Lab verification remains pending for both; it does not
+platform bundle (item 8) and separate Identity bundle (item 9, 0.4.0).
+See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
 
@@ -582,7 +582,7 @@ Foretrekk enkel og konsekvent navngivning fremfor et generisk alias- eller kompa
 
 ## 9. Extract Identity into a separate component and bundle
 
-Status: planned; after the naming change in item 8 and before the deploy refactor. Platform and Identity are separate bundles with explicit dependencies.
+Status: implemented in 0.4.0; real lab verification pending. Platform and Identity are separate bundles with explicit dependencies. See [Identity verification](acceptance/IDENTITY-SPLIT.md). The original task follows.
 
 Skill Identity ut av `platform` som en egen komponent med en egen separat offline-bundle i `gunstein/podman_offline`.
 
@@ -899,4 +899,7 @@ retention, explicit operator steps, verification and failure recovery. Preserve
 password bytes and existing keys; never create an unnoticed empty replacement
 database. Test against real historical releases and representative retained data.
 Do not implement automatic rename, cleanup, resets or migration as part of item 1.
-Coordinate the plan with item 9's Identity split before implementing a procedure.
+Include both retained core 0.2.x and combined platform/Identity 0.3.x sources.
+Target the separate platform/Identity layout of 0.4.0; neither old layout is
+automatically migrated. Coordinate backups, ownership and explicit transitions
+with item 9 before implementing a procedure.

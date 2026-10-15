@@ -20,7 +20,7 @@ class ConfigTests(ComponentFixture):
             "config/common.defaults.yaml",
             "PUBLIC_ORIGIN: https://defaults.test:8443\nHTTPS_PORT: 8443\nCHOICE: common\n",
         )
-        for name in ("platform", "app1"):
+        for name in ("platform", "identity", "app1"):
             self.write(
                 "components/" + name + "/config.defaults.yaml", "CHOICE: component\n"
             )
@@ -168,7 +168,10 @@ class ConfigTests(ComponentFixture):
 
     def test_production_defaults_changes_do_not_change_effective_config(self):
         """Install never reads new defaults or rewrites either persistent file."""
-        paths = [deploy.HOME / name / "config.yaml" for name in ("platform", "app1")]
+        paths = [
+            deploy.HOME / name / "config.yaml"
+            for name in ("platform", "identity", "app1")
+        ]
         before = {p: p.read_bytes() for p in paths}
         deploy.install()
         self.write("config/common.defaults.yaml", "not valid YAML: [\n")

@@ -81,6 +81,8 @@ class Run:
         self.id = run_id
         self.first_app = first_app
         self.help_only = False
+        self.identity_only = False
+        self.platform_help_only = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -230,6 +232,7 @@ class Run:
             clean=clean,
             version=(ROOT / "VERSION").read_text().strip(),
             platform_version=(ROOT / "PLATFORM_VERSION").read_text().strip(),
+            identity_version=(ROOT / "IDENTITY_VERSION").read_text().strip(),
             first_app=self.first_app,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
@@ -334,7 +337,11 @@ class Run:
         base = "podman-offline-acceptance/" + self.id
         version = (
             version
-            or self.meta["platform_version" if bundle == "platform" else "version"]
+            or self.meta[
+                {"platform": "platform_version", "identity": "identity_version"}.get(
+                    bundle, "version"
+                )
+            ]
         )
         archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
@@ -359,12 +366,14 @@ class Run:
         self.guest("PROD", "unpack", version, bundle=bundle)
 
     def transfer_bundles(self):
-        """Transfer all three scoped bundles before testing independent installations."""
+        """Transfer only the bundles selected for this fresh-install scenario."""
         bundles = (
-            ("platform", "app1", "help")
+            ("platform", "identity", "app1", "help")
             if self.help_only
-            else ("platform", "app1", "app2", "help")
+            else ("platform", "identity", "app1", "app2", "help")
         )
+        if self.platform_help_only:
+            bundles = ("platform", "help")
         for bundle in bundles:
             self.transfer(bundle=bundle)
 
@@ -542,6 +551,60 @@ class Run:
             lambda: self.guest("PROD", "platform-siblings-after", bundle="platform"),
         )
 
+    def upgrade_identity(self):
+        """Transfer only a rebuilt Identity image/bundle; verify runtime, data and siblings."""
+        parts = self.meta["identity_version"].split(".")
+        parts[-1] = str(int(parts[-1]) + 1)
+        version = ".".join(parts)
+        self.meta["identity_upgrade_release"] = version
+        self.step(
+            "10-identity-siblings-before",
+            lambda: self.guest("PROD", "identity-siblings-before", bundle="identity"),
+        )
+        self.step(
+            "10-identity-before",
+            lambda: self.guest("PROD", "identity-before", bundle="identity"),
+        )
+        self.step(
+            "10-identity-build",
+            lambda: self.guest(
+                "DEV", "identity-upgrade-bundle", version, bundle="identity"
+            ),
+        )
+        self.step(
+            "10-identity-transfer", lambda: self.transfer(version, bundle="identity")
+        )
+        self.step(
+            "10-identity-install",
+            lambda: self.guest("PROD", "identity-upgrade", version, bundle="identity"),
+        )
+        self.step(
+            "10-identity-image-data",
+            lambda: self.guest("PROD", "identity-after", version, bundle="identity"),
+        )
+        self.step(
+            "10-identity-siblings-after",
+            lambda: self.guest("PROD", "identity-siblings-after", bundle="identity"),
+        )
+        self.step("10-identity-persistent", lambda: self.persistent_state("after"))
+        self.step("10-identity-e2e", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("10-identity-markers", lambda: self.guest("DEV", "markers-check"))
+        self.step("10-identity-database", lambda: self.guest("PROD", "database-auth"))
+        self.step(
+            "10-identity-retire",
+            lambda: self.guest(
+                "PROD",
+                "identity-retire",
+                version,
+                old_version=self.meta["identity_version"],
+                bundle="identity",
+            ),
+        )
+        self.step(
+            "10-identity-final-siblings",
+            lambda: self.guest("PROD", "identity-siblings-after", bundle="identity"),
+        )
+
     def upgrade_help(self):
         """Transfer only a new help image/content release; unchanged route forbids platform restart."""
         version = self.meta["version"]
@@ -588,7 +651,7 @@ class Run:
             lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
         )
 
-    def credentials(self, component="platform"):
+    def credentials(self, component="identity"):
         """Move the CA and demo passwords through private runtime files without logging content."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
@@ -703,6 +766,10 @@ class Run:
         order = [self.first_app, "app2" if self.first_app == "app1" else "app1", "help"]
         if self.help_only:
             order = ["app1", "help"]
+        if self.platform_help_only:
+            order = ["help"]
+        else:
+            order.insert(0, "identity")
         order.insert(0, "platform")
         for bundle in order:
             self.step(
@@ -710,6 +777,13 @@ class Run:
                 lambda b=bundle: self.guest("PROD", "install", bundle=b),
             )
             self.step("06-healthy-" + bundle, lambda: self.guest("PROD", "health"))
+        if self.platform_help_only:
+            self.step(
+                "07-proxy-help-without-identity",
+                lambda: self.guest("PROD", "help-without-identity", bundle="help"),
+            )
+            self.finished = True
+            return
         self.step("07-registry-offline", lambda: self.guest("PROD", "registry-offline"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step("07-database-auth", lambda: self.guest("PROD", "database-auth"))
@@ -726,6 +800,10 @@ class Run:
         self.step("08-e2e", lambda: self.guest("DEV", "prod-e2e"))
         self.step("08-shared-login", lambda: self.guest("DEV", "shared-login"))
         self.step("08-markers", lambda: self.guest("DEV", "markers-create"))
+        if self.identity_only:
+            self.upgrade_identity()
+            self.finished = True
+            return
         self.step("09-stop", lambda: self.guest("PROD", "stop"))
         for action in ("start", "restart", "crash", "hang"):
             self.step("09-" + action, lambda a=action: self.guest("PROD", a))
@@ -749,6 +827,7 @@ class Run:
         self.upgrade_help()
         self.upgrade()
         self.upgrade_platform()
+        self.upgrade_identity()
         self.step("10-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("10-uninstall-app1", lambda: self.guest("PROD", "uninstall"))
         self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
@@ -839,6 +918,16 @@ def main():
         action="store_true",
         help="Install genuine core 0.2.0 and verify refusal by platform",
     )
+    parser.add_argument(
+        "--identity-only",
+        action="store_true",
+        help="Install all components and verify only the independent Identity upgrade",
+    )
+    parser.add_argument(
+        "--platform-help-only",
+        action="store_true",
+        help="Verify platform/help without Identity or apps",
+    )
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
@@ -849,9 +938,23 @@ def main():
         )
     if args.legacy_refusal and args.help_only:
         parser.error("--legacy-refusal cannot be combined with --help-only")
+    if (
+        sum(
+            (
+                args.help_only,
+                args.identity_only,
+                args.platform_help_only,
+                args.legacy_refusal,
+            )
+        )
+        > 1
+    ):
+        parser.error("Choose only one focused scenario")
     os.umask(0o077)
     run = Run(args.run, args.config, args.first_app)
     run.help_only = args.help_only
+    run.identity_only = args.identity_only
+    run.platform_help_only = args.platform_help_only
     try:
         if args.legacy_refusal:
             from legacy_refusal import execute

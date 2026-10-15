@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: platform-identity-data
+  name: identity-data
 spec:
   accessModes:
   - ReadWriteOnce
@@ -12,7 +12,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: platform-identity-protection
+  name: identity-protection
 spec:
   accessModes:
   - ReadWriteOnce

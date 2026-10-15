@@ -430,9 +430,9 @@ class VolumeTests(DeployFixture):
         """Equivalent staged registrations have identical bytes despite fresh file/dir times."""
         source = self.write("stage/app1/client.json", "public-client")
         output = deploy.BUILD / "files"
-        volumes = {"platform-clients": [source.parent]}
+        volumes = {"identity-clients": [source.parent]}
         deploy.write_file_archives(volumes, output)
-        archive = output / "platform-clients.tar"
+        archive = output / "identity-clients.tar"
         before = archive.read_bytes()
         os.utime(str(source), (10, 10))
         os.utime(str(source.parent), (20, 20))
@@ -827,7 +827,7 @@ class RenderTests(DeployFixture):
         """Render the demo manifests with merged defaults and local dummy files."""
         repo = Path(__file__).resolve().parent.parent
         docs = []
-        for component in ("platform", "app1", "app2", "help"):
+        for component in deploy.COMPONENTS:
             config = deploy.merge_config(
                 repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",
@@ -854,7 +854,7 @@ class RenderTests(DeployFixture):
         self.assertEqual(kinds.count("Pod"), 8)
         self.assertEqual(kinds.count("Secret"), 7)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 8)
-        self.assertEqual(kinds.count("ConfigMap"), 3)
+        self.assertEqual(kinds.count("ConfigMap"), 4)
         self.assertEqual(len(deploy.find_images(docs)), 6)
         deploy.check_links(docs, {})
         self.process.assert_not_called()

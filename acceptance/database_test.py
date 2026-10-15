@@ -229,7 +229,7 @@ def run():
                         "containers": [
                             {
                                 "name": "app",
-                                "image": image("platform", "app"),
+                                "image": image("identity", "app"),
                                 "imagePullPolicy": "Never",
                                 "args": ["--database-check"],
                                 "env": [
@@ -311,7 +311,7 @@ def run():
                 # Change only disposable input; never an installed persistent password.
                 client_password.write_bytes(b"deliberately-wrong-secret")
                 negative = podman(
-                    common + [image("platform", "app"), "--database-check"], expected=2
+                    common + [image("identity", "app"), "--database-check"], expected=2
                 )
                 if "28P01" not in negative.stderr:
                     raise RuntimeError(
@@ -338,7 +338,7 @@ def run():
                         + [
                             "-e",
                             "DB_PORT=" + invalid,
-                            image("platform", "app"),
+                            image("identity", "app"),
                             "--database-check",
                         ],
                         expected=1,
@@ -355,7 +355,7 @@ def run():
                             + [
                                 "-e",
                                 key + "=",
-                                image("platform", "app"),
+                                image("identity", "app"),
                                 "--database-check",
                             ],
                             expected=1,
@@ -374,7 +374,7 @@ def run():
                     ):
                         client_password.write_bytes(invalid_password)
                         result = podman(
-                            common + [image("platform", "app"), "--database-check"],
+                            common + [image("identity", "app"), "--database-check"],
                             expected=1,
                         )
                         if (

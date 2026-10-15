@@ -68,6 +68,7 @@ class WrapperTests(unittest.TestCase):
                 "build-bundle.sh",
                 "VERSION",
                 "PLATFORM_VERSION",
+                "IDENTITY_VERSION",
                 "README.md",
             ):
                 shutil.copy2(ROOT / name, source / name)
@@ -77,13 +78,17 @@ class WrapperTests(unittest.TestCase):
             (source / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
             )
-            (source / "bundles.yaml").write_text("platform: [platform]\napp1: [app1]\n")
-            for component in ("platform", "app1", "app2", "help"):
+            (source / "bundles.yaml").write_text(
+                "platform: [platform]\nidentity: [identity]\napp1: [app1]\n"
+            )
+            for component in ("platform", "identity", "app1", "app2", "help"):
                 folder = source / "components" / component
                 (folder / "manifests").mkdir(parents=True)
                 (folder / "config.defaults.yaml").write_text(
-                    "VOLUME_FILES: {platform-routes: [../routes], platform-clients: [../clients]}\n"
+                    "VOLUME_FILES: {platform-routes: [../routes]}\n"
                     if component == "platform"
+                    else "VOLUME_FILES: {identity-clients: [../clients]}\n"
+                    if component == "identity"
                     else "{}\n"
                 )
                 (folder / "manifests/10-pod.yaml").write_text(
@@ -103,12 +108,16 @@ class WrapperTests(unittest.TestCase):
                                     {
                                         "name": name,
                                         "persistentVolumeClaim": {
-                                            "claimName": "platform-" + name
+                                            "claimName": component + "-" + name
                                         },
                                     }
-                                    for name in ("routes", "clients")
+                                    for name in (
+                                        ("routes",)
+                                        if component == "platform"
+                                        else ("clients",)
+                                    )
                                 ]
-                                if component == "platform"
+                                if component in ("platform", "identity")
                                 else [],
                             },
                         }
@@ -175,6 +184,18 @@ class WrapperTests(unittest.TestCase):
             platform_release = extracted / ("myproduct-platform-" + platform_version)
             run(platform_release, "deploy", "init-config", "platform")
             run(platform_release, "deploy", "install")
+            identity_version = (source / "IDENTITY_VERSION").read_text().strip()
+            identity_tar = (
+                source
+                / "dist"
+                / ("myproduct-identity-" + identity_version + "-offline.tar.gz")
+            )
+            with tarfile.open(str(identity_tar)) as archive, warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                archive.extractall(str(extracted))
+            identity_release = extracted / ("myproduct-identity-" + identity_version)
+            run(identity_release, "deploy", "init-config", "identity")
+            run(identity_release, "deploy", "install")
             run(release, "deploy", "init-config", "app1")
             # Persistent settings override deliberately different release defaults.
             config = home / "app1/config.yaml"

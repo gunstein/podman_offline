@@ -1,3 +1,28 @@
+# Current Identity acceptance (0.4.0)
+
+From a clean committed checkout, run each against disposable lab snapshots:
+
+```sh
+python3 acceptance/acceptance.py --run identity-app1-first --first-app app1 run
+python3 acceptance/acceptance.py --run identity-app2-first --first-app app2 run
+python3 acceptance/acceptance.py --run identity-upgrade --identity-only run
+python3 acceptance/acceptance.py --run help-no-identity --platform-help-only run
+```
+
+These commands reset both configured lab VMs. The full matrix retains reboot,
+app-only, help-only and platform-only checks and adds an actual Identity-only
+image/content upgrade. `--identity-only` focuses on that upgrade with both apps;
+`--platform-help-only` installs no Identity and checks HTTPS help through the proxy.
+Only the changed component's archive/checksum is transferred during its upgrade.
+See [IDENTITY-SPLIT.md](IDENTITY-SPLIT.md) for evidence and remaining lab work.
+
+The former platform/core documentation below is historical. Current bundles are
+platform, identity, app1, app2 and help; current credentials belong under identity.
+`--legacy-refusal` still checks retained genuine core 0.2.0 against current code.
+The successful historical `--upgrade-020` must run at commit `511099e`.
+
+---
+
 # Current platform acceptance (0.3.0)
 
 Run the normal fresh-install/lifecycle matrix from a clean committed checkout:

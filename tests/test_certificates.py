@@ -97,7 +97,7 @@ class CertificateTests(unittest.TestCase):
     def test_component_credentials_are_independent_and_generated_once(self):
         """Keep platform/app1 private bytes unchanged when app2 is added or scripts repeat."""
         target = self.root / "component-home"
-        for component in ("platform", "app1"):
+        for component in ("platform", "identity", "app1"):
             result = self.run_script("--root", str(target), component, "example.test")
             self.assertEqual(result.returncode, 0, result.stdout)
         before = self.fingerprints(target)
@@ -113,7 +113,7 @@ class CertificateTests(unittest.TestCase):
             "Adding app2 changed existing credentials",
         )
         before_repeat = after
-        for component in ("platform", "app1", "app2"):
+        for component in ("platform", "identity", "app1", "app2"):
             result = self.run_script("--root", str(target), component, "example.test")
             self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(
@@ -122,7 +122,7 @@ class CertificateTests(unittest.TestCase):
         )
         # Database passwords now belong exclusively to deploy's GENERATED_SECRETS.
         for component, relative in (
-            ("platform", "identity-db"),
+            ("identity", "identity-db"),
             ("app1", "database"),
             ("app2", "database"),
         ):
@@ -156,6 +156,19 @@ class CertificateTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no certificates changed", result.stdout)
             self.assertEqual(list(target.iterdir()), [])
+
+    def test_combined_platform_credentials_refuse_before_ca_or_new_identity(self):
+        target = self.root / "combined"
+        old = target / "platform/generated-certificates/identity/identity.key"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"retained signing key")
+        for component in ("platform", "identity", "app1", "help"):
+            result = self.run_script("--root", str(target), component)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("migration", result.stdout)
+            self.assertEqual(old.read_bytes(), b"retained signing key")
+            self.assertFalse((target / "PKI").exists())
+            self.assertFalse((target / "identity").exists())
 
     def test_invalid_arguments_do_not_generate_material(self):
         for args in (("--root",), ("--root", ""), ("bad/name",), ("one", "two")):

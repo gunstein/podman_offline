@@ -40,7 +40,7 @@ are in the [acceptance test](../acceptance/README.md).
 
    ```sh
    sudo stat -c '%U:%G %a %n' /var/lib/myproduct
-   sudo stat -c '%U:%G %a %n' /var/lib/myproduct/.config/containers/systemd/myproduct-{platform,app1,app2,help}.{yaml,kube}
+   sudo stat -c '%U:%G %a %n' /var/lib/myproduct/.config/containers/systemd/myproduct-{platform,identity,app1,app2,help}.{yaml,kube}
    sudo stat -c '%U:%G %a %n' /var/lib/myproduct/app1/files
    sudo find /var/lib/myproduct/app1/files -maxdepth 1 -type f -exec stat -c '%U:%G %a %n' {} \;
    sudo ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
@@ -67,7 +67,7 @@ are in the [acceptance test](../acceptance/README.md).
    sudo systemctl --user -M myproduct@ cat myproduct-platform.service
    sudo systemctl --user -M myproduct@ cat myproduct-network.service
    as_product podman exec app1-todo-backend python -c 'import socket; socket.create_connection(("app1-postgres",5432),5).close()'
-   as_product podman exec platform-proxy-nginx wget -qO- http://platform-identity:8080/identity/.well-known/openid-configuration
+   as_product podman exec platform-proxy-nginx wget -qO- http://identity-server:8080/identity/.well-known/openid-configuration
    ```
 
    Expect a network dependency on myproduct-network.service and

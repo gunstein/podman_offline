@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: platform-identity
+  name: identity-server
 spec:
   restartPolicy: Always
   containers:
@@ -22,9 +22,9 @@ spec:
       failureThreshold: 3
     envFrom:
     - secretRef:
-        name: platform-api-secrets
+        name: identity-api-secrets
     - configMapRef:
-        name: platform-settings
+        name: identity-settings
     env:
     - name: DB_HOST
       value: '@@DB_HOST@@'
@@ -52,7 +52,7 @@ spec:
   volumes:
   - name: signing
     secret:
-      secretName: platform-identity-signing
+      secretName: identity-signing
       defaultMode: 256
       items:
       - key: identity.crt
@@ -61,16 +61,16 @@ spec:
         path: identity.key
   - name: clients
     persistentVolumeClaim:
-      claimName: platform-clients
+      claimName: identity-clients
   - name: password
     secret:
-      secretName: platform-database-password
+      secretName: identity-database-password
       items:
       - key: password
         path: password
   - name: users
     secret:
-      secretName: platform-demo-users
+      secretName: identity-demo-users
   - name: protection
     persistentVolumeClaim:
-      claimName: platform-identity-protection
+      claimName: identity-protection

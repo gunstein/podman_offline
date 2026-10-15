@@ -1,24 +1,7 @@
-DB_HOST: platform-identity-postgres
-DB_PORT: '5432'
-DB_USER: identity
-DB_NAME: identity
 IP_ADDRESS: 127.0.0.1
-GENERATED_SECRETS:
-- generated-certificates/app/ApiResources__0__ApiSecrets__0__Value
-- generated-certificates/identity-db/password
 SECRET_FILES:
-  platform-api-secrets:
-  - generated-certificates/app
-  platform-identity-signing:
-  - generated-certificates/identity
-  platform-database-password:
-  - generated-certificates/identity-db
-  platform-demo-users:
-  - generated-certificates/users
   platform-web-tls:
   - generated-certificates/web
 VOLUME_FILES:
   platform-routes:
   - ../routes
-  platform-clients:
-  - ../clients
