@@ -6,6 +6,8 @@ product Python requirements. Podman 5.x, Quadlet, systemd, OpenSSL and Bash are
 required on the target. The demo uses Duende IdentityServer, PostgreSQL, two Todo
 instances, nginx and a static help app.
 
+Planned work is tracked in [BACKLOG.md](BACKLOG.md).
+
 ## Components and bundles
 
 | Bundle | Components | Public paths |
