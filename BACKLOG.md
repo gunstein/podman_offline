@@ -4,7 +4,8 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+1. [Retry-safe install and uninstall (item 13)](#13-retry-safe-install-and-uninstall).
+2. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
 
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
 platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
@@ -180,7 +181,7 @@ Foretrekk noen få sterke tester fremfor mange overlappende tester.
 
 ## 1. Deploy maintainability refactor
 
-Status: planned; after items 10, 8, 9 and 12.
+Status: planned; after items 10, 8, 9, 12 and 13.
 
 Refactor the deploy implementation for maintainability without redesigning the architecture or changing behavior.
 
@@ -909,7 +910,7 @@ with item 9 before implementing a procedure.
 
 Status: implemented in 0.4.1; fresh-install lab verification pending. See
 [credential-path verification](acceptance/CREDENTIAL-PATHS.md). The deploy
-refactor (item 1) is next.
+refactor (item 1) follows the retry-safety fix (item 13).
 This task uses fresh state only and requires no migration or backward compatibility.
 The full agent message follows, with heading levels adjusted for this document.
 
@@ -1097,3 +1098,282 @@ Rapporter kort:
 4. Bekreftelse på at det ikke er innført migreringskode eller fallback til gammel layout.
 
 Foretrekk en enkel, konsekvent navneendring fremfor nye abstraksjoner.
+
+## 13. Retry-safe install and uninstall
+
+Status: planned; next implementation, before the deploy refactor (item 1).
+This is a bounded correctness fix for retrying failed operations, not a transaction
+framework or module refactor. The full agent message follows, with Markdown
+formatting adjusted for this document.
+
+Implementer trygg gjentakelse etter feil i installasjon og avinstallasjon i gunstein/podman_offline.
+
+Oppgaven gjelder to konkrete feil i deploy.py:
+
+1. Et nytt installasjonsforsøk kan hoppe over nødvendige omstarter av Identity/platform etter et mislykket forsøk.
+2. En avinstallasjon kan bli stående halvferdig, samtidig som neste forsøk avvises fordi installasjonsmarkøren allerede er slettet.
+
+Dette er en avgrenset feilretting. Ikke gjennomfør den planlagte modulrefaktoreringen, endre komponentarkitekturen eller innfør et generelt transaksjonsrammeverk.
+
+### 1. Les og forstå eksisterende flyt
+
+Les først:
+
+- install_components()
+- install_component_plan()
+- write_registrations()
+- registration_stage()
+- component_imports()
+- uninstall()
+- relevante tester for installasjonsfeil, komponenter og Identity
+
+Funksjonsnavnene kan ha endret seg. Finn tilsvarende kode i gjeldende branch.
+
+Komponentmodellen er:
+
+- platform eier proxy og ruteregistreringer.
+- identity eier IdentityServer og klientregistreringer.
+- app1 og app2 avhenger av platform og identity.
+- help avhenger av platform.
+
+Ruteregistreringer og klientregistreringer skal fortsatt behandles separat. En route-endring skal normalt påvirke platform, mens en klientendring skal påvirke identity.
+
+### 2. Feilen ved installasjon
+
+Dagens flyt skriver registreringer før alle nødvendige tjenester er restartet.
+
+Et eksempel:
+
+1. App1 har en ny route og klientregistrering.
+2. Installer skriver begge registreringene til persistent state.
+3. Restart av app1 feiler.
+4. Installer avslutter før Identity og platform er restartet.
+5. Operatøren kjører samme installasjon på nytt.
+6. Registreringsfilene har allerede riktig innhold og regnes som uendret.
+7. Identity og platform blir derfor ikke restartet.
+
+Det andre forsøket kan rapportere suksess selv om de kjørende tjenestene ikke har tatt i bruk registreringene.
+
+En tilsvarende feil kan oppstå dersom skriving av importarkiver eller restart av en av registreringseierne feiler.
+
+Krav: Et nytt installasjonsforsøk må fullføre nødvendig arbeid fra forrige forsøk. Det er ikke tilstrekkelig å sammenligne nye registreringer med filene som allerede ligger på disk.
+
+### 3. Løsning for installasjon
+
+Velg en enkel, eksplisitt mekanisme for å huske ufullført arbeid mellom prosesskjøringer.
+
+En liten persistent pending-fil er et mulig valg. Den kan for eksempel angi at registreringene til identity og/eller platform ennå ikke er bekreftet tatt i bruk.
+
+Det konkrete filnavnet og formatet kan tilpasses eksisterende kode. Følg disse reglene:
+
+- Registrer nødvendig arbeid før endringer som ellers kan gjøre at behovet blir glemt.
+- Pending-state skal overleve at installer avslutter eller prosessen avbrytes.
+- Ved neste forsøk skal pending-state leses og kombineres med eventuelle nye endringer.
+- Nødvendige importarkiver må skrives på nytt dersom forrige forsøk ikke fullførte dette.
+- Berørte tjenester må restartes og kontrolleres med eksisterende suksesskriterier.
+- Fjern bare pending-state for arbeid som faktisk er fullført.
+- Hvis en restart eller kontroll feiler, skal ufullført arbeid fortsatt være registrert.
+- Et nytt forsøk med identiske registreringsfiler må fortsatt utføre pending arbeid.
+
+Pending-state skal inneholde bare nødvendig metadata, aldri passord, private nøkler eller komplette konfigurasjoner.
+
+Bruk eksisterende mønstre for private filrettigheter og trygg filskriving. Ikke følg symlinker til vilkårlige steder. Ugyldig pending-state skal gi en tydelig feil, ikke ignoreres.
+
+Ikke løs problemet ved å restarte alle tjenester på hver installasjon.
+
+Bevar normal oppførsel:
+
+- Uendrede registreringer uten pending arbeid skal ikke restarte Identity/platform.
+- Bare route-endring skal normalt restarte platform.
+- Bare klientendring skal normalt restarte identity.
+- Begge endringer skal restarte begge.
+- Sibling-applikasjoner skal ikke restartes som en bivirkning.
+
+Hvis du velger en annen løsning enn pending-state, må den dekke de samme feiltilfellene og forklares tydelig.
+
+### 4. Feilen ved avinstallasjon
+
+Dagens avinstallasjon sletter blant annet installasjonsmarkøren før hele operasjonen er fullført.
+
+Et eksempel:
+
+1. App1 stoppes.
+2. Quadlet/YAML og registreringer slettes.
+3. Installasjonsmarkøren slettes.
+4. Restart av Identity eller platform feiler.
+5. Operatøren kjører uninstall på nytt.
+6. Installer avviser forsøket fordi app1 ikke lenger regnes som installert.
+
+Med --delete-data kan også volumfjerning feile etter at installasjonsmarkøren er borte.
+
+Krav: Operatøren skal kunne gjenta avinstallasjonen og fullføre den uten manuell rekonstruksjon av markører, YAML eller registreringer.
+
+### 5. Løsning for avinstallasjon
+
+Gjør avinstallasjonen mulig å fortsette etter delvis gjennomføring.
+
+Ikke løs dette bare ved å flytte sletting av installasjonsmarkøren til slutten. Tidligere slettet YAML eller andre filer kan fortsatt være nødvendige for å vite hva som gjenstår.
+
+Før destruktive steg må nødvendig informasjon være validert og bevart slik at neste kjøring vet:
+
+- hvilken komponent som avinstalleres
+- om operasjonen inkluderer --delete-data
+- hvilke tjenester som skal stoppes eller oppdateres
+- hvilke registreringseiere som må oppdateres
+- hvilke konkrete volumer som eventuelt skal slettes
+
+Bruk en liten, eksplisitt tilstand for pågående avinstallasjon dersom det er nødvendig. Ikke lag en generell operasjonsmotor.
+
+Følg disse kravene:
+
+- Avhengighetskontroller skal fortsatt kjøres før avinstallasjonen starter.
+- En komponent med pågående avinstallasjon må ikke behandles som en frisk, tilgjengelig avhengighet for nye installasjoner.
+- Gjentatt sletting av filer som allerede er fjernet av samme operasjon skal være trygg.
+- Manglende volum ved retry kan regnes som allerede slettet.
+- Feil ved kontroll av et volum skal fortsatt være en feil; det må ikke tolkes som at volumet mangler.
+- Volumlisten skal komme fra validert, komponentavgrenset informasjon.
+- Ikke utvid sletting til andre komponenters volumer eller state.
+- Oppdatering av registreringer og nødvendige omstarter må kunne gjentas.
+- Marker operasjonen som fullført først når alle nødvendige steg har lykkes.
+- Rydd opp i pending-state etter fullført operasjon.
+
+Bevar forskjellen mellom:
+
+- uninstall: behold data, config og credentials.
+- uninstall --delete-data: slett bare den valgte komponentens relevante data og state.
+
+Et retry må ikke utilsiktet endre en avinstallasjon uten datasletting til en avinstallasjon med datasletting. Definer og dokumenter hvordan avvikende flagg håndteres. Den enkleste løsningen er å kreve samme valg som da operasjonen startet og gi en tydelig feil ved avvik.
+
+### 6. Samspill mellom installasjon og avinstallasjon
+
+Definer enkel og tydelig oppførsel dersom en ny kommando møter en ufullført operasjon.
+
+For eksempel:
+
+- install må ikke ignorere en pågående avinstallasjon av samme komponent.
+- uninstall må ikke slette eller overse pending registreringsarbeid på en måte som etterlater feil runtime-state.
+- En operasjon må ikke fjerne pending arbeid som tilhører en annen operasjon.
+
+Det er akseptabelt å avvise en konflikt med en tydelig melding om hvilken kommando operatøren må kjøre for å fullføre først.
+
+Ikke innfør automatisk rollback eller automatiske reparasjoner av ukjent state.
+
+### 7. Tester for installasjon
+
+Bruk eksisterende testoppsett og feilinjeksjon. Legg minst til følgende scenarioer:
+
+#### A. App-restart feiler etter registreringsskriving
+
+1. Installer en app med endret route og klientregistrering.
+2. La app-restart feile etter at registreringene er skrevet.
+3. Verifiser at installasjonen feiler.
+4. Kjør samme installasjon igjen uten feilen.
+5. Verifiser at nødvendige importarkiver oppdateres og både Identity og platform restartes.
+6. Verifiser at pending-state fjernes etter suksess.
+
+#### B. En registreringseier feiler
+
+1. La restart eller etterfølgende kontroll av Identity/platform feile.
+2. Kjør installasjonen igjen.
+3. Verifiser at ufullført arbeid utføres, selv om registreringsfilene er identiske.
+
+#### C. Importarkivskriving feiler
+
+1. La skriving av et nødvendig importarkiv feile etter at registreringer er skrevet.
+2. Kjør installasjonen igjen.
+3. Verifiser at importarkivet faktisk oppdateres før operasjonen regnes som fullført.
+
+#### D. Normal installasjon er fortsatt avgrenset
+
+Verifiser fortsatt de fire kombinasjonene:
+
+- ingen registreringsendring
+- bare route-endring
+- bare klientendring
+- begge endringer
+
+Uten pending arbeid skal ingen ekstra fellestjenester restartes.
+
+### 8. Tester for avinstallasjon
+
+Legg minst til følgende scenarioer:
+
+#### A. Restart av registreringseier feiler
+
+1. Start avinstallasjon av en installert app.
+2. La restart av Identity eller platform feile.
+3. Kjør avinstallasjonen igjen.
+4. Verifiser at den fullføres selv om noen filer allerede er slettet.
+5. Verifiser at registreringene er fjernet fra de oppdaterte importarkivene.
+6. Verifiser at pending-state ryddes opp.
+
+#### B. Volumsletting feiler
+
+1. Start uninstall --delete-data med flere komponentvolumer.
+2. La sletting av et senere volum feile etter at et tidligere volum er fjernet.
+3. Kjør samme kommando igjen.
+4. Verifiser at allerede slettede volumer håndteres og resterende arbeid fullføres.
+5. Verifiser at andre komponenters state er uendret.
+
+#### C. Avinstallasjon uten datasletting
+
+Et mislykket forsøk og retry skal bevare bytes i config og credentials samt databasevolumer.
+
+#### D. Konflikter og ugyldig state
+
+Test:
+
+- retry med avvikende valg for --delete-data
+- installasjon mens samme komponent har pågående avinstallasjon
+- ny installasjon som krever en komponent med pågående avinstallasjon
+- ugyldig eller symlinket pending-state
+
+Retry-testene må representere en ny prosesskjøring: løsningen skal ikke være avhengig av variabler fra første forsøk. Bruk samme persistente testkatalog, men nullstill midlertidig tilstand mellom forsøkene.
+
+### 9. Avgrensning og kompatibilitet
+
+Bevar:
+
+- eksisterende rotkommandoer
+- Python 3.6-kompatibilitet for deploy-koden
+- bundle-avhengigheter og versjonsregler
+- checksums og offline installasjon
+- eksisterende secret-generering og credential-stier
+- SELinux- og fapolicyd-kontroller
+- komponentisolasjon og persistente data
+
+Ikke:
+
+- flytt deploy til en Python-pakke som del av denne oppgaven
+- legg til passordrotasjon
+- regenerer credentials ved retry
+- innfør ny migreringslogikk
+- endre normale tjenesteomstarter utover det feilrettingen krever
+- legg pending-state i release-katalogen eller offline-bundlen
+
+### 10. Dokumentasjon, sjekker og rapport
+
+Dokumenter kort hvordan operatøren gjentar en mislykket installasjon eller avinstallasjon, og hvordan eventuelle konflikter rapporteres.
+
+Kjør:
+
+- produkttestene
+- acceptance-harness-testene
+- ruff
+- formatkontroll
+- pyright
+- vermin
+- shellcheck
+
+Legg bare til nye reelle acceptance-scenarioer dersom de gir nødvendig dekning utover målrettede feilinjeksjonstester. Ikke påstå at stubbet testing beviser faktisk Podman/systemd-oppførsel.
+
+Rapporter:
+
+1. Årsaken til de to feilene.
+2. Hvordan ufullført arbeid lagres og fullføres ved retry.
+3. Hvilke filer som er endret.
+4. Hvilke nye feilscenarioer testene dekker.
+5. Faktiske testresultater og sjekker som ikke kunne kjøres.
+6. Eventuelle begrensninger.
+
+Foretrekk små, tydelige funksjoner og eksplisitte steg. Målet er at en middels erfaren Python-utvikler enkelt skal kunne forstå hvorfor et nytt forsøk er trygt.
