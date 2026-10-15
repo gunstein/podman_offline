@@ -596,5 +596,97 @@ class ComponentObservationTests(unittest.TestCase):
                 self.assertNotIn(value, result.stdout + result.stderr)
 
 
+class DatabaseHarnessTests(unittest.TestCase):
+    """Verify installed authentication checks with private stdin and bounded evidence."""
+
+    def test_installed_checks_use_environment_and_both_sibling_directions(self):
+        namespace = guest_code("DATABASE_AUTH")
+        namespace["logs_safe"] = mock.Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            secret = "sensitive;double\"' $ equals= end "
+            for component in ("app1", "app2"):
+                (home / "installed").mkdir(exist_ok=True)
+                (home / "installed" / component).write_text("0.2.1\n")
+                password = home / component / "generated-certificates/database/password"
+                password.parent.mkdir(parents=True)
+                password.write_text(secret + "\n")
+            positive = subprocess.CompletedProcess(
+                [],
+                0,
+                "PASS: correct secret connects; sibling password authentication rejected\n",
+                "",
+            )
+            identity = subprocess.CompletedProcess(
+                [],
+                0,
+                "Database connection verified via ConnectionStrings__Default\n",
+                "",
+            )
+            output = io.StringIO()
+            with (
+                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.object(
+                    subprocess, "run", side_effect=[identity, positive, positive]
+                ) as process,
+                contextlib.redirect_stdout(output),
+            ):
+                namespace["main"]()
+            self.assertEqual(process.call_count, 3)
+            self.assertIn("--database-check", process.call_args_list[0].args[0])
+            self.assertEqual(
+                [call.args[0][3] for call in process.call_args_list[1:]],
+                ["app1-todo-backend", "app2-todo-backend"],
+            )
+            for call in process.call_args_list[1:]:
+                self.assertEqual(
+                    json.loads(call.kwargs["input"])["sibling_password"], secret
+                )
+                self.assertNotIn(secret, " ".join(call.args[0]))
+            self.assertNotIn(secret, output.getvalue())
+            self.assertEqual(output.getvalue().count("authentication rejected"), 2)
+            self.assertIn("if not authentication_failed(error)", namespace["CHECK"])
+            self.assertLess(
+                namespace["CHECK"].index("values = parameters()"),
+                namespace["CHECK"].index('values["password"] ='),
+            )
+
+    def test_identity_failure_withholds_subprocess_output(self):
+        namespace = guest_code("DATABASE_AUTH")
+        namespace["logs_safe"] = mock.Mock()
+        failure = subprocess.CompletedProcess(
+            [], 2, "private-connection-string", "private-password"
+        )
+        with (
+            mock.patch.object(subprocess, "run", return_value=failure),
+            self.assertRaisesRegex(RuntimeError, "Identity runtime") as caught,
+        ):
+            namespace["main"]()
+        self.assertNotIn("private-", str(caught.exception))
+
+    def test_container_log_credentials_fail_without_echoing_content(self):
+        namespace = guest_code("DATABASE_AUTH")
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "installed").mkdir()
+            (home / "installed/core").write_text("0.2.1\n")
+            password = home / "core/generated-certificates/identity-db/password"
+            password.parent.mkdir(parents=True)
+            password.write_text("private-password\n")
+            exposed = subprocess.CompletedProcess([], 0, "private-password", "")
+            with (
+                mock.patch.object(subprocess, "run", return_value=exposed),
+                self.assertRaisesRegex(RuntimeError, "content withheld") as failure,
+            ):
+                namespace["logs_safe"](home)
+            self.assertNotIn("private-password", str(failure.exception))
+            clean = subprocess.CompletedProcess([], 0, "Database started", "")
+            with (
+                mock.patch.object(subprocess, "run", return_value=clean),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                namespace["logs_safe"](home)
+
+
 if __name__ == "__main__":
     unittest.main()

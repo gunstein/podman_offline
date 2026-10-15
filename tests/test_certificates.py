@@ -107,9 +107,21 @@ class CertificateTests(unittest.TestCase):
             before_repeat == self.fingerprints(target),
             "Repeated generation changed files",
         )
-        first = (target / "app1/generated-certificates/database/password").read_bytes()
-        second = (target / "app2/generated-certificates/database/password").read_bytes()
-        self.assertTrue(first != second, "Apps share a database password")
+        # Database passwords now belong exclusively to deploy's GENERATED_SECRETS.
+        for component, relative in (
+            ("core", "identity-db"),
+            ("app1", "database"),
+            ("app2", "database"),
+        ):
+            self.assertFalse(
+                (
+                    target
+                    / component
+                    / "generated-certificates"
+                    / relative
+                    / "password"
+                ).exists()
+            )
         for path in target.rglob("*"):
             if path.is_file():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)

@@ -219,7 +219,7 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 139 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The 141 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
 ## Registry source acceptance
@@ -527,3 +527,38 @@ newer/older core and exact expected service restarts.
 
 Current config/lifecycle results and their exact verification limits are recorded
 in [CONFIG-VERIFICATION.md](CONFIG-VERIFICATION.md).
+
+
+## PostgreSQL runtime verification
+
+Full runs execute `database-runtime` after images are built and before dev startup.
+It creates and removes only UUID-scoped disposable resources on the dev VM. Kube
+Secrets initialize PostgreSQL and feed the .NET Identity verifier; the verifier
+builds and uses `ConnectionStrings__Default` at runtime with Npgsql. Python tests
+its file-secret/keyword-parameter interface. Non-standard DB identities and port,
+quotes, dollar signs, semicolons, spaces, equals, Unicode and legacy hexadecimal
+credentials with trailing LF are checked by real connections; wrong credentials must fail authentication rather
+than DNS/network setup. Missing/invalid parameter and empty/invalid password diagnostics must not reveal
+credentials. The lifecycle guard is also checked against an actually initialized
+disposable volume. Existing fixture password bytes survive GENERATED_SECRETS,
+and negative client input is a separate temporary copy.
+
+`database-auth` runs on the offline prod VM after initial installation, after
+reboot and after upgrades. Identity must connect through its environment interface.
+For both Todo directions, the correct local password must connect before the same
+connection with a sibling's secret is required to fail password authentication. Npgsql checks SQLSTATE 28P01; Python
+checks either that code or libpq’s exact PostgreSQL FATAL password-authentication
+reply (handshake errors may have no SQLSTATE). Neither private diagnostic is
+dumped. This tests
+credential separation, **not network isolation** between applications. No persistent
+password is modified by negative checks. Installed database/client logs are
+checked privately for password or complete connection-string disclosure. Inputs remain in memory/stdin, never
+argv, full inspect/environment dumps or report output. Existing CRUD/e2e/persistent
+hash and volume checks remain in the full run. Failed scenarios stop before later
+checks; the original audit and cleanup rules are unchanged.
+
+See the root README for manual DB config additions before upgrading existing
+0.2.0 installs. Passwords and database volumes must be restored together. Rotating
+a file alone does not change a PostgreSQL role password; rotation is out of scope.
+
+Actual database results and limitations: [DATABASE-VERIFICATION.md](DATABASE-VERIFICATION.md).

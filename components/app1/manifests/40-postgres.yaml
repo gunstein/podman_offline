@@ -14,17 +14,19 @@ spec:
         command:
         - pg_isready
         - -U
-        - todo
+        - '@@DB_USER@@'
         - -d
-        - todo
+        - '@@DB_NAME@@'
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
     env:
     - name: POSTGRES_DB
-      value: todo
+      value: '@@DB_NAME@@'
     - name: POSTGRES_USER
-      value: todo
+      value: '@@DB_USER@@'
+    - name: PGPORT
+      value: '@@DB_PORT@@'
     - name: POSTGRES_PASSWORD_FILE
       value: /run/secrets/database/password
     - name: PGDATA

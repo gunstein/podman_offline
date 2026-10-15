@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: app
-    image: localhost/myproduct-identity:0.2.0
+    image: localhost/myproduct-identity:0.2.1
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90
@@ -26,8 +26,14 @@ spec:
     - configMapRef:
         name: core-settings
     env:
-    - name: DATABASE_HOST
-      value: core-identity-postgres
+    - name: DB_HOST
+      value: '@@DB_HOST@@'
+    - name: DB_PORT
+      value: '@@DB_PORT@@'
+    - name: DB_USER
+      value: '@@DB_USER@@'
+    - name: DB_NAME
+      value: '@@DB_NAME@@'
     volumeMounts:
     - name: signing
       mountPath: /run/secrets/signing

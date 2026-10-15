@@ -590,6 +590,7 @@ clone)
     ;;
 unit) cd "$src"; python3 -m unittest discover -s tests;;
 build-images) cd "$src"; ./dev/build-images.sh;;
+database-runtime) cd "$src"; python3 acceptance/database_test.py;;
 pull-images) cd "$src"; ./dev/pull-images.sh;;
 registry-test) cd "$src"; python3 acceptance/registry_test.py "$base" "$run";;
 dev-up)
@@ -888,6 +889,82 @@ install)
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     as_product podman ps --all
     sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
+    ;;
+database-auth)
+    as_product python3 - <<'DATABASE_AUTH'
+import json
+import pathlib
+import subprocess
+import sys
+
+# Fixed code only; sibling credentials go over stdin, never argv or generated code.
+CHECK = """
+import json
+import sys
+import psycopg
+from database import authentication_failed, parameters
+try:
+    values = parameters()
+    with psycopg.connect(**values, connect_timeout=5) as connection:
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+    values["password"] = json.load(sys.stdin)["sibling_password"]
+    try:
+        with psycopg.connect(**values, connect_timeout=5) as connection:
+            connection.execute("SELECT 1")
+    except psycopg.Error as error:
+        if not authentication_failed(error):
+            raise RuntimeError("Expected authentication failure") from None
+    else:
+        raise RuntimeError("Sibling password unexpectedly authenticated")
+except Exception:
+    print("FAIL: database credential check (details withheld)")
+    sys.exit(1)
+print("PASS: correct secret connects; sibling password authentication rejected")
+"""
+
+
+def logs_safe(home):
+    credentials, containers = [], ["core-identity-app", "core-identity-postgres-db"]
+    for component, relative in (("core", "identity-db"), ("app1", "database"), ("app2", "database")):
+        if not (home / "installed" / component).exists():
+            continue
+        credentials.append((home / component / "generated-certificates" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
+        if component != "core":
+            containers += [component + "-todo-backend", component + "-postgres-db"]
+    for container in containers:
+        result = subprocess.run(["podman", "logs", container], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, check=False)
+        content = result.stdout + result.stderr
+        if result.returncode or any(value in content for value in credentials) or ("password=" in content.lower() and "host=" in content.lower()):
+            raise RuntimeError("Database log safety check failed (content withheld)")
+    print("PASS: database/client logs contain no database passwords")
+
+
+def main():
+    home = pathlib.Path.home()
+    logs_safe(home)
+    result = subprocess.run(["podman", "exec", "core-identity-app", "dotnet", "Identity.dll", "--database-check"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    if result.returncode or "verified via ConnectionStrings__Default" not in result.stdout:
+        raise RuntimeError("Identity runtime environment connection check failed")
+    print("PASS: installed Identity uses ConnectionStrings__Default")
+    for component, sibling in (("app1", "app2"), ("app2", "app1")):
+        if not (home / "installed" / component).exists() or not (home / "installed" / sibling).exists():
+            continue
+        password = (home / sibling / "generated-certificates/database/password").read_bytes().decode("utf-8").rstrip("\n")
+        result = subprocess.run(["podman", "exec", "-i", component + "-todo-backend", "python", "-c", CHECK],
+                                input=json.dumps({"sibling_password": password}), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, check=False)
+        if result.returncode or result.stdout.strip() != "PASS: correct secret connects; sibling password authentication rejected":
+            raise RuntimeError("Installed app database authentication check failed")
+        print("PASS: " + component + " correct secret connects; sibling password authentication rejected")
+
+
+try:
+    main()
+except Exception:
+    raise SystemExit("FAIL: installed database credentials (details withheld)") from None
+DATABASE_AUTH
     ;;
 health) healthy;;
 check)

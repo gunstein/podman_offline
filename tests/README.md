@@ -28,7 +28,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 
 ## Images from the manifests
 
-164 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+181 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
 The image tests cover Pod/Deployment, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
@@ -38,7 +38,9 @@ private registry diagnostic output. `test_images.py` runs the actual dev helpers
 with a recording Podman stub, including manifest tags and localhost:port names.
 The installer tests check the render/load/exists order, rendered names,
 a missing archive/image and that existing Quadlet files are kept on check failures.
-The prepare tests still run entirely without Podman calls.
+Standalone prepare tests run without Podman calls. Component dev preparation
+checks the actual database volumes before creating a missing password; those
+Podman calls are stubbed in unit tests.
 
 A real save/load was verified on 2026-10-12 with **Podman 5.7.0, rootless**.
 Three existing names were saved with `podman save -m -o images.tar ...` and loaded
@@ -101,7 +103,7 @@ Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
 including symlinks, concurrent creation and output without secret values.
 
-The 139 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+The 142 acceptance-framework tests also cover pre-reboot launcher diagnostics:
 separate streams, safe journal/unit projections, strict command/parsing errors,
 audit collection after a diagnostic error, and stopping before reboot on a denial.
 The run-19 regression fixture distinguishes removed transient units from loaded
@@ -160,3 +162,27 @@ modes. Fresh staging-directory/file timestamps cannot change an archive checksum
 while changed file contents must change its bytes. This keeps unchanged public
 core imports stable across controlled core upgrades without excluding them from
 persistent-state comparisons.
+
+
+## PostgreSQL credentials
+
+`test_database.py` covers text-only DB parameters/port validation, identical
+server/client Secret keys, exactly one GENERATED_SECRETS declaration per DB,
+exclusive private generation, independent app passwords, preservation of legacy
+password bytes, missing-file/existing-volume refusal, empty/invalid file refusal,
+volume-check failures, non-regular file refusal, actual generated Secret payloads,
+and pre-generation/pre-image/pre-state ordering in both dev
+and production. Python secret-reader tests preserve quotes, dollar signs, equals,
+semicolons, spaces and only remove trailing LF. These are unit/integration tests
+with Podman transport stubbed; they do not prove PostgreSQL authentication.
+
+Acceptance's `database-runtime` action uses disposable UUID-scoped PostgreSQL
+volumes on the dev VM. It tests actual initdb through kube Secrets, non-default
+host/port/user/database, Identity's environment connection interface and Python's
+file interface, special/Unicode credentials and legacy trailing LF, wrong-secret
+authentication and sanitized missing/invalid parameter/password failures. `database-auth` checks installed
+Identity and both Todo applications before lifecycle tests, after reboot and after
+upgrade. Each Todo must connect with its own secret before a sibling-secret attempt
+is allowed. Negative checks change only transient client input, never stored
+passwords. See [database verification](../acceptance/DATABASE-VERIFICATION.md) for real-run
+results and limits. Harness tests separately check private stdin, safe evidence and sequencing.

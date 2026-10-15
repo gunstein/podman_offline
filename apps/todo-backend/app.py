@@ -10,8 +10,8 @@ import psycopg
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.flask_client import OAuth
 from authlib.oauth2.rfc7523 import PrivateKeyJWT
+from database import authentication_failed, connect, parameters
 from flask import Flask, abort, jsonify, redirect, request, session
-from psycopg.rows import DictRow, dict_row
 
 ORIGIN = os.environ["PUBLIC_ORIGIN"].rstrip("/")
 ISSUER = ORIGIN + "/identity"
@@ -45,24 +45,9 @@ identity = oauth.register(
 )
 
 
-def connect():
-    """Open this instance's PostgreSQL connection with its private password."""
-    return psycopg.Connection[DictRow].connect(
-        host=os.environ["DATABASE_HOST"],
-        dbname="todo",
-        user="todo",
-        password=Path(
-            os.getenv("DATABASE_PASSWORD_FILE", "/run/secrets/database/password")
-        )
-        .read_text()
-        .strip(),
-        row_factory=dict_row,
-        connect_timeout=5,
-    )
-
-
 def initialize():
     """Create the instance's Todo table, retrying while PostgreSQL starts."""
+    parameters()  # Validate before the connection retry loop.
     for attempt in range(60):
         try:
             with connect() as db:
@@ -75,9 +60,15 @@ def initialize():
                     )
                 """)
             return
-        except psycopg.OperationalError:
+        except psycopg.Error as error:
+            if authentication_failed(error):
+                raise RuntimeError(
+                    "Database password authentication failed; restore matching credentials; no password changed"
+                ) from None
             if attempt == 59:
-                raise
+                raise RuntimeError(
+                    "Database connection failed during startup"
+                ) from None
             time.sleep(1)
 
 

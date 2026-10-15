@@ -1,6 +1,11 @@
+DB_HOST: core-identity-postgres
+DB_PORT: '5432'
+DB_USER: identity
+DB_NAME: identity
 IP_ADDRESS: 127.0.0.1
 GENERATED_SECRETS:
 - generated-certificates/app/ApiResources__0__ApiSecrets__0__Value
+- generated-certificates/identity-db/password
 SECRET_FILES:
   core-api-secrets:
   - generated-certificates/app

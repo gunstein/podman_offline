@@ -640,6 +640,7 @@ class Run:
             "unit",
             "build-images",
             "pull-images",
+            "database-runtime",
             "dev-up",
             "venv",
             "dev-e2e",
@@ -681,6 +682,7 @@ class Run:
             self.step("06-healthy-" + bundle, lambda: self.guest("PROD", "health"))
         self.step("07-registry-offline", lambda: self.guest("PROD", "registry-offline"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
+        self.step("07-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)
         if self.help_only:
@@ -712,10 +714,12 @@ class Run:
         self.step("09-offline-after-reboot", lambda: self.guest("PROD", "offline"))
         self.step("09-check-after-reboot", lambda: self.guest("PROD", "check"))
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("09-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
         self.upgrade_help()
         self.upgrade()
         self.upgrade_core()
+        self.step("10-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("10-uninstall-app1", lambda: self.guest("PROD", "uninstall"))
         self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
         self.step("10-e2e-uninstall", lambda: self.guest("DEV", "survivor-e2e"))

@@ -125,6 +125,18 @@ def validate_config(config, path):
             f"HTTPS_PORT in {path} must be an integer 1-{MAX_PORT} without quotes"
         )
 
+    for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
+        if key in config:
+            value = config[key]
+            if not isinstance(value, str) or not value or "\x00" in value:
+                raise DeployError(f"{key} in {path} must be non-empty text")
+    if "DB_PORT" in config:
+        port = config["DB_PORT"]
+        if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= MAX_PORT:
+            raise DeployError(
+                f"DB_PORT in {path} must be text containing an integer 1-{MAX_PORT}"
+            )
+
     return config
 
 
@@ -296,6 +308,110 @@ def generated_secret_paths(config, base_dir):
             ) from None
         paths.append(path)
     return paths
+
+
+def database_preflight(config, config_path, manifests):
+    """Guard PostgreSQL password creation using its manifest's actual named volume.
+
+    This lifecycle check runs before rendering/generation, never inside the
+    general secret generator. Existing volumes are conservatively retained.
+    """
+    for manifest in sorted(manifests.glob("*.yaml")):
+        for doc in load_yaml_all(manifest):
+            if not doc or doc.get("kind") != "Pod":
+                continue
+            spec = doc.get("spec", {})
+            volumes = {v["name"]: v for v in spec.get("volumes", [])}
+            for container in spec.get("containers", []):
+                env = {e["name"]: e.get("value") for e in container.get("env", [])}
+                if "POSTGRES_PASSWORD_FILE" not in env:
+                    continue
+                reference = env["POSTGRES_PASSWORD_FILE"]
+                if not isinstance(reference, str) or not Path(reference).is_absolute():
+                    raise DeployError(f"Invalid POSTGRES_PASSWORD_FILE in {manifest}")
+                password_file = Path(reference)
+                mounts = container.get("volumeMounts", [])
+                secret_mount = next(
+                    (m for m in mounts if m["mountPath"] == str(password_file.parent)),
+                    None,
+                )
+                data_mount = next(
+                    (m for m in mounts if m["mountPath"] == "/var/lib/postgresql/data"),
+                    None,
+                )
+                if not secret_mount or not data_mount:
+                    raise DeployError(
+                        f"Unsupported PostgreSQL password/data mounts in {manifest}"
+                    )
+                try:
+                    secret = volumes[secret_mount["name"]]["secret"]
+                    claim = volumes[data_mount["name"]]["persistentVolumeClaim"][
+                        "claimName"
+                    ]
+                    keys = [
+                        item["key"]
+                        for item in secret.get("items", [])
+                        if item["path"] == password_file.name
+                    ]
+                    if len(keys) != 1:
+                        raise KeyError("password key")
+                    key = keys[0]
+                except (KeyError, TypeError):
+                    raise DeployError(
+                        f"Unsupported PostgreSQL Secret/PVC binding in {manifest}"
+                    ) from None
+                entries = config.get(SECRET_FILES, {}).get(secret["secretName"], [])
+                candidates = []
+                for entry in entries:
+                    source = resolve_path(entry, config_path.parent)
+                    candidates.append(source if source.name == key else source / key)
+                if len(candidates) != 1:
+                    raise DeployError(
+                        f"{config_path}: {SECRET_FILES}.{secret['secretName']} must identify one password file"
+                    )
+                password = candidates[0]
+                if password.exists() or password.is_symlink():
+                    if not password.is_file():
+                        raise DeployError(
+                            f"Invalid database password file {password}; restore from backup"
+                        )
+                    try:
+                        content = password.read_bytes().decode("utf-8").rstrip("\n")
+                    except (OSError, UnicodeError):
+                        raise DeployError(
+                            f"Invalid database password file {password}; restore from backup"
+                        ) from None
+                    if not content or any(c in content for c in ("\x00", "\n", "\r")):
+                        raise DeployError(
+                            f"Empty or invalid database password file {password}; restore from backup"
+                        )
+                    continue
+                try:
+                    result = subprocess.run(  # noqa: UP022 - Python 3.6
+                        ["podman", "volume", "exists", claim],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+                except OSError:
+                    raise DeployError(
+                        f"Cannot check database volume {claim}; no password generated"
+                    ) from None
+                if result.returncode == 0:
+                    raise DeployError(
+                        f"Missing database password file {password} with existing volume {claim}; "
+                        "restore the password from backup or use a separate recovery procedure; no password generated"
+                    )
+                if result.returncode != 1:
+                    raise DeployError(
+                        f"Cannot check database volume {claim}; no password generated"
+                    )
+                if password.resolve() not in generated_secret_paths(
+                    config, config_path.parent
+                ):
+                    raise DeployError(
+                        f"Missing database password file {password}; add its path to {GENERATED_SECRETS} in {config_path}"
+                    )
 
 
 def generate_secrets(config, base_dir):
@@ -740,10 +856,20 @@ def render(
 def prepare_components():
     """Render all source components with private dev state and shared imported registrations."""
     state = BUILD / "dev"
+    settings_by_component = {
+        component: component_defaults(component, dev=True)
+        for component in ("core", "app1", "app2", "help")
+    }
+    for component, settings in settings_by_component.items():
+        database_preflight(
+            settings,
+            state / component / "config.yaml",
+            ROOT / "components" / component / "manifests",
+        )
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     for component in ("core", "app1", "app2", "help"):
         target = state / component / "config.yaml"
-        settings = component_defaults(component, dev=True)
+        settings = settings_by_component[component]
         write_private(target, yaml.safe_dump(settings, sort_keys=False))
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
         imports, updates = registration_stage(
@@ -777,6 +903,8 @@ def prepare():
         prepare_components()
         return
     output = BUILD / "install.yaml"
+    if CONFIG.is_file():
+        database_preflight(load_config(CONFIG), CONFIG, MANIFESTS)
     write_private(output, render())
     print(f"[OK] {output}")
 
@@ -869,6 +997,8 @@ def install_legacy():
     """Install a standalone rootless manifest fixture using the persistent config."""
     production_environment()
     config_path = HOME / "config.yaml"
+    if config_path.is_file():
+        database_preflight(load_config(config_path), config_path, MANIFESTS)
     text = render(FILES_DIR, write_archives=False, config_path=config_path)
     archive = ROOT / "images" / "images.tar"
     if not archive.is_file():
@@ -1219,6 +1349,13 @@ def install_components():
         for key in ("PUBLIC_ORIGIN", "HTTPS_PORT"):
             if config[key] != core[key]:
                 raise DeployError(f"{key} in {path} must match {core_path}")
+    for component in components:
+        config_path = component_paths(component)[0]
+        database_preflight(
+            load_config(config_path),
+            config_path,
+            ROOT / "components" / component / "manifests",
+        )
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:

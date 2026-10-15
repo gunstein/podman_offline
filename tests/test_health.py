@@ -8,6 +8,8 @@ from unittest import mock
 
 import yaml
 
+import deploy
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -46,10 +48,14 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(probe["periodSeconds"], 30)
                 self.assertEqual(probe["timeoutSeconds"], 5)
                 self.assertEqual(probe["failureThreshold"], 3)
-                command = probe["exec"]["command"]
+                config = deploy.merge_config(
+                    ROOT / "config/common.defaults.yaml",
+                    path.parent.parent / "config.defaults.yaml",
+                )
+                command = deploy.replace(probe["exec"]["command"], config)
                 self.assertTrue(command)
                 self.assertTrue(all(isinstance(arg, str) for arg in command))
-                self.assertNotIn("@@", " ".join(command))
+                self.assertNotIn("@@", " ".join(str(arg) for arg in command))
         self.assertGreater(count, 0)
 
     def test_backend_probe_uses_livez_not_database_health(self):

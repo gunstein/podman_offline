@@ -63,7 +63,7 @@ if [[ ${1:-} == core || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; t
         core)
             issue_component identity core/generated-certificates/identity ''
             issue_component web core/generated-certificates/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
-            for entry in identity-db/password users/alice-password users/bob-password; do
+            for entry in users/alice-password users/bob-password; do
                 component_password "core/generated-certificates/$entry"
             done
             mkdir -p core/generated-certificates/app
@@ -74,7 +74,6 @@ if [[ ${1:-} == core || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; t
             if [[ ! -e $component/generated-certificates/todo/ca.crt ]]; then
                 cp PKI/private/ca.crt "$component/generated-certificates/todo/ca.crt"
             fi
-            component_password "$component/generated-certificates/database/password"
             ;;
         help) ;;
     esac
@@ -92,7 +91,7 @@ if [[ -e PKI/private/ca.key || -e generated-certificates/identity/identity.key ]
     echo 'PKI already exists. Keeping existing keys; see PKI/README.md.' >&2
     exit 1
 fi
-mkdir -p PKI/private generated-certificates/{identity,todo,web,identity-db,todo-db,users,client}
+mkdir -p PKI/private generated-certificates/{identity,todo,web,users,client}
 openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
     -keyout PKI/private/ca.key -out PKI/private/ca.crt \
     -subj '/CN=MyProduct Development CA' \
@@ -113,7 +112,7 @@ issue web generated-certificates/web "$(printf 'extendedKeyUsage=serverAuth\nsub
 cp generated-certificates/todo/todo-client.crt generated-certificates/client/
 cp PKI/private/ca.crt generated-certificates/todo/ca.crt
 openssl rand -hex 32 > generated-certificates/todo/session-key
-for path in identity-db/password todo-db/password users/alice-password users/bob-password; do
+for path in users/alice-password users/bob-password; do
     openssl rand -hex 24 > "generated-certificates/$path"
 done
 printf 'PKI created for %s. CA: PKI/private/ca.crt\n' "$hostname"

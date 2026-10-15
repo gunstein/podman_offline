@@ -406,6 +406,19 @@ class ComponentTests(ComponentFixture):
                     + "/generated-certificates/todo/todo-client.crt",
                     "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
                 )
+        for component, relative in (
+            ("core", "identity-db"),
+            ("app1", "database"),
+            ("app2", "database"),
+        ):
+            self.write(
+                "build/dev/"
+                + component
+                + "/generated-certificates/"
+                + relative
+                + "/password",
+                b"retained-db-password\n",
+            )
         before = (deploy.HOME / "app1/config.yaml").read_bytes()
         deploy.prepare()
         self.assertEqual((deploy.HOME / "app1/config.yaml").read_bytes(), before)

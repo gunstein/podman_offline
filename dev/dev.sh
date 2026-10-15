@@ -4,10 +4,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in
     up)
-        if [[ ! -e config/dev.yaml && ! -L config/dev.yaml ]]; then install -m 0600 config/dev.yaml.example config/dev.yaml; fi
         hostname=$(python3 - <<'DEV_HOST'
 from urllib.parse import urlsplit
 import deploy
+# Explicit Podman dependency before certificates, config output or secret creation.
+for component in ("core", "app1", "app2"):
+    deploy.database_preflight(
+        deploy.component_defaults(component, dev=True),
+        deploy.BUILD / "dev" / component / "config.yaml",
+        deploy.ROOT / "components" / component / "manifests",
+    )
 print(urlsplit(deploy.component_defaults("core", dev=True)["PUBLIC_ORIGIN"]).hostname)
 DEV_HOST
 )

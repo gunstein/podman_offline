@@ -245,9 +245,10 @@ collects public registrations into current route/client indexes. Only those
 indexes are used at runtime: Podman imports do not delete removed files, so stale
 files left in volumes must not keep an uninstalled route/client active.
 
-The shared demo CA and core keys/passwords are generated once. Each app gets
-its own client private key/certificate and database password; session keys use
-GENERATED_SECRETS. Identity receives only public client certificates. Its signing
+The certificate script creates the shared demo CA, core certificate pairs and
+demo-user passwords once. Deploy generates database passwords separately. Each app gets
+its own client private key/certificate and database password. Database passwords,
+session keys and API keys use GENERATED_SECRETS. Identity receives only public client certificates. Its signing
 key is a Secret; each Todo's private signing/session material is in its own PVC.
 `PKI/private/ca.key` on the target is for the demo only. In real prod, issue
 certificates elsewhere and deliver them to the persistent component paths.
@@ -266,7 +267,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=app1
-version=0.2.0
+version=0.2.1
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -499,3 +500,118 @@ be recorded separately and old evidence is never changed.
 | Tests | Update real resource counts in tests/test_deploy.py and app-specific assertions; probe tests discover every manifest. |
 | E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
 | Docs | Update overview, install/uninstall dependencies, tests/README and acceptance/README. |
+
+
+## PostgreSQL configuration and credentials
+
+Host, port, user and database name are ordinary component configuration. The
+password is generated once with `GENERATED_SECRETS` and retained as persistent
+secret state. `SECRET_FILES` delivers it as a Kubernetes Secret. PostgreSQL uses
+that Secret for first initialization, and its client uses the same password.
+Applications requiring a complete connection string build it at runtime and
+consume it as an environment variable.
+
+Each database-owning component has `DB_HOST`, `DB_PORT`, `DB_USER` and `DB_NAME`
+in its `config.defaults.yaml`. The port must be quoted text containing an integer
+from 1 through 65535. A top-level dev `DB_PORT` override applies to all database
+components; help can carry that unused value without requiring a database. Server `POSTGRES_USER`, `POSTGRES_DB` and `PGPORT`, and client
+`DB_*` environment values use whole-value placeholders; no password placeholder
+or complete connection string is rendered into YAML or written to disk.
+
+| Owner | DB host | User / database | Persistent password below component directory | Secret / key | PostgreSQL volume | Client |
+| --- | --- | --- | --- | --- | --- | --- |
+| core | core-identity-postgres | identity / identity | generated-certificates/identity-db/password | core-database-password / password | core-identity-data | Identity |
+| app1 | app1-postgres | todo / todo | generated-certificates/database/password | app1-database-password / password | app1-data | app1 Todo backend |
+| app2 | app2-postgres | todo / todo | generated-certificates/database/password | app2-database-password / password | app2-data | app2 Todo backend |
+
+The component directory is `/var/lib/myproduct/<component>` in production and
+`build/dev/<component>` in dev. No DB settings belong in common defaults.
+The table documents default identities; manifests/config remain the source of
+truth. The two Todo users have the same name in **different clusters** and have
+independently generated credentials.
+
+Identity's in-image `DatabaseEnvironment.cs` runs before ASP.NET startup. It reads
+ordinary `DB_*` environment values and `/run/secrets/database/password`, validates
+parameters, and uses [NpgsqlConnectionStringBuilder](https://www.npgsql.org/doc/connection-string-parameters.html) to set
+`ConnectionStrings__Default`. Identity then connects **only** through that environment
+value. The bootstrap and web application share the same process: there is no
+shell wrapper, child process, host executable or signal-forwarding problem.
+The existing entrypoint remains `dotnet Identity.dll`. Its `--database-check`
+mode performs a real connection and `SELECT 1` through the same environment path,
+with only a pass/fail result; it never prints the string. New code and its existing
+Npgsql dependency are built into the offline Identity image. There is no Podman
+`$(VAR)` expansion dependency, startup download, `eval` or secret in argv.
+
+The Todo examples keep an alternative application interface: `database.py` reads
+the same `DB_*` values and mounted Secret file, and passes separate keyword
+parameters to `psycopg`. It does not use .NET connection-string syntax. Dev and
+production use the same images, secret keys, parameter validation and startup code.
+
+Password files must contain nonempty UTF-8 text. Like the PostgreSQL image’s
+[`file_env`](https://github.com/docker-library/postgres/blob/master/17/bookworm/docker-entrypoint.sh)
+shell command substitution, clients remove **only trailing LF bytes**;
+spaces, tabs, dollar signs, semicolons, quotes and equals signs are preserved.
+Embedded LF, CR (including CRLF) and NUL are rejected because initdb's password-file
+interface cannot safely represent multiline credentials consistently. Existing
+files are never rewritten to normalize them. Npgsql handles connection-string
+quoting; psycopg receives keyword arguments. Passwords are not restricted to the
+new generator's alphanumeric alphabet.
+
+Before component rendering or secret generation, deploy derives the server's
+password Secret and database PVC from its manifest. If the file exists, it must
+be valid and is retained byte-for-byte. If it is missing, `podman volume exists`
+must explicitly report absence before generation is allowed. An existing volume
+is conservatively treated as retained database state, even if empty or there is
+no installed marker. Podman failures stop the operation. The error names the file
+and volume and tells the operator to restore the password from backup or follow a
+separate recovery procedure. No volume is deleted, inspected for reinitialization,
+or repaired automatically. Dev preparation now needs access to its rootless Podman
+volume store when a DB password is missing; `dev/dev.sh up` performs this preflight
+before creating certificate state, and `./deploy prepare` performs it before
+config output or any generated secrets. Ordinary YAML rendering has no Podman lookup.
+
+PostgreSQL does not update an existing user's password when its Secret file changes.
+Client startup verifies authentication with an actual connection. Npgsql reports
+SQLSTATE 28P01 for wrong passwords. Psycopg/libpq can omit SQLSTATE during
+handshake failure; its private PostgreSQL FATAL password-authentication reply is
+classified without printing it. DNS/network failures do not match that reply. Mismatches fail
+with a sanitized authentication error; no `ALTER ROLE`, privilege changes or automatic
+recovery occurs. Back up and restore the database volume **and** its password file
+together. A lost password cannot be replaced with a fresh random password for an
+existing database.
+
+### Upgrade from the former database-password generator
+
+Release 0.2.1 increments both `VERSION` and `CORE_VERSION`, and changes Identity
+and Todo backend image tags, so shared core transitions through its normal controlled
+upgrade. App/help-only upgrades with an equal core version still retain core.
+Existing config is authoritative and is never rewritten. Before upgrading each
+component, manually add these fields to its persistent `config.yaml`:
+
+```yaml
+DB_HOST: app1-postgres  # core: core-identity-postgres; app2: app2-postgres
+DB_PORT: "5432"
+DB_USER: todo          # core: identity
+DB_NAME: todo          # core: identity
+```
+
+Append `generated-certificates/database/password` to each app's existing
+`GENERATED_SECRETS` list; core uses `generated-certificates/identity-db/password`.
+Keep all preexisting list entries and `SECRET_FILES` references. Do not reinitialize
+config or change identities on a populated database. Existing valid passwords from
+the certificate script are reused, including their trailing LF, without changing
+the database password. A missing required DB setting fails with config path/key;
+a missing password with an existing volume requires recovery, not generation.
+An app2 config may wait until app2's own upgrade: upgrading core/app1 preserves
+app2's installed service, config, password and database.
+
+Credentials in the runtime environment are sensitive: do not dump environment,
+full inspect objects or connection strings during diagnosis. Administrators and
+people with container runtime access can access that state. Acceptance emits only
+bounded pass/fail observations and authentication classification, with private input
+kept out of argv and evidence.
+
+Password rotation is a separate future task. For each row above it must coordinate
+the database user's password, persistent password file and running clients. Session
+keys, demo-user passwords, OIDC keys and certificates have different lifecycles.
+This release implements no rotation command, dual credentials or rollback framework.

@@ -12,15 +12,34 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Npgsql;
 
+try { DatabaseEnvironment.Initialize(); }
+catch (InvalidOperationException error) {
+    Console.Error.WriteLine("Database configuration error: " + error.Message);
+    return 1;
+}
+// This runtime environment value is the only connection interface used by Identity.
+var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default")!;
+var source = NpgsqlDataSource.Create(connectionString);
+// Focused container verification uses the exact same startup and environment path.
+if (args.Contains("--database-check")) {
+    try {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand("SELECT 1", connection);
+        await command.ExecuteScalarAsync();
+        Console.WriteLine("Database connection verified via ConnectionStrings__Default");
+        return 0;
+    } catch (PostgresException error) when (error.SqlState == "28P01") {
+        Console.Error.WriteLine("Database authentication failed (28P01); restore matching credentials; no password changed");
+        return 2;
+    } catch (NpgsqlException) {
+        Console.Error.WriteLine("Database connection failed");
+        return 3;
+    }
+}
 var builder = WebApplication.CreateBuilder(args);
 string Required(string key) => builder.Configuration[key]
     ?? throw new InvalidOperationException($"Missing {key}");
 var origin = Required("PUBLIC_ORIGIN").TrimEnd('/');
-var connectionString = new NpgsqlConnectionStringBuilder {
-    Host = Required("DATABASE_HOST"), Database = "identity", Username = "identity",
-    Password = File.ReadAllText("/run/secrets/database/password").Trim(), Timeout = 5
-}.ConnectionString;
-var source = NpgsqlDataSource.Create(connectionString);
 builder.Services.AddSingleton(source);
 builder.Services.AddAntiforgery();
 builder.Services.AddDataProtection()
@@ -72,7 +91,16 @@ for (var attempt = 0; ; attempt++) {
             await insert.ExecuteNonQueryAsync();
         }
         break;
-    } catch (NpgsqlException) when (attempt < 59) { await Task.Delay(1000); }
+    } catch (PostgresException error) when (error.SqlState == "28P01") {
+        Console.Error.WriteLine("Database authentication failed (28P01); restore matching credentials; no password changed");
+        return 2;
+    } catch (NpgsqlException) {
+        if (attempt == 59) {
+            Console.Error.WriteLine("Database connection failed during startup");
+            return 3;
+        }
+        await Task.Delay(1000);
+    }
 }
 app.UseForwardedHeaders();
 app.UsePathBase("/identity");
@@ -113,6 +141,7 @@ app.MapPost("/account/login", async (HttpContext context, IAntiforgery antiforge
     return Results.Redirect(returnUrl);
 });
 app.Run();
+return 0;
 
 // Load one validated public client registration and its adjacent certificate.
 static Client LoadClient(string path) {
