@@ -305,6 +305,185 @@ separate cluster; each app creates/owns its tables, with no migration/GRANT role
 Duende needs an appropriate [production license](https://docs.duendesoftware.com/identityserver/overview/licensing/).
 Local Todo logout clears only that app's session; shared identity SSO remains.
 
+### Password and session-key flow
+
+Read these diagrams from creation, through persistent host files and container
+delivery, to application use. Paths starting with `credentials/` are relative to
+the component's persistent directory: `/var/lib/myproduct/<component>/` in prod
+or `build/dev/<component>/` in dev. Code paths are relative to the repository root.
+Production uses the existing component `config.yaml`; release defaults are used
+when initializing that file, not merged again during installation.
+
+All credentials shown have persistent source files, including passwords and
+session keys. A secret value is confidential information; a Kubernetes `Secret`
+is one delivery mechanism. In the current implementation, session keys use a PVC
+even though they are confidential. The diagrams describe that implementation.
+
+```mermaid
+flowchart TD
+    CONFIG["`Config declares files and delivery
+    GENERATED_SECRETS, SECRET_FILES, VOLUME_FILES
+    components/*/config.defaults.yaml`"]
+
+    GENERATE["`Deploy creates missing secret files
+    32 cryptographically random alphanumeric characters
+    Existing nonempty files are retained
+    deployment/render.py: generate_secrets()`"]
+
+    DBFILE["`Database password: persistent text file
+    Apps: credentials/database/password
+    Identity: credentials/identity-db/password
+    Created with owner-only access, mode 0600`"]
+
+    SESSIONFILE["`Session key: persistent text file
+    credentials/todo/session-key
+    Independent keys for app1 and app2
+    Created with owner-only access, mode 0600`"]
+
+    SECRET["`SECRET_FILES creates a Secret in YAML
+    File content is base64-encoded, not encrypted
+    Mounted as a password file in the containers
+    deployment/render.py: secret_documents()`"]
+
+    PVC["`VOLUME_FILES creates an import archive and PVC
+    Session key travels with the app's client files
+    app1-signing or app2-signing volume
+    deployment/render.py: write_file_archives()`"]
+
+    DATABASE["`Database and client use the same password file
+    /run/secrets/database/password
+    PostgreSQL: first database initialization
+    Clients: DatabaseEnvironment.cs and database.py`"]
+
+    BACKEND["`Backend reads the session key at startup
+    /certificates/session-key becomes Flask SECRET_KEY
+    Signs and verifies session cookies
+    apps/todo-backend/app.py`"]
+
+    BROWSER["`Browser stores and sends the signed cookie
+    Session key never leaves the backend for the browser
+    HttpOnly prevents JavaScript from reading the cookie
+    A separate CSRF token protects modifying requests`"]
+
+    CONFIG --> GENERATE
+    GENERATE --> DBFILE
+    GENERATE --> SESSIONFILE
+    DBFILE --> SECRET --> DATABASE
+    SESSIONFILE --> PVC --> BACKEND
+    BACKEND -->|Signed cookie in response| BROWSER
+    BROWSER -->|Cookie on later requests| BACKEND
+```
+
+`deployment/deploy.py: database_preflight()` runs before generation. A missing
+database password with an existing database volume stops installation; deploy
+does not invent a replacement password for retained database state.
+
+The session key is an application-wide signing key, not a per-user password or
+the key used to authenticate the app to Identity. Flask stores signed session
+data in the browser cookie; signing does not encrypt that data. The backend reads
+the key into memory at startup. Keeping the same key across restarts and upgrades
+allows existing cookies to remain verifiable. Changing it requires a deliberate
+session-invalidation or rotation policy.
+
+Session-key delivery currently has an important permission limitation:
+`deployment/render.py: normalize()` gives ordinary import-archive members mode
+`0644`, including the session key and private client key. The original files and
+the archive itself are private, and the volume is mounted read-only only in the
+backend, but the imported file modes are broader than necessary. Hardening this
+delivery is [backlog item 14](BACKLOG.md#14-tighten-app-credential-delivery-and-remove-unused-api-secret).
+Changing to a Secret alone would not establish encryption or memory-only storage
+in Podman; actual permissions and lifecycle behavior must also be verified.
+
+### Certificate and private-key flow
+
+Certificate preparation is a separate operator step before `deploy install`.
+The demo uses `scripts/generate-certificates.sh --root /var/lib/myproduct
+<component> <DNS-hostname>`; see the complete commands below. The script creates
+a shared demo CA under `PKI/private/` and missing component certificate/key pairs.
+`dev/dev.sh up` runs this preparation automatically for development. Real
+production certificates are issued externally and delivered to the persistent
+component paths. Deploy loads the prepared files; it does not issue certificates.
+
+The script writes separate PEM files: `.crt` contains the public certificate and
+`.key` contains the private key. It does not generate `.pfx` files. Existing
+nonempty pairs are retained, incomplete pairs cause an error, and rerunning the
+script does not automatically renew certificates.
+
+```mermaid
+flowchart TD
+    ISSUE["`Prepare certificates and private keys
+    Demo: OpenSSL and a shared demo CA
+    scripts/generate-certificates.sh: issue_component()
+    Production: prepare externally issued certificates`"]
+
+    TLSFILES["`Platform: persistent HTTPS files
+    credentials/web/web.crt and web.key
+    Public certificate identifies the HTTPS server
+    Private key belongs to the proxy`"]
+
+    SIGNFILES["`Identity: persistent token-signing files
+    credentials/identity/identity.crt and identity.key
+    Public certificate and private signing key
+    Separate purpose from HTTPS and client authentication`"]
+
+    CLIENTFILES["`App: persistent client-authentication files
+    credentials/todo/todo-client.crt and todo-client.key
+    Each app has its own pair
+    ca.crt provides CA trust for the app's HTTPS requests`"]
+
+    TLSSECRET["`SECRET_FILES delivers TLS files
+    Secret content in generated YAML
+    Files mounted in the proxy container
+    Platform config.defaults.yaml and manifests`"]
+
+    SIGNSECRET["`SECRET_FILES delivers token-signing files
+    Mounted under /run/secrets/signing
+    deployment/render.py: secret_documents()
+    Identity config.defaults.yaml and manifests`"]
+
+    CLIENTPVC["`VOLUME_FILES delivers the app's client files
+    Import archive and app-specific signing-PVC
+    Mounted read-only at /certificates in backend
+    App config.defaults.yaml and 60-todo.yaml`"]
+
+    PUBLIC["`Register only the public client certificate
+    Client metadata and certificate stored under clients/
+    Imported into Identity through its clients PVC
+    deployment/deploy.py: registration_stage()`"]
+
+    HTTPS["`Proxy uses certificate and key for HTTPS
+    Browser checks the server certificate
+    Browser must trust its issuer
+    components/platform/manifests/`"]
+
+    TOKENS["`Identity signs tokens with its private key
+    Recipients validate with the public signing key
+    apps/identity/Program.cs`"]
+
+    AUTH["`App authenticates to Identity with private_key_jwt
+    App signs with its private client key
+    Identity checks the registered public certificate
+    todo-backend/app.py and identity/Program.cs`"]
+
+    ISSUE --> TLSFILES
+    ISSUE --> SIGNFILES
+    ISSUE --> CLIENTFILES
+    TLSFILES --> TLSSECRET --> HTTPS
+    SIGNFILES --> SIGNSECRET --> TOKENS
+    CLIENTFILES --> CLIENTPVC --> AUTH
+    CLIENTFILES -->|Public certificate only; never the private key| PUBLIC
+    PUBLIC --> AUTH
+```
+
+The diagrams omit demo-user password creation. They also omit
+`ApiResources__0__ApiSecrets__0__Value`: the current config generates it and
+delivers it through `identity-api-secrets`, but the current Identity application
+does not consume it. Its removal is included in backlog item 14.
+
+The session-cookie example is specific to the Flask Todo backend. A different
+application must explicitly consume its credential files using its own framework;
+deploy and Podman do not infer a file's purpose from the name `session-key`.
+
 ## First production installation
 
 Run as the operator with sudo. Install the `platform` bundle first.
