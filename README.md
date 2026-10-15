@@ -305,6 +305,89 @@ separate cluster; each app creates/owns its tables, with no migration/GRANT role
 Duende needs an appropriate [production license](https://docs.duendesoftware.com/identityserver/overview/licensing/).
 Local Todo logout clears only that app's session; shared identity SSO remains.
 
+### From source YAML to container configuration
+
+Source manifests are templates, not the complete configuration Podman runs.
+Deploy combines them with the component's persistent production config and input
+files on the host. Whole-value placeholders such as `@@DB_HOST@@` become concrete
+config values. `SECRET_FILES` embeds file content in generated Secret documents;
+`VOLUME_FILES` delivers file content in separate import archives referenced by
+generated PVC documents.
+
+```mermaid
+flowchart TD
+    MANIFEST["`Source manifests
+    components/component/manifests/*.yaml
+    Describe containers, mounts and resources
+    May contain placeholders such as @@DB_HOST@@`"]
+
+    CONFIG["`Persistent production config
+    /var/lib/myproduct/component/config.yaml
+    Contains values and references to input files
+    Examples: DB_HOST, SECRET_FILES, VOLUME_FILES`"]
+
+    FILES["`Credential files and other inputs
+    Passwords, private keys, certificates and payloads
+    Stored separately from source manifests
+    Config selects which files to deliver`"]
+
+    RENDER["`Deploy reads and validates inputs
+    Replaces placeholders with config values
+    Creates declared missing secrets when permitted
+    deployment/render.py: materialize_and_render()`"]
+
+    SECRET["`SECRET_FILES
+    Reads the selected files
+    Base64-encodes their contents
+    Adds Secret documents to generated YAML`"]
+
+    VOLUME["`VOLUME_FILES
+    Packages selected files into import archives
+    Creates PVC documents referring to those archives
+    File contents are not embedded in YAML`"]
+
+    YAML["`Rendered component YAML
+    Concrete values with no unresolved placeholders
+    Secret contents and PVC archive references
+    Sensitive when it contains secrets`"]
+
+    ARCHIVE["`Separate import archives
+    /var/lib/myproduct/component/files/*.tar
+    Contain files selected through VOLUME_FILES
+    Sensitive when they contain private files`"]
+
+    PODMAN["`Podman starts the component
+    Reads rendered YAML through the component's Quadlet
+    Imports archives into named volumes
+    Supplies configuration and mounted files to containers`"]
+
+    MANIFEST --> RENDER
+    CONFIG --> RENDER
+    FILES --> RENDER
+    RENDER -->|Rendered manifests| YAML
+    RENDER --> SECRET
+    SECRET -->|File contents as Secret data| YAML
+    RENDER --> VOLUME
+    VOLUME -->|PVC with archive path| YAML
+    VOLUME -->|Actual file contents| ARCHIVE
+    YAML --> PODMAN
+    ARCHIVE --> PODMAN
+```
+
+`component` in the diagram stands for the selected component, such as `app1`.
+In development, `./deploy prepare` uses materialized config and credentials under
+`build/dev/` and writes the combined `build/install.yaml` for `podman kube play`.
+Production install uses persistent config and writes component-specific YAML for
+Quadlet. The diagram shows data flow; validation and image checks still gate the
+installation steps described in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+Base64 is encoding, not encryption: generated YAML containing Secret data must
+be protected along with credential files and private import archives. A PVC's
+YAML contains the archive reference, not the files inside it. Missing-secret
+generation is controlled by `GENERATED_SECRETS` and lifecycle preflight;
+certificates must already have been prepared separately. The following diagrams
+show how specific credentials pass through these two delivery mechanisms.
+
 ### Password and session-key flow
 
 Read these diagrams from creation, through persistent host files and container
