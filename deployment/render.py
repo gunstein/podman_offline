@@ -1,0 +1,726 @@
+"""Config validation, secret materialization, manifests and import archives."""
+
+import base64
+import os
+import re
+import secrets
+import string
+import tarfile
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import yaml
+
+from . import common
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects duplicate keys instead of keeping the last value."""
+
+    def construct_mapping(self, node, deep=False):
+        """Build a YAML mapping and reject duplicate keys with their line number."""
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate key {key!r}", key_node.start_mark
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def load_yaml(path):
+    """Read one YAML document safely and reject duplicate keys."""
+    with path.open(encoding="utf-8") as f:
+        # A SafeLoader subclass rejects duplicates without allowing object construction.
+        return yaml.load(f, Loader=UniqueKeyLoader)
+
+
+def load_yaml_all(path):
+    """Read all YAML documents safely and reject duplicate keys."""
+    with path.open(encoding="utf-8") as f:
+        return list(yaml.load_all(f, Loader=UniqueKeyLoader))
+
+
+def config_layer(path):
+    """Read one mapping, rejecting duplicate keys without exposing YAML values."""
+    try:
+        config = load_yaml(path)
+    except (yaml.YAMLError, TypeError) as error:
+        mark = getattr(error, "problem_mark", None)
+        location = f" at line {mark.line + 1}" if mark is not None else ""
+        problem = getattr(error, "problem", "") or ""
+        detail = problem if problem.startswith("duplicate key ") else "invalid YAML"
+        raise yaml.YAMLError(f"{path}{location}: {detail}") from None
+
+    if not isinstance(config, dict):
+        raise common.DeployError(f"{path} must contain KEY: value pairs")
+
+    return config
+
+
+def validate_config(config, path):
+    """Validate the complete config; individual merge layers may be incomplete."""
+    for key, value in config.items():
+        if not isinstance(key, str):
+            raise common.DeployError(f"All keys in {path} must be strings")
+
+        if key in (common.SECRET_FILES, common.VOLUME_FILES, common.GENERATED_SECRETS):
+            continue  # File groups and generated paths validate their own structures.
+
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            raise common.DeployError(
+                f"{key} in {path} must be a string or an integer, "
+                f"got type {type(value).__name__}. Put text in quotes."
+            )
+
+    port = config.get("HTTPS_PORT")
+    if not isinstance(port, int) or not 1 <= port <= common.MAX_PORT:
+        raise common.DeployError(
+            f"HTTPS_PORT in {path} must be an integer 1-{common.MAX_PORT} without quotes"
+        )
+
+    for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
+        if key in config:
+            value = config[key]
+            if not isinstance(value, str) or not value or "\x00" in value:
+                raise common.DeployError(f"{key} in {path} must be non-empty text")
+    if "DB_PORT" in config:
+        port = config["DB_PORT"]
+        if (
+            not re.fullmatch(r"[0-9]{1,5}", port)
+            or not 1 <= int(port) <= common.MAX_PORT
+        ):
+            raise common.DeployError(
+                f"DB_PORT in {path} must be text containing an integer 1-{common.MAX_PORT}"
+            )
+
+    return config
+
+
+def load_config(path):
+    """Production loads only the authoritative materialized file."""
+    return validate_config(config_layer(path), path)
+
+
+def merge_config(*paths, overrides=None):
+    """Merge mappings at the top level, in order, then validate the result."""
+    config = {}
+    for path in paths:
+        config.update(config_layer(path))
+    config.update(overrides or {})
+    return validate_config(config, paths[-1])
+
+
+def component_defaults(component, overrides=None, dev=False):
+    """Build complete config from common, component and explicit local overrides."""
+    paths = [
+        common.ROOT / "config/common.defaults.yaml",
+        common.ROOT / "components" / component / "config.defaults.yaml",
+    ]
+    local = common.ROOT / "config/dev.yaml"
+    if dev and (local.exists() or local.is_symlink()):
+        paths.append(local)
+    config = merge_config(*paths, overrides=overrides)
+    materialized = (
+        (common.BUILD / "dev" if dev else common.HOME) / component / "config.yaml"
+    )
+    validate_component_config(config, component, materialized)
+    return config
+
+
+def validate_component_config(config, component, path, check_placeholders=True):
+    """Require shared values and every whole-value manifest placeholder before writes."""
+    required = {"PUBLIC_ORIGIN", "HTTPS_PORT"}
+
+    def collect(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, str):
+            match = common.PH.fullmatch(value)
+            if match:
+                required.add(match[1])
+
+    if check_placeholders:
+        for manifest in sorted(
+            (common.ROOT / "components" / component / "manifests").glob("*.yaml")
+        ):
+            collect(load_yaml_all(manifest))
+    # PUBLIC_HOSTNAME is derived from the validated origin for platform rendering.
+    if component == "platform":
+        required.discard("PUBLIC_HOSTNAME")
+    for key in sorted(required):
+        if key not in config:
+            raise common.DeployError(
+                f"Missing {key} in {path}; add it explicitly before installation"
+            )
+    public_origin(config["PUBLIC_ORIGIN"], path)
+    check_component_config_names(config, component, path)
+    generated_secret_paths(config, path.parent)
+    for group in (common.SECRET_FILES, common.VOLUME_FILES):
+        mapping = config.get(group, {})
+        if not isinstance(mapping, dict):
+            raise common.DeployError(f"{group} in {path} must be a map")
+        for name, entries in mapping.items():
+            if (
+                not isinstance(name, str)
+                or not common.ID.fullmatch(name)
+                or not isinstance(entries, list)
+                or not entries
+                or any(not isinstance(entry, str) or not entry for entry in entries)
+            ):
+                raise common.DeployError(
+                    f"{group} in {path} must be id: [list of paths]"
+                )
+
+
+def public_origin(value, path):
+    """Validate an HTTPS origin without exposing its supplied value in errors."""
+    message = f"PUBLIC_ORIGIN in {path} must be an HTTPS origin without credentials, path or query"
+    if not isinstance(value, str):
+        raise common.DeployError(message)
+    try:
+        address = urlsplit(value.rstrip("/"))
+        hostname = address.hostname
+    except ValueError:
+        raise common.DeployError(message) from None
+    if (
+        address.scheme != "https"
+        or not hostname
+        or address.path
+        or address.query
+        or address.fragment
+        or address.username is not None
+        or address.password is not None
+    ):
+        raise common.DeployError(message)
+    return address
+
+
+def generated_secret_paths(config, base_dir):
+    """Resolve declared secret paths without generating or reading their contents."""
+    entries = config.get(common.GENERATED_SECRETS, [])
+    if not isinstance(entries, list) or not all(
+        isinstance(entry, str) for entry in entries
+    ):
+        raise common.DeployError(
+            f"{common.GENERATED_SECRETS} must be a list of relative file paths"
+        )
+    base = base_dir.resolve()
+    paths = []
+    for entry in entries:
+        relative = Path(entry)
+        if relative.is_absolute() or ".." in relative.parts or not relative.name:
+            raise common.DeployError(
+                f"{common.GENERATED_SECRETS}: {entry!r} must stay under the config directory"
+            )
+        path = (base / relative).resolve()
+        try:
+            path.relative_to(base)
+        except ValueError:
+            raise common.DeployError(
+                f"{common.GENERATED_SECRETS}: {entry!r} resolves outside the config directory"
+            ) from None
+        paths.append(path)
+    return paths
+
+
+def generate_secrets(config, base_dir):
+    """Create missing private secret files once, within the config directory."""
+    for path in generated_secret_paths(config, base_dir):
+        if path.exists():
+            if not path.is_file() or path.stat().st_size == 0:
+                raise common.DeployError(
+                    f"Generated secret file {path} is empty or not a regular file"
+                )
+            continue
+        missing, parent = [], path.parent
+        while not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700, exist_ok=True)
+        path.parent.chmod(0o700)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            if not path.is_file() or path.stat().st_size == 0:
+                raise common.DeployError(
+                    f"Generated secret file {path} is empty or not a regular file"
+                ) from None
+            continue
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(
+                "".join(
+                    secrets.choice(string.ascii_letters + string.digits)
+                    for _ in range(32)
+                )
+            )
+        print(f"[OK] Generated secret file {path}")
+
+
+def replace(value, config):
+    """Replace whole placeholders recursively and keep the config value's type."""
+    if isinstance(value, dict):
+        return {key: replace(item, config) for key, item in value.items()}
+
+    if isinstance(value, list):
+        return [replace(item, config) for item in value]
+
+    if isinstance(value, str):
+        match = common.PH.fullmatch(value)
+        if match:
+            key = match.group(1)
+            if key not in config:
+                raise common.DeployError(f"Missing {key} in config.yaml")
+            return config[key]
+
+    return value
+
+
+def write_private(path, text):
+    """Write the file with mode 0600 from the first byte."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o600)  # in case the file existed with another mode
+        f.write(text)
+
+
+def resolve_path(value, base_dir=None):
+    """Resolve a relative path from the config directory; ~ is allowed."""
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (base_dir or common.CONFIG.parent) / path
+
+
+def load_file_group(config, group, base_dir=None):
+    """Read file groups and expand directory paths one level, relative to the config."""
+    spec = config.get(group, {})
+
+    if not isinstance(spec, dict):
+        raise common.DeployError(f"{group} in config.yaml must be id: [list of files]")
+
+    groups = {}
+
+    for group_id, entries in spec.items():
+        where = f"{group}.{group_id}"
+
+        if not isinstance(group_id, str) or not common.ID.fullmatch(group_id):
+            raise common.DeployError(
+                f"Invalid id {group_id!r} in {group}. Use lowercase letters, digits and -"
+            )
+
+        if (
+            not isinstance(entries, list)
+            or not entries
+            or not all(isinstance(entry, str) for entry in entries)
+        ):
+            raise common.DeployError(f"{where} must be a list of file paths")
+
+        items = []
+
+        for path in (resolve_path(entry, base_dir) for entry in entries):
+            if not path.exists():
+                raise common.DeployError(f"Missing {path} ({where})")
+            items += sorted(path.iterdir()) if path.is_dir() else [path]
+
+        names = [item.name for item in items]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise common.DeployError(
+                f"{where} has several files with the same name: {duplicates}"
+            )
+
+        if group == common.SECRET_FILES:
+            for item in items:
+                if not item.is_file():
+                    raise common.DeployError(
+                        f"{where}: {item} is a directory. Secrets can only "
+                        "contain files; use VOLUME_FILES for directory trees"
+                    )
+                if not common.SECRET_KEY.fullmatch(item.name):
+                    raise common.DeployError(
+                        f"{where}: the file name {item.name!r} may only contain "
+                        "letters, digits, . - and _"
+                    )
+
+        groups[group_id] = items
+
+    return groups
+
+
+def secret_documents(secrets):
+    """Build base64-encoded Secrets within Podman's size limit."""
+    docs = []
+
+    for secret_id, items in secrets.items():
+        doc = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": secret_id},
+            "type": "Opaque",
+            "data": {
+                item.name: base64.b64encode(item.read_bytes()).decode("ascii")
+                for item in items
+            },
+        }
+
+        if len(yaml.safe_dump(doc)) > common.MAX_SECRET_SIZE:
+            raise common.DeployError(
+                f"{common.SECRET_FILES}.{secret_id} is too large for a Podman secret "
+                f"(max about {common.MAX_SECRET_SIZE * 3 // 4} bytes of file content). "
+                "Use VOLUME_FILES for large files"
+            )
+
+        docs.append(doc)
+
+    return docs
+
+
+def normalize(info):
+    """Normalize ownership, modes and timestamps for stable import checksums."""
+    info.uid = 0
+    info.gid = 0
+    info.uname = "root"
+    info.gname = "root"
+    info.mtime = 0
+    info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
+    return info
+
+
+def archive_path(files_dir, volume_id):
+    """Return the import archive path for a volume id."""
+    return files_dir / f"{volume_id}.tar"
+
+
+def write_file_archives(volumes, files_dir):
+    """Write one tar archive per VOLUME_FILES id."""
+    if not volumes:
+        return
+
+    files_dir.mkdir(parents=True, exist_ok=True)
+    files_dir.chmod(0o700)
+
+    for volume_id, items in volumes.items():
+        archive = archive_path(files_dir, volume_id)
+        fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+
+        with os.fdopen(fd, "wb") as raw:
+            os.fchmod(raw.fileno(), 0o600)
+            # The offline archive must contain link targets, not links to the build machine.
+            with tarfile.open(fileobj=raw, mode="w", dereference=True) as tar:
+                for item in items:
+                    tar.add(str(item), arcname=item.name, filter=normalize)
+
+
+def volume_claims(volumes, files_dir):
+    """Build PVCs that let Podman import each VOLUME_FILES archive."""
+    return [
+        {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {
+                "name": volume_id,
+                "annotations": {
+                    common.IMPORT_SOURCE: str(archive_path(files_dir, volume_id))
+                },
+            },
+            # Podman ignores spec, but Kubernetes requires the fields.
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "1Gi"}},
+            },
+        }
+        for volume_id in volumes
+    ]
+
+
+def references(value, found):
+    """Find Secret, PVC and ConfigMap references used by the manifests."""
+    if isinstance(value, dict):
+        secret = value.get("secret")
+        if isinstance(secret, dict) and "secretName" in secret:
+            found.add(("Secret", secret["secretName"]))
+
+        claim = value.get("persistentVolumeClaim")
+        if isinstance(claim, dict) and "claimName" in claim:
+            found.add(("PersistentVolumeClaim", claim["claimName"]))
+
+        config_map = value.get("configMap")
+        if isinstance(config_map, dict) and "name" in config_map:
+            found.add(("ConfigMap", config_map["name"]))
+
+        for key in ("secretKeyRef", "secretRef", "configMapRef", "configMapKeyRef"):
+            ref = value.get(key)
+            if isinstance(ref, dict) and "name" in ref:
+                kind = "ConfigMap" if key.startswith("configMap") else "Secret"
+                found.add((kind, ref["name"]))
+
+        for item in value.values():
+            references(item, found)
+
+    elif isinstance(value, list):
+        for item in value:
+            references(item, found)
+
+    return found
+
+
+def check_links(docs, from_config, sources=None):
+    """Validate unique volume names and links between config and manifests."""
+    defined = [
+        (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
+        for doc in docs
+        if isinstance(doc, dict)
+        and doc.get("kind") in ("Secret", "PersistentVolumeClaim", "ConfigMap")
+    ]
+
+    names = [name for _, name in defined]
+    for name in sorted({n for n in names if names.count(n) > 1}, key=str):
+        raise common.DeployError(
+            f"The name {name!r} is defined more than once as Secret/PVC/ConfigMap. "
+            "Podman creates one volume per name, so names must be unique across kinds"
+        )
+
+    defined = set(defined)
+    used = references(docs, set())
+
+    for kind, name in sorted(used - set(defined)):
+        source = ""
+        if sources:
+            for doc, path in zip(docs, sources):
+                if path and (kind, name) in references(doc, set()):
+                    source = f"{path}: "
+                    break
+        if kind == "ConfigMap":
+            hint = "Define it in a manifest"
+        else:
+            group = common.SECRET_FILES if kind == "Secret" else common.VOLUME_FILES
+            hint = f"Add it under {group} in config.yaml or in a manifest"
+        raise common.DeployError(
+            f"{source}A manifest uses {kind} {name!r}, but it does not exist. {hint}"
+        )
+
+    for key, where in sorted(from_config.items()):
+        if key not in used:
+            raise common.DeployError(
+                f"{where} in config.yaml is not used by any manifest. "
+                "Check that the id matches secretName/claimName in the manifest"
+            )
+
+
+def check_pod_spec(value):
+    """Validate offline pull policy and mounts within each pod specification."""
+    if isinstance(value, dict):
+        spec = value.get("spec")
+        if not isinstance(spec, dict):
+            spec = {}
+        volumes = {
+            volume.get("name")
+            for volume in spec.get("volumes", [])
+            if isinstance(volume, dict)
+        }
+        for group in ("containers", "initContainers"):
+            for container in spec.get(group, []):
+                if not isinstance(container, dict):
+                    raise common.DeployError(f"{group} entries must be maps")
+                name = container.get("name", "<unnamed>")
+                if container.get("imagePullPolicy") != "Never":
+                    raise common.DeployError(
+                        f"Container {name!r} ({group}) must use imagePullPolicy: Never"
+                    )
+                for mount in container.get("volumeMounts", []):
+                    if not isinstance(mount, dict) or mount.get("name") not in volumes:
+                        raise common.DeployError(
+                            f"Container {name!r} ({group}) mounts an undefined volume: {mount.get('name') if isinstance(mount, dict) else mount!r}"
+                        )
+        for child in value.values():
+            check_pod_spec(child)
+    elif isinstance(value, list):
+        for child in value:
+            check_pod_spec(child)
+
+
+def check_component_names(documents, component, source):
+    """Reject unprefixed component resources before generating or writing files."""
+    for doc in documents:
+        if not isinstance(doc, dict) or doc.get("kind") not in (
+            "Pod",
+            "Secret",
+            "PersistentVolumeClaim",
+            "ConfigMap",
+        ):
+            continue
+        name = (doc.get("metadata") or {}).get("name")
+        if (
+            not isinstance(name, str)
+            or not name.startswith(component + "-")
+            or not common.ID.fullmatch(name)
+        ):
+            raise common.DeployError(
+                f"{source}: {doc['kind']} name must start with {component}- and be a valid resource name"
+            )
+
+
+def check_component_config_names(config, component, path):
+    """Validate every configured Secret/PVC prefix without generating any files."""
+    for group, kind in (
+        (common.SECRET_FILES, "Secret"),
+        (common.VOLUME_FILES, "PersistentVolumeClaim"),
+    ):
+        mapping = config.get(group, {})
+        if not isinstance(mapping, dict):
+            raise common.DeployError(f"{group} in {path} must be a map")
+        check_component_names(
+            [{"kind": kind, "metadata": {"name": name}} for name in mapping],
+            component,
+            path,
+        )
+
+
+def materialize_and_render(
+    files_dir=None,
+    write_archives=True,
+    config_path=None,
+    manifests=None,
+    component=None,
+    extra_volumes=None,
+):
+    """Validate, create allowed missing secrets, render YAML and optionally write imports."""
+    config_path = config_path or common.CONFIG
+    if not config_path.exists():
+        raise common.DeployError(f"Missing {config_path}")
+
+    files_dir = files_dir or common.BUILD / "files"
+    config = load_config(config_path)
+    manifests = manifests or common.MANIFESTS
+    if component:
+        for path in sorted(manifests.glob("*.yaml")):
+            check_component_names(load_yaml_all(path), component, path)
+        check_component_config_names(config, component, config_path)
+    if component == "platform" and "PUBLIC_ORIGIN" in config:
+        config["PUBLIC_HOSTNAME"] = public_origin(
+            config["PUBLIC_ORIGIN"], config_path
+        ).hostname
+    if component:
+        validate_component_config(config, component, config_path)
+    generate_secrets(config, config_path.parent)
+    secrets = load_file_group(config, common.SECRET_FILES, config_path.parent)
+    volume_config = dict(config)
+    mapping = config.get(common.VOLUME_FILES, {})
+    if not isinstance(mapping, dict):
+        raise common.DeployError(
+            f"{common.VOLUME_FILES} in {config_path} must be a map"
+        )
+    volume_config[common.VOLUME_FILES] = {
+        key: entries
+        for key, entries in mapping.items()
+        if key not in (extra_volumes or {})
+    }
+    volumes = load_file_group(volume_config, common.VOLUME_FILES, config_path.parent)
+    volumes.update(extra_volumes or {})
+
+    docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
+    sources: list = [None] * len(docs)
+
+    for path in sorted(manifests.glob("*.yaml")):
+        try:
+            rendered = [
+                replace(document, config)
+                for document in load_yaml_all(path)
+                if document is not None
+            ]
+            for doc in rendered:
+                check_pod_spec(doc)
+                if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
+                    data = doc.get("data") or {}
+                    if not isinstance(data, dict):
+                        raise common.DeployError("ConfigMap.data must be a map")
+                    doc["data"] = {str(key): str(value) for key, value in data.items()}
+            if "@@" in yaml.safe_dump_all(rendered, sort_keys=False):
+                raise common.DeployError(
+                    'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'
+                )
+        except common.DeployError as error:
+            raise common.DeployError(
+                f"{path} (config {config_path}): {error}"
+            ) from None
+        docs += rendered
+        sources.extend([path] * len(rendered))
+
+    from_config = {("Secret", i): f"{common.SECRET_FILES}.{i}" for i in secrets}
+    from_config.update(
+        {("PersistentVolumeClaim", i): f"{common.VOLUME_FILES}.{i}" for i in volumes}
+    )
+    try:
+        check_links(docs, from_config, sources)
+    except common.DeployError as error:
+        raise common.DeployError(f"{config_path}: {error}") from None
+
+    text = yaml.safe_dump_all(docs, sort_keys=False)
+
+    # Base64 never contains '@', so Secret data cannot give false matches.
+    if "@@" in text:
+        raise common.DeployError(
+            'Unreplaced @@...@@ in the manifests. Only whole values like "@@NAME@@" are supported.'
+        )
+
+    if write_archives:
+        write_file_archives(volumes, files_dir)
+    return text
+
+
+def find_images(documents):
+    """Find unique, fully qualified images in pod specs."""
+    images = set()
+    pending = list(documents)
+    while pending:
+        value = pending.pop()
+        if isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                if key in ("containers", "initContainers") and isinstance(child, list):
+                    for container in child:
+                        image = (
+                            container.get("image")
+                            if isinstance(container, dict)
+                            else None
+                        )
+                        container_name = (
+                            container.get("name", "<unnamed>")
+                            if isinstance(container, dict)
+                            else "<unnamed>"
+                        )
+                        where = f"container {container_name!r} ({key})"
+                        if not isinstance(image, str) or not image.strip():
+                            raise common.DeployError(
+                                f"Container must have an image name as a string: {where}"
+                            )
+                        if "@@" in image:
+                            raise common.DeployError(
+                                f"Image {image}: placeholders are not supported in {where}"
+                            )
+                        registry, separator, name = image.partition("/")
+                        if (
+                            not separator
+                            or not name
+                            or not (
+                                "." in registry
+                                or ":" in registry
+                                or registry == "localhost"
+                            )
+                        ):
+                            raise common.DeployError(
+                                f"Image {image} must be fully qualified in {where}"
+                            )
+                        images.add(image)
+                pending.append(child)
+    if not images:
+        raise common.DeployError("No images found in the manifests")
+    return sorted(images)

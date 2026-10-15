@@ -27,7 +27,6 @@ class ImageHelperTests(unittest.TestCase):
         (self.root / "manifests").mkdir()
         for name in (
             "bundle.py",
-            "deploy.py",
             "dev/build-images.sh",
             "dev/pull-images.sh",
         ):
@@ -51,6 +50,7 @@ class ImageHelperTests(unittest.TestCase):
         )
         stub.chmod(0o755)
         self.log = self.root / "commands.jsonl"
+        shutil.copytree(ROOT / "deployment", self.root / "deployment")
         self.env = dict(
             os.environ,
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],

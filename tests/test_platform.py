@@ -7,7 +7,7 @@ from unittest import mock
 import yaml
 from test_components import ComponentFixture
 
-import deploy
+from deployment import cli, common, deploy
 
 LEGACY_VOLUME_EXISTS = deploy.legacy_volume_exists
 
@@ -17,8 +17,8 @@ class PlatformSafetyTests(ComponentFixture):
 
     def snapshot(self):
         return {
-            str(path.relative_to(deploy.HOME)): (path.read_bytes(), path.stat().st_mode)
-            for path in deploy.HOME.rglob("*")
+            str(path.relative_to(common.HOME)): (path.read_bytes(), path.stat().st_mode)
+            for path in common.HOME.rglob("*")
             if path.is_file()
         }
 
@@ -41,7 +41,7 @@ class PlatformSafetyTests(ComponentFixture):
                     before = self.snapshot()
                     self.process.reset_mock()
                     with self.assertRaisesRegex(
-                        deploy.DeployError, "Legacy core layout.*migration"
+                        common.DeployError, "Legacy core layout.*migration"
                     ):
                         operation()
                     self.process.assert_not_called()
@@ -51,7 +51,7 @@ class PlatformSafetyTests(ComponentFixture):
                         path.parent.rmdir()
 
     def test_leftover_core_directory_or_broken_alias_is_not_treated_as_absent(self):
-        old = deploy.HOME / "core"
+        old = common.HOME / "core"
         old.mkdir()
         for alias in (False, True):
             with self.subTest(alias=alias):
@@ -59,7 +59,7 @@ class PlatformSafetyTests(ComponentFixture):
                     old.rmdir()
                     old.symlink_to(self.root / "missing")
                 before = self.snapshot()
-                with self.assertRaisesRegex(deploy.DeployError, "Legacy core layout"):
+                with self.assertRaisesRegex(common.DeployError, "Legacy core layout"):
                     deploy.install()
                 self.assertEqual(self.snapshot(), before)
         old.unlink()
@@ -94,7 +94,7 @@ class PlatformSafetyTests(ComponentFixture):
                         deploy, "legacy_volume_exists", side_effect=LEGACY_VOLUME_EXISTS
                     )
                     refusal = self.assertRaisesRegex(
-                        deploy.DeployError, "Legacy core volume.*migration"
+                        common.DeployError, "Legacy core volume.*migration"
                     )
                     with transport, refusal:
                         operation()
@@ -122,7 +122,7 @@ class PlatformSafetyTests(ComponentFixture):
                     deploy, "legacy_volume_exists", side_effect=LEGACY_VOLUME_EXISTS
                 )
                 refusal = self.assertRaisesRegex(
-                    deploy.DeployError, "Cannot check legacy core"
+                    common.DeployError, "Cannot check legacy core"
                 )
                 with transport, refusal as caught:
                     deploy.install()
@@ -141,26 +141,26 @@ class PlatformSafetyTests(ComponentFixture):
                 )
                 self.select(name)
                 self.assertEqual(deploy.bundle_components(), [name])
-                marker = deploy.HOME / "installed/platform"
+                marker = common.HOME / "installed/platform"
                 if marker.exists():
                     marker.unlink()
                 before = self.snapshot()
                 self.process.reset_mock()
                 with self.assertRaisesRegex(
-                    deploy.DeployError, "separate platform bundle"
+                    common.DeployError, "separate platform bundle"
                 ):
                     deploy.install()
                 self.process.assert_not_called()
                 self.assertEqual(self.snapshot(), before)
         self.write("bundle.yaml", "name: app1\ncomponents: [platform, app1]\n")
-        with self.assertRaisesRegex(deploy.DeployError, "platform must be separate"):
+        with self.assertRaisesRegex(common.DeployError, "platform must be separate"):
             deploy.bundle_components()
 
     def test_installed_dependency_ranges_survive_removed_release_and_reject_incompatible_platform(
         self,
     ):
         deploy.install()
-        requirement = deploy.HOME / "dependencies/app1.json"
+        requirement = common.HOME / "dependencies/app1.json"
         self.assertEqual(
             json.loads(requirement.read_text()),
             {
@@ -172,14 +172,14 @@ class PlatformSafetyTests(ComponentFixture):
         self.write("PLATFORM_VERSION", "2.0.0\n")
         before = self.snapshot()
         self.process.reset_mock()
-        with self.assertRaisesRegex(deploy.DeployError, "dependency for identity"):
+        with self.assertRaisesRegex(common.DeployError, "dependency for identity"):
             deploy.install()
         self.process.assert_not_called()
         self.assertEqual(self.snapshot(), before)
         requirement.unlink()
         self.write("PLATFORM_VERSION", "1.1.0\n")
         with self.assertRaisesRegex(
-            deploy.DeployError, "installed platform requirement"
+            common.DeployError, "installed platform requirement"
         ):
             deploy.install()
         self.process.assert_not_called()
@@ -207,8 +207,8 @@ class PlatformSafetyTests(ComponentFixture):
             )
         )
         deploy.install()
-        (deploy.HOME / "installed/identity").unlink()
-        sibling = (deploy.HOME / "app1/config.yaml").read_bytes()
+        (common.HOME / "installed/identity").unlink()
+        sibling = (common.HOME / "app1/config.yaml").read_bytes()
         self.process.reset_mock()
         self.process.return_value = subprocess.CompletedProcess([], 0)
         deploy.uninstall("platform", delete_data=True)
@@ -218,20 +218,20 @@ class PlatformSafetyTests(ComponentFixture):
             if call.args[0][:3] == ["podman", "volume", "rm"]
         ]
         self.assertEqual(removals, [["podman", "volume", "rm", "platform-routes"]])
-        self.assertEqual((deploy.HOME / "app1/config.yaml").read_bytes(), sibling)
-        self.assertFalse((deploy.HOME / "platform").exists())
-        self.assertTrue((deploy.QUADLET_DIR / "myproduct.network").exists())
+        self.assertEqual((common.HOME / "app1/config.yaml").read_bytes(), sibling)
+        self.assertFalse((common.HOME / "platform").exists())
+        self.assertTrue((common.QUADLET_DIR / "myproduct.network").exists())
 
     def test_old_cli_arguments_refuse_before_any_operation(self):
         for arguments in (
             ["init-config", "core"],
             ["uninstall", "core", "--delete-data"],
         ):
-            command_line = mock.patch.object(deploy.sys, "argv", ["deploy"] + arguments)
+            command_line = mock.patch.object(cli.sys, "argv", ["deploy"] + arguments)
             with self.subTest(arguments=arguments), command_line:
                 before = self.snapshot()
                 self.process.reset_mock()
-                self.assertEqual(deploy.main(), 2)
+                self.assertEqual(cli.main(), 2)
                 self.process.assert_not_called()
                 self.assertEqual(self.snapshot(), before)
         self.assertIn("renamed to platform", self.stderr.getvalue())

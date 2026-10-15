@@ -1,8 +1,8 @@
 """Run one real deploy invocation in a fresh interpreter with only host transport stubbed."""
 
+import importlib
 import json
 import os
-import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -11,16 +11,20 @@ from pathlib import Path
 def main():
     parameters = json.loads(sys.stdin.read())
     root = Path(parameters["root"])
-    namespace = runpy.run_path(parameters["source"])
-    state = namespace["install"].__globals__
-    state.update(
+    sys.path.insert(0, str(Path(parameters["source"]).parent.parent))
+    lifecycle = importlib.import_module("deployment.deploy")
+    common = importlib.import_module("deployment.common")
+    rendering = importlib.import_module("deployment.render")
+    state = vars(lifecycle)
+    vars(common).update(
         ROOT=root,
         HOME=root / "home",
         BUILD=root / "build",
         QUADLET_DIR=root / "home/.config/containers/systemd",
         QUADLET_TEMPLATE=root / "quadlet/myproduct.kube",
-        production_environment=lambda: None,
-        legacy_volume_exists=lambda name: False,
+    )
+    state.update(
+        production_environment=lambda: None, legacy_volume_exists=lambda name: False
     )
     os.environ["XDG_RUNTIME_DIR"] = str(root)
     events = []
@@ -54,7 +58,7 @@ def main():
         return subprocess.CompletedProcess(args, status)
 
     subprocess.run = command
-    archives = state["write_file_archives"]
+    archives = rendering.write_file_archives
 
     def write_archives(groups, directory):
         record_event(["archives", str(directory)])
@@ -62,15 +66,15 @@ def main():
             raise OSError("Injected import failure")
         return archives(groups, directory)
 
-    state["write_file_archives"] = write_archives
-    private = state["write_private"]
+    vars(rendering)["write_file_archives"] = write_archives
+    private = rendering.write_private
 
     def write_private(path, text):
         if str(path.relative_to(root / "home")) == parameters.get("write_failure"):
             raise OSError("Injected registration failure")
         return private(path, text)
 
-    state["write_private"] = write_private
+    vars(rendering)["write_private"] = write_private
     clear = state["clear_pending"]
 
     def clear_pending():
@@ -86,7 +90,7 @@ def main():
             state["init_config"](state["bundle_components"]()[0])
         else:
             state["uninstall"](delete_data=parameters.get("delete_data", False))
-    except (state["DeployError"], OSError, subprocess.CalledProcessError) as error:
+    except (common.DeployError, OSError, subprocess.CalledProcessError) as error:
         record_event(["error", type(error).__name__, str(error)])
         return 1
     return 0

@@ -9,7 +9,8 @@ from pathlib import Path
 
 import yaml
 
-import deploy
+from deployment import common, deploy
+from deployment import render as rendering
 
 ROOT = Path(__file__).resolve().parent
 STAGE = ROOT / "build" / "bundle"
@@ -55,10 +56,10 @@ def manifest_images(manifests=None):
     if manifests is None and not paths:
         paths = sorted((ROOT / "manifests").glob("*.yaml"))
     for path in paths:
-        documents.extend(deploy.load_yaml_all(path))
+        documents.extend(rendering.load_yaml_all(path))
     try:
-        return deploy.find_images(documents)
-    except deploy.DeployError as error:
+        return rendering.find_images(documents)
+    except common.DeployError as error:
         raise BundleError(str(error)) from None
 
 
@@ -111,9 +112,9 @@ def generated_secret_guard(config_dirs=None):
     for path, base in sources:
         if path.exists():
             try:
-                config = deploy.config_layer(path)
-                secrets.update(deploy.generated_secret_paths(config, base))
-            except (deploy.DeployError, yaml.YAMLError):
+                config = rendering.config_layer(path)
+                secrets.update(rendering.generated_secret_paths(config, base))
+            except (common.DeployError, yaml.YAMLError):
                 raise BundleError(
                     f"Cannot validate generated secret paths in {path}"
                 ) from None
@@ -147,8 +148,8 @@ def generated_secret_guard(config_dirs=None):
 
 def build_release(version, bundle_name=None, components=None):
     """Package one selected bundle or a standalone manifest fixture."""
-    if components and bundle_name not in deploy.DEPENDENCIES:
-        raise deploy.DeployError("Component bundles require a known bundle name")
+    if components and bundle_name not in common.DEPENDENCIES:
+        raise common.DeployError("Component bundles require a known bundle name")
     name = (
         f"myproduct-{bundle_name}-{version}" if bundle_name else f"myproduct-{version}"
     )
@@ -171,7 +172,7 @@ def build_release(version, bundle_name=None, components=None):
         ROOT,
         [
             "deploy",
-            "deploy.py",
+            "deployment",
             "VERSION",
             "README.md",
             "config.defaults.yaml",
@@ -186,7 +187,6 @@ def build_release(version, bundle_name=None, components=None):
 
     for filename in [
         "deploy",
-        "deploy.py",
         "VERSION",
         "README.md",
     ] + (
@@ -196,7 +196,9 @@ def build_release(version, bundle_name=None, components=None):
     ):
         shutil.copy2(ROOT / filename, target / filename)
 
-    if bundle_name in deploy.VERSION_FILES:
+    shutil.copytree(ROOT / "deployment", target / "deployment", ignore=guard)
+
+    if bundle_name in common.VERSION_FILES:
         # This archive is versioned independently of app/help releases.
         (target / "VERSION").write_text(version + "\n", encoding="utf-8")
 
@@ -232,11 +234,11 @@ def build_release(version, bundle_name=None, components=None):
                     "components": components,
                     "requires": {
                         dependency: deploy.platform_requirement(
-                            (ROOT / deploy.VERSION_FILES[dependency])
+                            (ROOT / common.VERSION_FILES[dependency])
                             .read_text()
                             .strip()
                         )
-                        for dependency in deploy.DEPENDENCIES[str(bundle_name)]
+                        for dependency in common.DEPENDENCIES[str(bundle_name)]
                     },
                 }
             ),
@@ -294,14 +296,14 @@ def build():
     """Build every defined component bundle, or one standalone manifest fixture."""
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     definitions = (
-        deploy.load_yaml(ROOT / "bundles.yaml")
+        rendering.load_yaml(ROOT / "bundles.yaml")
         if (ROOT / "bundles.yaml").exists()
         else {None: None}
     )
     if not isinstance(definitions, dict) or not definitions:
         raise BundleError("bundles.yaml must define at least one bundle")
     for name, components in definitions.items():
-        if name is not None and (name not in deploy.COMPONENTS or components != [name]):
+        if name is not None and (name not in common.COMPONENTS or components != [name]):
             raise BundleError("Invalid bundle component definition")
     manifest_images()
     guard = generated_secret_guard([ROOT] + sorted((ROOT / "components").glob("*")))
@@ -309,8 +311,8 @@ def build():
     shutil.rmtree(STAGE, ignore_errors=True)
     for name, components in definitions.items():
         selected_version = (
-            (ROOT / deploy.VERSION_FILES[name]).read_text().strip()
-            if name in deploy.VERSION_FILES
+            (ROOT / common.VERSION_FILES[name]).read_text().strip()
+            if name in common.VERSION_FILES
             else version
         )
         build_release(selected_version, name, components)

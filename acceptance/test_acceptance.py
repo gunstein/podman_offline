@@ -564,7 +564,7 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
         remote = Path(__file__).with_name("remote.sh").read_text()
         return shell_code(remote, function="wait_trust")
 
-    def run_trust_wait(self, outputs, exit_code=0):
+    def run_trust_wait(self, outputs, exit_code=0, files=None):
         """Run the read-only trust wait against sequential database fixtures without delay."""
         fixtures = self.root / "trust-fixtures"
         fixtures.mkdir(exist_ok=True)
@@ -575,6 +575,7 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
         script = r"""
 # Read the next database fixture and keep warnings on stderr.
 sudo() {
+    if [[ $2 == find ]]; then printf '%s\n' "$expected_files"; return 0; fi
     printf 'Warning: fixture warning\n' >&2
     count=$(cat "$fixtures/counter")
     count=$((count + 1))
@@ -587,9 +588,14 @@ sudo() {
 sleep() { :; }
 # Run the stubbed read with the same arguments as the production call.
 timeout() { shift; "$@"; }
-wait_trust /new/deploy.py /old/deploy.py
+wait_trust /new/deployment/ /old/deployment/
 """
-        prefix = "set -eu\nfixtures=" + shlex.quote(str(fixtures))
+        prefix = (
+            "set -eu\nexpected_files="
+            + shlex.quote("\n".join(files or ["/new/deployment/__main__.py"]))
+            + "\nfixtures="
+            + shlex.quote(str(fixtures))
+        )
         prefix += (
             "\nlast=" + str(len(outputs)) + "\nfixture_status=" + str(exit_code) + "\n"
         )
@@ -605,8 +611,8 @@ wait_trust /new/deploy.py /old/deploy.py
     def test_trust_wait_accepts_delayed_update_without_mutations(self):
         """Wait for the new entry and the removed old one without writing hash values."""
         digest = "a" * 64
-        new = "file /new/deploy.py 123 " + digest + "\n"
-        old = "file /old/deploy.py 123 " + digest + "\n"
+        new = "file /new/deployment/__main__.py 123 " + digest + "\n"
+        old = "file /old/deployment/__main__.py 123 " + digest + "\n"
         result, calls = self.run_trust_wait([old, old + new, new])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, 3)
@@ -623,20 +629,43 @@ wait_trust /new/deploy.py /old/deploy.py
             + digest,
             "rpmdb /usr/lib/python3.9/site-packages/setuptools/script (dev).tmpl 123 "
             + digest,
-            "file /new/deploy.py backup 123 " + digest,
+            "file /new/deployment-backup/__main__.py backup 123 " + digest,
         ]
         pending = "\n".join(rows) + "\n"
         result, calls = self.run_trust_wait(
-            [pending, pending + "file /new/deploy.py 123 " + digest + "\n"]
+            [pending, pending + "file /new/deployment/__main__.py 123 " + digest + "\n"]
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, 2)
         self.assertNotIn(digest, result.stdout + result.stderr)
 
+    def test_package_trust_requires_every_file_and_all_old_entries_removed(self):
+        files = [
+            "/new/deployment/__main__.py",
+            "/new/deployment/common.py",
+            "/new/deployment/with spaces.py",
+        ]
+        rows = ["file " + path + " 123 " + "e" * 64 + "\n" for path in files]
+        old = "file /old/deployment/nested/render.py 123 " + "f" * 64 + "\n"
+        result, calls = self.run_trust_wait(
+            [rows[0], "".join(rows) + old, "".join(rows)], files=files
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, 3)
+        for invalid in (
+            "".join(rows) + rows[0],
+            "".join(rows) + "file /new/deployment/unexpected.py 123 " + "a" * 64 + "\n",
+        ):
+            result, _ = self.run_trust_wait([invalid], files=files)
+            self.assertNotEqual(result.returncode, 0)
+        result, calls = self.run_trust_wait([rows[0]], files=files)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, 30)
+
     def test_trust_wait_times_out_with_stale_database(self):
         """Reject a stale database after the limit even if the reads succeed."""
         result, calls = self.run_trust_wait(
-            ["file /old/deploy.py 123 " + "b" * 64 + "\n"]
+            ["file /old/deployment/__main__.py 123 " + "b" * 64 + "\n"]
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, 30)
@@ -644,7 +673,7 @@ wait_trust /new/deploy.py /old/deploy.py
 
     def test_trust_wait_rejects_failed_empty_or_invalid_read(self):
         """Stop at once on command errors or unusable stdout, also with warnings."""
-        valid = "file /new/deploy.py 123 " + "c" * 64 + "\n"
+        valid = "file /new/deployment/__main__.py 123 " + "c" * 64 + "\n"
         for output, status in ((valid, 1), ("", 0), ("invalid\n", 0)):
             with self.subTest(output=output[:10], status=status):
                 result, calls = self.run_trust_wait([output], status)
@@ -674,7 +703,7 @@ wait_trust /new/deploy.py /old/deploy.py
             code = "\n".join(
                 block
                 for block in blocks
-                if "--file delete" in block and "deploy.py install" in block
+                if "--file delete" in block and "exec bash ./deploy install" in block
             )
         (self.root / "version").write_text("0.1.1\n")
         (self.root / "myproduct-app1-0.1.1-offline.tar.gz").touch()
@@ -688,8 +717,9 @@ sudo() {
         *'--file add'*) echo add >> "$calls";;
         *'--file delete'*) echo delete >> "$calls";;
         *'--update'*) echo update >> "$calls";;
-        *'deploy.py install'*) echo install >> "$calls"; return "$install_status";;
-        *'--dump-db'*) printf "file %s 123 %064d\n" "$product/deploy.py" 0;;
+        *'exec bash ./deploy install'*) echo install >> "$calls"; return "$install_status";;
+        *'find '*) printf '%s\n' "$product/deployment/__main__.py";;
+        *'--dump-db'*) printf "file %s 123 %064d\n" "$product/deployment/__main__.py" 0;;
         *'systemctl --user'*) healthy;;
     esac
 }
@@ -1105,7 +1135,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         command = next(
             line.strip()
             for line in remote.splitlines()
-            if "exec python3 deploy.py install" in line
+            if "exec bash ./deploy install" in line
         )
         readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
         self.assertIn(
@@ -1114,9 +1144,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         )
         release = self.root / "service home/releases/myproduct-test"
         release.mkdir(parents=True)
-        (release / "deploy.py").write_text(
-            "import os,sys; print(os.getcwd()); print(sys.argv[1])\n"
-        )
+        (release / "deploy").write_text('#!/bin/bash\npwd\nprintf "%s\\n" "$1"\n')
         operator = self.root / "operator-private"
         operator.mkdir(mode=0o700)
         script = 'sudo() { shift 4; "$@"; }\nproduct=$1\n' + command

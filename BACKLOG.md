@@ -2,14 +2,14 @@
 
 Planned work, not implemented behavior. Each item requires separate implementation
 and verification. Item numbers are stable references, not execution priority.
-Recommended execution order:
-
-1. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+The recommended implementation sequence through item 1 is complete. Remaining
+items retain their individual scopes below; agree the next priority separately.
 
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
 platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
 path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), and
-retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)).
+retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)),
+and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -181,7 +181,10 @@ Foretrekk noen få sterke tester fremfor mange overlappende tester.
 
 ## 1. Deploy maintainability refactor
 
-Status: planned; after items 10, 8, 9, 12 and 13.
+Status: implemented in 0.4.3 after items 10, 8, 9, 12 and 13. Local checks passed;
+real directory trust remains unverified on the target. See [verification](acceptance/DEPLOY-REFACTOR.md).
+No existing installation requires migration: this implementation adds no migration,
+old-module fallback or compatibility layer. The original task follows.
 
 Refactor the deploy implementation for maintainability without redesigning the architecture or changing behavior.
 
@@ -910,7 +913,7 @@ with item 9 before implementing a procedure.
 
 Status: implemented in 0.4.1; fresh-install lab verification pending. See
 [credential-path verification](acceptance/CREDENTIAL-PATHS.md). The deploy
-refactor (item 1) is next.
+refactor (item 1) is implemented; see its verification report.
 This task uses fresh state only and requires no migration or backward compatibility.
 The full agent message follows, with heading levels adjusted for this document.
 

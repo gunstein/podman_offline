@@ -8,7 +8,8 @@ from unittest import mock
 import yaml
 from test_components import ComponentFixture
 
-import deploy
+from deployment import common, deploy
+from deployment import render as rendering
 
 LEGACY_VOLUME_EXISTS = deploy.legacy_volume_exists
 
@@ -18,8 +19,8 @@ class IdentityTests(ComponentFixture):
 
     def snapshot(self):
         return {
-            str(path.relative_to(deploy.HOME)): (path.read_bytes(), path.stat().st_mode)
-            for path in deploy.HOME.rglob("*")
+            str(path.relative_to(common.HOME)): (path.read_bytes(), path.stat().st_mode)
+            for path in common.HOME.rglob("*")
             if path.is_file()
         }
 
@@ -52,7 +53,7 @@ class IdentityTests(ComponentFixture):
             )
         }
         route = self.root / "components/app1/route.conf"
-        certificate = deploy.HOME / "app1/credentials/todo/todo-client.crt"
+        certificate = common.HOME / "app1/credentials/todo/todo-client.crt"
         for index, (route_changed, client_changed) in enumerate(
             ((False, False), (True, False), (False, True), (True, True))
         ):
@@ -86,8 +87,8 @@ class IdentityTests(ComponentFixture):
                     self.assertEqual(before[name] != after[name], changed)
 
     def test_help_works_without_identity_and_has_no_identity_side_effects(self):
-        (deploy.HOME / "installed/identity").unlink()
-        shutil.rmtree(deploy.HOME / "identity")
+        (common.HOME / "installed/identity").unlink()
+        shutil.rmtree(common.HOME / "identity")
         for path in deploy.component_paths("identity")[2:]:
             path.unlink()
         self.component_manifest("help")
@@ -102,20 +103,20 @@ class IdentityTests(ComponentFixture):
         self.assertEqual(
             self.restarts(), ["myproduct-help.service", "myproduct-platform.service"]
         )
-        self.assertFalse((deploy.HOME / "identity").exists())
-        self.assertFalse((deploy.HOME / "installed/identity").exists())
+        self.assertFalse((common.HOME / "identity").exists())
+        self.assertFalse((common.HOME / "installed/identity").exists())
 
     def test_missing_or_incompatible_identity_refuses_app_before_any_mutation(self):
         for version in (None, "0.9.0", "2.0.0"):
             with self.subTest(version=version):
-                marker = deploy.HOME / "installed/identity"
+                marker = common.HOME / "installed/identity"
                 if marker.exists():
                     marker.unlink()
                 if version:
                     self.write("home/installed/identity", version + "\n")
                 before = self.snapshot()
                 self.process.reset_mock()
-                with self.assertRaisesRegex(deploy.DeployError, "[Ii]dentity"):
+                with self.assertRaisesRegex(common.DeployError, "[Ii]dentity"):
                     deploy.install()
                 self.process.assert_not_called()
                 self.assertEqual(self.snapshot(), before)
@@ -128,7 +129,7 @@ class IdentityTests(ComponentFixture):
         self.write("IDENTITY_VERSION", "2.0.0\n")
         before = self.snapshot()
         self.process.reset_mock()
-        with self.assertRaisesRegex(deploy.DeployError, "dependency for app1"):
+        with self.assertRaisesRegex(common.DeployError, "dependency for app1"):
             deploy.install()
         self.process.assert_not_called()
         self.assertEqual(self.snapshot(), before)
@@ -146,7 +147,7 @@ class IdentityTests(ComponentFixture):
         self.assertEqual(self.restarts(), [])
         self.write("IDENTITY_VERSION", "1.0.0\n")
         self.process.reset_mock()
-        with self.assertRaisesRegex(deploy.DeployError, "Identity downgrade refused"):
+        with self.assertRaisesRegex(common.DeployError, "Identity downgrade refused"):
             deploy.install()
         self.process.assert_not_called()
 
@@ -165,7 +166,7 @@ class IdentityTests(ComponentFixture):
         deploy.install()
         self.select("identity")
         self.process.reset_mock()
-        with self.assertRaisesRegex(deploy.DeployError, "still required by: app1"):
+        with self.assertRaisesRegex(common.DeployError, "still required by: app1"):
             deploy.uninstall()
         self.process.assert_not_called()
         self.select("app1")
@@ -175,19 +176,19 @@ class IdentityTests(ComponentFixture):
             self.restarts(),
             ["myproduct-identity.service", "myproduct-platform.service"],
         )
-        self.assertFalse((deploy.HOME / "clients/app1").exists())
-        self.assertFalse((deploy.HOME / "routes/app1.conf").exists())
-        self.assertIn("identity", (deploy.HOME / "routes/identity.conf").read_text())
+        self.assertFalse((common.HOME / "clients/app1").exists())
+        self.assertFalse((common.HOME / "routes/app1.conf").exists())
+        self.assertIn("identity", (common.HOME / "routes/identity.conf").read_text())
         self.write("home/installed/help", "1.2.3\n")
         self.select("identity")
-        before = (deploy.HOME / "identity/config.yaml").read_bytes()
+        before = (common.HOME / "identity/config.yaml").read_bytes()
         self.process.reset_mock()
         deploy.uninstall()
         self.assertEqual(self.restarts(), ["myproduct-platform.service"])
-        self.assertEqual((deploy.HOME / "identity/config.yaml").read_bytes(), before)
-        self.assertFalse((deploy.HOME / "routes/identity.conf").exists())
-        self.assertTrue((deploy.HOME / "installed/help").exists())
-        self.assertTrue((deploy.HOME / "installed/platform").exists())
+        self.assertEqual((common.HOME / "identity/config.yaml").read_bytes(), before)
+        self.assertFalse((common.HOME / "routes/identity.conf").exists())
+        self.assertTrue((common.HOME / "installed/help").exists())
+        self.assertTrue((common.HOME / "installed/platform").exists())
 
     def test_identity_delete_data_removes_only_its_declared_volumes_and_state(self):
         self.select("identity")
@@ -217,7 +218,7 @@ class IdentityTests(ComponentFixture):
             if call.args[0][:3] == ["podman", "volume", "rm"]
         ]
         self.assertEqual(removed, list(volumes))
-        self.assertFalse((deploy.HOME / "identity").exists())
+        self.assertFalse((common.HOME / "identity").exists())
         after = self.snapshot()
         for name, value in before.items():
             if name.startswith(("platform/", "app1/", "PKI/")) or name.endswith(
@@ -239,7 +240,7 @@ class IdentityTests(ComponentFixture):
             before = self.snapshot()
             self.process.reset_mock()
             with self.assertRaisesRegex(
-                deploy.DeployError, "Combined platform/Identity.*migration"
+                common.DeployError, "Combined platform/Identity.*migration"
             ):
                 deploy.install()
             self.process.assert_not_called()
@@ -255,12 +256,12 @@ class IdentityTests(ComponentFixture):
                 "kind: Pod\nmetadata: {name: platform-identity}\n",
             ),
         ):
-            path = deploy.HOME / name
+            path = common.HOME / name
             original = path.read_bytes()
             path.write_text(text)
             before = self.snapshot()
             with self.assertRaisesRegex(
-                deploy.DeployError, "Combined platform/Identity.*migration"
+                common.DeployError, "Combined platform/Identity.*migration"
             ):
                 deploy.install()
             self.assertEqual(self.snapshot(), before)
@@ -291,7 +292,7 @@ class IdentityTests(ComponentFixture):
                         deploy, "legacy_volume_exists", side_effect=LEGACY_VOLUME_EXISTS
                     )
                     refusal = self.assertRaisesRegex(
-                        deploy.DeployError, "combined platform volume.*migration"
+                        common.DeployError, "combined platform volume.*migration"
                     )
                     with volume_check, refusal:
                         operation()
@@ -308,11 +309,11 @@ class IdentityTests(ComponentFixture):
         self,
     ):
         repo = Path(__file__).resolve().parent.parent
-        platform = deploy.merge_config(
+        platform = rendering.merge_config(
             repo / "config/common.defaults.yaml",
             repo / "components/platform/config.defaults.yaml",
         )
-        identity = deploy.merge_config(
+        identity = rendering.merge_config(
             repo / "config/common.defaults.yaml",
             repo / "components/identity/config.defaults.yaml",
         )

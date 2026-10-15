@@ -178,14 +178,13 @@ def main(base, run):
     (fixture / "dev").mkdir()
     for name in (
         "deploy",
-        "deploy.py",
         "bundle.py",
         "README.md",
         "dev/build-images.sh",
         "dev/pull-images.sh",
     ):
         shutil.copy2(ROOT / name, fixture / name)
-    for name in ("scripts", "quadlet"):
+    for name in ("deployment", "scripts", "quadlet"):
         shutil.copytree(ROOT / name, fixture / name)
     (fixture / "VERSION").write_text("0.0.0\n")
     (fixture / "config.defaults.yaml").write_text("HTTPS_PORT: 8443\n")

@@ -8,7 +8,7 @@ from unittest import mock
 
 import yaml
 
-import deploy
+from deployment import render as rendering
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -48,11 +48,11 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(probe["periodSeconds"], 30)
                 self.assertEqual(probe["timeoutSeconds"], 5)
                 self.assertEqual(probe["failureThreshold"], 3)
-                config = deploy.merge_config(
+                config = rendering.merge_config(
                     ROOT / "config/common.defaults.yaml",
                     path.parent.parent / "config.defaults.yaml",
                 )
-                command = deploy.replace(probe["exec"]["command"], config)
+                command = rendering.replace(probe["exec"]["command"], config)
                 self.assertTrue(command)
                 self.assertTrue(all(isinstance(arg, str) for arg in command))
                 self.assertNotIn("@@", " ".join(str(arg) for arg in command))

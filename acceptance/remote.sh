@@ -62,11 +62,11 @@ prepare_release() {
         # shellcheck disable=SC2024
         as_product tar xzf - -C "$state/releases" < "$archive"
         sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-        sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file "myproduct-$bundle"
+        sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "myproduct-$bundle"
         sudo -n fapolicyd-cli --update
     fi
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-    wait_trust "$product/deploy.py"
+    wait_trust "$product/deployment/"
 }
 # Create only missing component configs and credentials; upgrades reuse them.
 install_configuration() {
@@ -75,7 +75,7 @@ install_configuration() {
     for component in $components; do
         existing=0
         if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
-        as_product python3 "$product/deploy.py" init-config "$component"
+        as_product bash "$product/deploy" init-config "$component"
         if [[ $existing == 0 && $component == platform ]]; then
         as_product python3 - "$state/platform/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import pathlib
@@ -255,27 +255,42 @@ LAUNCH_DIAGNOSTICS
 }
 # Wait, read-only, for exact trust paths after the daemon's asynchronous update.
 wait_trust() {
-    local wanted=$1 removed=${2:-} dump status attempt
+    local wanted=${1%/}/ removed=${2:-} expected dump status attempt
+    if [[ -n $removed ]]; then removed=${removed%/}/; fi
+    expected=$(sudo -n find "$wanted" -type f -print) || {
+        echo 'FAIL: could not enumerate package trust files' >&2; return 1;
+    }
+    [[ -n $expected ]] || { echo 'FAIL: empty deployment package' >&2; return 1; }
     for attempt in {1..30}; do
         dump=$(timeout 10 sudo -n fapolicyd-cli --dump-db) || {
             echo 'FAIL: could not read trust database' >&2; return 1;
         }
         status=0
-        awk -v wanted="$wanted" -v removed="$removed" '
+        awk -v expected="$expected" -v wanted="$wanted" -v removed="$removed" '
+            BEGIN {
+                count=split(expected, files, "\n")
+                for (i=1; i<=count; i++) required[files[i]]=1
+            }
             {
                 path=$0
                 sub(/^[^[:space:]]+[[:space:]]+/, "", path)
                 sub(/[[:space:]]+[0-9]+[[:space:]]+[[:xdigit:]]+[[:space:]]*$/, "", path)
                 if (NF < 4 || path !~ /^\// || $(NF-1) !~ /^[0-9]+$/ ||
                     length($NF) != 64 || $NF !~ /^[[:xdigit:]]+$/) invalid=1
-                if (path == wanted) found=1
-                if (removed != "" && path == removed) old=1
+                if (index(path, wanted) == 1) {
+                    if (!(path in required) || ++seen[path] != 1) invalid=1
+                }
+                if (removed != "" && index(path, removed) == 1) old=1
             }
-            END { if (NR == 0 || invalid) exit 2; if (!found || old) exit 1 }
+            END {
+                if (NR == 0 || invalid) exit 2
+                for (path in required) if (seen[path] != 1) exit 1
+                if (old) exit 1
+            }
         ' <<< "$dump" || status=$?
         case "$status" in
-            0) printf 'PASS: trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
-            1) printf 'WAIT: trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
+            0) printf 'PASS: package trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
+            1) printf 'WAIT: package trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
             *) echo 'FAIL: invalid or empty trust database output' >&2; return 1;;
         esac
         if [[ $attempt != 30 ]]; then sleep 1; fi
@@ -283,6 +298,7 @@ wait_trust() {
     echo 'FAIL: trust update did not finish within 30 checks' >&2
     return 1
 }
+
 # Validate the VM role's fapolicyd, SELinux and firewalld profile.
 profile() {
     selinux=$(getenforce)
@@ -668,7 +684,7 @@ def no_parallel_platform():
 
 no_parallel_platform()
 for arguments in (("init-config", "platform"), ("install",), ("uninstall", "platform", "--delete-data")):
-    result = subprocess.run([sys.argv[1]] + list(arguments), stdout=subprocess.PIPE,
+    result = subprocess.run(["bash", sys.argv[1]] + list(arguments), stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, universal_newlines=True, check=False)
     if result.returncode != 1 or "Legacy core layout detected" not in result.stderr or "+ podman" in result.stdout:
         raise SystemExit("FAIL: retained core was not refused before image/state operations")
@@ -765,9 +781,9 @@ HELP_BUILD
     ;;
 help-upgrade|platform-upgrade|identity-upgrade)
     prepare_release
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     healthy
-    wait_trust "$product/deploy.py"
+    wait_trust "$product/deployment/"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
     ;;
 identity-before|identity-after)
@@ -907,7 +923,7 @@ def main():
                 raise SystemExit("FAIL: expected explicit platform restart")
     else:
         # The previous app bundle is still verified/trusted; refuse its older platform.
-        result = subprocess.run(["python3", str(Path(old_release) / "deploy.py"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        result = subprocess.run(["bash", str(Path(old_release) / "deploy"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
         if result.returncode != 1 or "Platform downgrade refused" not in result.stderr or "+ podman" in result.stdout:
             raise SystemExit("FAIL: older platform was not refused before image operations")
         if observe() != current:
@@ -929,9 +945,9 @@ help-content)
     ;;
 help-retire|platform-retire|identity-retire)
     old_release="$state/releases/myproduct-$bundle-$old_version"
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "myproduct-$bundle"
     sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py" "$old_release/deploy.py"
+    wait_trust "$product/deployment/" "$old_release/deployment/"
     as_product rm -rf -- "$old_release"
     sudo -n test ! -e "$old_release"
     echo "PASS: old $bundle release and its own trust retired after verification"
@@ -948,7 +964,7 @@ prepare-host)
     ;;
 help-alone)
     prepare_release
-    as_product python3 - "$product/deploy.py" <<'HELP_ALONE'
+    as_product python3 -B - "$product/deploy" <<'HELP_ALONE'
 import pathlib
 import subprocess
 import sys
@@ -956,7 +972,7 @@ import sys
 
 def main():
     """Require a clean dependency refusal without creating any component state."""
-    result = subprocess.run(["python3", sys.argv[1], "install"], stdout=subprocess.PIPE,
+    result = subprocess.run(["bash", sys.argv[1], "install"], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, universal_newlines=True, check=False)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
@@ -976,12 +992,12 @@ HELP_ALONE
 upgrade)
     prepare_release
     old_release="$state/releases/myproduct-$bundle-$old_version"
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     healthy
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "myproduct-$bundle"
     sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py" "$old_release/deploy.py"
-    echo 'PASS: old own deploy.py trust removed; other bundles untouched'
+    wait_trust "$product/deployment/" "$old_release/deployment/"
+    echo 'PASS: old own deployment package trust removed; other bundles untouched'
     ;;
 persistent-state)
     as_product python3 - <<'HASHES'
@@ -1045,7 +1061,7 @@ install)
     prepare_release
     install_configuration
     date +%s > "$base/install-start-$bundle"
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     as_product podman ps --all
     sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
@@ -1626,6 +1642,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -1676,8 +1693,22 @@ def observe():
     trust = command(["fapolicyd-cli", "--dump-db"])
     records = sorted(line for line in trust.splitlines()
                      if any("/releases/myproduct-" + component + "-" in line for component in components))
-    if len(records) != len(components):
-        raise SystemExit("FAIL: expected one trust entry per sibling bundle")
+    expected = set()
+    for component in components:
+        version = pathlib.Path("/var/lib/myproduct/installed", component).read_text().strip()
+        package = pathlib.Path("/var/lib/myproduct/releases") / ("myproduct-" + component + "-" + version) / "deployment"
+        files = [str(path) for path in package.rglob("*") if path.is_file()]
+        if not files:
+            raise SystemExit("FAIL: missing sibling deployment package")
+        expected.update(files)
+    trusted = []
+    for record in records:
+        match = re.fullmatch(r"\S+ (/.+) [0-9]+ [0-9a-fA-F]{64}", record)
+        if not match:
+            raise SystemExit("FAIL: invalid sibling trust entry")
+        trusted.append(match.group(1))
+    if set(trusted) != expected or len(trusted) != len(expected):
+        raise SystemExit("FAIL: expected exact package trust for sibling bundles")
     versions = {name: (pathlib.Path("/var/lib/myproduct/installed") / name).read_text()
                 for name in components}
     result = {"containers": observed, "trust": records, "versions": versions}
@@ -1719,11 +1750,11 @@ except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
 SIBLINGS
     ;;
 uninstall)
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py uninstall' bash "$product"
-    sudo -n fapolicyd-cli --file delete "$product/deploy.py" --trust-file myproduct-app1
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file myproduct-app1
     sudo -n fapolicyd-cli --update
     app2_version=$(sudo -n -H -u myproduct cat "$state/installed/app2")
-    wait_trust "$state/releases/myproduct-app2-$app2_version/deploy.py" "$product/deploy.py"
+    wait_trust "$state/releases/myproduct-app2-$app2_version/deployment/" "$product/deployment/"
     sudo -n test ! -e "$state/installed/app1"
     sudo -n test ! -e "$state/routes/app1.conf"
     sudo -n test ! -e "$state/clients/app1"

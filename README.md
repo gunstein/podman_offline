@@ -8,6 +8,10 @@ instances, nginx and a static help app.
 
 Planned work is tracked in [BACKLOG.md](BACKLOG.md).
 
+The deploy package and lifecycle flow are described in [ARCHITECTURE.md](ARCHITECTURE.md).
+The root `./deploy` command runs `python3 -B -m deployment` from its own directory,
+including when called from outside the release. It creates no Python bytecode.
+
 ## Components and bundles
 
 | Bundle | Components | Dependencies | Public paths |
@@ -94,7 +98,7 @@ syntax. A missing dev file means no overrides; an invalid existing file fails.
 From a verified, unpacked bundle, run as the service user:
 
 ```sh
-as_product python3 "$release/deploy.py" init-config platform
+as_product bash "$release/deploy" init-config platform
 # Or, from the release directory as myproduct: ./deploy init-config platform
 ```
 
@@ -218,7 +222,7 @@ unreleased version; published release tags must remain immutable.
 One invocation creates all five bundles. Each contains
 `config/common.defaults.yaml`, its components’ `config.defaults.yaml`, only its
 components,
-`deploy`/`deploy.py`, scripts, Quadlet templates, version metadata and its own
+`deploy`/`deployment/`, scripts, Quadlet templates, version metadata and its own
 `images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
 Checksums cover all shipped files. Apps/dev/tests/examples/acceptance and local
 config, passwords and keys are not shipped. Optional component `files/` is for
@@ -316,7 +320,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.2
+version=0.4.3
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -378,27 +382,42 @@ HEALTH
 }
 # Wait for an exact trust entry and, optionally, removal of an old release.
 wait_trust() {
-    local wanted=$1 removed=${2:-} dump status attempt
+    local wanted=${1%/}/ removed=${2:-} expected dump status attempt
+    if [[ -n $removed ]]; then removed=${removed%/}/; fi
+    expected=$(sudo -n find "$wanted" -type f -print) || {
+        echo 'FAIL: could not enumerate package trust files' >&2; return 1;
+    }
+    [[ -n $expected ]] || { echo 'FAIL: empty deployment package' >&2; return 1; }
     for attempt in {1..30}; do
         dump=$(timeout 10 sudo -n fapolicyd-cli --dump-db) || {
             echo 'FAIL: could not read trust database' >&2; return 1;
         }
         status=0
-        awk -v wanted="$wanted" -v removed="$removed" '
+        awk -v expected="$expected" -v wanted="$wanted" -v removed="$removed" '
+            BEGIN {
+                count=split(expected, files, "\n")
+                for (i=1; i<=count; i++) required[files[i]]=1
+            }
             {
                 path=$0
                 sub(/^[^[:space:]]+[[:space:]]+/, "", path)
                 sub(/[[:space:]]+[0-9]+[[:space:]]+[[:xdigit:]]+[[:space:]]*$/, "", path)
                 if (NF < 4 || path !~ /^\// || $(NF-1) !~ /^[0-9]+$/ ||
                     length($NF) != 64 || $NF !~ /^[[:xdigit:]]+$/) invalid=1
-                if (path == wanted) found=1
-                if (removed != "" && path == removed) old=1
+                if (index(path, wanted) == 1) {
+                    if (!(path in required) || ++seen[path] != 1) invalid=1
+                }
+                if (removed != "" && index(path, removed) == 1) old=1
             }
-            END { if (NR == 0 || invalid) exit 2; if (!found || old) exit 1 }
+            END {
+                if (NR == 0 || invalid) exit 2
+                for (path in required) if (seen[path] != 1) exit 1
+                if (old) exit 1
+            }
         ' <<< "$dump" || status=$?
         case "$status" in
-            0) printf 'PASS: trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
-            1) printf 'WAIT: trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
+            0) printf 'PASS: package trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
+            1) printf 'WAIT: package trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
             *) echo 'FAIL: invalid or empty trust database output' >&2; return 1;;
         esac
         if [[ $attempt != 30 ]]; then sleep 1; fi
@@ -408,25 +427,28 @@ wait_trust() {
 }
 ```
 
-Unpack and trust only the verified release's deploy.py. Trust uses one file per
-bundle; never add directory trust, private keys, crun rules or memfd rules.
-Repeat checksum/trust for each release directory:
+Unpack and recursively trust only the verified release's `deployment/` package. Trust uses one file per
+bundle; never trust the whole release, private keys, crun rules or memfd rules.
+The CLI expands that directory into individual trusted files. Wait for every
+package file to appear in the database; on upgrade also wait until all files
+beneath the old package path disappear. Do not trust the shell wrapper, config,
+credentials or other release directories. Repeat checksum/trust for each release:
 
 ```sh
 release="/var/lib/myproduct/releases/myproduct-$bundle-$version"
 as_product mkdir -p /var/lib/myproduct/releases
 as_product tar xzf - -C /var/lib/myproduct/releases < "$archive"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
-sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "myproduct-$bundle"
 sudo fapolicyd-cli --update
-wait_trust "$release/deploy.py"
+wait_trust "$release/deployment/"
 # Start with bundle=platform, then identity, then app1/app2; help needs only platform.
-as_product python3 "$release/deploy.py" init-config "$bundle"
+as_product bash "$release/deploy" init-config "$bundle"
 sudoedit "/var/lib/myproduct/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
 as_product bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$bundle" myproduct-proxy
 sudoedit "/var/lib/myproduct/$bundle/config.yaml"
-sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 sudo systemctl --user -M myproduct@ status "myproduct-$bundle.service"
 ```
 
@@ -445,7 +467,7 @@ settings and install. Keep existing platform and Identity config.
 
 For help, including a platform/help-only setup, repeat after platform with
 `bundle=help` and `VERSION`; run
-`as_product python3 "$release/deploy.py" init-config help` and install. Identity
+`as_product bash "$release/deploy" init-config help` and install. Identity
 and the apps can be omitted. Help needs no new credentials. These installs update shared routing/client imports
 and restart their changed owners (platform for routes, Identity for clients),
 while retaining the other app's service/data.
@@ -479,7 +501,7 @@ It cannot reconstruct unknown partial operations performed by older installers.
 See [retry verification](acceptance/RETRY-SAFETY.md) for coverage and limits.
 
 Help can be upgraded alone: transfer only the new help archive/checksum, verify
-and trust its deploy.py in the help trust file, install, verify healthy services
+and trust its deployment package in the help trust file, install, verify healthy services
 and new HTTPS help content, then retire the old help release/trust entry. App
 bundles need no retransmission. With an unchanged route, platform is not restarted.
 A changed help route restarts platform explicitly, without changing platform version or
@@ -492,15 +514,15 @@ or generate a new CA/password set. Install and check health/e2e first. Only afte
 success remove the old own trust entry, leaving other bundles' trust untouched:
 
 ```sh
-sudo fapolicyd-cli --file add "$release/deploy.py" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "myproduct-$bundle"
 sudo fapolicyd-cli --update
-wait_trust "$release/deploy.py"
-sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+wait_trust "$release/deployment/"
+sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 as_product podman ps
 healthy
-sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deploy.py" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deployment/" --trust-file "myproduct-$bundle"
 sudo fapolicyd-cli --update
-wait_trust "$release/deploy.py" "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deploy.py"
+wait_trust "$release/deployment/" "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deployment/"
 ```
 
 Use the `healthy` helper defined above. Also verify HTTPS and application e2e
@@ -513,15 +535,15 @@ state; none of it belongs to a release directory.
 Use a currently trusted release of the bundle to uninstall its own component:
 
 ```sh
-as_product python3 "$release/deploy.py" uninstall
+as_product bash "$release/deploy" uninstall
 # Destructive option: also delete this component's data/secret volumes and state.
-as_product python3 "$release/deploy.py" uninstall --delete-data
+as_product bash "$release/deploy" uninstall --delete-data
 ```
 
 Choose one of those commands. Default uninstall retains data/config/credentials
 for reinstall. It removes only the own service, version marker, route and public
 client; only the changed registration owners reload their imports. Network and sibling data/units
-are retained. Remove the own deploy.py trust entries after uninstall and update
+are retained. Remove the own deployment package trust entries after uninstall and update
 the trust database. Identity cannot be removed while either app remains; help
 does not block it. Platform cannot be removed while Identity, apps or help remain.
 After removing dependents, uninstall Identity and platform from their own bundles.

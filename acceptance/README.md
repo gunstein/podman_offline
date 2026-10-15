@@ -1,3 +1,26 @@
+# Deploy package acceptance (0.4.3)
+
+The stable `./deploy` entrypoint now uses `python3 -B -m deployment`. Current
+bundles ship `deployment/`, and only that package directory is recursively added
+to each bundle's own fapolicyd trust file. The harness checks every expected file,
+waits for all old package entries to disappear, and preserves sibling trust.
+No bytecode, whole-release trust, migration or old-module compatibility is added.
+
+Use the existing fresh-install/lifecycle matrix from a clean committed checkout:
+
+```sh
+python3 acceptance/acceptance.py --run package-app1-first --first-app app1 run
+python3 acceptance/acceptance.py --run package-app2-first --first-app app2 run
+python3 acceptance/acceptance.py --run package-help --platform-help-only run
+```
+
+Each run resets the configured disposable VMs. Directory trust remains unverified
+on a target until those runs pass; local transport stubs are not evidence of real
+fapolicyd behavior. See [DEPLOY-REFACTOR.md](DEPLOY-REFACTOR.md) for results and
+limits. Older sections below describe earlier release layouts and evidence.
+
+---
+
 # Credential paths (0.4.1)
 
 Fresh installations use `credentials/` below each component's state directory,

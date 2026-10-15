@@ -63,7 +63,6 @@ class WrapperTests(unittest.TestCase):
                 path.mkdir()
             for name in (
                 "deploy",
-                "deploy.py",
                 "bundle.py",
                 "build-bundle.sh",
                 "VERSION",
@@ -72,8 +71,12 @@ class WrapperTests(unittest.TestCase):
                 "README.md",
             ):
                 shutil.copy2(ROOT / name, source / name)
-            for name in ("quadlet", "scripts"):
-                shutil.copytree(ROOT / name, source / name)
+            for name in ("deployment", "quadlet", "scripts"):
+                shutil.copytree(
+                    ROOT / name,
+                    source / name,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+                )
             (source / "config").mkdir()
             (source / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
@@ -131,8 +134,8 @@ class WrapperTests(unittest.TestCase):
                 FIXTURE_HOME=str(home),
                 FIXTURE_COMMANDS=str(commands),
                 XDG_RUNTIME_DIR=str(root / "runtime"),
-                PYTHONDONTWRITEBYTECODE="1",
             )
+            env.pop("PYTHONDONTWRITEBYTECODE", None)
             # A tempting, invalid caller config must never be read or overwritten.
             (caller / "config.yaml").write_text("invalid: [\n")
             before = (caller / "config.yaml").read_bytes()
@@ -208,6 +211,9 @@ class WrapperTests(unittest.TestCase):
             self.assertIn("fixture.test", (home / "platform/config.yaml").read_text())
             self.assertEqual((home / "installed/app1").read_text().strip(), version)
             run(release, "deploy", "uninstall")
+            for folder in (source, extracted):
+                self.assertFalse(list(folder.rglob("__pycache__")))
+                self.assertFalse(list(folder.rglob("*.pyc")))
             self.assertFalse((home / "installed/app1").exists())
             self.assertTrue((home / "installed/platform").exists())
             self.assertEqual(config.read_bytes(), config_before)

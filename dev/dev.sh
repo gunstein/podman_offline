@@ -4,18 +4,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in
     up)
-        hostname=$(python3 - <<'DEV_HOST'
+        hostname=$(python3 -B - <<'DEV_HOST'
 from urllib.parse import urlsplit
-import deploy
+from deployment import common, deploy
+from deployment import render as rendering
 # Explicit Podman dependency before certificates, config output or secret creation.
-deploy.reject_legacy_layout(home=deploy.BUILD / "dev", volumes=True)
+deploy.reject_legacy_layout(home=common.BUILD / "dev", volumes=True)
 for component in ("identity", "app1", "app2"):
     deploy.database_preflight(
-        deploy.component_defaults(component, dev=True),
-        deploy.BUILD / "dev" / component / "config.yaml",
-        deploy.ROOT / "components" / component / "manifests",
+        rendering.component_defaults(component, dev=True),
+        common.BUILD / "dev" / component / "config.yaml",
+        common.ROOT / "components" / component / "manifests",
     )
-print(urlsplit(deploy.component_defaults("platform", dev=True)["PUBLIC_ORIGIN"]).hostname)
+print(urlsplit(rendering.component_defaults("platform", dev=True)["PUBLIC_ORIGIN"]).hostname)
 DEV_HOST
 )
         for component in platform identity app1 app2 help; do

@@ -13,7 +13,8 @@ from unittest import mock
 import yaml
 from test_deploy import DeployFixture
 
-import deploy
+from deployment import common, deploy
+from deployment import render as rendering
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -29,10 +30,10 @@ class DatabaseTests(DeployFixture):
             self.root / "config",
             ignore=shutil.ignore_patterns("dev.yaml"),
         )
-        self.path = deploy.HOME / "app1/config.yaml"
-        self.settings = deploy.component_defaults("app1")
+        self.path = common.HOME / "app1/config.yaml"
+        self.settings = rendering.component_defaults("app1")
         self.password = self.path.parent / "credentials/database/password"
-        self.manifests = deploy.ROOT / "components/app1/manifests"
+        self.manifests = common.ROOT / "components/app1/manifests"
         self.process.return_value = subprocess.CompletedProcess([], 1)
 
     def preflight(self):
@@ -40,28 +41,28 @@ class DatabaseTests(DeployFixture):
 
     def test_new_database_generates_once_with_private_modes(self):
         self.preflight()
-        deploy.generate_secrets(self.settings, self.path.parent)
+        rendering.generate_secrets(self.settings, self.path.parent)
         before = self.password.read_bytes()
         self.assertEqual(len(before), 32)
         self.assertEqual(self.mode(self.password), 0o600)
         self.assertEqual(self.mode(self.password.parent), 0o700)
         self.process.reset_mock()
         self.preflight()
-        deploy.generate_secrets(self.settings, self.path.parent)
+        rendering.generate_secrets(self.settings, self.path.parent)
         self.assertEqual(self.password.read_bytes(), before)
         self.process.assert_not_called()
 
     def test_app_passwords_are_generated_independently(self):
         passwords = []
         for component in ("app1", "app2"):
-            config = deploy.component_defaults(component)
-            base = deploy.HOME / component
+            config = rendering.component_defaults(component)
+            base = common.HOME / component
             deploy.database_preflight(
                 config,
                 base / "config.yaml",
-                deploy.ROOT / "components" / component / "manifests",
+                common.ROOT / "components" / component / "manifests",
             )
-            deploy.generate_secrets(config, base)
+            rendering.generate_secrets(config, base)
             passwords.append((base / "credentials/database/password").read_bytes())
         self.assertNotEqual(passwords[0], passwords[1])
 
@@ -69,7 +70,7 @@ class DatabaseTests(DeployFixture):
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
         self.write("home/app1/credentials/todo/public-fixture", b"fixture")
         self.preflight()
-        text = deploy.render(
+        text = rendering.materialize_and_render(
             config_path=self.path, manifests=self.manifests, component="app1"
         )
         password = self.password.read_bytes()
@@ -84,7 +85,9 @@ class DatabaseTests(DeployFixture):
         self.assertNotIn(password.decode(), text)
         self.assertNotIn("ConnectionStrings__Default", text)
         self.assertNotIn("@@", text)
-        deploy.render(config_path=self.path, manifests=self.manifests, component="app1")
+        rendering.materialize_and_render(
+            config_path=self.path, manifests=self.manifests, component="app1"
+        )
         self.assertEqual(self.password.read_bytes(), password)
 
     def test_production_volume_guard_precedes_images_and_persistent_changes(self):
@@ -98,15 +101,15 @@ class DatabaseTests(DeployFixture):
         self.write("home/installed/identity", "0.4.0\n")
         self.write(
             "home/platform/config.yaml",
-            yaml.safe_dump(deploy.component_defaults("platform")),
+            yaml.safe_dump(rendering.component_defaults("platform")),
         )
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
-        before = {p: p.read_bytes() for p in deploy.HOME.rglob("*") if p.is_file()}
+        before = {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
         self.process.return_value = subprocess.CompletedProcess([], 0)
-        with self.assertRaisesRegex(deploy.DeployError, "existing volume app1-data"):
+        with self.assertRaisesRegex(common.DeployError, "existing volume app1-data"):
             deploy.install_components()
         self.assertEqual(
-            before, {p: p.read_bytes() for p in deploy.HOME.rglob("*") if p.is_file()}
+            before, {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
         )
         self.assertEqual(self.process.call_count, 1)
         self.assertFalse(self.password.exists())
@@ -124,9 +127,9 @@ class DatabaseTests(DeployFixture):
         self.write("IDENTITY_VERSION", "0.4.1\n")
         self.write(
             "home/platform/config.yaml",
-            yaml.safe_dump(deploy.component_defaults("platform")),
+            yaml.safe_dump(rendering.component_defaults("platform")),
         )
-        identity = deploy.component_defaults("identity")
+        identity = rendering.component_defaults("identity")
         self.write("home/identity/config.yaml", yaml.safe_dump(identity))
         for component, settings in (("identity", identity), ("app1", self.settings)):
             for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
@@ -139,7 +142,7 @@ class DatabaseTests(DeployFixture):
                         "home/" + component + "/config.yaml", yaml.safe_dump(legacy)
                     )
                     before = {
-                        p: p.read_bytes() for p in deploy.HOME.rglob("*") if p.is_file()
+                        p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()
                     }
                     self.write(
                         "bundle.yaml",
@@ -149,20 +152,20 @@ class DatabaseTests(DeployFixture):
                                 "components": [component],
                                 "requires": {
                                     dependency: {"min": "0.4.0", "before": "0.5.0"}
-                                    for dependency in deploy.DEPENDENCIES[component]
+                                    for dependency in common.DEPENDENCIES[component]
                                 },
                             }
                         ),
                     )
                     self.process.reset_mock()
-                    with self.assertRaisesRegex(deploy.DeployError, "Missing " + key):
+                    with self.assertRaisesRegex(common.DeployError, "Missing " + key):
                         deploy.install_components()
                     self.process.assert_not_called()
                     self.assertEqual(
                         before,
                         {
                             p: p.read_bytes()
-                            for p in deploy.HOME.rglob("*")
+                            for p in common.HOME.rglob("*")
                             if p.is_file()
                         },
                     )
@@ -171,14 +174,14 @@ class DatabaseTests(DeployFixture):
         content = b""" space;both'"$= end \n\n"""
         self.write("home/app1/credentials/database/password", content, 0o600)
         self.preflight()
-        deploy.generate_secrets(self.settings, self.path.parent)
+        rendering.generate_secrets(self.settings, self.path.parent)
         self.assertEqual(self.password.read_bytes(), content)
         self.process.assert_not_called()
         self.assertNotIn(content.decode(), self.stdout.getvalue())
 
     def test_existing_volume_without_password_refuses_before_all_generation(self):
         self.process.return_value = subprocess.CompletedProcess([], 0)
-        with self.assertRaisesRegex(deploy.DeployError, "app1-data.*restore.*backup"):
+        with self.assertRaisesRegex(common.DeployError, "app1-data.*restore.*backup"):
             self.preflight()
         self.assertFalse(self.password.parent.exists())
         self.assertFalse((self.path.parent / "credentials/todo/session-key").exists())
@@ -193,7 +196,7 @@ class DatabaseTests(DeployFixture):
         for content in (b"", b"\n\n", b"a\x00b", b"a\nb", b"a\r\n", b"\xff"):
             with self.subTest(kind=repr(content)):
                 self.write("home/app1/credentials/database/password", content)
-                with self.assertRaisesRegex(deploy.DeployError, "password.*restore"):
+                with self.assertRaisesRegex(common.DeployError, "password.*restore"):
                     self.preflight()
                 self.assertEqual(self.password.read_bytes(), content)
         self.process.assert_not_called()
@@ -202,11 +205,11 @@ class DatabaseTests(DeployFixture):
         for code in (2, 125):
             self.process.return_value = subprocess.CompletedProcess([], code)
             with self.assertRaisesRegex(
-                deploy.DeployError, "Cannot check database volume app1-data"
+                common.DeployError, "Cannot check database volume app1-data"
             ):
                 self.preflight()
         self.process.side_effect = OSError("private details")
-        with self.assertRaisesRegex(deploy.DeployError, "no password generated"):
+        with self.assertRaisesRegex(common.DeployError, "no password generated"):
             self.preflight()
         self.assertFalse(self.password.exists())
         self.assertNotIn("private details", self.stderr.getvalue())
@@ -215,28 +218,28 @@ class DatabaseTests(DeployFixture):
         self.password.parent.mkdir(parents=True)
         os.mkfifo(str(self.password), 0o600)
         with self.assertRaisesRegex(
-            deploy.DeployError, "Invalid database password file"
+            common.DeployError, "Invalid database password file"
         ):
             self.preflight()
         self.process.assert_not_called()
 
     def test_missing_generation_declaration_requires_manual_config_addition(self):
-        self.settings[deploy.GENERATED_SECRETS] = []
+        self.settings[common.GENERATED_SECRETS] = []
         with self.assertRaisesRegex(
-            deploy.DeployError, "GENERATED_SECRETS.*config.yaml"
+            common.DeployError, "GENERATED_SECRETS.*config.yaml"
         ):
             self.preflight()
         self.assertFalse(self.password.exists())
 
     def test_all_components_share_their_secret_and_public_database_parameters(self):
         for component in ("identity", "app1", "app2"):
-            config = deploy.component_defaults(component)
+            config = rendering.component_defaults(component)
             config["PUBLIC_HOSTNAME"] = "myproduct-proxy"
             docs = []
-            for path in (deploy.ROOT / "components" / component / "manifests").glob(
+            for path in (common.ROOT / "components" / component / "manifests").glob(
                 "*.yaml"
             ):
-                docs.extend(deploy.replace(deploy.load_yaml_all(path), config))
+                docs.extend(rendering.replace(rendering.load_yaml_all(path), config))
             pods = [d for d in docs if d.get("kind") == "Pod"]
             server = next(p for p in pods if p["metadata"]["name"].endswith("postgres"))
             client = next(
@@ -266,7 +269,7 @@ class DatabaseTests(DeployFixture):
             relative = "identity-db" if component == "identity" else "database"
             self.assertIn(
                 "credentials/" + relative + "/password",
-                config[deploy.GENERATED_SECRETS],
+                config[common.GENERATED_SECRETS],
             )
             serialized = yaml.safe_dump(docs)
             self.assertNotIn("ConnectionStrings__Default", serialized)
@@ -276,32 +279,32 @@ class DatabaseTests(DeployFixture):
         for port in (5432, "0", "65536", "password-sensitive", "1;Password=x"):
             config = dict(self.settings, DB_PORT=port)
             with self.assertRaisesRegex(
-                deploy.DeployError, "DB_PORT.*config.yaml"
+                common.DeployError, "DB_PORT.*config.yaml"
             ) as caught:
-                deploy.validate_config(config, self.path)
+                rendering.validate_config(config, self.path)
             self.assertNotIn(str(port) + ";", str(caught.exception))
         for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
             config = dict(self.settings)
             del config[key]
-            with self.assertRaisesRegex(deploy.DeployError, key):
-                deploy.validate_component_config(config, "app1", self.path)
+            with self.assertRaisesRegex(common.DeployError, key):
+                rendering.validate_component_config(config, "app1", self.path)
 
     def test_shared_dev_port_override_does_not_require_a_database_in_help(self):
         self.write("config/dev.yaml", 'DB_PORT: "5544"\n')
-        for component in deploy.COMPONENTS:
+        for component in common.COMPONENTS:
             self.assertEqual(
-                deploy.component_defaults(component, dev=True)["DB_PORT"], "5544"
+                rendering.component_defaults(component, dev=True)["DB_PORT"], "5544"
             )
-        self.assertNotIn("DB_HOST", deploy.component_defaults("help", dev=True))
+        self.assertNotIn("DB_HOST", rendering.component_defaults("help", dev=True))
 
     def test_dev_checks_all_databases_before_config_or_secret_writes(self):
         self.process.side_effect = [
             subprocess.CompletedProcess([], 1),
             subprocess.CompletedProcess([], 0),
         ]
-        with self.assertRaisesRegex(deploy.DeployError, "existing volume app1-data"):
+        with self.assertRaisesRegex(common.DeployError, "existing volume app1-data"):
             deploy.prepare_components()
-        self.assertFalse((deploy.BUILD / "dev").exists())
+        self.assertFalse((common.BUILD / "dev").exists())
 
 
 class PythonDatabaseTests(DeployFixture):

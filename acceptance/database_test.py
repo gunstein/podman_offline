@@ -14,7 +14,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import deploy
+from deployment import common as deployment_common
+from deployment import deploy
+from deployment import render as rendering
 
 
 def podman(arguments, expected=0):
@@ -61,12 +63,12 @@ def volume_guard(base, secret, claim):
     """Exercise the lifecycle guard against this actual initialized test volume."""
     path = base / "guard/config.yaml"
     config = {
-        deploy.SECRET_FILES: {secret: ["lost/password"]},
-        deploy.GENERATED_SECRETS: ["lost/password"],
+        deployment_common.SECRET_FILES: {secret: ["lost/password"]},
+        deployment_common.GENERATED_SECRETS: ["lost/password"],
     }
     try:
         deploy.database_preflight(config, path, base)
-    except deploy.DeployError as error:
+    except deployment_common.DeployError as error:
         if "existing volume " + claim not in str(error) or "restore" not in str(error):
             raise RuntimeError("Unexpected database volume guard failure") from None
     else:
@@ -208,11 +210,11 @@ def run():
                     time.sleep(1)
                 retained = password_path.read_bytes()
                 config = {
-                    deploy.SECRET_FILES: {secret: ["password"]},
-                    deploy.GENERATED_SECRETS: ["password"],
+                    deployment_common.SECRET_FILES: {secret: ["password"]},
+                    deployment_common.GENERATED_SECRETS: ["password"],
                 }
                 deploy.database_preflight(config, base / "config.yaml", base)
-                deploy.generate_secrets(config, base)
+                rendering.generate_secrets(config, base)
                 if password_path.read_bytes() != retained:
                     raise RuntimeError(
                         "Existing database password changed during generation transition"

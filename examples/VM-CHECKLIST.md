@@ -7,7 +7,7 @@ are in the [acceptance test](../acceptance/README.md).
 
 1. Follow the preparation in the [prod flow in the README](../README.md#offline-bundle-and-rootless-quadlet):
    outer checksum, temporary unpacking, prepare-host, unpacking as myproduct,
-   inner checksums, trust of deploy.py only and demo certificates/config. Wait with
+   inner checksums, recursive trust of deployment/ only and demo certificates/config. Wait with
    install until step 2 below. No
    private keys or passwords may go into Git or logs. The VM must be without
    internet before the bundle is transferred. Record the OS, Podman and systemd versions.
@@ -24,7 +24,7 @@ are in the [acceptance test](../acceptance/README.md).
        ' bash "$@"
    }
    release=/var/lib/myproduct/releases/myproduct-app1-0.2.0
-   sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
+   sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
    sudo systemctl --user -M myproduct@ status myproduct-platform.service --no-pager
    sudo systemctl --user -M myproduct@ status myproduct-network.service --no-pager
    as_product podman network inspect myproduct
@@ -112,7 +112,7 @@ are in the [acceptance test](../acceptance/README.md).
 7. Follow the README's upgrade flow with a new VERSION. Use the same passwords
    for full e2e and check the markers from step 5. Compare the CA fingerprint
    and SHA256 for credentials before/after; no file may change.
-   Check that the old deploy.py has been removed from the trust database.
+   Check that the old deployment/ package entries have been removed from the trust database.
    Do not generate certificates or replace the config when upgrading.
 8. Record all deviations and collect the journal/audit read-only. Do not log key or
    password content and do not delete data to make the test pass.

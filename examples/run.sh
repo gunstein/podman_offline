@@ -50,7 +50,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cp "$root/deploy" "$root/deploy.py" "$work/"
+cp "$root/deploy" "$work/"
+cp -R "$root/deployment" "$work/"
 copy_example() {
     local source=$1
     cp "$source/config.yaml" "$work/"

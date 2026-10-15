@@ -1,3 +1,28 @@
+# Deployment package (0.4.3)
+
+Current local check entry points:
+
+```sh
+python3 -B -m unittest discover -s tests
+python3 -B -m unittest discover -s acceptance -p 'test_*.py'
+ruff check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
+ruff format --check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
+pyright deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
+vermin -t=3.6- deployment/ bundle.py tests/
+shellcheck deploy build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
+```
+
+Existing safety and fresh-process retry tests import the owning package modules;
+the shared path fixture patches `deployment.common`. Package regressions cover
+real module inclusion/checksums, private-file aliases, bytecode exclusion and
+source/unpacked wrappers from outside their directories without a bytecode env
+setting. Acceptance-harness tests check recursive directory trust completeness,
+old entry removal, exact sibling trust and cleanup ordering. See
+[DEPLOY-REFACTOR.md](../acceptance/DEPLOY-REFACTOR.md) for current evidence.
+Older commands/counts below are historical; use the commands above for this layout.
+
+---
+
 # Lifecycle retries (0.4.2)
 
 `test_retry.py` invokes `retry_driver.py` in a fresh Python interpreter for each

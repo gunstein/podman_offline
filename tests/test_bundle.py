@@ -39,8 +39,9 @@ class BundleTests(unittest.TestCase):
         )
         for name, text in {
             "VERSION": "1.2.3\n",
-            "deploy": '#!/bin/sh\nexec python3 deploy.py "$@"\n',
-            "deploy.py": "print('test fixture')\n",
+            "deploy": '#!/bin/sh\nexec python3 -B -m deployment "$@"\n',
+            "deployment/__init__.py": "",
+            "deployment/__main__.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",
             "config.defaults.yaml": "HTTPS_PORT: 8443\n",
             "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
@@ -116,7 +117,8 @@ class BundleTests(unittest.TestCase):
                 {
                     "VERSION",
                     "deploy",
-                    "deploy.py",
+                    "deployment/__init__.py",
+                    "deployment/__main__.py",
                     "README.md",
                     "config.defaults.yaml",
                     "scripts/generate-certificates.sh",
@@ -164,6 +166,35 @@ class BundleTests(unittest.TestCase):
         )
         self.assertEqual(filename, path.name)
         self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_real_package_and_nested_files_ship_without_bytecode_or_old_module(self):
+        source = Path(__file__).resolve().parent.parent / "deployment"
+        for path in source.glob("*.py"):
+            self.write("deployment/" + path.name, path.read_text())
+        self.write("deployment/__pycache__/cached.cpython-312.pyc", "bytecode excluded")
+        self.write("deployment/stray.pyo", "bytecode excluded")
+        bundle.build()
+        with tarfile.open(
+            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+        ) as archive:
+            names = {member.name for member in archive.getmembers()}
+            for path in source.glob("*.py"):
+                self.assertIn("myproduct-1.2.3/deployment/" + path.name, names)
+            self.assertNotIn("myproduct-1.2.3/deploy.py", names)
+            self.assertFalse(
+                any(
+                    "__pycache__" in name or name.endswith((".pyc", ".pyo"))
+                    for name in names
+                )
+            )
+
+    def test_package_symlink_cannot_bundle_declared_private_state(self):
+        self.write("config.yaml", "GENERATED_SECRETS: [private/token]\n")
+        private = self.write("private/token", "private-fixture")
+        (self.root / "deployment/alias.py").symlink_to(private)
+        with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+            bundle.build()
+        self.process.assert_not_called()
 
     def test_optional_files_tree_is_included(self):
         self.write("files/templates/nested/example.txt", "example\n")
@@ -566,7 +597,7 @@ data: {image: ignored}
                             "min": "1.1.0" if dependency == "identity" else "1.0.0",
                             "before": "2.0.0",
                         }
-                        for dependency in bundle.deploy.DEPENDENCIES[name]
+                        for dependency in bundle.common.DEPENDENCIES[name]
                     },
                 )
                 checksum = archive.extractfile(prefix + "checksums.sha256")

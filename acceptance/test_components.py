@@ -365,12 +365,15 @@ class ComponentObservationTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(Path, "home", return_value=root),
-                mock.patch.object(code["sys"], "argv", ["guest", "deploy.py"]),
-                mock.patch.object(subprocess, "run", return_value=result),
+                mock.patch.object(code["sys"], "argv", ["guest", "deploy"]),
+                mock.patch.object(subprocess, "run", return_value=result) as process,
                 contextlib.redirect_stdout(io.StringIO()),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 code["main"]()
+                self.assertEqual(
+                    process.call_args.args[0], ["bash", "deploy", "install"]
+                )
                 (root / "app1").mkdir()
                 with self.assertRaisesRegex(SystemExit, "changed"):
                     code["main"]()
@@ -514,6 +517,78 @@ class ComponentObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "before image operations"):
                     code["main"]()
 
+    def test_sibling_observation_requires_exact_recursive_package_trust(self):
+        code = guest_code("SIBLINGS")
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+
+            def rooted(*parts):
+                path = Path(*parts)
+                return (
+                    home / path.relative_to("/var/lib/myproduct")
+                    if str(path).startswith("/var/lib/myproduct")
+                    else path
+                )
+
+            code["pathlib"] = types.SimpleNamespace(Path=rooted)
+            contents = {
+                "installed/platform": "0.4.3",
+                "platform/config.yaml": "retained",
+                ".config/containers/systemd/myproduct-platform.yaml": "retained",
+                ".config/containers/systemd/myproduct-platform.kube": "retained",
+            }
+            for name, value in contents.items():
+                path = home / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(value)
+            package = home / "releases/myproduct-platform-0.4.3/deployment"
+            files = [
+                package / "__main__.py",
+                package / "common.py",
+                package / "nested/render.py",
+            ]
+            for path in files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture")
+            rows = ["file " + str(path) + " 123 " + "a" * 64 for path in files]
+            trust = list(rows)
+
+            def command(arguments):
+                if arguments == ["fapolicyd-cli", "--dump-db"]:
+                    return "\n".join(trust)
+                if "network" in arguments:
+                    return '[{"id":"network-id"}]'
+                return json.dumps(
+                    [
+                        {
+                            "Name": "platform-proxy-nginx",
+                            "RestartCount": 0,
+                            "State": {
+                                "Status": "running",
+                                "Health": {"Status": "healthy"},
+                                "Pid": 1234,
+                                "StartedAt": "before",
+                            },
+                        }
+                    ]
+                )
+
+            code["command"] = command
+            with mock.patch.object(
+                code["sys"],
+                "argv",
+                ["guest", "identity-siblings-before", "unused", "identity"],
+            ):
+                self.assertEqual(code["observe"]()["trust"], sorted(rows))
+                for broken in (
+                    rows[:-1],
+                    rows + rows[:1],
+                    rows + [rows[0].replace("0.4.3", "0.4.2")],
+                ):
+                    trust = broken
+                    with self.assertRaisesRegex(SystemExit, "exact package trust"):
+                        code["observe"]()
+
     def test_help_siblings_compare_platform_identity_state_network_and_other_trust(
         self,
     ):
@@ -590,7 +665,7 @@ class ComponentObservationTests(unittest.TestCase):
         """Keep survivor health and retired route/data/network checks in the removal step."""
         block = base.shell_code(REMOTE, action="uninstall")
         for text in (
-            "deploy.py uninstall",
+            "./deploy uninstall",
             "volume exists app1-data",
             "network exists myproduct",
             'test "$http" = 404',

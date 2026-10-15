@@ -5,7 +5,7 @@ import subprocess
 import yaml
 from test_components import ComponentFixture
 
-import deploy
+from deployment import common, deploy
 
 
 class InstallFailureTests(ComponentFixture):
@@ -15,12 +15,12 @@ class InstallFailureTests(ComponentFixture):
         super().setUp()
         self.registration_fixture()
         for component in ("platform", "app1"):
-            path = deploy.HOME / component / "config.yaml"
+            path = common.HOME / component / "config.yaml"
             config = yaml.safe_load(path.read_text())
             config["VOLUME_FILES"] = {component + "-payload": ["payload"]}
             config["GENERATED_SECRETS"] = ["credential"]
             path.write_text(yaml.safe_dump(config))
-            manifest = deploy.ROOT / "components" / component / "manifests/10-pod.yaml"
+            manifest = common.ROOT / "components" / component / "manifests/10-pod.yaml"
             pod = yaml.safe_load(manifest.read_text())
             pod["spec"]["volumes"] = [
                 {
@@ -50,7 +50,7 @@ class InstallFailureTests(ComponentFixture):
         deploy.install()
         self.write("VERSION", "1.2.4\n")
         self.write("PLATFORM_VERSION", "1.1.0\n")
-        manifest = deploy.ROOT / "components/app1/manifests/10-pod.yaml"
+        manifest = common.ROOT / "components/app1/manifests/10-pod.yaml"
         pod = yaml.safe_load(manifest.read_text())
         pod["metadata"]["name"] = "app1-new-worker"
         manifest.write_text(yaml.safe_dump(pod))
@@ -62,8 +62,8 @@ class InstallFailureTests(ComponentFixture):
     def snapshot(self):
         """Include contents and modes, and detect newly added/deleted files."""
         return {
-            str(path.relative_to(deploy.HOME)): (path.read_bytes(), self.mode(path))
-            for path in deploy.HOME.rglob("*")
+            str(path.relative_to(common.HOME)): (path.read_bytes(), self.mode(path))
+            for path in common.HOME.rglob("*")
             if path.is_file()
         }
 
@@ -72,7 +72,7 @@ class InstallFailureTests(ComponentFixture):
             if args == failure:
                 raise subprocess.CalledProcessError(exit_code, args)
 
-        (deploy.HOME / "routes/app1.conf").write_bytes(
+        (common.HOME / "routes/app1.conf").write_bytes(
             self.before["routes/app1.conf"][0]
         )
         self.process.side_effect = command
@@ -80,7 +80,7 @@ class InstallFailureTests(ComponentFixture):
     def test_image_failures_leave_every_persistent_file_unchanged(self):
         """Load and both image checks must finish before live registration/archive writes."""
         failures = [
-            ["podman", "load", "-i", str(deploy.ROOT / "images/images.tar")],
+            ["podman", "load", "-i", str(common.ROOT / "images/images.tar")],
             ["podman", "image", "exists", "localhost/app1:1"],
         ]
         for failure in failures:
@@ -89,7 +89,7 @@ class InstallFailureTests(ComponentFixture):
                     self.process.reset_mock()
                     self.fail_at(failure, exit_code)
                     with self.assertRaises(
-                        (deploy.DeployError, subprocess.CalledProcessError)
+                        (common.DeployError, subprocess.CalledProcessError)
                     ):
                         deploy.install()
                     self.assertEqual(self.snapshot(), self.before)
@@ -105,7 +105,7 @@ class InstallFailureTests(ComponentFixture):
             with self.subTest(exit=exit_code):
                 self.process.reset_mock()
                 self.fail_at(failure, exit_code)
-                with self.assertRaises(deploy.DeployError):
+                with self.assertRaises(common.DeployError):
                     deploy.install()
                 self.assertEqual(self.snapshot(), self.before)
                 self.assertEqual(self.process.call_args_list[-1].args[0], failure)
@@ -143,7 +143,7 @@ class InstallFailureTests(ComponentFixture):
                     self.before["app1/files/app1-payload.tar"],
                 )
                 self.assertIn(
-                    "return 201", (deploy.HOME / "routes/app1.conf").read_text()
+                    "return 201", (common.HOME / "routes/app1.conf").read_text()
                 )
                 calls = [call.args[0] for call in self.process.call_args_list]
                 self.assertEqual(calls[-1], failure)
