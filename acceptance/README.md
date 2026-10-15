@@ -562,3 +562,22 @@ See the root README for manual DB config additions before upgrading existing
 a file alone does not change a PostgreSQL role password; rotation is out of scope.
 
 Actual database results and limitations: [DATABASE-VERIFICATION.md](DATABASE-VERIFICATION.md).
+
+
+## Focused historical 0.2.0 upgrade
+
+```sh
+python3 acceptance/acceptance.py --run upgrade-020-20261015 --upgrade-020 run
+```
+
+This resets the same two configured disposable lab VMs. It builds genuine old
+images/archives from pinned commit `86e8e27`, installs old app1/core and app2,
+creates authenticated user markers, then upgrades core/app1 followed by app2 with
+only the documented manual config additions. It reuses existing logs, readiness,
+transfer, credential, audit and cleanup mechanisms. It does not rerun the full
+reboot/crash/hang matrix. Use a new run ID every time.
+
+See [test baseline and run details](TEST-BASELINE.md) for exact checks, revisions,
+local results and remaining verification. The local harness now has 148 tests;
+passing them is not evidence of a real historical upgrade. That scenario has not
+yet been run on the lab VMs.

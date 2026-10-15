@@ -799,15 +799,27 @@ def main():
         action="store_true",
         help="Install app1/core then help and upgrade only help",
     )
+    parser.add_argument(
+        "--upgrade-020",
+        action="store_true",
+        help="Focused real 0.2.0 upgrade on the configured disposable lab VMs",
+    )
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
+    if args.upgrade_020 and args.help_only:
+        parser.error("--upgrade-020 cannot be combined with --help-only")
     os.umask(0o077)
     run = Run(args.run, args.config, args.first_app)
     run.help_only = args.help_only
     try:
-        run.execute()
+        if args.upgrade_020:
+            from upgrade_020 import execute
+
+            execute(run)
+        else:
+            run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence
         print(str(error), file=sys.stderr)
     finally:

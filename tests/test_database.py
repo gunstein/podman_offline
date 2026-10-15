@@ -108,6 +108,40 @@ class DatabaseTests(DeployFixture):
         self.assertEqual(self.process.call_count, 1)
         self.assertFalse(self.password.exists())
 
+    def test_legacy_config_missing_db_additions_stops_before_commands_or_writes(self):
+        """Each README-required DB key is mandatory even when new defaults supply it."""
+        self.write("bundle.yaml", "name: app1\ncomponents: [core, app1]\n")
+        self.write("VERSION", "0.2.1\n")
+        self.write("CORE_VERSION", "0.2.1\n")
+        self.write("home/installed/core", "0.2.0\n")
+        core = deploy.component_defaults("core")
+        self.write("home/core/config.yaml", yaml.safe_dump(core))
+        for component, settings in (("core", core), ("app1", self.settings)):
+            for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
+                with self.subTest(component=component, key=key):
+                    self.write("home/core/config.yaml", yaml.safe_dump(core))
+                    self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
+                    legacy = dict(settings)
+                    del legacy[key]
+                    self.write(
+                        "home/" + component + "/config.yaml", yaml.safe_dump(legacy)
+                    )
+                    before = {
+                        p: p.read_bytes() for p in deploy.HOME.rglob("*") if p.is_file()
+                    }
+                    self.process.reset_mock()
+                    with self.assertRaisesRegex(deploy.DeployError, "Missing " + key):
+                        deploy.install_components()
+                    self.process.assert_not_called()
+                    self.assertEqual(
+                        before,
+                        {
+                            p: p.read_bytes()
+                            for p in deploy.HOME.rglob("*")
+                            if p.is_file()
+                        },
+                    )
+
     def test_existing_credentials_survive_transition_byte_for_byte(self):
         content = b""" space;both'"$= end \n\n"""
         self.write("home/app1/generated-certificates/database/password", content, 0o600)

@@ -113,3 +113,9 @@ no automatic migration of a retained 0.1.x monolithic installation. The examples
 remain examples; production licensing, privilege redesign and application schema
 migration are outside this change. Password rotation and recovery procedures are
 separate future work; existing volume/password backups must be restored together.
+
+
+The retained 0.2.0 upgrade scenario is now implemented under backlog item 10.
+See [TEST-BASELINE.md](TEST-BASELINE.md) for its pinned historical source, command
+and local harness results. Actual historical-upgrade lab execution is still
+pending; this addition does not change the runtime results recorded above.

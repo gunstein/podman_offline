@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -20,6 +21,18 @@ class ComponentFixture(DeployFixture):
     def setUp(self):
         """Create a minimal app1 release and two persistent configs."""
         super().setUp()
+        # The environment guard is tested separately. Keep staging inside the fixture,
+        # even on machines without the synthetic /run/user/1000 runtime directory.
+        temporary_directory = tempfile.TemporaryDirectory
+
+        def staging(*args, **kwargs):
+            if kwargs.get("dir") == "/run/user/1000":
+                kwargs["dir"] = str(self.root)
+            return temporary_directory(*args, **kwargs)
+
+        self.stack.enter_context(
+            mock.patch.object(tempfile, "TemporaryDirectory", side_effect=staging)
+        )
         self.write("bundle.yaml", "name: app1\ncomponents: [core, app1]\n")
         self.write("VERSION", "1.2.3\n")
         self.write("CORE_VERSION", "1.0.0\n")
@@ -56,6 +69,24 @@ class ComponentFixture(DeployFixture):
                 )
             ),
         )
+
+    def registration_fixture(self):
+        """Create matching origins, a public client descriptor and a synthetic PEM."""
+        for component in ("core", "app1"):
+            self.write(
+                "home/" + component + "/config.yaml",
+                "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+            )
+        source = Path(__file__).resolve().parent.parent / "components/app1"
+        for name in ("route.conf", "client.yaml"):
+            self.write("components/app1/" + name, (source / name).read_bytes())
+        self.write(
+            "home/app1/generated-certificates/todo/todo-client.crt",
+            "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
+        )
+        work = self.root / "registration-stage"
+        work.mkdir()
+        return work
 
 
 class ComponentTests(ComponentFixture):
@@ -228,24 +259,6 @@ class ComponentTests(ComponentFixture):
             deploy.install()
         self.process.assert_not_called()
         self.assertFalse((deploy.HOME / "core/generated/token").exists())
-
-    def registration_fixture(self):
-        """Create matching origins, a public client descriptor and a synthetic PEM."""
-        for component in ("core", "app1"):
-            self.write(
-                "home/" + component + "/config.yaml",
-                "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
-            )
-        source = Path(__file__).resolve().parent.parent / "components/app1"
-        for name in ("route.conf", "client.yaml"):
-            self.write("components/app1/" + name, (source / name).read_bytes())
-        self.write(
-            "home/app1/generated-certificates/todo/todo-client.crt",
-            "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
-        )
-        work = self.root / "registration-stage"
-        work.mkdir()
-        return work
 
     def test_registrations_stage_public_data_without_touching_siblings(self):
         """Merge app1 into a pending route/client view while preserving live app2 files."""

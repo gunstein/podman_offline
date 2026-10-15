@@ -186,3 +186,14 @@ upgrade. Each Todo must connect with its own secret before a sibling-secret atte
 is allowed. Negative checks change only transient client input, never stored
 passwords. See [database verification](../acceptance/DATABASE-VERIFICATION.md) for real-run
 results and limits. Harness tests separately check private stdin, safe evidence and sequencing.
+
+
+## Baseline before structural changes
+
+See [TEST-BASELINE.md](../acceptance/TEST-BASELINE.md) for the recorded main
+baseline, existing coverage, additional install failure/legacy config/wrapper
+regressions, verification results and the historical-upgrade gate. The current
+local suite has 185 tests. Wrapper tests use actual scripts and real bundles but
+stub host account/runtime and Podman/systemd in isolated child processes. Runtime
+staging in component fixtures stays within TemporaryDirectory even when the
+synthetic `/run/user/1000` is absent; production guards remain tested separately.

@@ -4,7 +4,7 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Supplement test coverage (item 10)](#10-supplement-test-coverage-before-structural-changes).
+1. [Verify the implemented test baseline in the lab (item 10)](#10-supplement-test-coverage-before-structural-changes).
 2. [Rename core to platform (item 8)](#8-rename-core-to-platform).
 3. [Extract Identity (item 9)](#9-extract-identity-into-a-separate-component-and-bundle).
 4. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
@@ -22,7 +22,9 @@ restore core or merge Identity back into platform.
 
 ## 10. Supplement test coverage before structural changes
 
-Status: planned; first in execution order, before items 8, 9 and 1.
+Status: implemented locally; historical lab verification pending, before items 8, 9 and 1.
+See [test baseline and lab command](acceptance/TEST-BASELINE.md) for coverage,
+results and the retained 0.2.0 upgrade gate. The original task is preserved below.
 This task includes the retained 0.2.0 upgrade scenario already tracked in item 5;
 implement it once and cross-reference its evidence rather than duplicating it.
 
@@ -302,7 +304,9 @@ Status: requires investigation and an explicit migration plan.
 ## 5. Close documented runtime verification gaps
 
 Status: planned verification work; current evidence remains unchanged.
-The retained 0.2.0 upgrade scenario below is implemented as part of item 10.
+The retained 0.2.0 upgrade scenario below is implemented as part of item 10;
+run the [focused lab scenario](acceptance/TEST-BASELINE.md#run-the-historical-upgrade-in-the-lab)
+and cross-reference its evidence here rather than implementing it again.
 
 - Run a full retained 0.2.0 → 0.2.1 upgrade with the documented manual DB config
   additions, verifying existing credentials, volumes and sibling state.
