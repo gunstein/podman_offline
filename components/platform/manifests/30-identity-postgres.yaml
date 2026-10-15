@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: core-identity-postgres
+  name: platform-identity-postgres
 spec:
   restartPolicy: Always
   containers:
@@ -40,10 +40,10 @@ spec:
   volumes:
   - name: data
     persistentVolumeClaim:
-      claimName: core-identity-data
+      claimName: platform-identity-data
   - name: password
     secret:
-      secretName: core-database-password
+      secretName: platform-database-password
       items:
       - key: password
         path: password

@@ -434,13 +434,14 @@ data: {image: ignored}
         self.process.assert_not_called()
 
     def test_component_bundles_include_only_selected_components_and_images(self):
-        """Build three independent archives with matching core versions and no local state."""
+        """Build three independent archives with matching platform versions and no local state."""
         self.write(
-            "bundles.yaml", "app1: [core, app1]\napp2: [core, app2]\nhelp: [help]\n"
+            "bundles.yaml",
+            "platform: [platform]\napp1: [app1]\napp2: [app2]\nhelp: [help]\n",
         )
-        self.write("CORE_VERSION", "1.0.0\n")
+        self.write("PLATFORM_VERSION", "1.0.0\n")
         self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")
-        for component in ("core", "app1", "app2", "help"):
+        for component in ("platform", "app1", "app2", "help"):
             self.write(
                 "components/" + component + "/manifests/pod.yaml",
                 yaml.safe_dump(
@@ -461,14 +462,30 @@ data: {image: ignored}
             )
         bundle.build()
         for name, components in (
-            ("app1", ("core", "app1")),
-            ("app2", ("core", "app2")),
+            ("platform", ("platform",)),
+            ("app1", ("app1",)),
+            ("app2", ("app2",)),
             ("help", ("help",)),
         ):
             with tarfile.open(
-                str(bundle.DIST / ("myproduct-" + name + "-1.2.3-offline.tar.gz"))
+                str(
+                    bundle.DIST
+                    / (
+                        "myproduct-"
+                        + name
+                        + "-"
+                        + ("1.0.0" if name == "platform" else "1.2.3")
+                        + "-offline.tar.gz"
+                    )
+                )
             ) as archive:
-                prefix = "myproduct-" + name + "-1.2.3/"
+                prefix = (
+                    "myproduct-"
+                    + name
+                    + "-"
+                    + ("1.0.0" if name == "platform" else "1.2.3")
+                    + "/"
+                )
                 members = {
                     member.name[len(prefix) :] for member in archive.getmembers()
                 }
@@ -478,7 +495,7 @@ data: {image: ignored}
                     stream.read().decode().splitlines(),
                     sorted("localhost/" + component + ":1" for component in components),
                 )
-                for component in ("core", "app1", "app2", "help"):
+                for component in ("platform", "app1", "app2", "help"):
                     self.assertEqual(
                         "components/" + component + "/manifests/pod.yaml" in members,
                         component in components,
@@ -498,7 +515,23 @@ data: {image: ignored}
                     self.assertIn(
                         "components/" + component + "/config.defaults.yaml", members
                     )
-                self.assertIn("CORE_VERSION", members)
+                self.assertIn("PLATFORM_VERSION", members)
+                version_file = archive.extractfile(prefix + "VERSION")
+                assert version_file is not None
+                self.assertEqual(
+                    version_file.read().decode().strip(),
+                    "1.0.0" if name == "platform" else "1.2.3",
+                )
+                descriptor_file = archive.extractfile(prefix + "bundle.yaml")
+                assert descriptor_file is not None
+                descriptor = yaml.safe_load(descriptor_file.read())
+                self.assertEqual(descriptor["components"], [name])
+                self.assertEqual(
+                    descriptor["requires"],
+                    {}
+                    if name == "platform"
+                    else {"platform": {"min": "1.0.0", "before": "2.0.0"}},
+                )
                 checksum = archive.extractfile(prefix + "checksums.sha256")
                 assert checksum is not None
                 lines = checksum.read().decode().splitlines()

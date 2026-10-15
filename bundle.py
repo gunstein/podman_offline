@@ -170,8 +170,12 @@ def build_release(version, bundle_name=None, components=None):
         "deploy.py",
         "VERSION",
         "README.md",
-    ] + (["config.defaults.yaml"] if not components else ["CORE_VERSION"]):
+    ] + (["config.defaults.yaml"] if not components else ["PLATFORM_VERSION"]):
         shutil.copy2(ROOT / filename, target / filename)
+
+    if bundle_name == "platform":
+        # This archive is versioned independently of app/help releases.
+        (target / "VERSION").write_text(version + "\n", encoding="utf-8")
 
     for component, directory in zip(components or [], directories):
         (target / "components").mkdir(exist_ok=True)
@@ -199,7 +203,19 @@ def build_release(version, bundle_name=None, components=None):
             ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
         )
         (target / "bundle.yaml").write_text(
-            yaml.safe_dump({"name": bundle_name, "components": components}),
+            yaml.safe_dump(
+                {
+                    "name": bundle_name,
+                    "components": components,
+                    "requires": {}
+                    if bundle_name == "platform"
+                    else {
+                        "platform": deploy.platform_requirement(
+                            (ROOT / "PLATFORM_VERSION").read_text().strip()
+                        )
+                    },
+                }
+            ),
             encoding="utf-8",
         )
     for dirname in (
@@ -262,8 +278,7 @@ def build():
         raise BundleError("bundles.yaml must define at least one bundle")
     for name, components in definitions.items():
         if name is not None and (
-            name not in ("app1", "app2", "help")
-            or components != (["help"] if name == "help" else ["core", name])
+            name not in ("platform", "app1", "app2", "help") or components != [name]
         ):
             raise BundleError("Invalid bundle component definition")
     manifest_images()
@@ -271,7 +286,12 @@ def build():
     guard(ROOT, ["files", "manifests", "scripts", "quadlet"])
     shutil.rmtree(STAGE, ignore_errors=True)
     for name, components in definitions.items():
-        build_release(version, name, components)
+        selected_version = (
+            (ROOT / "PLATFORM_VERSION").read_text().strip()
+            if name == "platform"
+            else version
+        )
+        build_release(selected_version, name, components)
 
 
 def main():

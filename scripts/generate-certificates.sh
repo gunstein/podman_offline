@@ -11,13 +11,42 @@ if [[ ${1:-} == --root ]]; then
     root=$2
     shift 2
 fi
-if [[ ${1:-} == core || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; then
+if [[ ${1:-} == core ]]; then
+    echo 'ERROR: core was renamed to platform; retained core installations require a separate migration procedure' >&2
+    exit 2
+fi
+if [[ ${1:-} == platform || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; then
     component=$1
     shift
     hostname=${1:-myproduct-proxy}
     [[ $# -le 1 && $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || {
-        echo 'Usage: generate-certificates.sh [--root DIR] core|app1|app2|help [DNS hostname]' >&2; exit 2;
+        echo 'Usage: generate-certificates.sh [--root DIR] platform|app1|app2|help [DNS hostname]' >&2; exit 2;
     }
+    # Refuse both old and mixed layouts before creating any CA/certificate material.
+    runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+    for old in "$root/core" "$root/installed/core" \
+        "$root/.config/containers/systemd/myproduct-core.kube" \
+        "$root/.config/containers/systemd/myproduct-core.yaml" \
+        "$root/.config/systemd/user/myproduct-core.service" \
+        "$runtime/systemd/generator/myproduct-core.service" \
+        "$runtime/systemd/generator.early/myproduct-core.service" \
+        "$runtime/systemd/generator.late/myproduct-core.service"; do
+        if [[ -e $old || -L $old ]]; then
+            echo 'ERROR: legacy core layout requires a separate migration procedure; no certificates changed' >&2
+            exit 1
+        fi
+    done
+    command -v podman >/dev/null || {
+        echo 'ERROR: cannot check legacy core volumes without Podman; no certificates changed' >&2; exit 1;
+    }
+    for old in core-identity-data core-identity-protection core-routes core-clients; do
+        status=0
+        timeout 30 podman volume exists "$old" >/dev/null 2>&1 || status=$?
+        if [[ $status != 1 ]]; then
+            echo 'ERROR: legacy core volume present or volume check failed; no certificates changed' >&2
+            exit 1
+        fi
+    done
     mkdir -p "$root/PKI/private" "$root/$component/generated-certificates"
     chmod 700 "$root/PKI" "$root/PKI/private" "$root/$component" "$root/$component/generated-certificates"
     cd "$root"
@@ -60,14 +89,14 @@ if [[ ${1:-} == core || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; t
         fi
     }
     case "$component" in
-        core)
-            issue_component identity core/generated-certificates/identity ''
-            issue_component web core/generated-certificates/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
+        platform)
+            issue_component identity platform/generated-certificates/identity ''
+            issue_component web platform/generated-certificates/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
             for entry in users/alice-password users/bob-password; do
-                component_password "core/generated-certificates/$entry"
+                component_password "platform/generated-certificates/$entry"
             done
-            mkdir -p core/generated-certificates/app
-            chmod 700 core/generated-certificates/app
+            mkdir -p platform/generated-certificates/app
+            chmod 700 platform/generated-certificates/app
             ;;
         app1|app2)
             issue_component todo-client "$component/generated-certificates/todo" 'extendedKeyUsage=clientAuth'

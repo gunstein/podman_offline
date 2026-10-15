@@ -229,7 +229,7 @@ class Run:
             revision=self.revision,
             clean=clean,
             version=(ROOT / "VERSION").read_text().strip(),
-            core_version=(ROOT / "CORE_VERSION").read_text().strip(),
+            platform_version=(ROOT / "PLATFORM_VERSION").read_text().strip(),
             first_app=self.first_app,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
@@ -332,7 +332,10 @@ class Run:
     def transfer(self, version=None, bundle="app1"):
         """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
-        version = version or self.meta["version"]
+        version = (
+            version
+            or self.meta["platform_version" if bundle == "platform" else "version"]
+        )
         archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
@@ -357,7 +360,11 @@ class Run:
 
     def transfer_bundles(self):
         """Transfer all three scoped bundles before testing independent installations."""
-        bundles = ("app1", "help") if self.help_only else ("app1", "app2", "help")
+        bundles = (
+            ("platform", "app1", "help")
+            if self.help_only
+            else ("platform", "app1", "app2", "help")
+        )
         for bundle in bundles:
             self.transfer(bundle=bundle)
 
@@ -469,53 +476,74 @@ class Run:
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
 
-    def upgrade_core(self):
-        """Verify a newer shared core and reject an older core before persistent changes."""
-        parts = self.meta["version"].split(".")
-        parts[-1] = str(int(parts[-1]) + 3)
+    def upgrade_platform(self):
+        """Verify a newer shared platform and reject an older platform before persistent changes."""
+        parts = self.meta["platform_version"].split(".")
+        parts[-1] = str(int(parts[-1]) + 1)
         version = ".".join(parts)
-        self.meta["core_upgrade_release"] = version
+        self.meta["platform_upgrade_release"] = version
         self.step(
-            "10-core-siblings-before",
-            lambda: self.guest("PROD", "core-siblings-before"),
+            "10-platform-siblings-before",
+            lambda: self.guest("PROD", "platform-siblings-before", bundle="platform"),
         )
-        self.step("10-core-before", lambda: self.guest("PROD", "core-before"))
         self.step(
-            "10-core-build", lambda: self.guest("DEV", "core-upgrade-bundle", version)
+            "10-platform-before",
+            lambda: self.guest("PROD", "platform-before", bundle="platform"),
         )
-        self.step("10-core-transfer", lambda: self.transfer(version))
         self.step(
-            "10-core-install", lambda: self.guest("PROD", "core-upgrade", version)
+            "10-platform-build",
+            lambda: self.guest(
+                "DEV", "platform-upgrade-bundle", version, bundle="platform"
+            ),
         )
-        self.step("10-core-after", lambda: self.guest("PROD", "core-after", version))
         self.step(
-            "10-core-siblings-after", lambda: self.guest("PROD", "core-siblings-after")
+            "10-platform-transfer", lambda: self.transfer(version, bundle="platform")
         )
-        self.step("10-core-persistent", lambda: self.persistent_state("after"))
-        self.step("10-core-e2e", lambda: self.guest("DEV", "prod-e2e"))
-        self.step("10-core-markers", lambda: self.guest("DEV", "markers-check"))
         self.step(
-            "10-core-downgrade",
+            "10-platform-install",
+            lambda: self.guest("PROD", "platform-upgrade", version, bundle="platform"),
+        )
+        self.step(
+            "10-platform-after",
+            lambda: self.guest("PROD", "platform-after", version, bundle="platform"),
+        )
+        self.step(
+            "10-platform-siblings-after",
+            lambda: self.guest("PROD", "platform-siblings-after", bundle="platform"),
+        )
+        self.step("10-platform-persistent", lambda: self.persistent_state("after"))
+        self.step("10-platform-e2e", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("10-platform-markers", lambda: self.guest("DEV", "markers-check"))
+        self.step(
+            "10-platform-downgrade",
             lambda: self.guest(
                 "PROD",
-                "core-downgrade",
+                "platform-downgrade",
                 version,
-                old_version=self.meta["upgrade_version"],
+                old_version=self.meta["platform_version"],
+                bundle="platform",
             ),
         )
-        self.step("10-core-e2e-after-refusal", lambda: self.guest("DEV", "prod-e2e"))
         self.step(
-            "10-core-retire",
+            "10-platform-e2e-after-refusal", lambda: self.guest("DEV", "prod-e2e")
+        )
+        self.step(
+            "10-platform-retire",
             lambda: self.guest(
-                "PROD", "core-retire", version, old_version=self.meta["upgrade_version"]
+                "PROD",
+                "platform-retire",
+                version,
+                old_version=self.meta["platform_version"],
+                bundle="platform",
             ),
         )
         self.step(
-            "10-core-final-siblings", lambda: self.guest("PROD", "core-siblings-after")
+            "10-platform-final-siblings",
+            lambda: self.guest("PROD", "platform-siblings-after", bundle="platform"),
         )
 
     def upgrade_help(self):
-        """Transfer only a new help image/content release; unchanged route forbids core restart."""
+        """Transfer only a new help image/content release; unchanged route forbids platform restart."""
         version = self.meta["version"]
         parts = version.split(".")
         parts[-1] = str(int(parts[-1]) + 2)
@@ -560,7 +588,7 @@ class Run:
             lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
         )
 
-    def credentials(self):
+    def credentials(self, component="platform"):
         """Move the CA and demo passwords through private runtime files without logging content."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
@@ -572,8 +600,9 @@ class Run:
         base = "/var/lib/myproduct/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
-            "alice-password": "core/generated-certificates/users/alice-password",
-            "bob-password": "core/generated-certificates/users/bob-password",
+            "alice-password": component
+            + "/generated-certificates/users/alice-password",
+            "bob-password": component + "/generated-certificates/users/bob-password",
         }
         for name, relative in files.items():
             local = self.private / name
@@ -674,6 +703,7 @@ class Run:
         order = [self.first_app, "app2" if self.first_app == "app1" else "app1", "help"]
         if self.help_only:
             order = ["app1", "help"]
+        order.insert(0, "platform")
         for bundle in order:
             self.step(
                 "06-install-" + bundle,
@@ -718,7 +748,7 @@ class Run:
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
         self.upgrade_help()
         self.upgrade()
-        self.upgrade_core()
+        self.upgrade_platform()
         self.step("10-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("10-uninstall-app1", lambda: self.guest("PROD", "uninstall"))
         self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
@@ -797,25 +827,34 @@ def main():
     parser.add_argument(
         "--help-only",
         action="store_true",
-        help="Install app1/core then help and upgrade only help",
+        help="Install app1/platform then help and upgrade only help",
     )
     parser.add_argument(
         "--upgrade-020",
         action="store_true",
         help="Focused real 0.2.0 upgrade on the configured disposable lab VMs",
     )
+    parser.add_argument(
+        "--legacy-refusal",
+        action="store_true",
+        help="Install genuine core 0.2.0 and verify refusal by platform",
+    )
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
-    if args.upgrade_020 and args.help_only:
-        parser.error("--upgrade-020 cannot be combined with --help-only")
+    if args.upgrade_020:
+        parser.error(
+            "The historical 0.2.0-to-0.2.1 upgrade must run at commit 511099e; platform 0.3.0 refuses core migration. Use --legacy-refusal for the new boundary"
+        )
+    if args.legacy_refusal and args.help_only:
+        parser.error("--legacy-refusal cannot be combined with --help-only")
     os.umask(0o077)
     run = Run(args.run, args.config, args.first_app)
     run.help_only = args.help_only
     try:
-        if args.upgrade_020:
-            from upgrade_020 import execute
+        if args.legacy_refusal:
+            from legacy_refusal import execute
 
             execute(run)
         else:

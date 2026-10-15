@@ -190,8 +190,8 @@ def validate_component_config(config, component, path, check_placeholders=True):
             (ROOT / "components" / component / "manifests").glob("*.yaml")
         ):
             collect(load_yaml_all(manifest))
-    # PUBLIC_HOSTNAME is derived from the validated origin for core rendering.
-    if component == "core":
+    # PUBLIC_HOSTNAME is derived from the validated origin for platform rendering.
+    if component == "platform":
         required.discard("PUBLIC_HOSTNAME")
     for key in sorted(required):
         if key not in config:
@@ -219,37 +219,44 @@ def validate_component_config(config, component, path, check_placeholders=True):
 def init_config(component):
     """Exclusively materialize one bundled config; never create private input files."""
     production_environment()
+    reject_legacy_layout()
+    if component == "core":
+        raise DeployError("core was renamed to platform; use init-config platform")
     if component not in bundle_components():
         raise DeployError(f"Component {component} is not included in this bundle")
+    if component != "platform":
+        platform_dependencies(component)
     target = HOME / component / "config.yaml"
     for path in [target] + list(target.parents):
         if path.is_symlink():
             raise DeployError(f"Refuse symlinked config path: {path}")
     if target.exists():
+        reject_legacy_layout(volumes=True)
         print(
             f"[OK] Existing config retained unchanged: {target}; install validates it"
         )
         return
     overrides = {}
-    core_path = component_paths("core")[0]
+    platform_path = component_paths("platform")[0]
     if (
-        component != "core"
-        and (HOME / "installed/core").exists()
-        and not core_path.exists()
+        component != "platform"
+        and (HOME / "installed/platform").exists()
+        and not platform_path.exists()
     ):
         raise DeployError(
-            f"Missing {core_path}; restore installed core config before initializing {component}"
+            f"Missing {platform_path}; restore installed platform config before initializing {component}"
         )
-    if component != "core" and core_path.exists():
-        core = load_config(core_path)
+    if component != "platform" and platform_path.exists():
+        platform = load_config(platform_path)
         validate_component_config(
-            core,
-            "core",
-            core_path,
-            check_placeholders=not (HOME / "installed/core").is_file(),
+            platform,
+            "platform",
+            platform_path,
+            check_placeholders=not (HOME / "installed/platform").is_file(),
         )
-        overrides = {key: core[key] for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")}
+        overrides = {key: platform[key] for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")}
     config = component_defaults(component, overrides=overrides)
+    reject_legacy_layout(volumes=True)
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
     fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -785,7 +792,7 @@ def render(
         for path in sorted(manifests.glob("*.yaml")):
             check_component_names(load_yaml_all(path), component, path)
         check_component_config_names(config, component, config_path)
-    if component == "core" and "PUBLIC_ORIGIN" in config:
+    if component == "platform" and "PUBLIC_ORIGIN" in config:
         config["PUBLIC_HOSTNAME"] = public_origin(
             config["PUBLIC_ORIGIN"], config_path
         ).hostname
@@ -856,9 +863,10 @@ def render(
 def prepare_components():
     """Render all source components with private dev state and shared imported registrations."""
     state = BUILD / "dev"
+    reject_legacy_layout(home=state)
     settings_by_component = {
         component: component_defaults(component, dev=True)
-        for component in ("core", "app1", "app2", "help")
+        for component in ("platform", "app1", "app2", "help")
     }
     for component, settings in settings_by_component.items():
         database_preflight(
@@ -866,8 +874,9 @@ def prepare_components():
             state / component / "config.yaml",
             ROOT / "components" / component / "manifests",
         )
+    reject_legacy_layout(home=state, volumes=True)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for component in ("core", "app1", "app2", "help"):
+    for component in ("platform", "app1", "app2", "help"):
         target = state / component / "config.yaml"
         settings = settings_by_component[component]
         write_private(target, yaml.safe_dump(settings, sort_keys=False))
@@ -876,13 +885,13 @@ def prepare_components():
             ["app1", "app2", "help"], Path(directory), home=state
         )
         documents = []
-        for component in ("core", "app1", "app2", "help"):
+        for component in ("platform", "app1", "app2", "help"):
             text = render(
                 state / component / "files",
                 config_path=state / component / "config.yaml",
                 manifests=ROOT / "components" / component / "manifests",
                 component=component,
-                extra_volumes=imports if component == "core" else None,
+                extra_volumes=imports if component == "platform" else None,
             )
             documents.extend(yaml.safe_load_all(text))
         check_links(documents, {})
@@ -1035,19 +1044,149 @@ def install_legacy():
 
 
 def bundle_components():
-    """Read a release's fixed component selection and reject an invalid descriptor."""
+    """Accept only one component per offline bundle, with explicit dependencies."""
     descriptor = load_yaml(ROOT / "bundle.yaml")
-    if not isinstance(descriptor, dict) or set(descriptor) != {"name", "components"}:
-        raise DeployError("Invalid bundle.yaml")
+    if not isinstance(descriptor, dict) or set(descriptor) != {
+        "name",
+        "components",
+        "requires",
+    }:
+        raise DeployError(
+            "Invalid bundle.yaml; use a separate platform/app/help bundle"
+        )
     name = descriptor["name"]
-    expected = ["help"] if name == "help" else ["core", name]
-    if name not in ("app1", "app2", "help") or descriptor["components"] != expected:
-        raise DeployError("Invalid bundle component selection")
-    return expected
+    if name not in ("platform", "app1", "app2", "help") or descriptor["components"] != [
+        name
+    ]:
+        raise DeployError(
+            "Invalid bundle component selection; platform must be separate"
+        )
+    requires = descriptor["requires"]
+    if (name == "platform" and requires != {}) or (
+        name != "platform"
+        and (not isinstance(requires, dict) or set(requires) != {"platform"})
+    ):
+        raise DeployError("Invalid bundle dependencies")
+    if name != "platform":
+        validate_platform_requirement(requires["platform"])
+    return [name]
+
+
+def platform_requirement(version):
+    """Declare a compatible major series, or minor series while platform is 0.x."""
+    major, minor, _ = version_number(version)
+    upper = f"{major + 1}.0.0" if major else f"0.{minor + 1}.0"
+    return {"min": version, "before": upper}
+
+
+def validate_platform_requirement(requirement):
+    """Require an explicit nonempty inclusive-minimum/exclusive-upper range."""
+    if not isinstance(requirement, dict) or set(requirement) != {"min", "before"}:
+        raise DeployError("Invalid platform version requirement")
+    if not all(isinstance(value, str) for value in requirement.values()):
+        raise DeployError("Invalid platform version requirement")
+    if version_number(requirement["min"]) >= version_number(requirement["before"]):
+        raise DeployError("Empty platform version requirement")
+
+
+def platform_dependencies(component):
+    """Check dependencies before writes, independently of retained release directories."""
+    descriptor = load_yaml(ROOT / "bundle.yaml")
+    if component != "platform":
+        marker = HOME / "installed/platform"
+        if not marker.is_file():
+            raise DeployError(
+                "Install the separate platform bundle before installing " + component
+            )
+        requirements = [(component, descriptor["requires"]["platform"])]
+        requested = version_number(marker.read_text().strip())
+    else:
+        requested = version_number((ROOT / "PLATFORM_VERSION").read_text().strip())
+        requirements = []
+        for name in ("app1", "app2", "help"):
+            if not (HOME / "installed" / name).is_file():
+                continue
+            path = HOME / "dependencies" / (name + ".json")
+            try:
+                requirement = json.loads(path.read_text())["platform"]
+            except (OSError, ValueError, KeyError, TypeError):
+                raise DeployError(
+                    "Missing or invalid installed platform requirement for " + name
+                ) from None
+            requirements.append((name, requirement))
+    for name, requirement in requirements:
+        validate_platform_requirement(requirement)
+        if (
+            not version_number(requirement["min"])
+            <= requested
+            < version_number(requirement["before"])
+        ):
+            raise DeployError(
+                "Platform version does not satisfy dependency for " + name
+            )
+
+
+def reject_legacy_layout(home=None, volumes=False):
+    """Refuse known core state; never migrate, delete or infer absence after an error."""
+    home = HOME if home is None else home
+    paths = [
+        home / "core",
+        home / "installed/core",
+        home / ".config/containers/systemd/myproduct-core.yaml",
+        home / ".config/containers/systemd/myproduct-core.kube",
+        home / ".config/systemd/user/myproduct-core.service",
+    ]
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime:
+        paths.extend(
+            Path(runtime) / "systemd" / directory / "myproduct-core.service"
+            for directory in ("generator", "generator.early", "generator.late")
+        )
+    for path in paths:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise DeployError(
+            "Legacy core layout detected; use its previous release. A separate migration procedure or an explicitly fresh installation is required; mixed core/platform state is refused"
+        )
+    if not volumes:
+        return
+    for name in (
+        "core-identity-data",
+        "core-identity-protection",
+        "core-routes",
+        "core-clients",
+    ):
+        if legacy_volume_exists(name):
+            raise DeployError(
+                "Legacy core volume detected: "
+                + name
+                + "; use the previous release or a separate migration procedure; no automatic migration"
+            )
+
+
+def legacy_volume_exists(name):
+    """Distinguish an absent legacy volume from an unavailable volume store."""
+    try:
+        result = subprocess.run(  # noqa: UP022 - Python 3.6
+            ["podman", "volume", "exists", name],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise DeployError("Cannot check legacy core volumes; no changes made") from None
+    if result.returncode not in (0, 1):
+        raise DeployError(
+            "Cannot check legacy core volume " + name + "; no changes made"
+        )
+    return result.returncode == 0
 
 
 def version_number(value):
-    """Parse a three-part numeric version for deterministic core comparisons."""
+    """Parse a three-part numeric version for deterministic platform comparisons."""
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
         raise DeployError(
             "Versions must contain three numeric parts: major.minor.patch"
@@ -1055,16 +1194,16 @@ def version_number(value):
     return tuple(int(part) for part in value.split("."))
 
 
-def core_upgrade_needed(version):
-    """Install missing/newer core, retain an equal core and reject downgrades."""
+def platform_upgrade_needed(version):
+    """Install missing/newer platform, retain an equal platform and reject downgrades."""
     requested = version_number(version)
-    marker = HOME / "installed/core"
+    marker = HOME / "installed/platform"
     if not marker.is_file():
         return True
     installed = version_number(marker.read_text().strip())
     if requested < installed:
         raise DeployError(
-            f"Core downgrade refused: requested {version}, installed {marker.read_text().strip()}"
+            f"Platform downgrade refused: requested {version}, installed {marker.read_text().strip()}"
         )
     return requested > installed
 
@@ -1078,6 +1217,8 @@ def component_paths(component, home=None):
         state / "files",
         state / "config.yaml",
         base / "installed" / component,
+        base / "dependencies",
+        base / "dependencies" / (component + ".json"),
     ]
     paths.extend((state / "files").glob("*.tar"))
     if home is None:
@@ -1137,12 +1278,13 @@ def registration_stage(components, directory, home=None):
         if not route.is_file() and not client.is_file():
             continue
         config = load_config(component_paths(component, home)[0])
-        core = load_config(component_paths("core", home)[0])
+        platform = load_config(component_paths("platform", home)[0])
         if any(
-            config.get(key) != core.get(key) for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")
+            config.get(key) != platform.get(key)
+            for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")
         ):
             raise DeployError(
-                f"{component} PUBLIC_ORIGIN and HTTPS_PORT must match the persistent core config"
+                f"{component} PUBLIC_ORIGIN and HTTPS_PORT must match the persistent platform config"
             )
         if route.is_file():
             updates["routes/" + component + ".conf"] = route.read_bytes()
@@ -1206,12 +1348,12 @@ def registration_stage(components, directory, home=None):
         encoding="utf-8",
     )
     # Imports overwrite files without deleting old entries; only these current indexes are read.
-    imports = {"core-routes": [routes], "core-clients": client_dirs + [index]}
+    imports = {"platform-routes": [routes], "platform-clients": client_dirs + [index]}
     return imports, updates
 
 
 def write_registrations(updates, home=None):
-    """Write changed public registrations privately and report whether core must restart."""
+    """Write changed public registrations privately and report whether platform must restart."""
     changed = False
     if any(((home or HOME) / relative).is_symlink() for relative in updates):
         raise DeployError("Refuse symlinked public registration output")
@@ -1237,8 +1379,8 @@ def install_component_plan(components, source_components, imports, updates):
         config, files, _, _ = component_paths(component)
         extra = (
             imports
-            if component == "core"
-            and "core-routes" in load_config(config).get(VOLUME_FILES, {})
+            if component == "platform"
+            and "platform-routes" in load_config(config).get(VOLUME_FILES, {})
             else None
         )
         rendered[component] = render(
@@ -1254,8 +1396,8 @@ def install_component_plan(components, source_components, imports, updates):
         raise DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
-    if "core" in source_components and "core" not in components:
-        for path in sorted((ROOT / "components/core/manifests").glob("*.yaml")):
+    if "platform" in source_components and "platform" not in components:
+        for path in sorted((ROOT / "components/platform/manifests").glob("*.yaml")):
             documents.extend(load_yaml_all(path))
     for image in find_images(documents):
         try:
@@ -1273,8 +1415,8 @@ def install_component_plan(components, source_components, imports, updates):
         config, files, output, quadlet = component_paths(component)
         extra = (
             imports
-            if component == "core"
-            and "core-routes" in load_config(config).get(VOLUME_FILES, {})
+            if component == "platform"
+            and "platform-routes" in load_config(config).get(VOLUME_FILES, {})
             else None
         )
         render(
@@ -1292,38 +1434,42 @@ def install_component_plan(components, source_components, imports, updates):
             encoding="utf-8",
         )
         quadlet.chmod(0o644)
-    if changed and "core" not in components:
-        write_file_archives(imports, component_paths("core")[1])
+    if changed and "platform" not in components:
+        write_file_archives(imports, component_paths("platform")[1])
     run("systemctl", "--user", "daemon-reload")
-    services = [component for component in components if component != "core"]
-    if "core" in components or changed:
-        services.append("core")
+    services = [component for component in components if component != "platform"]
+    if "platform" in components or changed:
+        services.append("platform")
     for component in services:
         service = "myproduct-" + component + ".service"
         run("systemctl", "--user", "restart", service)
         run("systemctl", "--user", "is-active", "--quiet", service)
     for component in components:
         version = (
-            (ROOT / ("CORE_VERSION" if component == "core" else "VERSION"))
+            (ROOT / ("PLATFORM_VERSION" if component == "platform" else "VERSION"))
             .read_text()
             .strip()
         )
         write_private(HOME / "installed" / component, version + "\n")
+        write_private(
+            HOME / "dependencies" / (component + ".json"),
+            json.dumps(load_yaml(ROOT / "bundle.yaml")["requires"], sort_keys=True),
+        )
     run("podman", "ps", "--all", "--pod")
 
 
 def install_components():
     """Validate the selected components and images before writing scoped services."""
     production_environment()
+    reject_legacy_layout()
     components = bundle_components()
+    platform_dependencies(components[0])
     version_number((ROOT / "VERSION").read_text().strip())
     source_components = list(components)
-    if "core" in components and not core_upgrade_needed(
-        (ROOT / "CORE_VERSION").read_text().strip()
+    if "platform" in components and not platform_upgrade_needed(
+        (ROOT / "PLATFORM_VERSION").read_text().strip()
     ):
-        components.remove("core")
-    if components == ["help"] and not (HOME / "installed/core").is_file():
-        raise DeployError("Install an app bundle with core before installing help")
+        components.remove("platform")
     for component in source_components:
         for path in sorted(
             (ROOT / "components" / component / "manifests").glob("*.yaml")
@@ -1336,19 +1482,20 @@ def install_components():
             config_path,
             check_placeholders=component in components,
         )
-    core_path = component_paths("core")[0]
-    core = load_config(core_path)
+    platform_path = component_paths("platform")[0]
+    platform = load_config(platform_path)
     validate_component_config(
-        core, "core", core_path, check_placeholders="core" in components
+        platform, "platform", platform_path, check_placeholders="platform" in components
     )
     for component in source_components:
-        if component == "core":
+        if component == "platform":
             continue
         path = component_paths(component)[0]
         config = load_config(path)
         for key in ("PUBLIC_ORIGIN", "HTTPS_PORT"):
-            if config[key] != core[key]:
-                raise DeployError(f"{key} in {path} must match {core_path}")
+            if config[key] != platform[key]:
+                raise DeployError(f"{key} in {path} must match {platform_path}")
+    reject_legacy_layout(volumes=True)
     for component in components:
         config_path = component_paths(component)[0]
         database_preflight(
@@ -1369,7 +1516,7 @@ def install():
         install_components()
     elif (ROOT / "components").is_dir():
         raise DeployError(
-            "Run install from an unpacked app/help bundle, not the source checkout"
+            "Run install from an unpacked platform/app/help bundle, not the source checkout"
         )
     else:
         install_legacy()
@@ -1378,24 +1525,24 @@ def install():
 def uninstall(component=None, delete_data=False):
     """Remove one scoped service and registration, preserving data unless explicitly requested."""
     production_environment()
+    reject_legacy_layout()
     selected = bundle_components()
-    own = next(name for name in selected if name != "core")
+    own = selected[0]
     component = component or own
-    if component not in (own, "core"):
-        raise DeployError(
-            "This bundle can only uninstall its own app/help or unused core"
-        )
+    if component != own:
+        raise DeployError("This bundle can only uninstall its own component")
     marker = HOME / "installed" / component
     if not marker.is_file():
         raise DeployError(f"Component {component} is not installed")
-    if component == "core":
+    if component == "platform":
         dependents = [
             name
             for name in ("app1", "app2", "help")
             if (HOME / "installed" / name).is_file()
         ]
         if dependents:
-            raise DeployError("Core is still required by: " + ", ".join(dependents))
+            raise DeployError("Platform is still required by: " + ", ".join(dependents))
+    reject_legacy_layout(volumes=True)
     _, _, output, quadlet = component_paths(component)
     documents = load_yaml_all(output)
     check_component_names(documents, component, output)
@@ -1417,14 +1564,17 @@ def uninstall(component=None, delete_data=False):
             raise DeployError("Refuse symlinked client registration")
         shutil.rmtree(client)
     marker.unlink()
-    if component != "core":
+    dependency = HOME / "dependencies" / (component + ".json")
+    if dependency.exists():
+        dependency.unlink()
+    if component != "platform":
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
             imports, _ = registration_stage([], Path(directory))
-            write_file_archives(imports, component_paths("core")[1])
-        run("systemctl", "--user", "restart", "myproduct-core.service")
-        run("systemctl", "--user", "is-active", "--quiet", "myproduct-core.service")
+            write_file_archives(imports, component_paths("platform")[1])
+        run("systemctl", "--user", "restart", "myproduct-platform.service")
+        run("systemctl", "--user", "is-active", "--quiet", "myproduct-platform.service")
     run("systemctl", "--user", "daemon-reload")
     if delete_data:
         for name in volumes:
@@ -1453,12 +1603,18 @@ def main():
         "init-config": init_config,
     }
     args = sys.argv[1:]
+    if "core" in args:
+        print(
+            "ERROR: core was renamed to platform; use the separate platform bundle",
+            file=sys.stderr,
+        )
+        return 2
     removing = bool(args and args[0] == "uninstall")
     valid_remove = removing and args[1:] in (
         [],
-        ["core"],
+        ["platform"],
         ["--delete-data"],
-        ["core", "--delete-data"],
+        ["platform", "--delete-data"],
     )
     initializing = bool(args and args[0] == "init-config" and len(args) == 2)
     if (
@@ -1471,7 +1627,7 @@ def main():
         )
     ):
         print(
-            "Usage: ./deploy prepare|install|uninstall [core] [--delete-data] | init-config <component>"
+            "Usage: ./deploy prepare|install|uninstall [platform] [--delete-data] | init-config <component>"
         )
         return 2
 
@@ -1480,7 +1636,8 @@ def main():
             init_config(args[1])
         elif removing:
             uninstall(
-                "core" if "core" in args[1:] else None, "--delete-data" in args[1:]
+                "platform" if "platform" in args[1:] else None,
+                "--delete-data" in args[1:],
             )
         else:
             commands[args[0]]()

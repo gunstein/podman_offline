@@ -90,12 +90,16 @@ class DatabaseTests(DeployFixture):
         self.assertEqual(self.password.read_bytes(), password)
 
     def test_production_volume_guard_precedes_images_and_persistent_changes(self):
-        self.write("bundle.yaml", "name: app1\ncomponents: [core, app1]\n")
-        self.write("VERSION", "0.2.1\n")
-        self.write("CORE_VERSION", "0.2.1\n")
-        self.write("home/installed/core", "0.2.1\n")
         self.write(
-            "home/core/config.yaml", yaml.safe_dump(deploy.component_defaults("core"))
+            "bundle.yaml",
+            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.2.0, before: 0.3.0}}\n",
+        )
+        self.write("VERSION", "0.2.1\n")
+        self.write("PLATFORM_VERSION", "0.2.1\n")
+        self.write("home/installed/platform", "0.2.1\n")
+        self.write(
+            "home/platform/config.yaml",
+            yaml.safe_dump(deploy.component_defaults("platform")),
         )
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
         before = {p: p.read_bytes() for p in deploy.HOME.rglob("*") if p.is_file()}
@@ -110,16 +114,19 @@ class DatabaseTests(DeployFixture):
 
     def test_legacy_config_missing_db_additions_stops_before_commands_or_writes(self):
         """Each README-required DB key is mandatory even when new defaults supply it."""
-        self.write("bundle.yaml", "name: app1\ncomponents: [core, app1]\n")
+        self.write(
+            "bundle.yaml",
+            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.2.0, before: 0.3.0}}\n",
+        )
         self.write("VERSION", "0.2.1\n")
-        self.write("CORE_VERSION", "0.2.1\n")
-        self.write("home/installed/core", "0.2.0\n")
-        core = deploy.component_defaults("core")
-        self.write("home/core/config.yaml", yaml.safe_dump(core))
-        for component, settings in (("core", core), ("app1", self.settings)):
+        self.write("PLATFORM_VERSION", "0.2.1\n")
+        self.write("home/installed/platform", "0.2.0\n")
+        platform = deploy.component_defaults("platform")
+        self.write("home/platform/config.yaml", yaml.safe_dump(platform))
+        for component, settings in (("platform", platform), ("app1", self.settings)):
             for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
                 with self.subTest(component=component, key=key):
-                    self.write("home/core/config.yaml", yaml.safe_dump(core))
+                    self.write("home/platform/config.yaml", yaml.safe_dump(platform))
                     self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
                     legacy = dict(settings)
                     del legacy[key]
@@ -129,6 +136,18 @@ class DatabaseTests(DeployFixture):
                     before = {
                         p: p.read_bytes() for p in deploy.HOME.rglob("*") if p.is_file()
                     }
+                    self.write(
+                        "bundle.yaml",
+                        yaml.safe_dump(
+                            {
+                                "name": component,
+                                "components": [component],
+                                "requires": {}
+                                if component == "platform"
+                                else {"platform": {"min": "0.2.0", "before": "0.3.0"}},
+                            }
+                        ),
+                    )
                     self.process.reset_mock()
                     with self.assertRaisesRegex(deploy.DeployError, "Missing " + key):
                         deploy.install_components()
@@ -208,7 +227,7 @@ class DatabaseTests(DeployFixture):
         self.assertFalse(self.password.exists())
 
     def test_all_components_share_their_secret_and_public_database_parameters(self):
-        for component in ("core", "app1", "app2"):
+        for component in ("platform", "app1", "app2"):
             config = deploy.component_defaults(component)
             config["PUBLIC_HOSTNAME"] = "myproduct-proxy"
             docs = []
@@ -242,7 +261,7 @@ class DatabaseTests(DeployFixture):
                 self.assertEqual(
                     volume["secret"]["items"], [{"key": "password", "path": "password"}]
                 )
-            relative = "identity-db" if component == "core" else "database"
+            relative = "identity-db" if component == "platform" else "database"
             self.assertIn(
                 "generated-certificates/" + relative + "/password",
                 config[deploy.GENERATED_SECRETS],
@@ -267,7 +286,7 @@ class DatabaseTests(DeployFixture):
 
     def test_shared_dev_port_override_does_not_require_a_database_in_help(self):
         self.write("config/dev.yaml", 'DB_PORT: "5544"\n')
-        for component in ("core", "app1", "app2", "help"):
+        for component in ("platform", "app1", "app2", "help"):
             self.assertEqual(
                 deploy.component_defaults(component, dev=True)["DB_PORT"], "5544"
             )

@@ -1,3 +1,18 @@
+# Current test baseline (platform 0.3.0)
+
+The active component is `platform`, shipped in its own offline bundle. The current
+suite covers separate installation/dependencies, renamed resources, preserved
+sibling state, equal/newer/older platform versions, scoped deletion, legacy/mixed
+layout refusal, retained core volumes, failed volume checks and certificate guards.
+See [PLATFORM-RENAME.md](../acceptance/PLATFORM-RENAME.md) for the full mapping,
+checks and lab commands. Host code and product tests retain Python 3.6 syntax/APIs.
+
+The coverage notes and runtime evidence below are retained from the earlier core
+layout. Their historical counts/results do not assert platform lab verification.
+The commands remain the current local test entry points.
+
+---
+
 # Unit tests
 
 `test_deploy.py` and `test_bundle.py` use only the standard library

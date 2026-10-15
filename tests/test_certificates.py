@@ -1,6 +1,7 @@
 """Exercise the certificate script only in disposable directories."""
 
 import hashlib
+import os
 import shutil
 import stat
 import subprocess
@@ -24,10 +25,22 @@ class CertificateTests(unittest.TestCase):
             self.script,
         )
 
+        stub = self.root / "host-bin"
+        stub.mkdir()
+        podman = stub / "podman"
+        podman.write_text(
+            '#!/bin/sh\nif [ "$3" = core-identity-data ]; then exit "${LEGACY_VOLUME_RC:-1}"; fi\nexit 1\n'
+        )
+        podman.chmod(0o755)
+        self.environment = dict(
+            os.environ, PATH=str(stub) + os.pathsep + os.environ["PATH"]
+        )
+
     def run_script(self, *args):
         return subprocess.run(
             ["bash", str(self.script)] + list(args),
             cwd=str(self.root),
+            env=self.environment,
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -82,9 +95,9 @@ class CertificateTests(unittest.TestCase):
         self.assertFalse((self.root / "generated-certificates").exists())
 
     def test_component_credentials_are_independent_and_generated_once(self):
-        """Keep core/app1 private bytes unchanged when app2 is added or scripts repeat."""
+        """Keep platform/app1 private bytes unchanged when app2 is added or scripts repeat."""
         target = self.root / "component-home"
-        for component in ("core", "app1"):
+        for component in ("platform", "app1"):
             result = self.run_script("--root", str(target), component, "example.test")
             self.assertEqual(result.returncode, 0, result.stdout)
         before = self.fingerprints(target)
@@ -100,7 +113,7 @@ class CertificateTests(unittest.TestCase):
             "Adding app2 changed existing credentials",
         )
         before_repeat = after
-        for component in ("core", "app1", "app2"):
+        for component in ("platform", "app1", "app2"):
             result = self.run_script("--root", str(target), component, "example.test")
             self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(
@@ -109,7 +122,7 @@ class CertificateTests(unittest.TestCase):
         )
         # Database passwords now belong exclusively to deploy's GENERATED_SECRETS.
         for component, relative in (
-            ("core", "identity-db"),
+            ("platform", "identity-db"),
             ("app1", "database"),
             ("app2", "database"),
         ):
@@ -125,6 +138,24 @@ class CertificateTests(unittest.TestCase):
         for path in target.rglob("*"):
             if path.is_file():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_legacy_names_files_and_volumes_refuse_before_certificate_generation(self):
+        target = self.root / "retained"
+        target.mkdir()
+        old = target / "core"
+        old.mkdir()
+        for component in ("platform", "app1", "core"):
+            result = self.run_script("--root", str(target), component)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("core", result.stdout)
+            self.assertFalse((target / "PKI").exists())
+        old.rmdir()
+        for status in ("0", "125"):
+            self.environment["LEGACY_VOLUME_RC"] = status
+            result = self.run_script("--root", str(target), "platform")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no certificates changed", result.stdout)
+            self.assertEqual(list(target.iterdir()), [])
 
     def test_invalid_arguments_do_not_generate_material(self):
         for args in (("--root",), ("--root", ""), ("bad/name",), ("one", "two")):

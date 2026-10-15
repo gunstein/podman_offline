@@ -13,7 +13,7 @@ run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
 bundle=${12:-app1}
-[[ $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
+[[ $bundle == platform || $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
 state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
@@ -42,11 +42,11 @@ def main():
     """Return installed component names after strict name and version validation."""
     names = []
     for path in sorted((pathlib.Path.home() / "installed").glob("*")):
-        if path.name not in ("core", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
+        if path.name not in ("platform", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
             raise SystemExit("FAIL: invalid installed component marker")
         names.append(path.name)
-    if not names or "core" not in names:
-        raise SystemExit("FAIL: no installed core")
+    if not names or "platform" not in names:
+        raise SystemExit("FAIL: no installed platform")
     print("\n".join(names))
 
 
@@ -71,27 +71,27 @@ prepare_release() {
 # Create only missing component configs and credentials; upgrades reuse them.
 install_configuration() {
     local component components existing
-    if [[ $bundle == help ]]; then components=help; else components="core $bundle"; fi
+    components=$bundle
     for component in $components; do
         existing=0
         if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
         as_product python3 "$product/deploy.py" init-config "$component"
-        if [[ $existing == 0 && $component == core ]]; then
-        as_product python3 - "$state/core/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
+        if [[ $existing == 0 && $component == platform ]]; then
+        as_product python3 - "$state/platform/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import pathlib
 import sys
 import yaml
 
 
 def main():
-    """Edit newly initialized core explicitly before initializing dependents."""
+    """Edit newly initialized platform explicitly before initializing dependents."""
     path = pathlib.Path(sys.argv[1])
     with path.open() as stream:
         config = yaml.safe_load(stream)
     config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
     with path.open("w") as stream:
         yaml.safe_dump(config, stream)
-    print("PASS: initial core settings edited: " + str(path))
+    print("PASS: initial platform settings edited: " + str(path))
 
 
 main()
@@ -642,6 +642,37 @@ legacy-build)
     mkdir -p "$src/dist"
     cp dist/myproduct-*-0.2.0-offline.tar.gz* "$src/dist/"
     ;;
+legacy-refusal)
+    prepare_release
+    as_product python3 - "$product/deploy" <<'LEGACY_REFUSAL'
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path.home()
+new_paths = [root / "platform", root / "installed/platform", root / "dependencies",
+             root / ".config/containers/systemd/myproduct-platform.yaml",
+             root / ".config/containers/systemd/myproduct-platform.kube"]
+
+def no_parallel_platform():
+    if any(path.exists() or path.is_symlink() for path in new_paths):
+        raise SystemExit("FAIL: parallel platform files exist on retained core host")
+    for volume in ("platform-identity-data", "platform-identity-protection", "platform-routes", "platform-clients"):
+        check = subprocess.run(["podman", "volume", "exists", volume], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, check=False, timeout=30)
+        if check.returncode != 1:
+            raise SystemExit("FAIL: new platform volume exists or its absence cannot be verified")
+
+no_parallel_platform()
+for arguments in (("init-config", "platform"), ("install",), ("uninstall", "platform", "--delete-data")):
+    result = subprocess.run([sys.argv[1]] + list(arguments), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    if result.returncode != 1 or "Legacy core layout detected" not in result.stderr or "+ podman" in result.stdout:
+        raise SystemExit("FAIL: retained core was not refused before image/state operations")
+no_parallel_platform()
+print("PASS: platform init/install/uninstall refuse retained core without mutation")
+LEGACY_REFUSAL
+    ;;
 legacy-install)
     sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-before"
     prepare_release
@@ -673,7 +704,7 @@ upgrade-bundle)
     (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
     ;;
-help-upgrade-bundle|core-upgrade-bundle)
+help-upgrade-bundle|platform-upgrade-bundle)
     cd "$src"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
     export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle"
@@ -705,30 +736,28 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
         subprocess.run(["podman", "build", "-t", "localhost/myproduct-help:" + version,
                         "-f", str(release / "apps/help/Containerfile"), str(release / "apps/help")], check=True)
     else:
-        core_parts = (release / "CORE_VERSION").read_text().strip().split(".")
-        core_parts[-1] = str(int(core_parts[-1]) + 1)
-        (release / "CORE_VERSION").write_text(".".join(core_parts) + "\n")
+        (release / "PLATFORM_VERSION").write_text(version + "\n")
     bundle.ROOT = release
     bundle.STAGE = source / "build/help-upgrade"
     bundle.DIST = source / "dist"
     if kind == "help":
         bundle.build_release(version, "help", ["help"])
     else:
-        bundle.build_release(version, "app1", ["core", "app1"])
+        bundle.build_release(version, "platform", ["platform"])
 
 HELP_BUILD
     (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
     cat "build/help-upgrade/myproduct-$bundle-$requested_version/images/images.txt"
     ;;
-help-upgrade|core-upgrade)
+help-upgrade|platform-upgrade)
     prepare_release
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     healthy
     wait_trust "$product/deploy.py"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
     ;;
-core-before|core-after|core-downgrade)
-    as_product python3 - "$action" "$state/core-lifecycle.json" "$product" "$state/releases/myproduct-app1-$old_version" <<'CORE_LIFECYCLE'
+platform-before|platform-after|platform-downgrade)
+    as_product python3 - "$action" "$state/platform-lifecycle.json" "$product" "$state/releases/myproduct-platform-$old_version" <<'PLATFORM_LIFECYCLE'
 import hashlib
 import json
 import os
@@ -740,11 +769,11 @@ import sys
 def observe():
     root = Path.home()
     paths = []
-    for directory in ("core", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
+    for directory in ("platform", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
         paths.extend(path for path in (root / directory).rglob("*") if path.is_file())
     files = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-    names = ["core-identity-postgres-db", "core-identity-app", "core-proxy-nginx"]
-    if sys.argv[1] == "core-downgrade":
+    names = ["platform-identity-postgres-db", "platform-identity-app", "platform-proxy-nginx"]
+    if sys.argv[1] == "platform-downgrade":
         for component in ("app1", "app2"):
             if (root / "installed" / component).is_file():
                 names.extend([component + "-postgres-db", component + "-todo-backend", component + "-todo-frontend"])
@@ -755,46 +784,46 @@ def observe():
         result = subprocess.run(["podman", "inspect", "--format", "json", name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True)
         rows = json.loads(result.stdout)
         if len(rows) != 1 or rows[0]["Name"] != name:
-            raise SystemExit("FAIL: invalid core inventory")
+            raise SystemExit("FAIL: invalid platform inventory")
         state = rows[0]["State"]
         if state["Status"] != "running" or state["Health"]["Status"] != "healthy" or type(state["Pid"]) is not int or state["Pid"] <= 1 or not isinstance(state["StartedAt"], str) or not state["StartedAt"] or type(rows[0]["RestartCount"]) is not int or rows[0]["RestartCount"] < 0:
-            raise SystemExit("FAIL: core is not healthy")
+            raise SystemExit("FAIL: platform is not healthy")
         containers[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"]}
-    return {"files": files, "containers": containers, "version": (root / "installed/core").read_text().strip()}
+    return {"files": files, "containers": containers, "version": (root / "installed/platform").read_text().strip()}
 
 
 def main():
     action, snapshot, release, old_release = sys.argv[1:]
     current = observe()
     path = Path(snapshot)
-    if action == "core-before":
+    if action == "platform-before":
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as stream:
             json.dump(current, stream)
-    elif action == "core-after":
+    elif action == "platform-after":
         before = json.loads(path.read_text())
-        expected = (Path(release) / "CORE_VERSION").read_text().strip()
+        expected = (Path(release) / "PLATFORM_VERSION").read_text().strip()
         if current["version"] != expected or current["version"] == before["version"]:
-            raise SystemExit("FAIL: core version was not upgraded")
+            raise SystemExit("FAIL: platform version was not upgraded")
         for name, old in before["containers"].items():
             new = current["containers"][name]
             if new["Pid"] == old["Pid"] or new["StartedAt"] == old["StartedAt"]:
-                raise SystemExit("FAIL: expected explicit core restart")
+                raise SystemExit("FAIL: expected explicit platform restart")
     else:
-        # The previous app bundle is still verified/trusted; refuse its older core.
+        # The previous app bundle is still verified/trusted; refuse its older platform.
         result = subprocess.run(["python3", str(Path(old_release) / "deploy.py"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
-        if result.returncode != 1 or "Core downgrade refused" not in result.stderr or "+ podman" in result.stdout:
-            raise SystemExit("FAIL: older core was not refused before image operations")
+        if result.returncode != 1 or "Platform downgrade refused" not in result.stderr or "+ podman" in result.stdout:
+            raise SystemExit("FAIL: older platform was not refused before image operations")
         if observe() != current:
-            raise SystemExit("FAIL: downgrade refusal changed persistent files or core processes")
+            raise SystemExit("FAIL: downgrade refusal changed persistent files or platform processes")
     print("PASS: " + action + "; private state and inspect contents withheld")
 
 
 try:
     main()
 except (OSError, ValueError, TypeError, KeyError, subprocess.CalledProcessError):
-    raise SystemExit("FAIL: invalid core lifecycle observation")
-CORE_LIFECYCLE
+    raise SystemExit("FAIL: invalid platform lifecycle observation")
+PLATFORM_LIFECYCLE
     ;;
 help-content)
     content=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
@@ -802,7 +831,7 @@ help-content)
     grep -Fq "help-release-$requested_version" <<< "$content"
     echo 'PASS: new help content served via verified HTTPS'
     ;;
-help-retire|core-retire)
+help-retire|platform-retire)
     old_release="$state/releases/myproduct-$bundle-$old_version"
     sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
     sudo -n fapolicyd-cli --update
@@ -835,12 +864,12 @@ def main():
                             stderr=subprocess.PIPE, universal_newlines=True, check=False)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
-    if result.returncode != 1 or result.stderr.strip() != "ERROR: Install an app bundle with core before installing help":
-        raise SystemExit("FAIL: help-alone did not refuse the missing core")
+    if result.returncode != 1 or result.stderr.strip() != "ERROR: Install the separate platform bundle before installing help":
+        raise SystemExit("FAIL: help-alone did not refuse the missing platform")
     home = pathlib.Path.home()
-    if any((home / name).exists() for name in ("installed", "core", "app1", "app2", "help", "routes", "clients")):
+    if any((home / name).exists() for name in ("installed", "platform", "app1", "app2", "help", "routes", "clients")):
         raise SystemExit("FAIL: help-alone changed persistent component state")
-    print("PASS: help-alone refused missing core without component writes")
+    print("PASS: help-alone refused missing platform without component writes")
 
 
 main()
@@ -870,7 +899,7 @@ def main():
     """Hash private persistent files for the controller without printing their contents."""
     root = pathlib.Path.home()
     paths = []
-    for component in ("core", "app1", "app2", "help"):
+    for component in ("platform", "app1", "app2", "help"):
         config = root / component / "config.yaml"
         if config.is_file():
             paths.append(config)
@@ -958,12 +987,12 @@ print("PASS: correct secret connects; sibling password authentication rejected")
 
 
 def logs_safe(home):
-    credentials, containers = [], ["core-identity-app", "core-identity-postgres-db"]
-    for component, relative in (("core", "identity-db"), ("app1", "database"), ("app2", "database")):
+    credentials, containers = [], ["platform-identity-app", "platform-identity-postgres-db"]
+    for component, relative in (("platform", "identity-db"), ("app1", "database"), ("app2", "database")):
         if not (home / "installed" / component).exists():
             continue
         credentials.append((home / component / "generated-certificates" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
-        if component != "core":
+        if component != "platform":
             containers += [component + "-todo-backend", component + "-postgres-db"]
     for container in containers:
         result = subprocess.run(["podman", "logs", container], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -977,7 +1006,7 @@ def logs_safe(home):
 def main():
     home = pathlib.Path.home()
     logs_safe(home)
-    result = subprocess.run(["podman", "exec", "core-identity-app", "dotnet", "Identity.dll", "--database-check"],
+    result = subprocess.run(["podman", "exec", "platform-identity-app", "dotnet", "Identity.dll", "--database-check"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
     if result.returncode or "verified via ConnectionStrings__Default" not in result.stdout:
         raise RuntimeError("Identity runtime environment connection check failed")
@@ -1219,14 +1248,14 @@ LABELS
 import subprocess
 from pathlib import Path
 
-SECRET_FILE = Path("/var/lib/myproduct/core/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
+SECRET_FILE = Path("/var/lib/myproduct/platform/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
 
 
 def main():
     """Compare source bytes to the delivered secret without printing either value."""
     expected = SECRET_FILE.read_bytes()
     result = subprocess.run(
-        ["podman", "exec", "core-identity-app", "bash", "-c",
+        ["podman", "exec", "platform-identity-app", "bash", "-c",
          'printf "%s" "$ApiResources__0__ApiSecrets__0__Value"'],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
     )
@@ -1247,7 +1276,7 @@ API_SECRET
             as_product podman exec "$component-todo-backend" python -c "import socket; socket.create_connection(('$component-postgres',5432),5).close()"
         fi
     done
-    as_product podman exec core-proxy-nginx wget -qO- http://core-identity:8080/identity/.well-known/openid-configuration
+    as_product podman exec platform-proxy-nginx wget -qO- http://platform-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
     uid=$(id -u myproduct)
     journal=$(sudo -n journalctl _UID="$uid" --since "@$run_started" --no-pager)
@@ -1489,10 +1518,11 @@ HANG
     healthy
     wait_backend
     ;;
-siblings-before|siblings-after|help-siblings-before|help-siblings-after|core-siblings-before|core-siblings-after)
+siblings-before|siblings-after|help-siblings-before|help-siblings-after|platform-siblings-before|platform-siblings-after)
     observation="$base/siblings.json"
-    if [[ $action == core-siblings-* ]]; then observation="$base/core-siblings.json"; fi
+    if [[ $action == platform-siblings-* ]]; then observation="$base/platform-siblings.json"; fi
     mode=app1
+    if [[ $action == platform-siblings-* ]]; then mode=platform; fi
     if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
     sudo -n python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
 import hashlib
@@ -1517,15 +1547,19 @@ def observe():
     """Project sibling process identity, version markers and their exact trust records."""
     prefix = ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
               'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
-    help_upgrade = len(sys.argv) > 3 and sys.argv[3] == "help"
-    components = ["app2", "help"]
-    names = ["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend", "help-web-web"]
-    if help_upgrade:
-        components = ["core", "app1"]
-        names = ["core-identity-postgres-db", "core-identity-app", "core-proxy-nginx", "app1-postgres-db", "app1-todo-backend", "app1-todo-frontend"]
-        if pathlib.Path("/var/lib/myproduct/installed/app2").is_file():
-            components.append("app2")
-            names.extend(["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend"])
+    mode = sys.argv[3] if len(sys.argv) > 3 else "app1"
+    components = {"app1": ["platform", "app2", "help"],
+                  "help": ["platform", "app1", "app2"],
+                  "platform": ["app1", "app2", "help"]}[mode]
+    components = [name for name in components if pathlib.Path("/var/lib/myproduct/installed", name).is_file()]
+    names = []
+    for component in components:
+        if component == "platform":
+            names.extend(["platform-identity-postgres-db", "platform-identity-app", "platform-proxy-nginx"])
+        elif component == "help":
+            names.append("help-web-web")
+        else:
+            names.extend([component + "-postgres-db", component + "-todo-backend", component + "-todo-frontend"])
     rows = json.loads(command(prefix + ["podman", "inspect", "--format", "json"] + names))
     if not isinstance(rows, list) or len(rows) != len(names):
         raise SystemExit("FAIL: incomplete sibling inspect list")
@@ -1541,13 +1575,13 @@ def observe():
         observed[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": row["RestartCount"]}
     trust = command(["fapolicyd-cli", "--dump-db"])
     records = sorted(line for line in trust.splitlines()
-                     if any("/releases/myproduct-" + component + "-" in line for component in (["app1", "app2"] if help_upgrade else ["app2", "help"])))
-    if len(records) != (len(components) - 1 if help_upgrade else 2):
+                     if any("/releases/myproduct-" + component + "-" in line for component in components))
+    if len(records) != len(components):
         raise SystemExit("FAIL: expected one trust entry per sibling bundle")
     versions = {name: (pathlib.Path("/var/lib/myproduct/installed") / name).read_text()
                 for name in components}
     result = {"containers": observed, "trust": records, "versions": versions}
-    if help_upgrade:
+    if components:
         root = pathlib.Path("/var/lib/myproduct")
         files = []
         for component in components:
@@ -1573,7 +1607,7 @@ def main():
         with os.fdopen(fd, "w") as stream:
             json.dump(current, stream)
     elif json.loads(path.read_text()) != current:
-        raise SystemExit("FAIL: sibling/core process identity, version, state, network or trust changed")
+        raise SystemExit("FAIL: sibling/platform process identity, version, state, network or trust changed")
     print("SIBLINGS " + json.dumps(current["containers"], sort_keys=True))
     print("PASS: sibling versions and trust " + ("recorded" if sys.argv[1].endswith("siblings-before") else "unchanged"))
 

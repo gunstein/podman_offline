@@ -1,4 +1,4 @@
-DB_HOST: core-identity-postgres
+DB_HOST: platform-identity-postgres
 DB_PORT: '5432'
 DB_USER: identity
 DB_NAME: identity
@@ -7,18 +7,18 @@ GENERATED_SECRETS:
 - generated-certificates/app/ApiResources__0__ApiSecrets__0__Value
 - generated-certificates/identity-db/password
 SECRET_FILES:
-  core-api-secrets:
+  platform-api-secrets:
   - generated-certificates/app
-  core-identity-signing:
+  platform-identity-signing:
   - generated-certificates/identity
-  core-database-password:
+  platform-database-password:
   - generated-certificates/identity-db
-  core-demo-users:
+  platform-demo-users:
   - generated-certificates/users
-  core-web-tls:
+  platform-web-tls:
   - generated-certificates/web
 VOLUME_FILES:
-  core-routes:
+  platform-routes:
   - ../routes
-  core-clients:
+  platform-clients:
   - ../clients

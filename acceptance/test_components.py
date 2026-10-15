@@ -40,7 +40,8 @@ class ComponentHarnessTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(base.runner, "RUNS", root))
         self.stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
         self.harness = base.runner.Run("components", "unused")
-        self.harness.meta["version"] = "0.2.0"
+        self.harness.meta["version"] = "0.3.0"
+        self.harness.meta["platform_version"] = "0.3.0"
         for name in (
             "readiness",
             "reset",
@@ -66,7 +67,7 @@ class ComponentHarnessTests(unittest.TestCase):
                 installs = [
                     call.kwargs["bundle"] for call in calls if call.args[1] == "install"
                 ]
-                self.assertEqual(installs, [first, second, "help"])
+                self.assertEqual(installs, ["platform", first, second, "help"])
                 actions = [call.args[1] for call in calls]
                 self.assertLess(actions.index("help-alone"), actions.index("install"))
                 self.assertLess(
@@ -89,12 +90,12 @@ class ComponentHarnessTests(unittest.TestCase):
         self.harness.transfer_bundles()
         self.assertEqual(
             self.harness.transfer.call_args_list,
-            [mock.call(bundle=name) for name in ("app1", "app2", "help")],
+            [mock.call(bundle=name) for name in ("platform", "app1", "app2", "help")],
         )
         self.harness.transfer.reset_mock()
         self.harness.step = mock.Mock(side_effect=lambda name, action: action())
         self.harness.upgrade()
-        self.harness.transfer.assert_called_once_with("0.2.1")
+        self.harness.transfer.assert_called_once_with("0.3.1")
 
     def run_upgrade_build(self, corrupt=False):
         """Run the real upgrade action against scoped fixture archives and Git/build stubs."""
@@ -164,7 +165,7 @@ class ComponentHarnessTests(unittest.TestCase):
         """A genuine content/image upgrade cannot retire old trust before HTTPS/e2e checks."""
         self.harness.step = mock.Mock(side_effect=lambda name, action: action())
         self.harness.upgrade_help()
-        self.harness.transfer.assert_called_once_with("0.2.2", bundle="help")
+        self.harness.transfer.assert_called_once_with("0.3.2", bundle="help")
         calls = self.harness.guest.call_args_list
         actions = [call.args[1] for call in calls]
         self.assertLess(
@@ -184,27 +185,33 @@ class ComponentHarnessTests(unittest.TestCase):
         self.assertIn('"<p>help-release-" + version', build)
         self.assertNotIn("./build-bundle.sh", build)
 
-    def test_core_upgrade_checks_siblings_e2e_and_downgrade_before_retirement(self):
-        """New core changes deliberately while siblings remain; old core refuses before writes."""
+    def test_platform_upgrade_checks_siblings_e2e_and_downgrade_before_retirement(self):
+        """New platform changes deliberately while siblings remain; old platform refuses before writes."""
         self.harness.meta["upgrade_version"] = "0.2.1"
         self.harness.step = mock.Mock(side_effect=lambda name, action: action())
-        self.harness.upgrade_core()
-        self.harness.transfer.assert_called_once_with("0.2.3")
+        self.harness.upgrade_platform()
+        self.harness.transfer.assert_called_once_with("0.3.1", bundle="platform")
         actions = [call.args[1] for call in self.harness.guest.call_args_list]
         self.assertLess(
-            actions.index("core-siblings-before"), actions.index("core-upgrade")
+            actions.index("platform-siblings-before"), actions.index("platform-upgrade")
         )
-        self.assertLess(actions.index("core-upgrade"), actions.index("core-after"))
-        self.assertLess(actions.index("core-siblings-after"), actions.index("prod-e2e"))
-        self.assertLess(actions.index("core-downgrade"), actions.index("core-retire"))
+        self.assertLess(
+            actions.index("platform-upgrade"), actions.index("platform-after")
+        )
+        self.assertLess(
+            actions.index("platform-siblings-after"), actions.index("prod-e2e")
+        )
+        self.assertLess(
+            actions.index("platform-downgrade"), actions.index("platform-retire")
+        )
         self.assertEqual(actions.count("prod-e2e"), 2)
-        self.assertEqual(actions[-1], "core-siblings-after")
+        self.assertEqual(actions[-1], "platform-siblings-after")
         call = next(
             call
             for call in self.harness.guest.call_args_list
-            if call.args[1] == "core-downgrade"
+            if call.args[1] == "platform-downgrade"
         )
-        self.assertEqual(call.kwargs["old_version"], "0.2.1")
+        self.assertEqual(call.kwargs["old_version"], "0.3.0")
 
     def test_help_upgrade_failure_preserves_old_release_and_trust(self):
         """Any content, sibling or e2e failure stops before old help trust is removed."""
@@ -238,7 +245,7 @@ class ComponentHarnessTests(unittest.TestCase):
         calls = self.harness.guest.call_args_list
         self.assertEqual(
             [call.kwargs["bundle"] for call in calls if call.args[1] == "install"],
-            ["app1", "help"],
+            ["platform", "app1", "help"],
         )
         actions = [call.args[1] for call in calls]
         self.assertIn("app1-e2e", actions)
@@ -248,9 +255,10 @@ class ComponentHarnessTests(unittest.TestCase):
         self.assertEqual(
             self.harness.transfer.call_args_list,
             [
+                mock.call(bundle="platform"),
                 mock.call(bundle="app1"),
                 mock.call(bundle="help"),
-                mock.call("0.2.2", bundle="help"),
+                mock.call("0.3.2", bundle="help"),
             ],
         )
         self.assertTrue(self.harness.finished)
@@ -280,13 +288,13 @@ class ComponentObservationTests(unittest.TestCase):
             root = Path(directory)
             units = root / ".config/containers/systemd"
             units.mkdir(parents=True)
-            for name in ("core", "app1", "app2", "help"):
+            for name in ("platform", "app1", "app2", "help"):
                 (units / ("myproduct-" + name + ".yaml")).write_text(
                     "kind: Pod\nmetadata: {name: "
                     + name
                     + "-pod}\nspec:\n  containers: [{name: app}]\n"
                 )
-            names = {name + "-pod-app" for name in ("core", "app1", "app2", "help")}
+            names = {name + "-pod-app" for name in ("platform", "app1", "app2", "help")}
             rows = [
                 {
                     "Name": name,
@@ -322,7 +330,7 @@ class ComponentObservationTests(unittest.TestCase):
             root = Path(directory)
             units = root / ".config/containers/systemd"
             units.mkdir(parents=True)
-            for name in ("core", "app1"):
+            for name in ("platform", "app1"):
                 (units / ("myproduct-" + name + ".yaml")).write_text(
                     "kind: Pod\nmetadata: {name: duplicate}\nspec:\n  containers: [{name: app}]\n"
                 )
@@ -343,7 +351,7 @@ class ComponentObservationTests(unittest.TestCase):
                 [],
                 1,
                 "",
-                "ERROR: Install an app bundle with core before installing help\n",
+                "ERROR: Install the separate platform bundle before installing help\n",
             )
             with (
                 mock.patch.object(Path, "home", return_value=root),
@@ -418,38 +426,40 @@ class ComponentObservationTests(unittest.TestCase):
             ):
                 code["main"]()
 
-    def test_core_lifecycle_requires_restart_and_preserves_state_on_downgrade(self):
-        """Reject unchanged core identity and any mutation during an older-core refusal."""
-        code = guest_code("CORE_LIFECYCLE")
+    def test_platform_lifecycle_requires_restart_and_preserves_state_on_downgrade(self):
+        """Reject unchanged platform identity and any mutation during an older-platform refusal."""
+        code = guest_code("PLATFORM_LIFECYCLE")
         before = {
             "containers": {
-                "core-proxy-nginx": {
+                "platform-proxy-nginx": {
                     "Pid": 1234,
                     "StartedAt": "before",
                     "RestartCount": 0,
                 }
             },
-            "files": {"core/config.yaml": "private-hash"},
+            "files": {"platform/config.yaml": "private-hash"},
             "version": "0.2.0",
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            snapshot = root / "core.json"
+            snapshot = root / "platform.json"
             snapshot.write_text(json.dumps(before))
-            (root / "CORE_VERSION").write_text("0.2.1\n")
+            (root / "PLATFORM_VERSION").write_text("0.2.1\n")
             current: dict = dict(before, version="0.2.1")
             code["observe"] = lambda: current
             with (
                 mock.patch.object(
                     code["sys"],
                     "argv",
-                    ["guest", "core-after", str(snapshot), str(root), str(root)],
+                    ["guest", "platform-after", str(snapshot), str(root), str(root)],
                 ),
-                self.assertRaisesRegex(SystemExit, "expected explicit core restart"),
+                self.assertRaisesRegex(
+                    SystemExit, "expected explicit platform restart"
+                ),
             ):
                 code["main"]()
             current["containers"] = {
-                "core-proxy-nginx": {
+                "platform-proxy-nginx": {
                     "Pid": 9999,
                     "StartedAt": "after",
                     "RestartCount": 0,
@@ -459,20 +469,26 @@ class ComponentObservationTests(unittest.TestCase):
                 mock.patch.object(
                     code["sys"],
                     "argv",
-                    ["guest", "core-after", str(snapshot), str(root), str(root)],
+                    ["guest", "platform-after", str(snapshot), str(root), str(root)],
                 ),
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 code["main"]()
             self.assertNotIn("private-hash", output.getvalue())
             result = subprocess.CompletedProcess(
-                [], 1, "", "ERROR: Core downgrade refused"
+                [], 1, "", "ERROR: Platform downgrade refused"
             )
             with (
                 mock.patch.object(
                     code["sys"],
                     "argv",
-                    ["guest", "core-downgrade", str(snapshot), str(root), str(root)],
+                    [
+                        "guest",
+                        "platform-downgrade",
+                        str(snapshot),
+                        str(root),
+                        str(root),
+                    ],
                 ),
                 mock.patch.object(subprocess, "run", return_value=result),
                 contextlib.redirect_stdout(io.StringIO()),
@@ -488,18 +504,20 @@ class ComponentObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "before image operations"):
                     code["main"]()
 
-    def test_help_siblings_compare_core_identity_state_network_and_other_trust(self):
-        """Unchanged route permits no arbitrary core restart or mutation of protected fields."""
+    def test_help_siblings_compare_platform_identity_state_network_and_other_trust(
+        self,
+    ):
+        """Unchanged route permits no arbitrary platform restart or mutation of protected fields."""
         code = guest_code("SIBLINGS")
         before = {
             "containers": {
-                "core-proxy-nginx": {
+                "platform-proxy-nginx": {
                     "Pid": 1234,
                     "StartedAt": "before",
                     "RestartCount": 0,
                 }
             },
-            "versions": {"core": "0.2.0", "app1": "0.2.0"},
+            "versions": {"platform": "0.2.0", "app1": "0.2.0"},
             "trust": ["app1 trust"],
             "state": {"app1/config.yaml": "private-hash"},
             "network": "network-id",
@@ -520,7 +538,7 @@ class ComponentObservationTests(unittest.TestCase):
                 (
                     "containers",
                     {
-                        "core-proxy-nginx": {
+                        "platform-proxy-nginx": {
                             "Pid": 9999,
                             "StartedAt": "after",
                             "RestartCount": 0,
@@ -528,7 +546,7 @@ class ComponentObservationTests(unittest.TestCase):
                     },
                 ),
                 ("state", {}),
-                ("versions", {"core": "0.2.1"}),
+                ("versions", {"platform": "0.2.1"}),
                 ("network", "other"),
                 ("trust", []),
             ):
@@ -669,8 +687,8 @@ class DatabaseHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             (home / "installed").mkdir()
-            (home / "installed/core").write_text("0.2.1\n")
-            password = home / "core/generated-certificates/identity-db/password"
+            (home / "installed/platform").write_text("0.2.1\n")
+            password = home / "platform/generated-certificates/identity-db/password"
             password.parent.mkdir(parents=True)
             password.write_text("private-password\n")
             exposed = subprocess.CompletedProcess([], 0, "private-password", "")

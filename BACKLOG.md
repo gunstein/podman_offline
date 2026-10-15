@@ -4,10 +4,13 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Verify the implemented test baseline in the lab (item 10)](#10-supplement-test-coverage-before-structural-changes).
-2. [Rename core to platform (item 8)](#8-rename-core-to-platform).
-3. [Extract Identity (item 9)](#9-extract-identity-into-a-separate-component-and-bundle).
-4. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+1. [Extract Identity (item 9)](#9-extract-identity-into-a-separate-component-and-bundle).
+2. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+
+Implemented: test baseline (item 10, commit `511099e`) and rename/separate
+platform bundle (item 8). Lab verification remains pending for both; it does not
+block the next implementation step. Run the historical upgrade at `511099e` and
+current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
 
 The full agent task descriptions for items 8, 9 and 10 are preserved below, with
 heading levels adjusted for this document. The later clarification in item 9
@@ -22,7 +25,7 @@ restore core or merge Identity back into platform.
 
 ## 10. Supplement test coverage before structural changes
 
-Status: implemented locally; historical lab verification pending, before items 8, 9 and 1.
+Status: implemented locally at `511099e`; historical lab verification pending. Item 8 proceeded with explicit user authorization.
 See [test baseline and lab command](acceptance/TEST-BASELINE.md) for coverage,
 results and the retained 0.2.0 upgrade gate. The original task is preserved below.
 This task includes the retained 0.2.0 upgrade scenario already tracked in item 5;
@@ -361,7 +364,12 @@ verification gaps, not evidence of completed runtime support.
 
 ## 8. Rename core to platform
 
-Status: planned; before item 9 and the deploy refactor. The later separate-bundle clarification above takes precedence over the original bundle assumptions in this task.
+Status: implemented locally in 0.3.0; fresh platform/refusal lab verification pending.
+The user explicitly selected a separate platform bundle for this step. Platform
+still contains Identity until item 9. The original task below is retained;
+[PLATFORM-RENAME.md](acceptance/PLATFORM-RENAME.md) describes the delivered model,
+compatibility boundary and checks. The later separate-bundle clarification takes
+precedence over the original embedded-platform assumptions in this task.
 
 Gi den delte komponenten `core` navnet `platform` i `gunstein/podman_offline`.
 
@@ -876,3 +884,19 @@ Rapporter:
 7. Utsatt arbeid, særlig migrering og modulrefaktorering.
 
 Hold funksjonell oppdeling og senere modulrefaktorering adskilt. Foretrekk eksplisitte, enkle regler fremfor generelle abstraksjoner.
+
+
+## 11. Plan an explicit retained core-to-platform migration
+
+Status: deferred design/operational work; not part of the deploy refactor.
+
+0.3.0 deliberately refuses retained or mixed core/platform state. Design and
+review a separate procedure before migrating an important 0.2.x installation.
+Inventory config, all credentials/certificates and CA, database and Data
+Protection volumes, public registrations/imports, versions/dependencies,
+Quadlet/systemd files and trust. Specify backups/restoration, volume identity/data
+retention, explicit operator steps, verification and failure recovery. Preserve
+password bytes and existing keys; never create an unnoticed empty replacement
+database. Test against real historical releases and representative retained data.
+Do not implement automatic rename, cleanup, resets or migration as part of item 1.
+Coordinate the plan with item 9's Identity split before implementing a procedure.

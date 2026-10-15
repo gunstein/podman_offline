@@ -20,7 +20,7 @@ class ConfigTests(ComponentFixture):
             "config/common.defaults.yaml",
             "PUBLIC_ORIGIN: https://defaults.test:8443\nHTTPS_PORT: 8443\nCHOICE: common\n",
         )
-        for name in ("core", "app1"):
+        for name in ("platform", "app1"):
             self.write(
                 "components/" + name + "/config.defaults.yaml", "CHOICE: component\n"
             )
@@ -29,15 +29,15 @@ class ConfigTests(ComponentFixture):
         """Every later layer replaces a whole value, including empty maps and lists."""
         common = self.write(
             "config/common.defaults.yaml",
-            "HTTPS_PORT: 8443\nCHOICE: common\nSECRET_FILES: {core-one: [one]}\nVOLUME_FILES: {core-old: [old]}\nGENERATED_SECRETS: [old]\n",
+            "HTTPS_PORT: 8443\nCHOICE: common\nSECRET_FILES: {platform-one: [one]}\nVOLUME_FILES: {platform-old: [old]}\nGENERATED_SECRETS: [old]\n",
         )
         component = self.write(
-            "components/core/config.defaults.yaml",
-            "CHOICE: component\nSECRET_FILES: {core-two: [two]}\nGENERATED_SECRETS: [new]\n",
+            "components/platform/config.defaults.yaml",
+            "CHOICE: component\nSECRET_FILES: {platform-two: [two]}\nGENERATED_SECRETS: [new]\n",
         )
         merged = deploy.merge_config(common, component)
         self.assertEqual(merged["CHOICE"], "component")
-        self.assertEqual(merged["SECRET_FILES"], {"core-two": ["two"]})
+        self.assertEqual(merged["SECRET_FILES"], {"platform-two": ["two"]})
         self.assertEqual(merged["GENERATED_SECRETS"], ["new"])
         overrides = {
             "CHOICE": "override",
@@ -79,13 +79,14 @@ class ConfigTests(ComponentFixture):
 
     def test_init_modes_references_and_no_secret_or_image_operations(self):
         """Initialize complete config and private directories, without creating input files."""
-        shutil.rmtree(deploy.HOME / "core")
+        shutil.rmtree(deploy.HOME / "platform")
         self.write(
-            "components/core/config.defaults.yaml",
-            "GENERATED_SECRETS: [private/token]\nSECRET_FILES: {core-token: [private/token]}\n",
+            "components/platform/config.defaults.yaml",
+            "GENERATED_SECRETS: [private/token]\nSECRET_FILES: {platform-token: [private/token]}\n",
         )
-        deploy.init_config("core")
-        target = deploy.HOME / "core/config.yaml"
+        self.select("platform")
+        deploy.init_config("platform")
+        target = deploy.HOME / "platform/config.yaml"
         config = deploy.load_config(target)
         self.assertEqual(config["PUBLIC_ORIGIN"], "https://defaults.test:8443")
         self.assertEqual(config["GENERATED_SECRETS"], ["private/token"])
@@ -97,9 +98,10 @@ class ConfigTests(ComponentFixture):
     def test_init_preserves_empty_invalid_and_valid_existing_files(self):
         """Existence wins over contents; ordinary install remains responsible for validation."""
         for contents in ("", "[invalid", "HTTPS_PORT: 9000\n"):
-            target = self.write("home/core/config.yaml", contents, 0o600)
+            target = self.write("home/platform/config.yaml", contents, 0o600)
             before = target.read_bytes(), target.stat().st_mtime_ns
-            deploy.init_config("core")
+            self.select("platform")
+            deploy.init_config("platform")
             self.assertEqual((target.read_bytes(), target.stat().st_mtime_ns), before)
         self.assertIn("retained unchanged", self.stdout.getvalue())
 
@@ -107,29 +109,32 @@ class ConfigTests(ComponentFixture):
         """Reject unbundled components, symlinked files and any symlink ancestor."""
         with self.assertRaisesRegex(deploy.DeployError, "not included"):
             deploy.init_config("help")
-        target = deploy.HOME / "core/config.yaml"
+        target = deploy.HOME / "platform/config.yaml"
         target.unlink()
         target.symlink_to(self.root / "absent")
         with self.assertRaisesRegex(deploy.DeployError, "symlinked"):
-            deploy.init_config("core")
+            self.select("platform")
+            deploy.init_config("platform")
         target.unlink()
         target.parent.rmdir()
         target.parent.symlink_to(self.root, target_is_directory=True)
         with self.assertRaisesRegex(deploy.DeployError, "symlinked"):
-            deploy.init_config("core")
+            self.select("platform")
+            deploy.init_config("platform")
         target.parent.unlink()
         alias = self.root / "alias"
         alias.symlink_to(deploy.HOME, target_is_directory=True)
         self.stack.enter_context(mock.patch.object(deploy, "HOME", alias))
         self.stack.enter_context(mock.patch.dict(os.environ, {"HOME": str(alias)}))
         with self.assertRaisesRegex(deploy.DeployError, "symlinked"):
-            deploy.init_config("core")
+            self.select("platform")
+            deploy.init_config("platform")
 
-    def test_init_app_inherits_only_two_core_shared_values(self):
-        """Copy the defined shared settings as final overrides, never other core keys."""
+    def test_init_app_inherits_only_two_platform_shared_values(self):
+        """Copy the defined shared settings as final overrides, never other platform keys."""
         self.write(
-            "home/core/config.yaml",
-            "HTTPS_PORT: 9443\nPUBLIC_ORIGIN: https://installed.test:9443\nCHOICE: private-core\n",
+            "home/platform/config.yaml",
+            "HTTPS_PORT: 9443\nPUBLIC_ORIGIN: https://installed.test:9443\nCHOICE: private-platform\n",
         )
         (deploy.HOME / "app1/config.yaml").unlink()
         deploy.init_config("app1")
@@ -138,32 +143,32 @@ class ConfigTests(ComponentFixture):
         self.assertEqual(config["HTTPS_PORT"], 9443)
         self.assertEqual(config["CHOICE"], "component")
 
-    def test_invalid_existing_core_never_falls_back_to_defaults(self):
-        """A present but unusable core config is an operator error."""
+    def test_invalid_existing_platform_never_falls_back_to_defaults(self):
+        """A present but unusable platform config is an operator error."""
         (deploy.HOME / "app1/config.yaml").unlink()
         for contents in (
             "",
             "HTTPS_PORT: 8443\n",
             "PUBLIC_ORIGIN: secret-invalid\nHTTPS_PORT: 8443\n",
         ):
-            self.write("home/core/config.yaml", contents)
+            self.write("home/platform/config.yaml", contents)
             with self.assertRaises(deploy.DeployError) as failure:
                 deploy.init_config("app1")
-            self.assertIn("core/config.yaml", str(failure.exception))
+            self.assertIn("platform/config.yaml", str(failure.exception))
             self.assertNotIn("secret-invalid", str(failure.exception))
             self.assertFalse((deploy.HOME / "app1/config.yaml").exists())
 
-        self.write("home/installed/core", "1.0.0\n")
-        (deploy.HOME / "core/config.yaml").unlink()
+        self.write("home/installed/platform", "1.0.0\n")
+        (deploy.HOME / "platform/config.yaml").unlink()
         with self.assertRaisesRegex(
-            deploy.DeployError, "core/config.yaml.*restore installed core"
+            deploy.DeployError, "platform/config.yaml.*restore installed platform"
         ):
             deploy.init_config("app1")
         self.assertFalse((deploy.HOME / "app1/config.yaml").exists())
 
     def test_production_defaults_changes_do_not_change_effective_config(self):
         """Install never reads new defaults or rewrites either persistent file."""
-        paths = [deploy.HOME / name / "config.yaml" for name in ("core", "app1")]
+        paths = [deploy.HOME / name / "config.yaml" for name in ("platform", "app1")]
         before = {p: p.read_bytes() for p in paths}
         deploy.install()
         self.write("config/common.defaults.yaml", "not valid YAML: [\n")
@@ -182,7 +187,7 @@ class ConfigTests(ComponentFixture):
             "components/app1/config.defaults.yaml", "NEW_REQUIRED: sensitive-default\n"
         )
         self.write(
-            "home/core/config.yaml",
+            "home/platform/config.yaml",
             "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\nGENERATED_SECRETS: [private/token]\n",
         )
         with self.assertRaisesRegex(
@@ -190,23 +195,25 @@ class ConfigTests(ComponentFixture):
         ) as failure:
             deploy.install()
         self.assertNotIn("sensitive-default", str(failure.exception))
-        self.assertFalse((deploy.HOME / "core/private/token").exists())
-        self.assertFalse((deploy.HOME / "installed").exists())
+        self.assertFalse((deploy.HOME / "platform/private/token").exists())
+        self.assertFalse((deploy.HOME / "installed/app1").exists())
         self.process.assert_not_called()
         self.assertTrue(path.exists())
 
     def test_materialized_relative_paths_ignore_defaults_source_directory(self):
         """Secret/volume/generated paths use component state in production and dev."""
         self.write(
-            "components/core/config.defaults.yaml",
-            "SECRET_FILES: {core-token: [inputs/token]}\nVOLUME_FILES: {core-content: [content/message]}\nGENERATED_SECRETS: [private/generated]\n",
+            "components/platform/config.defaults.yaml",
+            "SECRET_FILES: {platform-token: [inputs/token]}\nVOLUME_FILES: {platform-content: [content/message]}\nGENERATED_SECRETS: [private/generated]\n",
         )
-        self.write("components/core/inputs/token", "wrong-source")
-        self.write("components/core/content/message", "wrong-source")
+        self.write("components/platform/inputs/token", "wrong-source")
+        self.write("components/platform/content/message", "wrong-source")
         for dev in (False, True):
             with self.subTest(dev=dev):
-                base = deploy.BUILD / "dev/core" if dev else deploy.HOME / "core"
-                config = deploy.component_defaults("core", dev=dev)
+                base = (
+                    deploy.BUILD / "dev/platform" if dev else deploy.HOME / "platform"
+                )
+                config = deploy.component_defaults("platform", dev=dev)
                 for directory, name, contents in (
                     ("inputs", "token", "materialized-secret"),
                     ("content", "message", "materialized-content"),
@@ -216,8 +223,10 @@ class ConfigTests(ComponentFixture):
                     target.write_text(contents)
                 secrets = deploy.load_file_group(config, "SECRET_FILES", base)
                 volumes = deploy.load_file_group(config, "VOLUME_FILES", base)
-                self.assertEqual(secrets["core-token"], [base / "inputs/token"])
-                self.assertEqual(volumes["core-content"], [base / "content/message"])
+                self.assertEqual(secrets["platform-token"], [base / "inputs/token"])
+                self.assertEqual(
+                    volumes["platform-content"], [base / "content/message"]
+                )
                 self.assertEqual(
                     deploy.generated_secret_paths(config, base),
                     [base / "private/generated"],
@@ -233,20 +242,20 @@ class ConfigTests(ComponentFixture):
             path = self.write("home/app1/config.yaml", settings)
             before = path.read_bytes()
             with self.assertRaisesRegex(
-                deploy.DeployError, "app1/config.yaml.*must match.*core/config.yaml"
+                deploy.DeployError, "app1/config.yaml.*must match.*platform/config.yaml"
             ):
                 deploy.install()
             self.assertEqual(path.read_bytes(), before)
-            self.assertFalse((deploy.HOME / "installed").exists())
+            self.assertFalse((deploy.HOME / "installed/app1").exists())
             self.process.assert_not_called()
 
-    def test_help_init_inherits_shared_values_without_bundled_core(self):
-        """A help-only bundle uses existing core settings without shipping/installing core."""
+    def test_help_init_inherits_shared_values_without_bundled_platform(self):
+        """A help-only bundle uses existing platform settings without shipping/installing platform."""
         self.write("bundle.yaml", "name: help\ncomponents: [help]\n")
         self.component_manifest("help")
         self.write("components/help/config.defaults.yaml", "{}\n")
         self.write(
-            "home/core/config.yaml",
+            "home/platform/config.yaml",
             "PUBLIC_ORIGIN: https://installed.test:9443\nHTTPS_PORT: 9443\n",
         )
         deploy.init_config("help")

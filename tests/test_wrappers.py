@@ -45,7 +45,7 @@ def command(args, **kwargs):
         stream.write(json.dumps(args) + "\\n")
     if args[:2] == ["podman", "save"]:
         Path(args[4]).write_bytes(b"fixture image archive")
-    return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+    return subprocess.CompletedProcess(args, 1 if args[:3] == ["podman", "volume", "exists"] else 0, stdout=b"", stderr=b"")
 subprocess.run = command
 """
 
@@ -67,7 +67,7 @@ class WrapperTests(unittest.TestCase):
                 "bundle.py",
                 "build-bundle.sh",
                 "VERSION",
-                "CORE_VERSION",
+                "PLATFORM_VERSION",
                 "README.md",
             ):
                 shutil.copy2(ROOT / name, source / name)
@@ -77,13 +77,13 @@ class WrapperTests(unittest.TestCase):
             (source / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
             )
-            (source / "bundles.yaml").write_text("app1: [core, app1]\n")
-            for component in ("core", "app1", "app2", "help"):
+            (source / "bundles.yaml").write_text("platform: [platform]\napp1: [app1]\n")
+            for component in ("platform", "app1", "app2", "help"):
                 folder = source / "components" / component
                 (folder / "manifests").mkdir(parents=True)
                 (folder / "config.defaults.yaml").write_text(
-                    "VOLUME_FILES: {core-routes: [../routes], core-clients: [../clients]}\n"
-                    if component == "core"
+                    "VOLUME_FILES: {platform-routes: [../routes], platform-clients: [../clients]}\n"
+                    if component == "platform"
                     else "{}\n"
                 )
                 (folder / "manifests/10-pod.yaml").write_text(
@@ -103,12 +103,12 @@ class WrapperTests(unittest.TestCase):
                                     {
                                         "name": name,
                                         "persistentVolumeClaim": {
-                                            "claimName": "core-" + name
+                                            "claimName": "platform-" + name
                                         },
                                     }
                                     for name in ("routes", "clients")
                                 ]
-                                if component == "core"
+                                if component == "platform"
                                 else [],
                             },
                         }
@@ -144,7 +144,12 @@ class WrapperTests(unittest.TestCase):
 
             run(source, "deploy", "prepare")
             self.assertTrue((source / "build/install.yaml").is_file())
-            self.assertFalse(commands.exists())
+            self.assertTrue(
+                all(
+                    json.loads(line)[:3] == ["podman", "volume", "exists"]
+                    for line in commands.read_text().splitlines()
+                )
+            )
             run(source, "build-bundle.sh")
             version = (source / "VERSION").read_text().strip()
             extracted = root / "extracted"
@@ -158,8 +163,19 @@ class WrapperTests(unittest.TestCase):
                 warnings.simplefilter("ignore", DeprecationWarning)
                 archive.extractall(str(extracted))
             release = extracted / ("myproduct-app1-" + version)
-            for component in ("core", "app1"):
-                run(release, "deploy", "init-config", component)
+            platform_version = (source / "PLATFORM_VERSION").read_text().strip()
+            platform_tar = (
+                source
+                / "dist"
+                / ("myproduct-platform-" + platform_version + "-offline.tar.gz")
+            )
+            with tarfile.open(str(platform_tar)) as archive, warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                archive.extractall(str(extracted))
+            platform_release = extracted / ("myproduct-platform-" + platform_version)
+            run(platform_release, "deploy", "init-config", "platform")
+            run(platform_release, "deploy", "install")
+            run(release, "deploy", "init-config", "app1")
             # Persistent settings override deliberately different release defaults.
             config = home / "app1/config.yaml"
             config_before = config.read_bytes()
@@ -168,11 +184,11 @@ class WrapperTests(unittest.TestCase):
             )
             run(release, "deploy", "install")
             self.assertEqual(config.read_bytes(), config_before)
-            self.assertIn("fixture.test", (home / "core/config.yaml").read_text())
+            self.assertIn("fixture.test", (home / "platform/config.yaml").read_text())
             self.assertEqual((home / "installed/app1").read_text().strip(), version)
             run(release, "deploy", "uninstall")
             self.assertFalse((home / "installed/app1").exists())
-            self.assertTrue((home / "installed/core").exists())
+            self.assertTrue((home / "installed/platform").exists())
             self.assertEqual(config.read_bytes(), config_before)
             calls = [json.loads(line) for line in commands.read_text().splitlines()]
             self.assertIn(

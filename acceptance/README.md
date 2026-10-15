@@ -1,3 +1,39 @@
+# Current platform acceptance (0.3.0)
+
+Run the normal fresh-install/lifecycle matrix from a clean committed checkout:
+
+```sh
+python3 acceptance/acceptance.py --run platform-app1-first --first-app app1 run
+python3 acceptance/acceptance.py --run platform-app2-first --first-app app2 run
+python3 acceptance/acceptance.py --run platform-help --help-only run
+```
+
+Each run resets the configured disposable lab VMs. Platform is transferred and
+installed separately before the chosen first app. All four bundles are checked;
+app-only, help-only and platform-only upgrades preserve unaffected components.
+Platform version requirements and installed dependency metadata are enforced.
+
+Check the new compatibility boundary against genuine old code/images:
+
+```sh
+python3 acceptance/acceptance.py --run platform-core-refusal --legacy-refusal run
+```
+
+This installs pinned core 0.2.0 using the unchanged historical harness, creates
+user data, then requires current platform init/install/uninstall to refuse it.
+Private state, volumes, credentials, process identities and old user data must
+remain unchanged. No migration or cleanup is performed.
+
+The historical successful 0.2.0-to-0.2.1 upgrade remains at commit `511099e`:
+run `--upgrade-020` from a checkout of that commit, before running a resettable
+platform scenario. The current CLI rejects that flag before resetting any VM.
+See [PLATFORM-RENAME.md](PLATFORM-RENAME.md) for scope, local checks and lab gaps.
+
+The documentation below is retained verbatim as historical core-layout guidance
+and evidence through 0.2.1; its bundle/filename assumptions do not describe 0.3.0.
+
+---
+
 # Acceptance: dev → bundle → offline prod
 
 Run from the controller (a Linux laptop with Python 3.11+, git, SSH and scp):

@@ -269,7 +269,7 @@ user_service() {
 }
 # Avoid real waiting in the test.
 sleep() { :; }
-installed_components() { echo core; }
+installed_components() { echo platform; }
 """
         script = (
             "set -eu\nstate_file="
@@ -294,7 +294,7 @@ installed_components() { echo core; }
             ["activating", "activating", "active"]
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(commands, ["is-active myproduct-core.service"] * 3)
+        self.assertEqual(commands, ["is-active myproduct-platform.service"] * 3)
 
     def test_boot_service_failed_stops_immediately_with_status(self):
         """Stop as soon as systemd reports failed and include status diagnostics."""
@@ -303,8 +303,8 @@ installed_components() { echo core; }
         self.assertEqual(
             commands,
             [
-                "is-active myproduct-core.service",
-                "status --no-pager myproduct-core.service",
+                "is-active myproduct-platform.service",
+                "status --no-pager myproduct-platform.service",
             ],
         )
         self.assertIn("service diagnostics", result.stdout)
@@ -313,7 +313,7 @@ installed_components() { echo core; }
         """Reject a service that never becomes active within the wait limit."""
         result, commands = self.boot_service_fixture(["activating"])
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(commands.count("is-active myproduct-core.service"), 120)
+        self.assertEqual(commands.count("is-active myproduct-platform.service"), 120)
         self.assertIn("within 240s", result.stdout)
 
     def test_audit_uses_separate_streams_and_locale_date(self):
@@ -361,7 +361,7 @@ installed_components() { echo core; }
     def state_fixture(self, digest="a"):
         """Build synthetic hash data without secrets for 24 persistent files."""
         names = (
-            "core/config.yaml",
+            "platform/config.yaml",
             "PKI/private/ca.crt",
             "PKI/private/ca.key",
             "PKI/private/ca.srl",
@@ -372,19 +372,19 @@ installed_components() { echo core; }
             "PKI/private/web.csr",
             "PKI/private/web.ext",
             "app1/files/app1-signing.tar",
-            "core/generated-certificates/client/todo-client.crt",
-            "core/generated-certificates/identity-db/password",
-            "core/generated-certificates/identity/identity.crt",
-            "core/generated-certificates/identity/identity.key",
+            "platform/generated-certificates/client/todo-client.crt",
+            "platform/generated-certificates/identity-db/password",
+            "platform/generated-certificates/identity/identity.crt",
+            "platform/generated-certificates/identity/identity.key",
             "app1/generated-certificates/database/password",
             "app1/generated-certificates/todo/ca.crt",
             "app1/generated-certificates/todo/session-key",
             "app1/generated-certificates/todo/todo-client.crt",
             "app1/generated-certificates/todo/todo-client.key",
-            "core/generated-certificates/users/alice-password",
-            "core/generated-certificates/users/bob-password",
-            "core/generated-certificates/web/web.crt",
-            "core/generated-certificates/web/web.key",
+            "platform/generated-certificates/users/alice-password",
+            "platform/generated-certificates/users/bob-password",
+            "platform/generated-certificates/web/web.crt",
+            "platform/generated-certificates/web/web.key",
         )
         return {
             "ca_der_sha256": digest * 64,
@@ -743,6 +743,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_upgrade_preserves_credentials_and_orders_checks(self):
         """Confirm the upgrade order and reuse of the original passwords."""
         self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["platform_version"] = "0.1.0"
         self.harness.persistent_before = self.state_fixture()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture()))
         self.harness.transfer = mock.Mock()
@@ -767,6 +768,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_upgrade_hash_change_stops_before_e2e(self):
         """Confirm a stop before e2e when the upgrade changes persistent state."""
         self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["platform_version"] = "0.1.0"
         self.harness.persistent_before = self.state_fixture()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture("b")))
         self.harness.transfer = mock.Mock()
@@ -780,6 +782,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_failed_upgrade_install_stops_before_other_checks(self):
         """Confirm that a failed upgrade stops later checks."""
         self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["platform_version"] = "0.1.0"
         self.harness.transfer = mock.Mock()
         self.harness.guest = mock.Mock(
             side_effect=["baseline", "built", RuntimeError("install failed")]
@@ -792,6 +795,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_full_run_rechecks_after_reboot_and_upgrade(self):
         """Confirm that prod checks are repeated after reboot and upgrade."""
         self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["platform_version"] = "0.1.0"
         self.harness.readiness = mock.Mock()
         self.harness.reset = mock.Mock()
         self.harness.source = mock.Mock()
@@ -841,20 +845,20 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "10-persistent-after",
             "10-e2e-upgrade",
             "10-markers-upgrade",
-            "10-core-siblings-before",
-            "10-core-before",
-            "10-core-build",
-            "10-core-transfer",
-            "10-core-install",
-            "10-core-after",
-            "10-core-siblings-after",
-            "10-core-persistent",
-            "10-core-e2e",
-            "10-core-markers",
-            "10-core-downgrade",
-            "10-core-e2e-after-refusal",
-            "10-core-retire",
-            "10-core-final-siblings",
+            "10-platform-siblings-before",
+            "10-platform-before",
+            "10-platform-build",
+            "10-platform-transfer",
+            "10-platform-install",
+            "10-platform-after",
+            "10-platform-siblings-after",
+            "10-platform-persistent",
+            "10-platform-e2e",
+            "10-platform-markers",
+            "10-platform-downgrade",
+            "10-platform-e2e-after-refusal",
+            "10-platform-retire",
+            "10-platform-final-siblings",
             "10-database-auth",
             "10-uninstall-app1",
             "10-check-uninstall",
@@ -917,6 +921,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
     def test_launcher_denial_stops_before_markers_hang_or_reboot(self):
         """Stop immediately at the first pre-reboot launcher audit failure."""
         self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["platform_version"] = "0.1.0"
         for name in (
             "readiness",
             "reset",
@@ -972,6 +977,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.private = self.root / "private"
         self.harness.private.mkdir(mode=0o700)
         self.harness.meta["version"] = "0.1.0"
+        self.harness.meta["platform_version"] = "0.1.0"
         self.harness.cfg = {
             "SSH_USER": "operator",
             "PROD_IP": "192.0.2.2",
@@ -1179,7 +1185,7 @@ class HealthTests(unittest.TestCase):
             home = Path(temporary)
             units = home / ".config/containers/systemd"
             units.mkdir(parents=True)
-            (units / "myproduct-core.yaml").touch()
+            (units / "myproduct-platform.yaml").touch()
             with (
                 mock.patch.object(Path, "home", return_value=home),
                 mock.patch.object(subprocess, "run", side_effect=run),

@@ -9,12 +9,12 @@ import deploy
 
 
 class InstallFailureTests(ComponentFixture):
-    """Upgrade an installed app/core while keeping a sibling's private state."""
+    """Upgrade an installed app/platform while keeping a sibling's private state."""
 
     def setUp(self):
         super().setUp()
         self.registration_fixture()
-        for component in ("core", "app1"):
+        for component in ("platform", "app1"):
             path = deploy.HOME / component / "config.yaml"
             config = yaml.safe_load(path.read_text())
             config["VOLUME_FILES"] = {component + "-payload": ["payload"]}
@@ -43,9 +43,13 @@ class InstallFailureTests(ComponentFixture):
             ".config/containers/systemd/myproduct-app2.kube",
         ):
             self.write("home/" + name, "sibling fixture")
+        self.write(
+            "home/dependencies/app2.json",
+            '{"platform": {"min": "1.0.0", "before": "2.0.0"}}',
+        )
         deploy.install()
         self.write("VERSION", "1.2.4\n")
-        self.write("CORE_VERSION", "1.1.0\n")
+        self.write("PLATFORM_VERSION", "1.1.0\n")
         manifest = deploy.ROOT / "components/app1/manifests/10-pod.yaml"
         pod = yaml.safe_load(manifest.read_text())
         pod["metadata"]["name"] = "app1-new-worker"
@@ -68,6 +72,9 @@ class InstallFailureTests(ComponentFixture):
             if args == failure:
                 raise subprocess.CalledProcessError(exit_code, args)
 
+        (deploy.HOME / "routes/app1.conf").write_bytes(
+            self.before["routes/app1.conf"][0]
+        )
         self.process.side_effect = command
 
     def test_image_failures_leave_every_persistent_file_unchanged(self):
@@ -75,7 +82,6 @@ class InstallFailureTests(ComponentFixture):
         failures = [
             ["podman", "load", "-i", str(deploy.ROOT / "images/images.tar")],
             ["podman", "image", "exists", "localhost/app1:1"],
-            ["podman", "image", "exists", "localhost/core:1"],
         ]
         for failure in failures:
             for exit_code in (125,) if failure[1] == "load" else (1, 125):
@@ -91,13 +97,26 @@ class InstallFailureTests(ComponentFixture):
                     self.assertEqual(calls[-1], failure)
                     self.assertTrue(all(args[0] == "podman" for args in calls))
 
+    def test_platform_image_failure_preserves_existing_state(self):
+        """The standalone platform upgrade has its own pre-write image boundary."""
+        self.select("platform")
+        failure = ["podman", "image", "exists", "localhost/platform:1"]
+        for exit_code in (1, 125):
+            with self.subTest(exit=exit_code):
+                self.process.reset_mock()
+                self.fail_at(failure, exit_code)
+                with self.assertRaises(deploy.DeployError):
+                    deploy.install()
+                self.assertEqual(self.snapshot(), self.before)
+                self.assertEqual(self.process.call_args_list[-1].args[0], failure)
+
     def test_service_failures_stop_with_new_files_but_old_version_markers(self):
         """No rollback exists: rendered files/imports commit before the first restart."""
         for component, operation in (
             ("app1", "restart"),
             ("app1", "is-active"),
-            ("core", "restart"),
-            ("core", "is-active"),
+            ("platform", "restart"),
+            ("platform", "is-active"),
         ):
             with self.subTest(component=component, operation=operation):
                 failure = ["systemctl", "--user", operation]
@@ -131,9 +150,9 @@ class InstallFailureTests(ComponentFixture):
                 expected = [
                     ["systemctl", "--user", "restart", "myproduct-app1.service"]
                 ]
-                if component == "core":
+                if component == "platform":
                     expected.append(
-                        ["systemctl", "--user", "restart", "myproduct-core.service"]
+                        ["systemctl", "--user", "restart", "myproduct-platform.service"]
                     )
                 self.assertEqual(
                     [

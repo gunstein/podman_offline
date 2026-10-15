@@ -47,6 +47,9 @@ class DeployFixture(unittest.TestCase):
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(deploy, name, path))
         self.process = self.stack.enter_context(mock.patch.object(subprocess, "run"))
+        self.stack.enter_context(
+            mock.patch.object(deploy, "legacy_volume_exists", return_value=False)
+        )
         self.euid = self.stack.enter_context(
             mock.patch.object(os, "geteuid", return_value=1000)
         )
@@ -427,9 +430,9 @@ class VolumeTests(DeployFixture):
         """Equivalent staged registrations have identical bytes despite fresh file/dir times."""
         source = self.write("stage/app1/client.json", "public-client")
         output = deploy.BUILD / "files"
-        volumes = {"core-clients": [source.parent]}
+        volumes = {"platform-clients": [source.parent]}
         deploy.write_file_archives(volumes, output)
-        archive = output / "core-clients.tar"
+        archive = output / "platform-clients.tar"
         before = archive.read_bytes()
         os.utime(str(source), (10, 10))
         os.utime(str(source.parent), (20, 20))
@@ -824,7 +827,7 @@ class RenderTests(DeployFixture):
         """Render the demo manifests with merged defaults and local dummy files."""
         repo = Path(__file__).resolve().parent.parent
         docs = []
-        for component in ("core", "app1", "app2", "help"):
+        for component in ("platform", "app1", "app2", "help"):
             config = deploy.merge_config(
                 repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",

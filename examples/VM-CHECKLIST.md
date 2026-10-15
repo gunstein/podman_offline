@@ -25,7 +25,7 @@ are in the [acceptance test](../acceptance/README.md).
    }
    release=/var/lib/myproduct/releases/myproduct-app1-0.2.0
    sudo -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$release"
-   sudo systemctl --user -M myproduct@ status myproduct-core.service --no-pager
+   sudo systemctl --user -M myproduct@ status myproduct-platform.service --no-pager
    sudo systemctl --user -M myproduct@ status myproduct-network.service --no-pager
    as_product podman network inspect myproduct
    as_product podman ps --all --pod
@@ -40,7 +40,7 @@ are in the [acceptance test](../acceptance/README.md).
 
    ```sh
    sudo stat -c '%U:%G %a %n' /var/lib/myproduct
-   sudo stat -c '%U:%G %a %n' /var/lib/myproduct/.config/containers/systemd/myproduct-{core,app1,app2,help}.{yaml,kube}
+   sudo stat -c '%U:%G %a %n' /var/lib/myproduct/.config/containers/systemd/myproduct-{platform,app1,app2,help}.{yaml,kube}
    sudo stat -c '%U:%G %a %n' /var/lib/myproduct/app1/files
    sudo find /var/lib/myproduct/app1/files -maxdepth 1 -type f -exec stat -c '%U:%G %a %n' {} \;
    sudo ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
@@ -64,10 +64,10 @@ are in the [acceptance test](../acceptance/README.md).
 
    ```sh
    as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
-   sudo systemctl --user -M myproduct@ cat myproduct-core.service
+   sudo systemctl --user -M myproduct@ cat myproduct-platform.service
    sudo systemctl --user -M myproduct@ cat myproduct-network.service
    as_product podman exec app1-todo-backend python -c 'import socket; socket.create_connection(("app1-postgres",5432),5).close()'
-   as_product podman exec core-proxy-nginx wget -qO- http://core-identity:8080/identity/.well-known/openid-configuration
+   as_product podman exec platform-proxy-nginx wget -qO- http://platform-identity:8080/identity/.well-known/openid-configuration
    ```
 
    Expect a network dependency on myproduct-network.service and
@@ -76,13 +76,13 @@ are in the [acceptance test](../acceptance/README.md).
    be active, all app containers running and the markers still present:
 
    ```sh
-   sudo systemctl --user -M myproduct@ stop myproduct-core.service
+   sudo systemctl --user -M myproduct@ stop myproduct-platform.service
    as_product podman ps --all --pod
    as_product podman secret ls
    as_product podman volume ls
-   sudo systemctl --user -M myproduct@ start myproduct-core.service
+   sudo systemctl --user -M myproduct@ start myproduct-platform.service
    # Check status, HTTPS and markers before the next transition.
-   sudo systemctl --user -M myproduct@ restart myproduct-core.service
+   sudo systemctl --user -M myproduct@ restart myproduct-platform.service
    # Record PID, start time and restart count before the crash.
    as_product podman inspect --format '{{.State.Pid}} {{json .State.StartedAt}} {{.RestartCount}}' app1-todo-backend
    pid=$(as_product podman inspect --format '{{.State.Pid}}' app1-todo-backend)
@@ -118,7 +118,7 @@ are in the [acceptance test](../acceptance/README.md).
    password content and do not delete data to make the test pass.
 
    ```sh
-   sudo journalctl _SYSTEMD_USER_UNIT=myproduct-core.service _UID="$(id -u myproduct)" --no-pager
+   sudo journalctl _SYSTEMD_USER_UNIT=myproduct-platform.service _UID="$(id -u myproduct)" --no-pager
    # Set start to the epoch recorded before the run.
    start_date=$(LC_ALL=C date -d "@$start" +%x)
    start_time=$(date -d "@$start" +%H:%M:%S)
@@ -151,4 +151,4 @@ snapshots with app2 first. Each app has a separate database and markers; identit
 provides shared sign-in. Upgrade app1 and compare app2/help private file names and
 same/changed results plus container restart counts. Uninstall app1 without deleting
 data; app2/help must remain healthy, their markers intact, and the shared network present.
-Core cannot be removed while any app/help is installed.
+Platform cannot be removed while any app/help is installed.
