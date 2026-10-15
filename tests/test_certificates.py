@@ -58,9 +58,9 @@ class CertificateTests(unittest.TestCase):
         target = self.root / "persistent home"
         first = self.run_script("--root", str(target), "example.test")
         self.assertEqual(first.returncode, 0, first.stdout)
-        self.assertFalse((self.project / "generated-certificates").exists())
+        self.assertFalse((self.project / "credentials").exists())
         self.assertTrue((target / "PKI/private/ca.key").is_file())
-        for directory in ("PKI/private", "generated-certificates"):
+        for directory in ("PKI/private", "credentials"):
             self.assertEqual(stat.S_IMODE((target / directory).stat().st_mode), 0o700)
         for path in target.rglob("*"):
             if path.is_file():
@@ -75,7 +75,7 @@ class CertificateTests(unittest.TestCase):
                 "openssl",
                 "x509",
                 "-in",
-                str(target / "generated-certificates/web/web.crt"),
+                str(target / "credentials/web/web.crt"),
                 "-noout",
                 "-text",
             ],
@@ -89,10 +89,8 @@ class CertificateTests(unittest.TestCase):
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue((self.project / "PKI/private/ca.key").is_file())
-        self.assertTrue(
-            (self.project / "generated-certificates/users/alice-password").is_file()
-        )
-        self.assertFalse((self.root / "generated-certificates").exists())
+        self.assertTrue((self.project / "credentials/users/alice-password").is_file())
+        self.assertFalse((self.root / "credentials").exists())
 
     def test_component_credentials_are_independent_and_generated_once(self):
         """Keep platform/app1 private bytes unchanged when app2 is added or scripts repeat."""
@@ -127,13 +125,7 @@ class CertificateTests(unittest.TestCase):
             ("app2", "database"),
         ):
             self.assertFalse(
-                (
-                    target
-                    / component
-                    / "generated-certificates"
-                    / relative
-                    / "password"
-                ).exists()
+                (target / component / "credentials" / relative / "password").exists()
             )
         for path in target.rglob("*"):
             if path.is_file():
@@ -176,4 +168,4 @@ class CertificateTests(unittest.TestCase):
                 result = self.run_script(*args)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("Usage:", result.stdout)
-        self.assertFalse((self.project / "generated-certificates").exists())
+        self.assertFalse((self.project / "credentials").exists())

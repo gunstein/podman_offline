@@ -102,7 +102,9 @@ class PlatformHarnessTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(upgrade_020_guest.COMPONENTS, ("core", "app1", "app2"))
-            run.credentials.assert_called_once_with(component="core")
+            run.credentials.assert_called_once_with(
+                component="core", directory="generated-certificates"
+            )
             self.assertEqual(
                 run.transfer.call_args_list,
                 [

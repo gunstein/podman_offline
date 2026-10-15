@@ -3,17 +3,17 @@ DB_PORT: '5432'
 DB_USER: identity
 DB_NAME: identity
 GENERATED_SECRETS:
-- generated-certificates/app/ApiResources__0__ApiSecrets__0__Value
-- generated-certificates/identity-db/password
+- credentials/app/ApiResources__0__ApiSecrets__0__Value
+- credentials/identity-db/password
 SECRET_FILES:
   identity-api-secrets:
-  - generated-certificates/app
+  - credentials/app
   identity-signing:
-  - generated-certificates/identity
+  - credentials/identity
   identity-database-password:
-  - generated-certificates/identity-db
+  - credentials/identity-db
   identity-demo-users:
-  - generated-certificates/users
+  - credentials/users
 VOLUME_FILES:
   identity-clients:
   - ../clients

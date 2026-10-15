@@ -111,7 +111,7 @@ are in the [acceptance test](../acceptance/README.md).
    again in the new shell session. Linger must start the service without a user login.
 7. Follow the README's upgrade flow with a new VERSION. Use the same passwords
    for full e2e and check the markers from step 5. Compare the CA fingerprint
-   and SHA256 for generated-certificates before/after; no file may change.
+   and SHA256 for credentials before/after; no file may change.
    Check that the old deploy.py has been removed from the trust database.
    Do not generate certificates or replace the config when upgrading.
 8. Record all deviations and collect the journal/audit read-only. Do not log key or

@@ -636,7 +636,7 @@ class DatabaseHarnessTests(unittest.TestCase):
             for component in ("app1", "app2"):
                 (home / "installed").mkdir(exist_ok=True)
                 (home / "installed" / component).write_text("0.2.1\n")
-                password = home / component / "generated-certificates/database/password"
+                password = home / component / "credentials/database/password"
                 password.parent.mkdir(parents=True)
                 password.write_text(secret + "\n")
             positive = subprocess.CompletedProcess(
@@ -698,7 +698,7 @@ class DatabaseHarnessTests(unittest.TestCase):
             home = Path(directory)
             (home / "installed").mkdir()
             (home / "installed/identity").write_text("0.4.0\n")
-            password = home / "identity/generated-certificates/identity-db/password"
+            password = home / "identity/credentials/identity-db/password"
             password.parent.mkdir(parents=True)
             password.write_text("private-password\n")
             exposed = subprocess.CompletedProcess([], 0, "private-password", "")

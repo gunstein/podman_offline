@@ -1,3 +1,15 @@
+# Credential paths (0.4.1)
+
+Active tests use fresh `credentials/` state. Config tests initialize real defaults
+for all five components in dev/production; generation, database preflight,
+registration, preservation and archive tests use the same paths. Bundle tests
+also reject externally delivered credentials and symlink aliases while retaining
+the declaration-based secret checks for arbitrary paths. See
+[CREDENTIAL-PATHS.md](../acceptance/CREDENTIAL-PATHS.md) for current results;
+older counts and lab evidence below remain historical.
+
+---
+
 # Current test baseline (Identity split 0.4.0)
 
 Five separate bundles implement the fixed platform/Identity/app/help dependency

@@ -4,11 +4,11 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Rename component credential paths (item 12)](#12-rename-component-credential-paths).
-2. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+1. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
 
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
-platform bundle (item 8) and separate Identity bundle (item 9, 0.4.0).
+platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
+path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -907,7 +907,9 @@ with item 9 before implementing a procedure.
 
 ## 12. Rename component credential paths
 
-Status: planned; next implementation, before the deploy refactor (item 1).
+Status: implemented in 0.4.1; fresh-install lab verification pending. See
+[credential-path verification](acceptance/CREDENTIAL-PATHS.md). The deploy
+refactor (item 1) is next.
 This task uses fresh state only and requires no migration or backward compatibility.
 The full agent message follows, with heading levels adjusted for this document.
 

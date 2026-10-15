@@ -141,7 +141,7 @@ def login(username, session=None):
                 Path(
                     os.getenv(
                         "SMOKE_PASSWORD_DIR",
-                        str(ROOT / "build/dev/identity/generated-certificates/users"),
+                        str(ROOT / "build/dev/identity/credentials/users"),
                     )
                 )
                 / (username + "-password")

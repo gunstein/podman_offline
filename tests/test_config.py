@@ -2,6 +2,7 @@
 
 import os
 import shutil
+from pathlib import Path
 from unittest import mock
 
 import yaml
@@ -76,6 +77,37 @@ class ConfigTests(ComponentFixture):
                 deploy.component_defaults("app1", dev=True)
             self.assertNotIn("private-key-value", str(failure.exception))
             self.assertNotIn("private-source-value", str(failure.exception))
+
+    def test_real_defaults_initialize_component_credentials_in_dev_and_production(self):
+        """The same shipped host paths resolve beneath each fresh component state."""
+        repo = Path(__file__).resolve().parent.parent
+        self.write(
+            "config/common.defaults.yaml",
+            (repo / "config/common.defaults.yaml").read_bytes(),
+        )
+        for component in deploy.COMPONENTS:
+            source = repo / "components" / component / "config.defaults.yaml"
+            self.write(
+                "components/" + component + "/config.defaults.yaml", source.read_bytes()
+            )
+            self.select(component)
+            target = deploy.HOME / component / "config.yaml"
+            if target.exists():
+                target.unlink()
+            deploy.init_config(component)
+            production = deploy.load_config(target)
+            dev = deploy.component_defaults(component, dev=True)
+            for settings in (production, dev):
+                paths = list(settings.get("GENERATED_SECRETS", []))
+                for group in ("SECRET_FILES", "VOLUME_FILES"):
+                    for entries in settings.get(group, {}).values():
+                        paths.extend(
+                            path for path in entries if not path.startswith("../")
+                        )
+                self.assertTrue(all(path.startswith("credentials/") for path in paths))
+            self.assertEqual(
+                production.get("GENERATED_SECRETS"), dev.get("GENERATED_SECRETS")
+            )
 
     def test_init_modes_references_and_no_secret_or_image_operations(self):
         """Initialize complete config and private directories, without creating input files."""

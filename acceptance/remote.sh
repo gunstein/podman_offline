@@ -790,9 +790,9 @@ def command(arguments):
 
 def observe():
     root = Path.home() / "identity"
-    paths = [root / "config.yaml"] + [path for path in (root / "generated-certificates").rglob("*") if path.is_file()]
+    paths = [root / "config.yaml"] + [path for path in (root / "credentials").rglob("*") if path.is_file()]
     required = ("identity-db/password", "identity/identity.key", "identity/identity.crt")
-    if any(not (root / "generated-certificates" / name).is_file() for name in required):
+    if any(not (root / "credentials" / name).is_file() for name in required):
         raise RuntimeError("Missing Identity credential evidence")
     files = {str(path.relative_to(root)): {"hash": hashlib.sha256(path.read_bytes()).hexdigest(), "mode": path.stat().st_mode & 0o777} for path in paths}
     volumes = {}
@@ -999,7 +999,7 @@ def main():
         config = root / component / "config.yaml"
         if config.is_file():
             paths.append(config)
-        for directory in ("generated-certificates", "files"):
+        for directory in ("credentials", "files"):
             paths.extend(p for p in (root / component / directory).rglob("*") if p.is_file())
     for directory in ("PKI/private", "routes", "clients"):
         paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
@@ -1087,7 +1087,7 @@ def logs_safe(home):
     for component, relative in (("identity", "identity-db"), ("app1", "database"), ("app2", "database")):
         if not (home / "installed" / component).exists():
             continue
-        credentials.append((home / component / "generated-certificates" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
+        credentials.append((home / component / "credentials" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
         if component != "identity":
             containers += [component + "-todo-backend", component + "-postgres-db"]
     for container in containers:
@@ -1110,7 +1110,7 @@ def main():
     for component, sibling in (("app1", "app2"), ("app2", "app1")):
         if not (home / "installed" / component).exists() or not (home / "installed" / sibling).exists():
             continue
-        password = (home / sibling / "generated-certificates/database/password").read_bytes().decode("utf-8").rstrip("\n")
+        password = (home / sibling / "credentials/database/password").read_bytes().decode("utf-8").rstrip("\n")
         result = subprocess.run(["podman", "exec", "-i", component + "-todo-backend", "python", "-c", CHECK],
                                 input=json.dumps({"sibling_password": password}), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 universal_newlines=True, check=False)
@@ -1152,7 +1152,7 @@ def main():
     for marker in (root / "installed").glob("*"):
         component = marker.name
         paths[root / component / "config.yaml"] = 0o600
-        for directory in ("generated-certificates", "files"):
+        for directory in ("credentials", "files"):
             folder = root / component / directory
             if folder.is_dir():
                 paths[folder] = 0o700
@@ -1344,7 +1344,7 @@ LABELS
 import subprocess
 from pathlib import Path
 
-SECRET_FILE = Path("/var/lib/myproduct/identity/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
+SECRET_FILE = Path("/var/lib/myproduct/identity/credentials/app/ApiResources__0__ApiSecrets__0__Value")
 
 
 def main():
@@ -1686,7 +1686,7 @@ def observe():
         files = []
         for component in components:
             files.append(root / component / "config.yaml")
-            for directory in ("generated-certificates", "files"):
+            for directory in ("credentials", "files"):
                 files.extend(path for path in (root / component / directory).rglob("*") if path.is_file())
             for suffix in (".yaml", ".kube"):
                 files.append(root / ".config/containers/systemd" / ("myproduct-" + component + suffix))

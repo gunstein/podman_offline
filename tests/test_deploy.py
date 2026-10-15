@@ -549,8 +549,8 @@ class GeneratedSecretTests(DeployFixture):
 
     def configure_generated(self):
         """Add a generated file and a manifest envFrom Secret reference."""
-        self.config["GENERATED_SECRETS"] = ["generated-certificates/app/key"]
-        self.config["SECRET_FILES"] = {"app-secrets": ["generated-certificates/app"]}
+        self.config["GENERATED_SECRETS"] = ["credentials/app/key"]
+        self.config["SECRET_FILES"] = {"app-secrets": ["credentials/app"]}
         self.write_config()
         self.manifest(
             [
@@ -571,7 +571,7 @@ class GeneratedSecretTests(DeployFixture):
             ],
             "30-generated.yaml",
         )
-        return self.root / "generated-certificates/app/key"
+        return self.root / "credentials/app/key"
 
     def test_prepare_creates_private_alphanumeric_file_without_logging_value(self):
         """Generate 32 characters once and deliver their bytes through SECRET_FILES."""
@@ -614,7 +614,7 @@ class GeneratedSecretTests(DeployFixture):
         prod_config["VOLUME_FILES"] = {"uploads": ["../files/message.txt"]}
         self.write("home/config.yaml", yaml.safe_dump(prod_config))
         deploy.generate_secrets(self.config, deploy.HOME)
-        prod_path = deploy.HOME / "generated-certificates/app/key"
+        prod_path = deploy.HOME / "credentials/app/key"
         before = prod_path.read_bytes()
         deploy.install()
         deploy.install()
@@ -636,7 +636,7 @@ class GeneratedSecretTests(DeployFixture):
         )
         with mock.patch.object(deploy, "MANIFESTS", example / "manifests"):
             first = list(yaml.safe_load_all(deploy.render()))
-            path = self.root / "generated-certificates/app/API_TOKEN"
+            path = self.root / "credentials/app/API_TOKEN"
             before = path.read_bytes()
             second = list(yaml.safe_load_all(deploy.render()))
         self.assertTrue(path.read_bytes() == before, "Example regenerated its secret")
@@ -651,7 +651,7 @@ class GeneratedSecretTests(DeployFixture):
     def test_empty_or_directory_path_is_not_regenerated(self):
         """Reject empty files and directory targets without replacing them."""
         path = self.configure_generated()
-        self.write("generated-certificates/app/key", b"")
+        self.write("credentials/app/key", b"")
         with self.assertRaisesRegex(deploy.DeployError, "empty"):
             deploy.prepare()
         self.assertEqual(path.stat().st_size, 0)

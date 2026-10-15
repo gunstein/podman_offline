@@ -226,6 +226,17 @@ private files out of shipped directories and retain their declarations.
 
 ## Config, secrets and persistence
 
+Component `credentials/` directories contain passwords, session keys, private
+keys and certificates, whether generated locally or supplied externally.
+`GENERATED_SECRETS` selects the files deploy creates; `SECRET_FILES` and
+`VOLUME_FILES` describe how files reach containers. Dev uses
+`build/dev/<component>/credentials/`; production uses
+`/var/lib/myproduct/<component>/credentials/`. Shared `PKI/private` stays in place.
+Release 0.4.1 uses this layout for fresh state only, with no path migration,
+aliases or fallback. Container mounts, Secret/PVC names and image tags are unchanged.
+See [credential-path verification](acceptance/CREDENTIAL-PATHS.md) for results
+and remaining historical references.
+
 `PUBLIC_ORIGIN` must be an HTTPS origin with no credentials, path, query or fragment.
 Invalid values are rejected with the config path and field name; their contents
 are never included in the error.
@@ -259,7 +270,7 @@ Back these files up with all other persistent state. See the
 /var/lib/myproduct/                         service-user home, 0700
 ├── platform/, identity/, app1/, app2/, help/
 │   ├── config.yaml                        0600, retained across releases
-│   ├── generated-certificates/            0700, keys/passwords retained
+│   ├── credentials/                       0700, passwords/keys/certificates retained
 │   └── files/                             0700; import archives 0600
 ├── PKI/private/                           0700; shared demo CA
 ├── routes/<component>.conf                public route registrations
@@ -298,7 +309,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.0
+version=0.4.1
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -562,9 +573,9 @@ or complete connection string is rendered into YAML or written to disk.
 
 | Owner | DB host | User / database | Persistent password below component directory | Secret / key | PostgreSQL volume | Client |
 | --- | --- | --- | --- | --- | --- | --- |
-| identity | identity-postgres | identity / identity | generated-certificates/identity-db/password | identity-database-password / password | identity-data | Identity |
-| app1 | app1-postgres | todo / todo | generated-certificates/database/password | app1-database-password / password | app1-data | app1 Todo backend |
-| app2 | app2-postgres | todo / todo | generated-certificates/database/password | app2-database-password / password | app2-data | app2 Todo backend |
+| identity | identity-postgres | identity / identity | credentials/identity-db/password | identity-database-password / password | identity-data | Identity |
+| app1 | app1-postgres | todo / todo | credentials/database/password | app1-database-password / password | app1-data | app1 Todo backend |
+| app2 | app2-postgres | todo / todo | credentials/database/password | app2-database-password / password | app2-data | app2 Todo backend |
 
 The component directory is `/var/lib/myproduct/<component>` in production and
 `build/dev/<component>` in dev. No DB settings belong in common defaults.

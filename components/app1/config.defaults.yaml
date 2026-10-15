@@ -3,11 +3,11 @@ DB_PORT: '5432'
 DB_USER: todo
 DB_NAME: todo
 GENERATED_SECRETS:
-- generated-certificates/todo/session-key
-- generated-certificates/database/password
+- credentials/todo/session-key
+- credentials/database/password
 SECRET_FILES:
   app1-database-password:
-  - generated-certificates/database
+  - credentials/database
 VOLUME_FILES:
   app1-signing:
-  - generated-certificates/todo
+  - credentials/todo

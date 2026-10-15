@@ -31,7 +31,7 @@ class DatabaseTests(DeployFixture):
         )
         self.path = deploy.HOME / "app1/config.yaml"
         self.settings = deploy.component_defaults("app1")
-        self.password = self.path.parent / "generated-certificates/database/password"
+        self.password = self.path.parent / "credentials/database/password"
         self.manifests = deploy.ROOT / "components/app1/manifests"
         self.process.return_value = subprocess.CompletedProcess([], 1)
 
@@ -62,14 +62,12 @@ class DatabaseTests(DeployFixture):
                 deploy.ROOT / "components" / component / "manifests",
             )
             deploy.generate_secrets(config, base)
-            passwords.append(
-                (base / "generated-certificates/database/password").read_bytes()
-            )
+            passwords.append((base / "credentials/database/password").read_bytes())
         self.assertNotEqual(passwords[0], passwords[1])
 
     def test_generated_password_is_the_shared_kube_secret_and_never_a_placeholder(self):
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
-        self.write("home/app1/generated-certificates/todo/public-fixture", b"fixture")
+        self.write("home/app1/credentials/todo/public-fixture", b"fixture")
         self.preflight()
         text = deploy.render(
             config_path=self.path, manifests=self.manifests, component="app1"
@@ -171,7 +169,7 @@ class DatabaseTests(DeployFixture):
 
     def test_existing_credentials_survive_transition_byte_for_byte(self):
         content = b""" space;both'"$= end \n\n"""
-        self.write("home/app1/generated-certificates/database/password", content, 0o600)
+        self.write("home/app1/credentials/database/password", content, 0o600)
         self.preflight()
         deploy.generate_secrets(self.settings, self.path.parent)
         self.assertEqual(self.password.read_bytes(), content)
@@ -183,9 +181,7 @@ class DatabaseTests(DeployFixture):
         with self.assertRaisesRegex(deploy.DeployError, "app1-data.*restore.*backup"):
             self.preflight()
         self.assertFalse(self.password.parent.exists())
-        self.assertFalse(
-            (self.path.parent / "generated-certificates/todo/session-key").exists()
-        )
+        self.assertFalse((self.path.parent / "credentials/todo/session-key").exists())
         self.process.assert_called_once_with(
             ["podman", "volume", "exists", "app1-data"],
             stdout=subprocess.PIPE,
@@ -196,9 +192,7 @@ class DatabaseTests(DeployFixture):
     def test_empty_invalid_or_unreadable_password_never_replaced(self):
         for content in (b"", b"\n\n", b"a\x00b", b"a\nb", b"a\r\n", b"\xff"):
             with self.subTest(kind=repr(content)):
-                self.write(
-                    "home/app1/generated-certificates/database/password", content
-                )
+                self.write("home/app1/credentials/database/password", content)
                 with self.assertRaisesRegex(deploy.DeployError, "password.*restore"):
                     self.preflight()
                 self.assertEqual(self.password.read_bytes(), content)
@@ -271,7 +265,7 @@ class DatabaseTests(DeployFixture):
                 )
             relative = "identity-db" if component == "identity" else "database"
             self.assertIn(
-                "generated-certificates/" + relative + "/password",
+                "credentials/" + relative + "/password",
                 config[deploy.GENERATED_SECRETS],
             )
             serialized = yaml.safe_dump(docs)

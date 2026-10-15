@@ -158,7 +158,7 @@ from pathlib import Path
 
 def main():
     """Require private files, exact delivery and unchanged bytes after another play."""
-    path = Path("generated-certificates/app/API_TOKEN")
+    path = Path("credentials/app/API_TOKEN")
     before = path.read_bytes()
     if (len(before) != 32 or not before.decode("ascii").isalnum()
             or path.stat().st_mode & 0o777 != 0o600

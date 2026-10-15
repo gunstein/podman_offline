@@ -4,4 +4,4 @@ scopes:
 - openid
 - profile
 - app2
-certificate: generated-certificates/todo/todo-client.crt
+certificate: credentials/todo/todo-client.crt

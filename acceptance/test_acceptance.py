@@ -372,19 +372,19 @@ installed_components() { echo platform; }
             "PKI/private/web.csr",
             "PKI/private/web.ext",
             "app1/files/app1-signing.tar",
-            "platform/generated-certificates/client/todo-client.crt",
-            "identity/generated-certificates/identity-db/password",
-            "identity/generated-certificates/identity/identity.crt",
-            "identity/generated-certificates/identity/identity.key",
-            "app1/generated-certificates/database/password",
-            "app1/generated-certificates/todo/ca.crt",
-            "app1/generated-certificates/todo/session-key",
-            "app1/generated-certificates/todo/todo-client.crt",
-            "app1/generated-certificates/todo/todo-client.key",
-            "identity/generated-certificates/users/alice-password",
-            "identity/generated-certificates/users/bob-password",
-            "platform/generated-certificates/web/web.crt",
-            "platform/generated-certificates/web/web.key",
+            "platform/credentials/client/todo-client.crt",
+            "identity/credentials/identity-db/password",
+            "identity/credentials/identity/identity.crt",
+            "identity/credentials/identity/identity.key",
+            "app1/credentials/database/password",
+            "app1/credentials/todo/ca.crt",
+            "app1/credentials/todo/session-key",
+            "app1/credentials/todo/todo-client.crt",
+            "app1/credentials/todo/todo-client.key",
+            "identity/credentials/users/alice-password",
+            "identity/credentials/users/bob-password",
+            "platform/credentials/web/web.crt",
+            "platform/credentials/web/web.key",
         )
         return {
             "ca_der_sha256": digest * 64,
@@ -1005,12 +1005,15 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.ssh = mock.Mock(side_effect=["/run/user/1000", ""])
         self.harness.command = mock.Mock()
 
+        paths = []
+
         def transfer(args, stdout, **kwargs):
             """Simulate the SSH transfer and check that it uses private file output."""
             self.assertIn(
                 "sudo -n -H -u myproduct cat /var/lib/myproduct/",
                 args[-1],
             )
+            paths.append(args[-1])
             stdout.write(b"synthetic-private-content")
             return subprocess.CompletedProcess(
                 args, 0, stderr=b"SSH transfer warning\n"
@@ -1018,6 +1021,14 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
 
         with mock.patch.object(runner.subprocess, "run", side_effect=transfer):
             self.harness.step("credentials", self.harness.credentials)
+        self.assertEqual(
+            paths,
+            [
+                "sudo -n -H -u myproduct cat /var/lib/myproduct/PKI/private/ca.crt",
+                "sudo -n -H -u myproduct cat /var/lib/myproduct/identity/credentials/users/alice-password",
+                "sudo -n -H -u myproduct cat /var/lib/myproduct/identity/credentials/users/bob-password",
+            ],
+        )
         self.assertNotIn(
             "synthetic-private-content",
             (self.harness.folder / "logs/credentials.log").read_text(),

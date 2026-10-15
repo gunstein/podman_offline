@@ -51,7 +51,10 @@ def execute(run):
             "05-install-" + bundle, lambda b=bundle: old_guest("PROD", "install", b)
         )
         run.step("05-health-" + bundle, lambda: old_guest("PROD", "health"))
-    run.step("06-credentials", lambda: run.credentials(component="core"))
+    run.step(
+        "06-credentials",
+        lambda: run.credentials(component="core", directory="generated-certificates"),
+    )
     run.step("06-old-e2e", lambda: run.guest("DEV", "prod-e2e"))
     run.step("06-markers", lambda: run.guest("DEV", "markers-create"))
     run.step("06-baseline", lambda: upgrade_020.guest(run, "baseline"))

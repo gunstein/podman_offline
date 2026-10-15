@@ -70,8 +70,8 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
             exit 1
         fi
     done
-    mkdir -p "$root/PKI/private" "$root/$component/generated-certificates"
-    chmod 700 "$root/PKI" "$root/PKI/private" "$root/$component" "$root/$component/generated-certificates"
+    mkdir -p "$root/PKI/private" "$root/$component/credentials"
+    chmod 700 "$root/PKI" "$root/PKI/private" "$root/$component" "$root/$component/credentials"
     cd "$root"
     if [[ -e PKI/private/ca.key || -e PKI/private/ca.crt ]]; then
         [[ -s PKI/private/ca.key && -s PKI/private/ca.crt ]] || {
@@ -113,20 +113,20 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
     }
     case "$component" in
         platform)
-            issue_component web platform/generated-certificates/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
+            issue_component web platform/credentials/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
             ;;
         identity)
-            issue_component identity identity/generated-certificates/identity ''
+            issue_component identity identity/credentials/identity ''
             for entry in users/alice-password users/bob-password; do
-                component_password "identity/generated-certificates/$entry"
+                component_password "identity/credentials/$entry"
             done
-            mkdir -p identity/generated-certificates/app
-            chmod 700 identity/generated-certificates/app
+            mkdir -p identity/credentials/app
+            chmod 700 identity/credentials/app
             ;;
         app1|app2)
-            issue_component todo-client "$component/generated-certificates/todo" 'extendedKeyUsage=clientAuth'
-            if [[ ! -e $component/generated-certificates/todo/ca.crt ]]; then
-                cp PKI/private/ca.crt "$component/generated-certificates/todo/ca.crt"
+            issue_component todo-client "$component/credentials/todo" 'extendedKeyUsage=clientAuth'
+            if [[ ! -e $component/credentials/todo/ca.crt ]]; then
+                cp PKI/private/ca.crt "$component/credentials/todo/ca.crt"
             fi
             ;;
         help) ;;
@@ -141,11 +141,11 @@ if [[ $# -gt 1 || ! $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]; then
 fi
 mkdir -p "$root"
 cd "$root"
-if [[ -e PKI/private/ca.key || -e generated-certificates/identity/identity.key ]]; then
+if [[ -e PKI/private/ca.key || -e credentials/identity/identity.key ]]; then
     echo 'PKI already exists. Keeping existing keys; see PKI/README.md.' >&2
     exit 1
 fi
-mkdir -p PKI/private generated-certificates/{identity,todo,web,users,client}
+mkdir -p PKI/private credentials/{identity,todo,web,users,client}
 openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
     -keyout PKI/private/ca.key -out PKI/private/ca.crt \
     -subj '/CN=MyProduct Development CA' \
@@ -160,14 +160,14 @@ issue() {
         -CAkey PKI/private/ca.key -CAcreateserial -days 365 -sha256 \
         -extfile "PKI/private/$name.ext" -out "$dir/$name.crt"
 }
-issue identity generated-certificates/identity ''
-issue todo-client generated-certificates/todo 'extendedKeyUsage=clientAuth'
-issue web generated-certificates/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
-cp generated-certificates/todo/todo-client.crt generated-certificates/client/
-cp PKI/private/ca.crt generated-certificates/todo/ca.crt
-openssl rand -hex 32 > generated-certificates/todo/session-key
+issue identity credentials/identity ''
+issue todo-client credentials/todo 'extendedKeyUsage=clientAuth'
+issue web credentials/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
+cp credentials/todo/todo-client.crt credentials/client/
+cp PKI/private/ca.crt credentials/todo/ca.crt
+openssl rand -hex 32 > credentials/todo/session-key
 for path in users/alice-password users/bob-password; do
-    openssl rand -hex 24 > "generated-certificates/$path"
+    openssl rand -hex 24 > "credentials/$path"
 done
 printf 'PKI created for %s. CA: PKI/private/ca.crt\n' "$hostname"
-printf 'Demo passwords: generated-certificates/users/{alice,bob}-password\n'
+printf 'Demo passwords: credentials/users/{alice,bob}-password\n'

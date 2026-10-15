@@ -53,7 +53,7 @@ class IdentityTests(ComponentFixture):
         self.imports_fixture()
         self.registration_fixture()
         self.write(
-            "home/identity/generated-certificates/identity-db/password",
+            "home/identity/credentials/identity-db/password",
             "retained password\n",
             0o600,
         )
@@ -64,14 +64,14 @@ class IdentityTests(ComponentFixture):
             if name.endswith("config.yaml")
             or name.startswith(
                 (
-                    "identity/generated-certificates/",
+                    "identity/credentials/",
                     "installed/identity",
                     "installed/platform",
                 )
             )
         }
         route = self.root / "components/app1/route.conf"
-        certificate = deploy.HOME / "app1/generated-certificates/todo/todo-client.crt"
+        certificate = deploy.HOME / "app1/credentials/todo/todo-client.crt"
         for index, (route_changed, client_changed) in enumerate(
             ((False, False), (True, False), (False, True), (True, True))
         ):

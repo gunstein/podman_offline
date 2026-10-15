@@ -84,13 +84,21 @@ def pull_images(images):
 def generated_secret_guard(config_dirs=None):
     """Reject copies of declared local secrets, including symlink aliases."""
     secrets = set()
+    directories = list(config_dirs or [ROOT])
+    credential_roots = {(ROOT / "credentials").resolve()}
+    for directory in directories:
+        if directory != ROOT:
+            credential_roots.add((directory / "credentials").resolve())
+            credential_roots.add(
+                (ROOT / "build/dev" / directory.name / "credentials").resolve()
+            )
     sources = []
     # Standalone manifest fixtures keep explicit root-level config; products do not.
     if not (ROOT / "components").is_dir():
         sources.extend(
             [(ROOT / "config.yaml", ROOT), (ROOT / "config.defaults.yaml", ROOT)]
         )
-    for directory in config_dirs or [ROOT]:
+    for directory in directories:
         if directory == ROOT:
             continue
         base = ROOT / "build/dev" / directory.name
@@ -114,6 +122,15 @@ def generated_secret_guard(config_dirs=None):
         """Fail before copying a secret file or a directory containing one."""
         for name in names:
             path = (Path(directory) / name).resolve()
+            for private in credential_roots:
+                if (
+                    path == private
+                    or private in path.parents
+                    or path in private.parents
+                ):
+                    raise BundleError(
+                        f"Cannot bundle credentials via {Path(directory) / name}"
+                    )
             for secret in secrets:
                 if path == secret or path in secret.parents:
                     raise BundleError(
@@ -235,8 +252,8 @@ def build_release(version, bundle_name=None, components=None):
         shutil.copytree(ROOT / "files", target / "files", ignore=guard)
 
     if not components:
-        (target / "generated-certificates").mkdir(mode=0o700)
-        (target / "generated-certificates").chmod(0o700)
+        (target / "credentials").mkdir(mode=0o700)
+        (target / "credentials").chmod(0o700)
         (target / "build").mkdir()
 
     (target / "deploy").chmod(0o755)

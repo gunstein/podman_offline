@@ -105,7 +105,7 @@ class ComponentFixture(DeployFixture):
         for name in ("route.conf", "client.yaml"):
             self.write("components/app1/" + name, (source / name).read_bytes())
         self.write(
-            "home/app1/generated-certificates/todo/todo-client.crt",
+            "home/app1/credentials/todo/todo-client.crt",
             "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
         )
         work = self.root / "registration-stage"
@@ -342,7 +342,7 @@ class ComponentTests(ComponentFixture):
         work.mkdir()
         self.write(
             "components/app1/client.yaml",
-            "id: app2\nbase_path: /app1\nscopes: [openid, profile, app1]\ncertificate: generated-certificates/todo/todo-client.crt\n",
+            "id: app2\nbase_path: /app1\nscopes: [openid, profile, app1]\ncertificate: credentials/todo/todo-client.crt\n",
         )
         with self.assertRaisesRegex(deploy.DeployError, "Invalid public client"):
             deploy.registration_stage(["app1"], work)
@@ -456,9 +456,7 @@ class ComponentTests(ComponentFixture):
                             )
             if component.startswith("app"):
                 self.write(
-                    "build/dev/"
-                    + component
-                    + "/generated-certificates/todo/todo-client.crt",
+                    "build/dev/" + component + "/credentials/todo/todo-client.crt",
                     "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
                 )
         for component, relative in (
@@ -467,11 +465,7 @@ class ComponentTests(ComponentFixture):
             ("app2", "database"),
         ):
             self.write(
-                "build/dev/"
-                + component
-                + "/generated-certificates/"
-                + relative
-                + "/password",
+                "build/dev/" + component + "/credentials/" + relative + "/password",
                 b"retained-db-password\n",
             )
         before = (deploy.HOME / "app1/config.yaml").read_bytes()
@@ -665,7 +659,7 @@ class ComponentTests(ComponentFixture):
                 self.select(first)
                 deploy.install()
                 credentials = self.write(
-                    "home/" + first + "/generated-certificates/token",
+                    "home/" + first + "/credentials/token",
                     "sibling-credential",
                     0o600,
                 )

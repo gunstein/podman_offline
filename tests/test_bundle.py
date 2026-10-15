@@ -144,9 +144,7 @@ class BundleTests(unittest.TestCase):
                 "scripts/prepare-host.sh",
             ):
                 self.assertEqual(archive.getmember(prefix + name).mode, 0o755)
-            self.assertEqual(
-                archive.getmember(prefix + "generated-certificates").mode, 0o700
-            )
+            self.assertEqual(archive.getmember(prefix + "credentials").mode, 0o700)
             self.assertTrue(archive.getmember(prefix + "build").isdir())
             seen = set()
             for line in (
@@ -208,6 +206,35 @@ class BundleTests(unittest.TestCase):
                 self.process.assert_not_called()
                 self.assertFalse(bundle.DIST.exists())
                 alias.unlink()
+
+    def test_private_credentials_and_symlink_aliases_cannot_enter_archives(self):
+        """Externally delivered keys are private even without GENERATED_SECRETS."""
+        component = self.root / "components/app1"
+        for base in (
+            "credentials",
+            "components/app1/credentials",
+            "build/dev/app1/credentials",
+        ):
+            key = self.write(
+                base + "/todo/client.key", "externally-delivered-private-key"
+            )
+            guard = bundle.generated_secret_guard([self.root, component])
+            for source in (key, key.parent, key.parent.parent):
+                with self.subTest(base=base, source=source.name):
+                    with self.assertRaisesRegex(bundle.BundleError, "credentials"):
+                        guard(source.parent, [source.name])
+                    alias = self.root / "files/alias"
+                    alias.parent.mkdir(exist_ok=True)
+                    alias.symlink_to(source, target_is_directory=source.is_dir())
+                    with self.assertRaisesRegex(bundle.BundleError, "credentials"):
+                        guard(alias.parent, [alias.name])
+                    alias.unlink()
+        alias = self.root / "files/alias"
+        alias.symlink_to(key.parent, target_is_directory=True)
+        with self.assertRaisesRegex(bundle.BundleError, "credentials"):
+            bundle.build()
+        self.assertFalse(bundle.DIST.exists())
+        self.process.assert_not_called()
 
     def test_multiple_files_documents_flow_maps_and_deployments(self):
         self.write(

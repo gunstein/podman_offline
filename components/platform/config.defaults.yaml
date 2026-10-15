@@ -1,7 +1,7 @@
 IP_ADDRESS: 127.0.0.1
 SECRET_FILES:
   platform-web-tls:
-  - generated-certificates/web
+  - credentials/web
 VOLUME_FILES:
   platform-routes:
   - ../routes

@@ -651,7 +651,7 @@ class Run:
             lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
         )
 
-    def credentials(self, component="identity"):
+    def credentials(self, component="identity", directory="credentials"):
         """Move the CA and demo passwords through private runtime files without logging content."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
@@ -663,9 +663,8 @@ class Run:
         base = "/var/lib/myproduct/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
-            "alice-password": component
-            + "/generated-certificates/users/alice-password",
-            "bob-password": component + "/generated-certificates/users/bob-password",
+            "alice-password": component + "/" + directory + "/users/alice-password",
+            "bob-password": component + "/" + directory + "/users/bob-password",
         }
         for name, relative in files.items():
             local = self.private / name

@@ -1,3 +1,13 @@
+# Credential paths (0.4.1)
+
+Fresh installations use `credentials/` below each component's state directory,
+including `build/dev/<component>/credentials/` in dev. The older sections below
+retain their historical paths and evidence. No credentials are migrated and no
+fallback path is provided. See [CREDENTIAL-PATHS.md](CREDENTIAL-PATHS.md) for current
+verification results and pending fresh-install lab commands.
+
+---
+
 # Current Identity acceptance (0.4.0)
 
 From a clean committed checkout, run each against disposable lab snapshots:
