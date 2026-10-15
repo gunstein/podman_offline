@@ -4,7 +4,8 @@ Planned work, not implemented behavior. Each item requires separate implementati
 and verification. Item numbers are stable references, not execution priority.
 Recommended execution order:
 
-1. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+1. [Rename component credential paths (item 12)](#12-rename-component-credential-paths).
+2. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
 
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
 platform bundle (item 8) and separate Identity bundle (item 9, 0.4.0).
@@ -179,7 +180,7 @@ Foretrekk noen få sterke tester fremfor mange overlappende tester.
 
 ## 1. Deploy maintainability refactor
 
-Status: planned; after items 10, 8 and 9.
+Status: planned; after items 10, 8, 9 and 12.
 
 Refactor the deploy implementation for maintainability without redesigning the architecture or changing behavior.
 
@@ -903,3 +904,194 @@ Include both retained core 0.2.x and combined platform/Identity 0.3.x sources.
 Target the separate platform/Identity layout of 0.4.0; neither old layout is
 automatically migrated. Coordinate backups, ownership and explicit transitions
 with item 9 before implementing a procedure.
+
+## 12. Rename component credential paths
+
+Status: planned; next implementation, before the deploy refactor (item 1).
+This task uses fresh state only and requires no migration or backward compatibility.
+The full agent message follows, with heading levels adjusted for this document.
+
+Erstatt katalognavnet `generated-certificates/` med `credentials/` for komponentenes passord, sesjonsnøkler, private nøkler og sertifikater i `gunstein/podman_offline`.
+
+Navnet `generated-certificates` beskriver innholdet feil: mappen inneholder også databasepassord og sesjonsnøkler, og materialet kan være både generert og eksternt levert.
+
+Dette er en avgrenset opprydding av filstier. Ikke kombiner den med modulrefaktorering, passordrotasjon eller andre arkitekturendringer.
+
+### 1. Ingen migrering eller bakoverkompatibilitet
+
+Det finnes ingen eksisterende installasjoner som skal oppgraderes.
+
+Implementer bare den nye layouten:
+
+- Ikke lag migreringskode.
+- Ikke lag fallback til `generated-certificates/`.
+- Ikke legg til aliaser eller kompatibilitetsgrener.
+- Ikke lag en flytteprosedyre for gammel state.
+- Bruk fersk, isolert state i testene.
+
+Sletting av andre eksisterende filer, credentials eller databasevolumer inngår ikke i oppgaven.
+
+Historiske verifikasjonsrapporter og evidence skal beholdes uendret.
+
+### 2. Undersøk gjeldende kode
+
+Ta utgangspunkt i faktisk repo-status, inkludert eventuell gjennomført omdøping fra core til platform og utskilling av identity.
+
+Kartlegg aktive referanser til `generated-certificates`, blant annet i:
+
+- Komponentenes config-defaults.
+- `GENERATED_SECRETS`, `SECRET_FILES` og `VOLUME_FILES`.
+- Sertifikatscript og andre generatorer.
+- OIDC-klientdescriptors og offentlig sertifikatregistrering.
+- Database-preflight.
+- Dev-script og smoke-tester.
+- Acceptance-script og persistensobservasjoner.
+- Bundle-beskyttelse mot private filer.
+- README, PKI-dokumentasjon og eksempler.
+
+### 3. Ny standardstruktur
+
+Bruk `credentials/` under hver komponents state-mappe.
+
+For app1 kan strukturen være:
+```
+/var/lib/myproduct/app1/
+├── config.yaml
+└── credentials/
+    ├── database/
+    │   └── password
+    └── todo/
+        ├── session-key
+        ├── todo-client.key
+        ├── todo-client.crt
+        └── ca.crt
+```
+
+Dev bruker tilsvarende:
+```
+build/dev/app1/credentials/
+```
+
+Oppdater config, eksempelvis:
+```
+GENERATED_SECRETS:
+- credentials/todo/session-key
+- credentials/database/password
+
+SECRET_FILES:
+  app1-database-password:
+  - credentials/database
+
+VOLUME_FILES:
+  app1-signing:
+  - credentials/todo
+```
+
+Bruk samme prinsipp for øvrige komponenter.
+
+Behold eksisterende undermapper og filnavn når de fortsatt er meningsfulle. Ikke utvid oppgaven til en generell reorganisering av credentials.
+
+Felles PKI/CA-state utenfor komponentenes `generated-certificates/` skal ikke flyttes som en bieffekt.
+
+### 4. Behold eksisterende funksjonalitet
+
+Dette er en endring av host-side filstier. Behold:
+
+- Secret-navn og keys.
+- PVC-/volumnavn.
+- Pod- og tjenestenavn.
+- Containerens mount-paths, eksempelvis `/run/secrets/database/password` og `/certificates`.
+- Databasebrukere og databasenavn.
+- OIDC-klient-ID-er, scopes og offentlige URL-er.
+- Runtime-mekanismen for connection strings.
+- Config-precedence og autoritativ persistent produksjonsconfig.
+
+Oppdater alle host-side referanser, også sertifikatstier i `client.yaml` eller tilsvarende descriptors.
+
+Unngå endringer i applikasjonskode og images når containergrensesnittet er uendret.
+
+### 5. Behold genererings- og sikkerhetsreglene
+
+Databasepassord og sesjonsnøkler skal fortsatt genereres gjennom eksisterende `GENERATED_SECRETS`.
+
+Sertifikatscriptet skal skrive sitt materiale til de nye stiene. Ikke flytt databasepassordgenerering tilbake til sertifikatscriptet.
+
+Behold eksisterende garantier:
+
+- Manglende hemmeligheter opprettes bare når dette er tillatt.
+- Eksisterende gyldige filer beholdes byte-for-byte ved restart/redeploy.
+- Tomme eller ugyldige filer gir feil.
+- Manglende databasepassord med eksisterende databasevolum avvises.
+- Private fil- og katalogrettigheter beholdes.
+- Symlink-escape og utrygge output-stier avvises.
+- Credentials og komplette connection strings eksponeres ikke i logger.
+
+Disse kontrollene gjelder vanlig drift av den nye layouten. Det skal ikke innføres egne kontroller eller fallback-regler for gammel layout.
+
+### 6. Dev, bundling og acceptance
+
+Oppdater alle helper-script som leser, genererer, overfører eller sammenligner credentials.
+
+Nye dev- og produksjonsinstallasjoner skal bruke samme layout under sine respektive komponentmapper.
+
+Bundle-beskyttelsen skal fortsatt hindre at credentials følger med offline-arkivene, inkludert kopiering gjennom symlink-aliaser.
+
+Behold kontrollene som følger deklarerte secret-filer. Ikke erstatt dem med bare et enkelt navnefilter for mappen `credentials`.
+
+Behold checksum-garantier, offline-egenskaper og eksisterende SELinux-/fapolicyd-kontroller.
+
+### 7. Tester
+
+Oppdater eksisterende tester og legg bare til fokuserte regresjoner der dekning mangler.
+
+Verifiser:
+
+- Defaults og config-initialisering bruker `credentials/`.
+- Genererte filer havner på riktige stier i dev og produksjon.
+- Sertifikatscriptet bruker de nye stiene.
+- OIDC-klientregistrering finner riktig offentlig sertifikat.
+- Server og klient fortsatt bruker samme databasepassord.
+- Restart/redeploy beholder credentials byte-for-byte.
+- Database-preflight fortsatt avviser manglende passord når volumet finnes.
+- Secret-/PVC-navn og container-mounts er uendret.
+- Private filer og symlink-aliaser ikke havner i bundles.
+- Smoke- og acceptance-script bruker de nye plasseringene.
+
+Ikke legg til migreringstester eller tester som krever støtte for gamle configstier.
+
+### 8. Dokumentasjon og opprydding
+
+Dokumenter rollene tydelig:
+
+- `credentials/` inneholder passord, nøkler og sertifikater.
+- `GENERATED_SECRETS` angir hvilke filer som genereres.
+- `SECRET_FILES` og `VOLUME_FILES` angir hvordan filene leveres til containerne.
+
+Søk gjennom hele repoet etter `generated-certificates`. Oppdater aktive referanser i kode, config, tester, eksempler og operatørdokumentasjon.
+
+Behold historiske rapporter og eventuelle fixtures som eksplisitt representerer en historisk release. Forklar gjenværende forekomster i sluttrapporten.
+
+Ikke marker tidligere labresultater som verifikasjon av denne endringen.
+
+### 9. Verifikasjon og leveranse
+
+Kjør:
+
+- Alle produkttester.
+- Alle acceptance-harness-tester.
+- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller med prosjektets eksisterende oppsett.
+
+Behold Python 3.6-kompatibilitet for host-verktøyene.
+
+Kjør relevante ferske installasjons-/e2e-scenarioer i etablert labmiljø dersom dette er tilgjengelig og autorisert. Ikke reset andre miljøer.
+
+Skill tydelig mellom lokale tester, harness-tester og faktisk container-/målmaskinverifikasjon. Oppgi hva som ikke kunne kjøres.
+
+Rapporter kort:
+
+1. Hvilke stier og filer som er endret.
+2. Eventuelle bevisst beholdte historiske referanser.
+3. Testresultater og verifikasjonshull.
+4. Bekreftelse på at det ikke er innført migreringskode eller fallback til gammel layout.
+
+Foretrekk en enkel, konsekvent navneendring fremfor nye abstraksjoner.
