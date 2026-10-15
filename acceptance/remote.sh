@@ -55,7 +55,7 @@ INSTALLED
 }
 # Verify and trust only this bundle's release, reusing an already prepared release.
 prepare_release() {
-    local trust_status=0
+    local trust_status=0 trust_output
     cd "$base"
     archive="myproduct-$bundle-$version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
@@ -65,9 +65,18 @@ prepare_release() {
     fi
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
     # Retry trust even after a previous attempt extracted the release successfully.
-    sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "myproduct-$bundle" || trust_status=$?
-    # add returns 1 when all files are already listed. Require complete live trust below.
-    if [[ $trust_status != 0 && $trust_status != 1 ]]; then return "$trust_status"; fi
+    trust_output=$(sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "myproduct-$bundle" 2>&1) || trust_status=$?
+    # fapolicyd 1.4.5 returns 9 for an entirely duplicate add. Accept only that
+    # diagnostic, then still require every package file in the live database.
+    if [[ $trust_status != 0 ]]; then
+        if [[ $trust_status != 9 || $trust_output != *"After removing duplicates, there is nothing to add"* ]]; then
+            printf '%s\n' "$trust_output" >&2
+            return "$trust_status"
+        fi
+        echo 'Release package already listed; verifying live trust'
+    elif [[ -n $trust_output ]]; then
+        printf '%s\n' "$trust_output"
+    fi
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deployment/"
 }

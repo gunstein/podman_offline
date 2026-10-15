@@ -713,8 +713,15 @@ sudo() {
                     [[ $* == "fapolicyd-cli --file add $product/deployment/ --trust-file myproduct-app1" ]] || return 9
                     echo add >> "$base/calls"
                     if [[ $failure == add ]]; then return 7; fi
-                    if [[ $failure == partial ]]; then return 1; fi
-                    if [[ -f $base/trusted ]]; then return 1; fi
+                    if [[ $failure == add-one ]]; then return 1; fi
+                    if [[ $failure == add-nine ]]; then
+                        echo 'ERROR: another fapolicyd failure' >&2
+                        return 9
+                    fi
+                    if [[ $failure == partial || -f $base/trusted ]]; then
+                        echo 'ERROR: After removing duplicates, there is nothing to add' >&2
+                        return 9
+                    fi
                     touch "$base/trusted";;
                 --update)
                     echo update >> "$base/calls"
@@ -739,7 +746,15 @@ sleep() { :; }
 timeout() { shift; "$@"; }
 prepare_release
 """
-        for failure in ("checksum", "add", "partial", "update", "wait"):
+        for failure in (
+            "checksum",
+            "add",
+            "add-one",
+            "add-nine",
+            "partial",
+            "update",
+            "wait",
+        ):
             with self.subTest(failure=failure):
                 base = self.root / failure
                 base.mkdir()
@@ -767,9 +782,16 @@ prepare_release
                     self.assertEqual(
                         calls, ["archive-check", "extract", "release-check"]
                     )
-                elif failure == "add":
-                    self.assertEqual(first.returncode, 7)
+                elif failure in ("add", "add-one", "add-nine"):
+                    self.assertEqual(
+                        first.returncode,
+                        {"add": 7, "add-one": 1, "add-nine": 9}[failure],
+                    )
                     self.assertNotIn("update", calls)
+                elif failure == "partial":
+                    self.assertIn("update", calls)
+                    self.assertIn("wait", calls)
+                    self.assertIn("trust update did not finish", first.stderr)
                 elif failure == "update":
                     self.assertEqual(first.returncode, 8)
                     self.assertNotIn("wait", calls)
@@ -777,6 +799,7 @@ prepare_release
                     (base / "calls").write_text("")
                     retry = attempt("none")
                     self.assertEqual(retry.returncode, 0, retry.stderr)
+                    self.assertNotIn("ERROR", retry.stdout + retry.stderr)
                     self.assertEqual(
                         (base / "calls").read_text().splitlines(),
                         ["archive-check", "release-check", "add", "update", "wait"],
