@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kjør faste akseptansesteg på VM-ene uten å logge hemmeligheter.
+# Run fixed acceptance steps on the VMs without logging secrets.
 set -euo pipefail
 action=$1
 run=$2
@@ -12,13 +12,16 @@ role=$8
 run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
+bundle=${12:-app1}
+[[ $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
 state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
-product="/var/lib/myproduct/releases/myproduct-RELEASE"
-if [[ -f $base/version ]]; then product="/var/lib/myproduct/releases/myproduct-$(cat "$base/version")"; fi
+version=$requested_version
+if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
+product="$state/releases/myproduct-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
-# Kjør kommandoer som tjenestebrukeren fra hjemmet med riktig runtime.
+# Run commands as the service user from its home with the right runtime.
 as_product() {
     sudo -n -H -u myproduct bash -c '
         cd "$HOME" || exit
@@ -26,9 +29,78 @@ as_product() {
         exec "$@"
     ' bash "$@"
 }
-# Styr produktets tjeneste i tjenestebrukerens systemd-instans.
+# Control the product service in the service user's systemd instance.
 user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
-# Samle audit med adskilte strømmer og godta bare det dokumenterte tomme svaret.
+# List only validated installed component markers, never their private state.
+installed_components() {
+    as_product python3 - <<'INSTALLED'
+import pathlib
+import re
+
+
+def main():
+    """Return installed component names after strict name and version validation."""
+    names = []
+    for path in sorted((pathlib.Path.home() / "installed").glob("*")):
+        if path.name not in ("core", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
+            raise SystemExit("FAIL: invalid installed component marker")
+        names.append(path.name)
+    if not names or "core" not in names:
+        raise SystemExit("FAIL: no installed core")
+    print("\n".join(names))
+
+
+main()
+INSTALLED
+}
+# Verify and trust only this bundle's release, reusing an already prepared release.
+prepare_release() {
+    cd "$base"
+    archive="myproduct-$bundle-$version-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    if ! sudo -n test -d "$product"; then
+        # shellcheck disable=SC2024
+        as_product tar xzf - -C "$state/releases" < "$archive"
+        sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+        sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file "myproduct-$bundle"
+        sudo -n fapolicyd-cli --update
+    fi
+    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
+    wait_trust "$product/deploy.py"
+}
+# Create only missing component configs and credentials; upgrades reuse them.
+install_configuration() {
+    local component components existing
+    if [[ $bundle == help ]]; then components=help; else components="core $bundle"; fi
+    for component in $components; do
+        existing=0
+        if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
+        as_product python3 "$product/deploy.py" init-config "$component"
+        if [[ $existing == 0 && $component == core ]]; then
+        as_product python3 - "$state/core/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
+import pathlib
+import sys
+import yaml
+
+
+def main():
+    """Edit newly initialized core explicitly before initializing dependents."""
+    path = pathlib.Path(sys.argv[1])
+    with path.open() as stream:
+        config = yaml.safe_load(stream)
+    config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
+    with path.open("w") as stream:
+        yaml.safe_dump(config, stream)
+    print("PASS: initial core settings edited: " + str(path))
+
+
+main()
+CONFIG
+        fi
+        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
+    done
+}
+# Collect audit with separate streams and accept only the documented empty result.
 audit_events() {
     sudo -n python3 - "$start_date" "$start_time" "$1" <<'AUDIT'
 import os
@@ -37,7 +109,7 @@ import sys
 
 
 def collect():
-    """Logg audit-strømmene og avvis feil eller avvisninger i kontrollmodus."""
+    """Log the audit streams and reject errors or denials in check mode."""
     result = subprocess.run(
         ["ausearch", "--input-logs", "-m", "FANOTIFY,AVC,USER_AVC", "-ts",
          sys.argv[1], sys.argv[2], "-i"],
@@ -57,7 +129,131 @@ def collect():
 collect()
 AUDIT
 }
-# Vent lesende på eksakte trust-stier etter daemonens asynkrone oppdatering.
+# Preserve safe launcher evidence before reboot discards the volatile journal.
+health_launch_diagnostics() {
+    sudo -n python3 - "$run_started" <<'LAUNCH_DIAGNOSTICS'
+import json
+import pathlib
+import pwd
+import re
+import subprocess
+import sys
+
+UNIT = re.compile(r"\b[0-9a-f]{64}(?:-[0-9a-f]+)?(?:-startup)?\.service\b")
+PROPERTIES = ("LoadState", "ActiveState", "SubState", "Result", "MainPID",
+              "ExecMainPID", "ExecMainCode", "ExecMainStatus", "ExecStart")
+EXEC_ERROR = re.compile(
+    r"Failed (?:at step [A-Z_]+ spawning|to execute) /usr/bin/podman: "
+    r"(?:Operation not permitted|Permission denied|No such file or directory)")
+EXIT_ERROR = re.compile(r"Main process exited, code=exited, status=\d+/[A-Z_]+")
+RESULT_ERROR = re.compile(r"Failed with result '(?:exit-code|signal|core-dump|timeout|resources|protocol)'")
+
+
+def command(arguments):
+    """Read separate streams without printing unfiltered journal or unit data."""
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=30)
+    print(result.stderr or "", end="", file=sys.stderr)
+    if result.returncode:
+        raise RuntimeError("Launch diagnostics command failed: " + arguments[0]
+                           + " exit " + str(result.returncode))
+    return result.stdout
+
+
+def journal_events(output):
+    """Keep only recognized systemd failures and safe identifiers from journal JSON."""
+    events, units = [], set()
+    for line in output.splitlines():
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict) or not isinstance(row.get("MESSAGE"), str):
+                raise ValueError("Invalid journal fields")
+        except (TypeError, ValueError):
+            raise RuntimeError("Invalid journal JSON in launch diagnostics") from None
+        names = set()
+        for key in ("USER_UNIT", "UNIT", "_SYSTEMD_USER_UNIT", "OBJECT_SYSTEMD_USER_UNIT", "MESSAGE"):
+            if isinstance(row.get(key), str):
+                names.update(UNIT.findall(row[key]))
+        units.update(names)
+        errors = [match.group(0) for pattern in (EXEC_ERROR, EXIT_ERROR, RESULT_ERROR)
+                  for match in [pattern.search(row["MESSAGE"])] if match]
+        if not errors:
+            continue
+        event = {"units": sorted(names), "errors": errors}
+        for key in ("__REALTIME_TIMESTAMP", "_PID", "OBJECT_PID"):
+            value = row.get(key)
+            if isinstance(value, str) and value.isdigit():
+                event[key] = value
+        for key, allowed in (("_EXE", ("/usr/lib/systemd/systemd", "/usr/bin/podman")),
+                             ("_COMM", ("systemd", "(podman)", "podman"))):
+            if row.get(key) in allowed:
+                event[key] = row[key]
+        events.append(event)
+    return events, units
+
+
+def unit_state(name, output):
+    """Project loaded launcher state or mark removed transient units unavailable."""
+    values = {}
+    for line in output.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key not in PROPERTIES or key in values:
+            raise RuntimeError("Invalid systemd properties in launch diagnostics")
+        values[key] = value
+    missing = set(PROPERTIES) - set(values)
+    if missing and not (values.get("LoadState") == "not-found" and missing == {"ExecStart"}):
+        raise RuntimeError("Missing systemd properties in launch diagnostics")
+    result = {"unit": name}
+    for key, value in values.items():
+        if key == "ExecStart":
+            match = re.search(r"path=/usr/bin/podman ; argv\[\]=/usr/bin/podman healthcheck run ([0-9a-f]{64}) ;", value)
+            result[key] = ("/usr/bin/podman healthcheck run " + match.group(1)
+                           if match else "withheld: not the expected healthcheck command")
+        elif re.fullmatch(r"[A-Za-z0-9_-]*", value):
+            result[key] = value
+        else:
+            raise RuntimeError("Invalid systemd state value in launch diagnostics")
+    if result["LoadState"] == "not-found":
+        return {"unit": name, "LoadState": "not-found",
+                "evidence": "unavailable: transient unit removed"}
+    return result
+
+
+def main():
+    """Collect read-only launcher state and failures without application messages or environments."""
+    try:
+        user = pwd.getpwnam("myproduct")
+    except KeyError:
+        print("LAUNCH_DIAGNOSTICS: service user absent; no product launcher to inspect")
+        return
+    print("LAUNCH_DIAGNOSTICS boot_id=" + pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+    print(command(["journalctl", "--list-boots", "--no-pager"]), end="")
+    output = command(["journalctl", "--since", "@" + sys.argv[1],
+                      "_UID=" + str(user.pw_uid), "--output=json", "--no-pager"])
+    events, units = journal_events(output)
+    print("LAUNCH_JOURNAL records=" + str(len(output.splitlines())))
+    for event in events:
+        print("LAUNCH_EVENT " + json.dumps(event, sort_keys=True))
+    print("LAUNCH_EVENTS count=" + str(len(events)))
+    listing = command(["systemctl", "--user", "-M", "myproduct@", "list-units",
+                       "--all", "--type=service", "--plain", "--no-legend", "--no-pager"])
+    units.update(UNIT.findall(listing))
+    print("LAUNCH_UNITS count=" + str(len(units)))
+    for name in sorted(units):
+        output = command(["systemctl", "--user", "-M", "myproduct@", "show", name]
+                         + ["--property=" + key for key in PROPERTIES])
+        print("LAUNCH_UNIT " + json.dumps(unit_state(name, output), sort_keys=True))
+    print("PASS: read-only launcher diagnostics collected; unrecognized messages and arguments withheld")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+LAUNCH_DIAGNOSTICS
+}
+# Wait, read-only, for exact trust paths after the daemon's asynchronous update.
 wait_trust() {
     local wanted=$1 removed=${2:-} dump status attempt
     for attempt in {1..30}; do
@@ -87,7 +283,7 @@ wait_trust() {
     echo 'FAIL: trust update did not finish within 30 checks' >&2
     return 1
 }
-# Valider VM-rollens fapolicyd-, SELinux- og firewalld-profil.
+# Validate the VM role's fapolicyd, SELinux and firewalld profile.
 profile() {
     selinux=$(getenforce)
     firewall=$(systemctl show firewalld -p ActiveState --value)
@@ -104,7 +300,7 @@ profile() {
         test "$policy" = active
     fi
 }
-# Logg OS-, verktøy- og oppstartsdata etter profilkontroll.
+# Log OS, tool and boot data after the profile check.
 facts() {
     profile
     cat /etc/os-release
@@ -117,26 +313,31 @@ facts() {
     sudo -n systemctl is-active firewalld
     df -h "$HOME"
 }
-# Vent på automatisk oppstart etter reboot uten å starte eller restarte tjenesten.
+# Wait for automatic start after reboot without starting or restarting the service.
 wait_boot_service() {
+    local component components
+    components=$(installed_components)
+    for component in $components; do
     for _ in {1..120}; do
         status=0
-        service=$(user_service is-active myproduct.service) || status=$?
+        service=$(user_service is-active "myproduct-$component.service") || status=$?
         printf 'boot-service state=%s exit=%s\n' "$service" "$status"
         case "$service:$status" in
-            active:0) return;;
+            active:0) break;;
             failed:*)
-                user_service status --no-pager myproduct.service || true
+                user_service status --no-pager "myproduct-$component.service" || true
                 echo 'FAIL: product service failed after reboot'; return 1;;
             activating:3|inactive:3) sleep 2;;
             *) echo 'FAIL: unexpected service state or command failure'; return 1;;
         esac
     done
-    user_service status --no-pager myproduct.service || true
-    echo 'FAIL: product service did not become active within 240s'
-    return 1
+    if [[ $service != active || $status != 0 ]]; then
+        user_service status --no-pager "myproduct-$component.service" || true
+        echo 'FAIL: product service did not become active within 240s'; return 1
+    fi
+    done
 }
-# Bekreft blokkert internett uten å godta manglende verktøy som nettbevis.
+# Confirm blocked internet without accepting missing tools as network evidence.
 offline() {
     sudo -n systemctl is-active podman-offline-isolation.service
     sudo -n nft list table inet podman_offline
@@ -161,7 +362,7 @@ PY
     # Check prerequisites separately: a missing binary is not proof of isolation.
     sudo -n podman version >/dev/null
     status=0
-    # FD 3 bevarer stdout; bare stderr fanges for å validere nettfeilen.
+    # FD 3 keeps stdout; only stderr is captured to validate the network error.
     { probe_error=$(timeout 20 sudo -n podman pull docker.io/library/busybox 2>&1 1>&3) || status=$?; } 3>&1
     printf '%s\n' "$probe_error" | sed 's/^/pull-probe: /' >&2
     case "$status" in
@@ -175,9 +376,11 @@ PY
     esac
     echo "PASS: public pull failed (exit $status)"
 }
-# Vent på alle manifestdefinerte appcontainere og deres Podman-helsestatus.
+# Wait for all manifest-defined app containers and their Podman health status.
 healthy() {
-    user_service is-active myproduct.service
+    local component components
+    components=$(installed_components)
+    for component in $components; do user_service is-active "myproduct-$component.service"; done
     as_product python3 - <<'HEALTHY'
 import json
 import pathlib
@@ -188,18 +391,18 @@ import yaml
 
 
 def podman(arguments):
-    """Les Podman-stdout uten privat inspect-innhold, og logg stderr ved alle utfall."""
+    """Read Podman stdout without private inspect content, and log stderr on every outcome."""
     result = subprocess.run(["podman"] + arguments, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, universal_newlines=True,
                             check=False, timeout=10)
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("Podman-kontroll feilet: exit " + str(result.returncode))
+        raise RuntimeError("Podman check failed: exit " + str(result.returncode))
     return result.stdout
 
 
 def expected_containers(path):
-    """Les unike app- og init-containernavn fra installert Pod-YAML."""
+    """Read unique app and init-container names from the installed Pod YAML."""
     expected, init = set(), set()
     with path.open() as stream:
         for doc in yaml.safe_load_all(stream):
@@ -210,57 +413,67 @@ def expected_containers(path):
                 for container in doc["spec"].get(group, []):
                     name = pod + "-" + container["name"]
                     if name in expected or name in init:
-                        raise RuntimeError("Duplisert forventet containernavn: " + name)
+                        raise RuntimeError("Duplicate expected container name: " + name)
                     target.add(name)
     if not expected:
-        raise RuntimeError("Ingen appcontainere i installert YAML")
+        raise RuntimeError("No app containers in the installed YAML")
     return expected, init
 
 
 def states(expected, init):
-    """Krev eksakt containerinventar og returner bare offentlige helsetilstandsfelt."""
+    """Require the exact container inventory and return only public health fields."""
     ids = podman(["ps", "-aq"]).splitlines()
     if not ids or any(not value.strip() for value in ids):
-        raise RuntimeError("Manglende containerinventar")
+        raise RuntimeError("Missing container inventory")
     rows = json.loads(podman(["inspect", "--format", "json"] + ids))
     if not isinstance(rows, list) or not rows:
-        raise RuntimeError("Ugyldig inspect-liste")
+        raise RuntimeError("Invalid inspect list")
     found = {}
     for row in rows:
         if type(row["IsInfra"]) is not bool or type(row["IsService"]) is not bool:
-            raise RuntimeError("Ugyldige inventarflagg")
+            raise RuntimeError("Invalid inventory flags")
         if row["IsInfra"] or row["IsService"]:
             continue
         name = row["Name"]
         if name in init:
             continue
         if name not in expected or name in found:
-            raise RuntimeError("Ukjent eller duplisert container: " + str(name))
+            raise RuntimeError("Unknown or duplicate container: " + str(name))
         state = row["State"]
         running, health = state["Status"], state["Health"]["Status"]
         if not isinstance(running, str) or health not in ("starting", "healthy", "unhealthy"):
-            raise RuntimeError("Ugyldig helsestatus: " + name)
+            raise RuntimeError("Invalid health status: " + name)
         found[name] = (running, health)
     if set(found) != expected:
-        raise RuntimeError("Mangler containere: " + ", ".join(sorted(expected - set(found))))
+        raise RuntimeError("Missing containers: " + ", ".join(sorted(expected - set(found))))
     return found
 
 
 def main():
-    """Vent inntil 150 sekunder på healthy; avvis inventar-, kommando- og parsefeil straks."""
-    expected, init = expected_containers(pathlib.Path.home() / ".config/containers/systemd/myproduct.yaml")
+    """Wait up to 150 seconds for healthy; reject inventory, command and parse errors at once."""
+    folder = pathlib.Path.home() / ".config/containers/systemd"
+    paths = sorted(folder.glob("myproduct-*.yaml"))
+    if not paths:
+        raise RuntimeError("No installed component YAML")
+    expected, init = set(), set()
+    for path in paths:
+        names, initial = expected_containers(path)
+        if (expected | init) & (names | initial):
+            raise RuntimeError("Duplicate container names across components")
+        expected.update(names)
+        init.update(initial)
     deadline = time.monotonic() + 150
     while True:
         current = states(expected, init)
         for name, (running, health) in sorted(current.items()):
             print("HEALTH {} state={} health={}".format(name, running, health), flush=True)
             if running != "running" or health == "unhealthy":
-                raise RuntimeError("Containeren er ikke frisk: " + name)
+                raise RuntimeError("Container is not healthy: " + name)
         if all(health == "healthy" for _, health in current.values()):
-            print("PASS: alle {} appcontainere kjører og er healthy".format(len(expected)))
+            print("PASS: all {} app containers are running and healthy".format(len(expected)))
             return
         if time.monotonic() >= deadline:
-            raise RuntimeError("Helsestatus fortsatt starting etter 150s")
+            raise RuntimeError("Health status still starting after 150s")
         time.sleep(min(2, max(0, deadline - time.monotonic())))
 
 
@@ -271,13 +484,13 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: " + str(error))
 HEALTHY
 }
-# Vent på backend gjennom HTTPS-proxyen før autentiserte markørkontroller.
+# Wait for the backend through the HTTPS proxy before authenticated marker checks.
 wait_backend() {
     for _ in {1..30}; do
         status=0
         http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
             --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
-            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/api/health") || status=$?
+            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/app1/api/health") || status=$?
         printf 'backend-health HTTP=%s exit=%s\n' "$http" "$status"
         if [[ $status == 0 && $http == 200 ]]; then
             echo 'PASS: backend ready through HTTPS proxy'; return
@@ -377,11 +590,13 @@ clone)
     ;;
 unit) cd "$src"; python3 -m unittest discover -s tests;;
 build-images) cd "$src"; ./dev/build-images.sh;;
+database-runtime) cd "$src"; python3 acceptance/database_test.py;;
+pull-images) cd "$src"; ./dev/pull-images.sh;;
+registry-test) cd "$src"; python3 acceptance/registry_test.py "$base" "$run";;
 dev-up)
     cd "$src"
-    ./scripts/generate-certificates.sh
-    cp config.example.yaml config.yaml
-    chmod 600 config.yaml
+    cp config/dev.yaml.example config/dev.yaml
+    chmod 600 config/dev.yaml
     ./dev/dev.sh up
     ;;
 venv)
@@ -389,10 +604,15 @@ venv)
     python3 -m venv .venv-smoke
     .venv-smoke/bin/pip install -r apps/todo-backend/requirements.txt
     ;;
-dev-e2e) cd "$src"; .venv-smoke/bin/python dev/smoke-test.py;;
+dev-e2e)
+    cd "$src"
+    for app in app1 app2; do APP_BASE_PATH=/$app .venv-smoke/bin/python dev/smoke-test.py; done
+    ;;
 examples-setup)
-    podman pull docker.io/library/busybox:1.37.0
-    podman tag docker.io/library/busybox:1.37.0 localhost/offline-example:1
+    image=$(cat "$base/registry-fixture/image.txt")
+    podman image exists "$image"
+    podman tag "$image" localhost/offline-example:1
+    echo 'PASS: examples use the BusyBox image downloaded from the TLS test registry'
     ;;
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
@@ -416,83 +636,337 @@ upgrade-bundle)
     test "$changed" = VERSION
     git diff -- VERSION
     ./build-bundle.sh
-    (cd dist && sha256sum -c "myproduct-$requested_version-offline.tar.gz.sha256")
-    cat "build/bundle/myproduct-$requested_version/images/images.txt"
+    (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
+    cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
     ;;
-upgrade)
-    cd "$base"
-    archive="myproduct-$(cat version)-offline.tar.gz"
-    sha256sum -c "$archive.sha256"
-    # shellcheck disable=SC2024
-    sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
-    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-    sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
-    old_release="/var/lib/myproduct/releases/myproduct-$old_version"
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py"
+help-upgrade-bundle|core-upgrade-bundle)
+    cd "$src"
+    [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle"
+    python3 - <<'HELP_BUILD'
+import os
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+import bundle
+
+version = os.environ["HELP_RELEASE_VERSION"]
+source = Path.cwd()
+with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
+    release = Path(directory) / "release"
+    subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(source), str(release)], check=True)
+    (release / "VERSION").write_text(version + "\n")
+    kind = os.environ["RELEASE_KIND"]
+    if kind == "help":
+        manifest = next((release / "components/help/manifests").glob("*.yaml"))
+        text, count = re.subn(r"localhost/myproduct-help:[0-9]+\.[0-9]+\.[0-9]+", "localhost/myproduct-help:" + version, manifest.read_text())
+        if count != 1:
+            raise SystemExit("FAIL: expected exactly one help image")
+        manifest.write_text(text)
+        content = release / "apps/help/index.html"
+        if "</body>" not in content.read_text():
+            raise SystemExit("FAIL: missing help content insertion point")
+        content.write_text(content.read_text().replace("</body>", "<p>help-release-" + version + "</p></body>"))
+        subprocess.run(["podman", "build", "-t", "localhost/myproduct-help:" + version,
+                        "-f", str(release / "apps/help/Containerfile"), str(release / "apps/help")], check=True)
+    else:
+        core_parts = (release / "CORE_VERSION").read_text().strip().split(".")
+        core_parts[-1] = str(int(core_parts[-1]) + 1)
+        (release / "CORE_VERSION").write_text(".".join(core_parts) + "\n")
+    bundle.ROOT = release
+    bundle.STAGE = source / "build/help-upgrade"
+    bundle.DIST = source / "dist"
+    if kind == "help":
+        bundle.build_release(version, "help", ["help"])
+    else:
+        bundle.build_release(version, "app1", ["core", "app1"])
+
+HELP_BUILD
+    (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
+    cat "build/help-upgrade/myproduct-$bundle-$requested_version/images/images.txt"
+    ;;
+help-upgrade|core-upgrade)
+    prepare_release
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
     healthy
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file myproduct
+    wait_trust "$product/deploy.py"
+    if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
+    ;;
+core-before|core-after|core-downgrade)
+    as_product python3 - "$action" "$state/core-lifecycle.json" "$product" "$state/releases/myproduct-app1-$old_version" <<'CORE_LIFECYCLE'
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def observe():
+    root = Path.home()
+    paths = []
+    for directory in ("core", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
+        paths.extend(path for path in (root / directory).rglob("*") if path.is_file())
+    files = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    names = ["core-identity-postgres-db", "core-identity-app", "core-proxy-nginx"]
+    if sys.argv[1] == "core-downgrade":
+        for component in ("app1", "app2"):
+            if (root / "installed" / component).is_file():
+                names.extend([component + "-postgres-db", component + "-todo-backend", component + "-todo-frontend"])
+        if (root / "installed/help").is_file():
+            names.append("help-web-web")
+    containers = {}
+    for name in names:
+        result = subprocess.run(["podman", "inspect", "--format", "json", name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True)
+        rows = json.loads(result.stdout)
+        if len(rows) != 1 or rows[0]["Name"] != name:
+            raise SystemExit("FAIL: invalid core inventory")
+        state = rows[0]["State"]
+        if state["Status"] != "running" or state["Health"]["Status"] != "healthy" or type(state["Pid"]) is not int or state["Pid"] <= 1 or not isinstance(state["StartedAt"], str) or not state["StartedAt"] or type(rows[0]["RestartCount"]) is not int or rows[0]["RestartCount"] < 0:
+            raise SystemExit("FAIL: core is not healthy")
+        containers[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"]}
+    return {"files": files, "containers": containers, "version": (root / "installed/core").read_text().strip()}
+
+
+def main():
+    action, snapshot, release, old_release = sys.argv[1:]
+    current = observe()
+    path = Path(snapshot)
+    if action == "core-before":
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(current, stream)
+    elif action == "core-after":
+        before = json.loads(path.read_text())
+        expected = (Path(release) / "CORE_VERSION").read_text().strip()
+        if current["version"] != expected or current["version"] == before["version"]:
+            raise SystemExit("FAIL: core version was not upgraded")
+        for name, old in before["containers"].items():
+            new = current["containers"][name]
+            if new["Pid"] == old["Pid"] or new["StartedAt"] == old["StartedAt"]:
+                raise SystemExit("FAIL: expected explicit core restart")
+    else:
+        # The previous app bundle is still verified/trusted; refuse its older core.
+        result = subprocess.run(["python3", str(Path(old_release) / "deploy.py"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        if result.returncode != 1 or "Core downgrade refused" not in result.stderr or "+ podman" in result.stdout:
+            raise SystemExit("FAIL: older core was not refused before image operations")
+        if observe() != current:
+            raise SystemExit("FAIL: downgrade refusal changed persistent files or core processes")
+    print("PASS: " + action + "; private state and inspect contents withheld")
+
+
+try:
+    main()
+except (OSError, ValueError, TypeError, KeyError, subprocess.CalledProcessError):
+    raise SystemExit("FAIL: invalid core lifecycle observation")
+CORE_LIFECYCLE
+    ;;
+help-content)
+    content=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --fail --silent --show-error --max-time 10 "https://$prod_host:$port/help/")
+    grep -Fq "help-release-$requested_version" <<< "$content"
+    echo 'PASS: new help content served via verified HTTPS'
+    ;;
+help-retire|core-retire)
+    old_release="$state/releases/myproduct-$bundle-$old_version"
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deploy.py" "$old_release/deploy.py"
-    echo 'PASS: old deploy.py trust removed, new deploy.py trusted'
+    as_product rm -rf -- "$old_release"
+    sudo -n test ! -e "$old_release"
+    echo "PASS: old $bundle release and its own trust retired after verification"
+    ;;
+prepare-host)
+    cd "$base"
+    archive="myproduct-$bundle-$version-offline.tar.gz"
+    sha256sum -c "$archive.sha256"
+    stage=$(mktemp -d /tmp/myproduct-host.XXXXXXXX)
+    tar xzf "$archive" -C "$stage"
+    sudo -n bash "$stage/myproduct-$bundle-$version/scripts/prepare-host.sh" --port "$port"
+    rm -rf -- "$stage"
+    as_product mkdir -p "$state/releases"
+    ;;
+help-alone)
+    prepare_release
+    as_product python3 - "$product/deploy.py" <<'HELP_ALONE'
+import pathlib
+import subprocess
+import sys
+
+
+def main():
+    """Require a clean dependency refusal without creating any component state."""
+    result = subprocess.run(["python3", sys.argv[1], "install"], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    if result.returncode != 1 or result.stderr.strip() != "ERROR: Install an app bundle with core before installing help":
+        raise SystemExit("FAIL: help-alone did not refuse the missing core")
+    home = pathlib.Path.home()
+    if any((home / name).exists() for name in ("installed", "core", "app1", "app2", "help", "routes", "clients")):
+        raise SystemExit("FAIL: help-alone changed persistent component state")
+    print("PASS: help-alone refused missing core without component writes")
+
+
+main()
+HELP_ALONE
+    output=$(as_product podman ps -aq)
+    test -z "$output"
+    ;;
+upgrade)
+    prepare_release
+    old_release="$state/releases/myproduct-$bundle-$old_version"
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
+    healthy
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --update
+    wait_trust "$product/deploy.py" "$old_release/deploy.py"
+    echo 'PASS: old own deploy.py trust removed; other bundles untouched'
     ;;
 persistent-state)
     as_product python3 - <<'HASHES'
-import hashlib, json, pathlib, ssl
-root = pathlib.Path.home()
-paths = [root / "config.yaml"]
-for directory in ("generated-certificates", "PKI/private", "files"):
-    paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
-assert len(paths) > 1
-hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
-ca = ssl.PEM_cert_to_DER_cert((root / "PKI/private/ca.crt").read_text())
-print(json.dumps({"files_sha256": hashes, "ca_der_sha256": hashlib.sha256(ca).hexdigest()}, sort_keys=True))
+import hashlib
+import json
+import pathlib
+import ssl
+
+
+def main():
+    """Hash private persistent files for the controller without printing their contents."""
+    root = pathlib.Path.home()
+    paths = []
+    for component in ("core", "app1", "app2", "help"):
+        config = root / component / "config.yaml"
+        if config.is_file():
+            paths.append(config)
+        for directory in ("generated-certificates", "files"):
+            paths.extend(p for p in (root / component / directory).rglob("*") if p.is_file())
+    for directory in ("PKI/private", "routes", "clients"):
+        paths.extend(p for p in (root / directory).rglob("*") if p.is_file())
+    if not paths:
+        raise SystemExit("FAIL: no persistent files")
+    hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
+    ca = ssl.PEM_cert_to_DER_cert((root / "PKI/private/ca.crt").read_text())
+    print(json.dumps({"files_sha256": hashes, "ca_der_sha256": hashlib.sha256(ca).hexdigest()}, sort_keys=True))
+
+
+main()
 HASHES
     ;;
 unpack)
     cd "$base"
-    archive="myproduct-$requested_version-offline.tar.gz"
+    archive="myproduct-$bundle-$requested_version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
-    tar -xOf "$archive" "myproduct-$requested_version/VERSION" > version
-    version=$(cat version)
+    tar -xOf "$archive" "myproduct-$bundle-$requested_version/VERSION" > "version-$bundle"
+    version=$(cat "version-$bundle")
     test "$version" = "$requested_version"
-    [[ $version =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]
-    cat version
+    [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    cat "version-$bundle"
+    ;;
+registry-offline)
+    cd "$base/registry"
+    sha256sum -c myproduct-0.0.0-offline.tar.gz.sha256
+    tar xzf myproduct-0.0.0-offline.tar.gz
+    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$PWD/myproduct-0.0.0"
+    as_product podman load -i /dev/stdin < myproduct-0.0.0/images/images.tar
+    image=$(cat myproduct-0.0.0/images/images.txt)
+    [[ $image =~ ^127\.0\.0\.1:[0-9]+/acceptance/busybox:1\.37\.0$ ]]
+    as_product podman image exists "$image"
+    as_product podman images --format '{{.Repository}}:{{.Tag}}'
+    result=$(as_product podman run --rm --pull=never --network=none "$image" sh -c 'printf registry-offline-ok')
+    test "$result" = registry-offline-ok
+    echo 'PASS: registry name preserved by save/load; image runs offline with pull=never'
+    healthy
+    start_date=$(LC_ALL=C date -d "@$run_started" +%x)
+    start_time=$(date -d "@$run_started" +%H:%M:%S)
+    audit_events check
     ;;
 install)
-    cd "$base"
-    archive="myproduct-$(cat version)-offline.tar.gz"
-    sha256sum -c "$archive.sha256"
-    stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
-    tar xzf "$archive" -C "$stage"
-    sudo -n bash "$stage/myproduct-$(cat version)/scripts/prepare-host.sh" --port "$port"
-    sudo -n -H -u myproduct mkdir -p /var/lib/myproduct/releases
-    # Operatøren åpner arkivet; myproduct trenger ikke lesetilgang til operatørens hjem.
-    # shellcheck disable=SC2024
-    sudo -n -H -u myproduct tar xzf - -C /var/lib/myproduct/releases < "$archive"
-    rm -rf -- "$stage"
-    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-    sudo -n fapolicyd-cli --file add "$product/deploy.py" --trust-file myproduct
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py"
-    sudo -n -H -u myproduct bash "$product/scripts/generate-certificates.sh" --root "$state" "$prod_host"
-    sudo -n install -o myproduct -g myproduct -m 0600 "$product/config.example.yaml" "$state/config.yaml"
-    sudo -n -H -u myproduct python3 - "$state/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
-import os, sys, yaml
-with open(sys.argv[1]) as stream:
-    config = yaml.safe_load(stream)
-config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
-os.chmod(sys.argv[1], 0o600)
-with open(sys.argv[1], "w") as stream:
-    yaml.safe_dump(config, stream)
-CONFIG
-    date +%s > "$base/install-start"
+    prepare_release
+    install_configuration
+    date +%s > "$base/install-start-$bundle"
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py install' bash "$product"
-    user_service status --no-pager myproduct.service
-    as_product podman images
+    as_product podman ps --all
     sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
+database-auth)
+    as_product python3 - <<'DATABASE_AUTH'
+import json
+import pathlib
+import subprocess
+import sys
+
+# Fixed code only; sibling credentials go over stdin, never argv or generated code.
+CHECK = """
+import json
+import sys
+import psycopg
+from database import authentication_failed, parameters
+try:
+    values = parameters()
+    with psycopg.connect(**values, connect_timeout=5) as connection:
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+    values["password"] = json.load(sys.stdin)["sibling_password"]
+    try:
+        with psycopg.connect(**values, connect_timeout=5) as connection:
+            connection.execute("SELECT 1")
+    except psycopg.Error as error:
+        if not authentication_failed(error):
+            raise RuntimeError("Expected authentication failure") from None
+    else:
+        raise RuntimeError("Sibling password unexpectedly authenticated")
+except Exception:
+    print("FAIL: database credential check (details withheld)")
+    sys.exit(1)
+print("PASS: correct secret connects; sibling password authentication rejected")
+"""
+
+
+def logs_safe(home):
+    credentials, containers = [], ["core-identity-app", "core-identity-postgres-db"]
+    for component, relative in (("core", "identity-db"), ("app1", "database"), ("app2", "database")):
+        if not (home / "installed" / component).exists():
+            continue
+        credentials.append((home / component / "generated-certificates" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
+        if component != "core":
+            containers += [component + "-todo-backend", component + "-postgres-db"]
+    for container in containers:
+        result = subprocess.run(["podman", "logs", container], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, check=False)
+        content = result.stdout + result.stderr
+        if result.returncode or any(value in content for value in credentials) or ("password=" in content.lower() and "host=" in content.lower()):
+            raise RuntimeError("Database log safety check failed (content withheld)")
+    print("PASS: database/client logs contain no database passwords")
+
+
+def main():
+    home = pathlib.Path.home()
+    logs_safe(home)
+    result = subprocess.run(["podman", "exec", "core-identity-app", "dotnet", "Identity.dll", "--database-check"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    if result.returncode or "verified via ConnectionStrings__Default" not in result.stdout:
+        raise RuntimeError("Identity runtime environment connection check failed")
+    print("PASS: installed Identity uses ConnectionStrings__Default")
+    for component, sibling in (("app1", "app2"), ("app2", "app1")):
+        if not (home / "installed" / component).exists() or not (home / "installed" / sibling).exists():
+            continue
+        password = (home / sibling / "generated-certificates/database/password").read_bytes().decode("utf-8").rstrip("\n")
+        result = subprocess.run(["podman", "exec", "-i", component + "-todo-backend", "python", "-c", CHECK],
+                                input=json.dumps({"sibling_password": password}), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, check=False)
+        if result.returncode or result.stdout.strip() != "PASS: correct secret connects; sibling password authentication rejected":
+            raise RuntimeError("Installed app database authentication check failed")
+        print("PASS: " + component + " correct secret connects; sibling password authentication rejected")
+
+
+try:
+    main()
+except Exception:
+    raise SystemExit("FAIL: installed database credentials (details withheld)") from None
+DATABASE_AUTH
+    ;;
+health) healthy;;
 check)
     profile
     healthy
@@ -502,27 +976,41 @@ check)
     grep -q 'podman-user-wait-network-online.service' <<< "$generated"
     output=$(sudo -n podman ps -aq)
     test -z "$output"
-    sudo -n podman ps -a
     sudo -n ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
-    sudo -n python3 - <<'PY'
-import pathlib, pwd, stat
-account = pwd.getpwnam("myproduct")
-paths = {
- "/var/lib/myproduct": 0o700,
- "/var/lib/myproduct/config.yaml": 0o600,
- "/var/lib/myproduct/generated-certificates": 0o700,
- "/var/lib/myproduct/PKI/private": 0o700,
- "/var/lib/myproduct/.config/containers/systemd/myproduct.yaml": 0o600,
- "/var/lib/myproduct/.config/containers/systemd/myproduct.kube": 0o644,
- "/var/lib/myproduct/.config/containers/systemd/myproduct.network": 0o644,
- "/var/lib/myproduct/files": 0o700,
-}
-paths.update({str(p): 0o600 for p in pathlib.Path("/var/lib/myproduct/files").glob("*.tar")})
-for name, mode in paths.items():
-    item = pathlib.Path(name).stat()
-    assert item.st_uid == account.pw_uid and item.st_gid == account.pw_gid and stat.S_IMODE(item.st_mode) == mode, name
-    print("PASS: myproduct:myproduct {:04o} {}".format(mode, name))
-PY
+    sudo -n python3 - <<'PERMISSIONS'
+import pathlib
+import pwd
+import stat
+
+
+def main():
+    """Require private state and readable Quadlets for every installed component."""
+    account = pwd.getpwnam("myproduct")
+    root = pathlib.Path("/var/lib/myproduct")
+    paths = {root: 0o700, root / "PKI/private": 0o700}
+    units = root / ".config/containers/systemd"
+    paths[units / "myproduct.network"] = 0o644
+    for marker in (root / "installed").glob("*"):
+        component = marker.name
+        paths[root / component / "config.yaml"] = 0o600
+        for directory in ("generated-certificates", "files"):
+            folder = root / component / directory
+            if folder.is_dir():
+                paths[folder] = 0o700
+                for path in folder.rglob("*"):
+                    paths[path] = 0o700 if path.is_dir() else 0o600
+        paths[units / ("myproduct-" + component + ".yaml")] = 0o600
+        paths[units / ("myproduct-" + component + ".kube")] = 0o644
+    for path, mode in sorted(paths.items()):
+        item = path.lstat()
+        if (item.st_uid != account.pw_uid or item.st_gid != account.pw_gid
+                or stat.S_IMODE(item.st_mode) != mode):
+            raise SystemExit("FAIL: private ownership/mode: " + str(path))
+        print("PASS: myproduct:myproduct {:04o} {}".format(mode, path))
+
+
+main()
+PERMISSIONS
     container_ids=$(as_product podman ps -aq)
     test -n "$container_ids"
     mapfile -t containers <<< "$container_ids"
@@ -538,70 +1026,70 @@ import sys
 try:
     import selinux
 except ImportError:
-    raise SystemExit("FAIL: Python-modulen selinux mangler; installer vertens policycoreutils-python-utils før snapshot")
+    raise SystemExit("FAIL: the selinux Python module is missing; install the host's policycoreutils-python-utils before the snapshot")
 
 STORAGE = pathlib.Path("/var/lib/myproduct/.local/share/containers/storage")
 CUSTOMIZABLE = pathlib.Path("/etc/selinux/targeted/contexts/customizable_types")
 
 
 def context_type(context):
-    """Hent typen fra en SELinux-context og avvis ugyldig format."""
+    """Get the type from an SELinux context and reject an invalid format."""
     parts = context.rstrip("\x00").split(":")
     if len(parts) < 4:
-        raise RuntimeError("Ugyldig SELinux-context: " + context)
+        raise RuntimeError("Invalid SELinux context: " + context)
     return parts[2]
 
 
 def policy_type(path):
-    """Hent policytypen med stiens lstat-filtype; avvis feil uten reserveoppslag."""
+    """Get the policy type using the path's lstat file type; reject errors without fallback."""
     try:
         mode = stat.S_IFMT(os.lstat(str(path)).st_mode)
     except OSError as error:
-        raise RuntimeError("lstat feilet for {}: {}".format(path, error)) from None
+        raise RuntimeError("lstat failed for {}: {}".format(path, error)) from None
     status, context = selinux.matchpathcon(str(path), mode)
     if status != 0:
-        raise RuntimeError("matchpathcon feilet: " + str(path))
+        raise RuntimeError("matchpathcon failed: " + str(path))
     return context_type(context)
 
 
 def check_equivalence():
-    """Bekreft container-ekvivalensen med policy-prober uten filkrav."""
+    """Confirm the container equivalence with policy probes that need no files."""
     probes = ((STORAGE / "overlay-layers", "container_ro_file_t"),
               (STORAGE / "volumes/x/_data/y", "container_file_t"))
     for path, expected in probes:
         status, context = selinux.matchpathcon(str(path), 0)
         if status != 0:
-            raise RuntimeError("matchpathcon feilet for policy-probe: " + str(path))
+            raise RuntimeError("matchpathcon failed for policy probe: " + str(path))
         actual = context_type(context)
         print("POLICY {} type={} expected={}".format(path, actual, expected))
         if actual != expected:
-            raise RuntimeError("Container-ekvivalensen mangler eller gir feil type: " + str(path))
+            raise RuntimeError("The container equivalence is missing or gives the wrong type: " + str(path))
 
 
 def check_label(path):
-    """Logg faktisk og forventet type og avvis avvik fra policyen."""
+    """Log the actual and expected type and reject deviations from the policy."""
     actual = context_type(os.getxattr(str(path), "security.selinux", follow_symlinks=False).decode())
     expected = policy_type(path)
     print("LABEL {} actual={} expected={}".format(path, actual, expected))
     if actual != expected:
-        raise RuntimeError("SELinux-type avviker fra policyen: " + str(path))
+        raise RuntimeError("SELinux type deviates from the policy: " + str(path))
 
 
 def writable_layers(output):
-    """Valider UpperDir fra eksisterende containere og returner deres skrivbare lag-ID-er."""
+    """Validate UpperDir of existing containers and return their writable layer IDs."""
     layers = set()
     for path in output.splitlines():
         match = re.fullmatch(re.escape(str(STORAGE)) + r"/overlay/([0-9a-f]{64})/diff", path)
         if not match:
-            raise RuntimeError("Uventet UpperDir fra podman inspect: " + path)
+            raise RuntimeError("Unexpected UpperDir from podman inspect: " + path)
         layers.add(match.group(1))
     if not layers:
-        raise RuntimeError("Ingen skrivbare container-lag funnet")
+        raise RuntimeError("No writable container layers found")
     return layers
 
 
 def classify_line(line, customizable, upper_layers):
-    """Klassifiser én dry-run-linje med smale regler eller avvis den."""
+    """Classify one dry-run line with narrow rules or reject it."""
     proposal = re.fullmatch(r"Would relabel (.+) from (\S+) to (\S+)", line)
     preserved = re.fullmatch(r"(.+) not reset as customized by admin to (\S+)", line)
     if proposal:
@@ -611,10 +1099,10 @@ def classify_line(line, customizable, upper_layers):
         path, context = preserved.groups()
         before, after = context_type(context), policy_type(path)
     else:
-        raise RuntimeError("Uklassifisert restorecon-linje: " + line)
+        raise RuntimeError("Unclassified restorecon line: " + line)
     prefix = str(STORAGE) + "/"
     if not path.startswith(prefix) or ".." in pathlib.Path(path).parts:
-        raise RuntimeError("restorecon-linje utenfor lageret: " + line)
+        raise RuntimeError("restorecon line outside storage: " + line)
     relative = path[len(prefix):]
     # R1: container.if named transition for 'artifacts'; container.fc path default.
     if (proposal and re.fullmatch(r"overlay-containers/[0-9a-f]{64}/userdata/artifacts", relative)
@@ -630,11 +1118,11 @@ def classify_line(line, customizable, upper_layers):
             return "CUSTOM_WRITABLE_LAYER"
         if re.fullmatch(r"overlay-containers/[0-9a-f]{64}/rootfs/upper(?:/.*)?", relative) and after == "container_var_lib_t":
             return "CUSTOM_WRITABLE_ROOTFS"
-    raise RuntimeError("Uklassifisert restorecon-linje: " + line)
+    raise RuntimeError("Unclassified restorecon line: " + line)
 
 
 def dryrun(arguments):
-    """Logg lesende restorecon-output og avvis kommandoens feilstatus."""
+    """Log read-only restorecon output and reject the command's failing status."""
     result = subprocess.run(["restorecon", "-n", "-v", "-R"] + arguments,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False)
@@ -642,14 +1130,14 @@ def dryrun(arguments):
     print(result.stdout, end="")
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("restorecon dry-run feilet: exit " + str(result.returncode))
+        raise RuntimeError("restorecon dry-run failed: exit " + str(result.returncode))
     if result.stderr:
-        raise RuntimeError("restorecon dry-run skrev diagnostikk på stderr")
+        raise RuntimeError("restorecon dry-run wrote diagnostics to stderr")
     return result.stdout
 
 
 def main():
-    """Kontroller policy, faktiske labels og klassifisert dry-run uten relabeling."""
+    """Check policy, actual labels and the classified dry run without relabeling."""
     check_equivalence()
     upper_layers = writable_layers(sys.argv[1])
     for layer in sorted(upper_layers):
@@ -658,14 +1146,14 @@ def main():
         check_label(STORAGE / name)
     volumes = sorted((STORAGE / "volumes").glob("*/_data"))
     if not volumes:
-        raise RuntimeError("Ingen volumdata funnet")
+        raise RuntimeError("No volume data found")
     for root in volumes:
         check_label(root)
         for directory, dirs, files in os.walk(str(root)):
             for name in sorted(dirs + files):
                 check_label(pathlib.Path(directory) / name)
     outputs, failures = [], []
-    # Begge dry-runs er lesende bevis, også når den første rapporterer feil.
+    # Both dry runs are read-only evidence, even when the first one reports an error.
     for arguments in (["-e", str(STORAGE), "/var/lib/myproduct"], [str(STORAGE)]):
         try:
             outputs.append(dryrun(arguments))
@@ -676,12 +1164,12 @@ def main():
         raise RuntimeError("; ".join(failures))
     outside, inside = outputs
     if outside:
-        raise RuntimeError("restorecon foreslår endringer utenfor lageret")
+        raise RuntimeError("restorecon proposes changes outside storage")
     customizable = set(CUSTOMIZABLE.read_text().splitlines())
     for line in inside.splitlines():
         rule = classify_line(line, customizable, upper_layers)
         print("RULE {}: {}".format(rule, line))
-    print("PASS: policy, faktiske labels og klassifisert restorecon dry-run")
+    print("PASS: policy, actual labels and classified restorecon dry run")
 
 
 if __name__ == "__main__":
@@ -693,38 +1181,81 @@ LABELS
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     audit_events check
-    as_product podman exec myproduct-todo-backend python -c 'import socket; socket.create_connection(("myproduct-todo-postgres",5432),5).close()'
-    as_product podman exec myproduct-proxy-nginx wget -qO- http://myproduct-identity:8080/identity/.well-known/openid-configuration
+    as_product python3 - <<'API_SECRET'
+import subprocess
+from pathlib import Path
+
+SECRET_FILE = Path("/var/lib/myproduct/core/generated-certificates/app/ApiResources__0__ApiSecrets__0__Value")
+
+
+def main():
+    """Compare source bytes to the delivered secret without printing either value."""
+    expected = SECRET_FILE.read_bytes()
+    result = subprocess.run(
+        ["podman", "exec", "core-identity-app", "bash", "-c",
+         'printf "%s" "$ApiResources__0__ApiSecrets__0__Value"'],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
+    )
+    if result.returncode or len(expected) != 32 or result.stdout != expected:
+        raise RuntimeError("Generated API secret delivery did not match its source file")
+    print("PASS: generated API secret matches its source bytes; values are withheld")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        raise SystemExit("FAIL: generated API secret delivery check failed")
+API_SECRET
+    components=$(installed_components)
+    for component in $components; do
+        if [[ $component == app1 || $component == app2 ]]; then
+            as_product podman exec "$component-todo-backend" python -c "import socket; socket.create_connection(('$component-postgres',5432),5).close()"
+        fi
+    done
+    as_product podman exec core-proxy-nginx wget -qO- http://core-identity:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
     uid=$(id -u myproduct)
-    installed=$(cat "$base/install-start")
-    journal=$(sudo -n journalctl _SYSTEMD_USER_UNIT=myproduct.service _UID="$uid" --since "@$installed" --no-pager)
+    journal=$(sudo -n journalctl _UID="$uid" --since "@$run_started" --no-pager)
     if grep -Ei 'Trying to pull|Pulling image|pull access denied' <<< "$journal"; then
         echo 'FAIL: install attempted a pull'; exit 1
     fi
     echo 'PASS: journal contains no pull attempts'
     ;;
-prod-e2e|markers-create|markers-check)
+prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers|app1-e2e|app1-markers-create|app1-markers-check)
     cd "$src"
     export PUBLIC_ORIGIN="https://$prod_host:$port" CONNECT_IP="$prod_ip"
     export SMOKE_CA_FILE="$private/ca.crt" SMOKE_PASSWORD_DIR="$private"
-    if [[ $action == prod-e2e ]]; then
-        .venv-smoke/bin/python dev/smoke-test.py
+    if [[ $action == shared-login ]]; then
+        .venv-smoke/bin/python acceptance/shared_login.py
     else
-        .venv-smoke/bin/python acceptance/markers.py "${action#markers-}" "$base/markers.json" "$run"
+        apps="app1 app2"
+        if [[ $action == survivor-* ]]; then apps=app2; fi
+        if [[ $action == app1-* ]]; then apps=app1; fi
+        for app in $apps; do
+            export APP_BASE_PATH=/$app
+            if [[ $action == prod-e2e || $action == survivor-e2e || $action == app1-e2e ]]; then
+                .venv-smoke/bin/python dev/smoke-test.py
+            else
+                operation=${action#app1-}
+                operation=${operation#markers-}
+                if [[ $action == survivor-markers ]]; then operation=check; fi
+                .venv-smoke/bin/python acceptance/markers.py "$operation" "$base/markers-$app.json" "$run"
+            fi
+        done
     fi
     ;;
 stop)
-    user_service stop myproduct.service
-    if user_service is-active --quiet myproduct.service; then exit 1; fi
-    as_product podman ps --all --pod
+    components=$(installed_components)
+    for component in $components; do user_service stop "myproduct-$component.service"; done
     output=$(as_product podman ps -q)
     test -z "$output"
     as_product podman secret ls
     as_product podman volume ls
     ;;
 start|restart)
-    user_service "$action" myproduct.service
+    components=$(installed_components)
+    for component in $components; do user_service "$action" "myproduct-$component.service"; done
     healthy
     ;;
 crash)
@@ -735,54 +1266,59 @@ import subprocess
 import sys
 import time
 
-CONTAINER = "myproduct-todo-backend"
+CONTAINER = "app1-todo-backend"
 
 
 def product_command(arguments):
-    """Bygg et Podman-kall som tjenestebrukeren fra riktig hjem og runtime."""
+    """Build a Podman call as the service user from the right home and runtime."""
     return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
             'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
             "bash"] + arguments
 
 
 def command(arguments):
-    """Returner stdout uten å logge inspect-innhold og behold stderr også ved feil."""
+    """Return stdout without logging inspect content and keep stderr also on failure."""
     print("$ " + " ".join(shlex.quote(arg) for arg in arguments))
     result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False, timeout=10)
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("Krasjtest-kommando feilet: exit " + str(result.returncode))
+        raise RuntimeError("Crash test command failed: exit " + str(result.returncode))
     return result.stdout
 
 
 def inspect_container():
-    """Parse inspect-JSON og valider bare feltene som brukes til krasjkontrollen."""
+    """Parse inspect JSON and validate only the fields the check uses."""
     try:
-        rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
+        template = ('[{"State":{"Pid":{{.State.Pid}},"Running":{{.State.Running}},'
+                    '"StartedAt":{{json .State.StartedAt}},'
+                    '"StoppedByUser":{{.State.StoppedByUser}},'
+                    '"Health":{"Status":{{json .State.Health.Status}}}},'
+                    '"RestartCount":{{.RestartCount}}}]')
+        rows = json.loads(command(product_command(["podman", "inspect", "--format", template, CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
-            raise ValueError("Forventet én container")
+            raise ValueError("Expected one container")
         state = rows[0]["State"]
         result = {"Pid": state["Pid"], "Running": state["Running"],
                   "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
-                  "StoppedByUser": state.get("StoppedByUser", False)}
+                  "StoppedByUser": state["StoppedByUser"]}
         if (type(result["Pid"]) is not int or result["Pid"] < 0
                 or type(result["Running"]) is not bool
                 or (result["Running"] and result["Pid"] <= 1)
                 or type(result["RestartCount"]) is not int or result["RestartCount"] < 0
                 or type(result["StoppedByUser"]) is not bool
                 or not isinstance(result["StartedAt"], str) or not result["StartedAt"].strip()):
-            raise ValueError("Ugyldige tilstandsfelt")
+            raise ValueError("Invalid state fields")
     except (ValueError, KeyError, TypeError):
-        raise RuntimeError("Ugyldig eller tom container-tilstand fra inspect") from None
+        raise RuntimeError("Invalid or empty container state from inspect") from None
     return result
 
 
 def main():
-    """Drep vertsprosessen én gang og krev én automatisk restart innen 60 sekunder."""
+    """Kill the host process once and require one automatic restart within 60 seconds."""
     before = inspect_container()
     if not before["Running"] or before["StoppedByUser"]:
-        raise RuntimeError("Containeren må kjøre og ikke være stoppet av bruker før krasjtesten")
+        raise RuntimeError("The container must be running and not stopped by the user before the crash test")
     print("BEFORE " + json.dumps(before, sort_keys=True))
     command(["sudo", "-n", "kill", "-KILL", str(before["Pid"])])
     deadline = time.monotonic() + 60
@@ -790,15 +1326,15 @@ def main():
         after = inspect_container()
         print("AFTER " + json.dumps(after, sort_keys=True))
         if after["StoppedByUser"]:
-            raise RuntimeError("StoppedByUser ble satt under krasjtesten")
+            raise RuntimeError("StoppedByUser was set during the crash test")
         if after["RestartCount"] > before["RestartCount"] + 1:
-            raise RuntimeError("Containeren restartet mer enn én gang")
+            raise RuntimeError("The container restarted more than once")
         if (after["Running"] and after["RestartCount"] == before["RestartCount"] + 1
                 and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
-            print("PASS: én automatisk restart med ny PID og starttid etter prosesskrasj")
+            print("PASS: one automatic restart with a new PID and start time after the process crash")
             return
         time.sleep(min(2, max(0, deadline - time.monotonic())))
-    raise RuntimeError("Ingen verifisert automatisk restart innen 60s")
+    raise RuntimeError("No verified automatic restart within 60s")
 
 
 if __name__ == "__main__":
@@ -818,37 +1354,42 @@ import subprocess
 import sys
 import time
 
-CONTAINER = "myproduct-todo-backend"
+CONTAINER = "app1-todo-backend"
 
 
 def product_command(arguments):
-    """Bygg et Podman-kall som tjenestebrukeren fra riktig hjem og runtime."""
+    """Build a Podman call as the service user from the right home and runtime."""
     return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
             'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
             "bash"] + arguments
 
 
 def command(arguments):
-    """Returner stdout uten å logge inspect-innhold og behold stderr også ved feil."""
+    """Return stdout without logging inspect content and keep stderr also on failure."""
     print("$ " + " ".join(shlex.quote(arg) for arg in arguments))
     result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             universal_newlines=True, check=False, timeout=10)
     print(result.stderr or "", end="", file=sys.stderr)
     if result.returncode:
-        raise RuntimeError("Hengtest-kommando feilet: exit " + str(result.returncode))
+        raise RuntimeError("Hang test command failed: exit " + str(result.returncode))
     return result.stdout
 
 
 def inspect_container():
-    """Parse inspect-JSON og valider bare feltene som brukes til krasjkontrollen."""
+    """Parse inspect JSON and validate the hang test state fields."""
     try:
-        rows = json.loads(command(product_command(["podman", "inspect", "--format", "json", CONTAINER])))
+        template = ('[{"State":{"Pid":{{.State.Pid}},"Running":{{.State.Running}},'
+                    '"StartedAt":{{json .State.StartedAt}},'
+                    '"StoppedByUser":{{.State.StoppedByUser}},'
+                    '"Health":{"Status":{{json .State.Health.Status}}}},'
+                    '"RestartCount":{{.RestartCount}}}]')
+        rows = json.loads(command(product_command(["podman", "inspect", "--format", template, CONTAINER])))
         if not isinstance(rows, list) or len(rows) != 1:
-            raise ValueError("Forventet én container")
+            raise ValueError("Expected one container")
         state = rows[0]["State"]
         result = {"Pid": state["Pid"], "Running": state["Running"],
                   "StartedAt": state["StartedAt"], "RestartCount": rows[0]["RestartCount"],
-                  "StoppedByUser": state.get("StoppedByUser", False),
+                  "StoppedByUser": state["StoppedByUser"],
                   "Health": state["Health"]["Status"]}
         if (type(result["Pid"]) is not int or result["Pid"] < 0
                 or type(result["Running"]) is not bool
@@ -857,29 +1398,29 @@ def inspect_container():
                 or type(result["StoppedByUser"]) is not bool
                 or result["Health"] not in ("healthy", "starting", "unhealthy")
                 or not isinstance(result["StartedAt"], str) or not result["StartedAt"].strip()):
-            raise ValueError("Ugyldige tilstandsfelt")
+            raise ValueError("Invalid state fields")
     except (ValueError, KeyError, TypeError):
-        raise RuntimeError("Ugyldig eller tom container-tilstand fra inspect") from None
+        raise RuntimeError("Invalid or empty container state from inspect") from None
     return result
 
 
 def main():
-    """Frys alle vertsprosesser én gang og krev unhealthy fulgt av én frisk restart."""
+    """Freeze all host processes once and require unhealthy followed by one healthy restart."""
     before = inspect_container()
     if not before["Running"] or before["StoppedByUser"] or before["Health"] != "healthy":
-        raise RuntimeError("Containeren må være healthy før hengtesten")
+        raise RuntimeError("The container must be healthy before the hang test")
     print("BEFORE " + json.dumps(before, sort_keys=True), flush=True)
     top = command(product_command(["podman", "top", CONTAINER, "hpid"]))
     lines = top.splitlines()
     if not lines or lines[0].strip().upper() != "HPID":
-        raise RuntimeError("Ugyldig PID-liste fra podman top")
+        raise RuntimeError("Invalid PID list from podman top")
     pids = [line.strip() for line in lines[1:]]
     if (not pids or any(not pid.isdigit() or int(pid) <= 1 for pid in pids)
             or len(set(pids)) != len(pids) or str(before["Pid"]) not in pids):
-        raise RuntimeError("Ugyldige verts-PID-er fra podman top")
+        raise RuntimeError("Invalid host PIDs from podman top")
     for pid in pids:
         command(["sudo", "-n", "kill", "-STOP", pid])
-    deadline, unhealthy = time.monotonic() + 240, False
+    deadline, unhealthy = time.monotonic() + 300, False
     while time.monotonic() < deadline:
         after = inspect_container()
         print("AFTER " + json.dumps(after, sort_keys=True), flush=True)
@@ -890,19 +1431,19 @@ def main():
             and after["StartedAt"] == before["StartedAt"]
             and after["Pid"] in (0, before["Pid"])
         )
-        # Podmans helsestyrte Stop setter flagget før cleanup restarter containeren.
+        # A health-triggered Stop sets this flag before cleanup restarts the container.
         if after["StoppedByUser"] and not stopping_original:
-            raise RuntimeError("StoppedByUser utenfor opprinnelig unhealthy stoppfase")
+            raise RuntimeError("StoppedByUser outside the original unhealthy stop phase")
         if after["RestartCount"] > before["RestartCount"] + 1:
-            raise RuntimeError("Containeren restartet mer enn én gang")
+            raise RuntimeError("The container restarted more than once")
         if (unhealthy and after["Running"] and not after["StoppedByUser"]
                 and after["Health"] == "healthy"
                 and after["RestartCount"] == before["RestartCount"] + 1
                 and after["Pid"] != before["Pid"] and after["StartedAt"] != before["StartedAt"]):
-            print("PASS: unhealthy fulgt av én automatisk restart til healthy")
+            print("PASS: unhealthy followed by one automatic restart to healthy")
             return
         time.sleep(min(2, max(0, deadline - time.monotonic())))
-    raise RuntimeError("Ingen verifisert frisk restart etter heng innen 240s")
+    raise RuntimeError("No verified healthy restart after the hang within 300s")
 
 
 if __name__ == "__main__":
@@ -914,19 +1455,136 @@ HANG
     healthy
     wait_backend
     ;;
+siblings-before|siblings-after|help-siblings-before|help-siblings-after|core-siblings-before|core-siblings-after)
+    observation="$base/siblings.json"
+    if [[ $action == core-siblings-* ]]; then observation="$base/core-siblings.json"; fi
+    mode=app1
+    if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
+    sudo -n python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
+import hashlib
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+
+def command(arguments):
+    """Read separate command streams without printing private inspect or trust content."""
+    result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=15)
+    print(result.stderr, end="", file=sys.stderr)
+    if result.returncode:
+        raise SystemExit("FAIL: sibling observation command failed")
+    return result.stdout
+
+
+def observe():
+    """Project sibling process identity, version markers and their exact trust records."""
+    prefix = ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+              'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
+    help_upgrade = len(sys.argv) > 3 and sys.argv[3] == "help"
+    components = ["app2", "help"]
+    names = ["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend", "help-web-web"]
+    if help_upgrade:
+        components = ["core", "app1"]
+        names = ["core-identity-postgres-db", "core-identity-app", "core-proxy-nginx", "app1-postgres-db", "app1-todo-backend", "app1-todo-frontend"]
+        if pathlib.Path("/var/lib/myproduct/installed/app2").is_file():
+            components.append("app2")
+            names.extend(["app2-postgres-db", "app2-todo-backend", "app2-todo-frontend"])
+    rows = json.loads(command(prefix + ["podman", "inspect", "--format", "json"] + names))
+    if not isinstance(rows, list) or len(rows) != len(names):
+        raise SystemExit("FAIL: incomplete sibling inspect list")
+    observed = {}
+    for row in rows:
+        name, state = row["Name"], row["State"]
+        if (name not in names or name in observed or state["Status"] != "running"
+                or state["Health"]["Status"] != "healthy"
+                or type(row["RestartCount"]) is not int
+                or type(state["Pid"]) is not int or state["Pid"] <= 1
+                or not isinstance(state["StartedAt"], str) or not state["StartedAt"]):
+            raise SystemExit("FAIL: invalid sibling state")
+        observed[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": row["RestartCount"]}
+    trust = command(["fapolicyd-cli", "--dump-db"])
+    records = sorted(line for line in trust.splitlines()
+                     if any("/releases/myproduct-" + component + "-" in line for component in (["app1", "app2"] if help_upgrade else ["app2", "help"])))
+    if len(records) != (len(components) - 1 if help_upgrade else 2):
+        raise SystemExit("FAIL: expected one trust entry per sibling bundle")
+    versions = {name: (pathlib.Path("/var/lib/myproduct/installed") / name).read_text()
+                for name in components}
+    result = {"containers": observed, "trust": records, "versions": versions}
+    if help_upgrade:
+        root = pathlib.Path("/var/lib/myproduct")
+        files = []
+        for component in components:
+            files.append(root / component / "config.yaml")
+            for directory in ("generated-certificates", "files"):
+                files.extend(path for path in (root / component / directory).rglob("*") if path.is_file())
+            for suffix in (".yaml", ".kube"):
+                files.append(root / ".config/containers/systemd" / ("myproduct-" + component + suffix))
+        result["state"] = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+        network = json.loads(command(prefix + ["podman", "network", "inspect", "myproduct"]))
+        if not isinstance(network, list) or len(network) != 1 or not network[0].get("id"):
+            raise SystemExit("FAIL: invalid shared network observation")
+        result["network"] = network[0]["id"]
+    return result
+
+
+def main():
+    """Compare untouched app2/help process identities, version markers and trust entries."""
+    path = pathlib.Path(sys.argv[2])
+    current = observe()
+    if sys.argv[1].endswith("siblings-before"):
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(current, stream)
+    elif json.loads(path.read_text()) != current:
+        raise SystemExit("FAIL: sibling/core process identity, version, state, network or trust changed")
+    print("SIBLINGS " + json.dumps(current["containers"], sort_keys=True))
+    print("PASS: sibling versions and trust " + ("recorded" if sys.argv[1].endswith("siblings-before") else "unchanged"))
+
+
+try:
+    main()
+except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+    raise SystemExit("FAIL: invalid or incomplete sibling observation")
+SIBLINGS
+    ;;
+uninstall)
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec python3 deploy.py uninstall' bash "$product"
+    sudo -n fapolicyd-cli --file delete "$product/deploy.py" --trust-file myproduct-app1
+    sudo -n fapolicyd-cli --update
+    app2_version=$(sudo -n -H -u myproduct cat "$state/installed/app2")
+    wait_trust "$state/releases/myproduct-app2-$app2_version/deploy.py" "$product/deploy.py"
+    sudo -n test ! -e "$state/installed/app1"
+    sudo -n test ! -e "$state/routes/app1.conf"
+    sudo -n test ! -e "$state/clients/app1"
+    sudo -n test -f "$state/app1/config.yaml"
+    as_product podman volume exists app1-data
+    as_product podman network exists myproduct
+    healthy
+    http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+        --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/app1/")
+    test "$http" = 404
+    echo 'PASS: app1 removed, route inactive, data/network retained; app2/help healthy'
+    ;;
 reboot)
     cat /proc/sys/kernel/random/boot_id
     sudo -n systemd-run --on-active=3 /usr/bin/systemctl reboot
     ;;
 boot) cat /proc/sys/kernel/random/boot_id;;
 wait-boot-service) wait_boot_service;;
-audit|audit-check)
+audit|audit-check|launch-audit-check)
+    diagnostic_status=0
+    health_launch_diagnostics || diagnostic_status=$?
     # Use VM local time for ausearch, derived from the recorded controller epoch.
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     printf 'FANOTIFY/AVC evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
     sudo -n systemctl is-active auditd
-    if [[ $action == audit-check ]]; then audit_events check; else audit_events collect; fi
+    if [[ $action == audit ]]; then audit_events collect; else audit_events check; fi
+    test "$diagnostic_status" = 0
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;

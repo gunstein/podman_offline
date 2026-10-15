@@ -1,10 +1,10 @@
-# Enhetstester
+# Unit tests
 
-`test_deploy.py` og `test_bundle.py` bruker bare standardbiblioteket
-og PyYAML. `test_certificates.py` bruker også bash og OpenSSL når de finnes,
-med alt nøkkelmateriale i en midlertidig katalog. Alle stier peker inn i `TemporaryDirectory`; Podman-/systemd-kall og brukersjekk
-stubbes. Ingen nettverk, Podman, systemd eller root kreves. Bundle-testene skriver
-og leser ekte tar-arkiver og verifiserer alle SHA-256-linjene, men stubber image-save.
+`test_deploy.py` and `test_bundle.py` use only the standard library
+and PyYAML. `test_certificates.py` also uses bash and OpenSSL when they exist,
+with all key material in a temporary directory. All paths point into `TemporaryDirectory`; Podman/systemd calls and the user check
+are stubbed. No network, Podman, systemd or root is required. The bundle tests write
+and read real tar archives and verify every SHA-256 line, but stub the image save.
 
 ```sh
 python3 -m unittest discover -s tests
@@ -15,7 +15,7 @@ pyright deploy.py bundle.py tests/
 vermin -t=3.6- deploy.py bundle.py tests/
 ```
 
-For PyYAML 5.4.1 brukes en Python-versjon som den kan bygges på (testet med 3.11):
+For PyYAML 5.4.1, use a Python version it can be built on (tested with 3.11):
 
 ```sh
 python3.11 -m venv .venv54
@@ -23,23 +23,30 @@ python3.11 -m venv .venv54
 .venv54/bin/pip install --no-build-isolation pyyaml==5.4.1
 ```
 
-Lint/type/vermin er utviklingsverktøy, ikke nye runtime-avhengigheter.
-Testene bruker Python 3.6-kompatibel syntaks og standardbibliotek-API-er.
-## Images fra manifestene
+Lint/type/vermin are development tools, not new runtime dependencies.
+The tests use Python 3.6-compatible syntax and standard library APIs.
 
-90 tester passerer med PyYAML 6.0.3 (Python 3.14.4) og 5.4.1 (Python 3.11.17).
-Image-testene dekker Pod/Deployment, init-containere, flere filer/dokumenter,
-flow-maps, duplikater, fulle navn og forventede valideringsfeil. Bundle-testene
-kontrollerer én sortert multi-image-save, navnelisten, tar-innhold og checksums.
-Installer-testene kontrollerer render/load/exists-rekkefølgen, rendrede navn,
-manglende arkiv/image og at eksisterende Quadlet-filer bevares ved kontrollfeil.
-Prepare-testene kjører fortsatt helt uten Podman-kall.
+## Images from the manifests
 
-Ekte save/load ble verifisert 2026-10-12 med **Podman 5.7.0, rootless**.
-Tre eksisterende navn ble lagret med `podman save -m -o images.tar ...` og lastet
-med `podman load -i images.tar` i et tomt, midlertidig VFS-image-lager
-(`--root`, `--runroot`, `--storage-driver vfs`). Alle tre
-`podman image exists`-kontrollene returnerte 0. `podman images` etter load viste:
+181 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
+The image tests cover Pod/Deployment, init containers, several files/documents,
+flow maps, duplicates, full names and expected validation errors. The bundle tests
+check one sorted multi-image save, the name list, tar content and checksums.
+Registry tests require sorted deduplicated pulls with policy=always before save,
+skip localhost/ names, and reject failed pulls without build/save fallback or
+private registry diagnostic output. `test_images.py` runs the actual dev helpers
+with a recording Podman stub, including manifest tags and localhost:port names.
+The installer tests check the render/load/exists order, rendered names,
+a missing archive/image and that existing Quadlet files are kept on check failures.
+Standalone prepare tests run without Podman calls. Component dev preparation
+checks the actual database volumes before creating a missing password; those
+Podman calls are stubbed in unit tests.
+
+A real save/load was verified on 2026-10-12 with **Podman 5.7.0, rootless**.
+Three existing names were saved with `podman save -m -o images.tar ...` and loaded
+with `podman load -i images.tar` into an empty, temporary VFS image store
+(`--root`, `--runroot`, `--storage-driver vfs`). All three
+`podman image exists` checks returned 0. `podman images` after the load showed:
 
 ```text
 docker.io/library/nginx:1.28-alpine dc73b49f5124
@@ -47,43 +54,135 @@ localhost/offline-example:1 30ecbe150909
 docker.io/library/busybox:1.37.0 30ecbe150909
 ```
 
-Fulle navn og tagger ble bevart, også to navn for samme image-ID.
-Testlageret ble fjernet etterpå. Dette var en separat save/load-test med små
-testimages; full produktbundle og prod-Quadlet-installasjon ble ikke kjørt
-som del av denne endringen.
+Full names and tags were preserved, including two names for the same image ID.
+The test store was removed afterwards. This was a separate save/load test with small
+test images; the full product bundle and the prod Quadlet installation were not run
+as part of that change.
 
-Regresjonstestene dekker navnekollisjoner mellom Secret/PVC/ConfigMap,
-validering uten arkivskriving, bevaring av gamle arkiver ved load/exists-feil,
-network-Quadlet og avvisning av dupliserte manifestnøkler under bygging.
-Ekte systemd, reboot og oppgradering kontrolleres av [akseptansetesten](../acceptance/README.md).
+The regression tests cover name collisions between Secret/PVC/ConfigMap,
+validation without writing archives, keeping old archives on load/exists failures,
+the network Quadlet and rejection of duplicate manifest keys during the build.
+Real systemd, reboot and upgrade are checked by the [acceptance test](../acceptance/README.md).
 
 ## Rootless prod
 
-Install-testene avviser root før rendering/kommandoer, kontrollerer brukerdatabase-baserte
-Quadlet-/arkivstier, systemctl --user i riktig rekkefølge, runtime-fallback og
-feil ved manglende runtime-katalog, samt filrettigheter. Ingen produktfiler
-skrives i systeminstansens Quadlet-katalog. Bundle-testen inkluderer prepare-host.
-Akseptanserammens lokale tester kontrollerer også at sudo-kommandoene bytter
-arbeidskatalog før install/Podman, uten root, Podman eller nett.
+The install tests reject root before rendering/commands, check the user-database-based
+Quadlet/archive paths, systemctl --user in the right order, the runtime fallback and
+the error for a missing runtime directory, plus file permissions. No product files
+are written to the system instance's Quadlet directory. The bundle test includes prepare-host.
+The acceptance harness's local tests also check that the sudo commands change
+the working directory before install/Podman, without root, Podman or network.
 
-Varig config testes separat fra release-config: install bruker hjemmet fra brukerdatabasen, prepare
-bruker repo-roten, og relative secret-/volumstier følger config-katalogen.
-Sertifikattestene kontrollerer --root, standardroten, filmoduser, vertsnavn
-og at gjentatt generering avvises uten å endre noen filer.
+Persistent config is tested separately from the release config: install uses the home from the user database, component prepare
+merges common/component defaults with optional local dev overrides, and relative secret/volume paths follow the config directory.
+The certificate tests check --root, the default root, file modes, the host name
+and that a repeated generation is rejected without changing any files.
 
-Prod-stiene testes med mock av pwd.getpwuid, også med feil HOME. Install
-avviser avvik før rendering og kommandoer; fraværende HOME bruker pw_dir.
+The prod paths are tested with a mock of pwd.getpwuid, also with a wrong HOME. Install
+rejects a mismatch before rendering and commands; an absent HOME uses pw_dir.
 
-Vertsscripttestene kontrollerer påkrevd port, avvisning av gammel ekvivalens,
-idempotent regel og at rekursiv restorecon alltid ekskluderer storage.
-Runtime-testene avviser alle XDG_RUNTIME_DIR-verdier utenom /run/user/<euid>.
-Bundle-testen inkluderer de to prod-scriptene og utelukker dev/-katalogen.
+The host script tests check the required port, rejection of an old equivalence,
+the idempotent rule and that recursive restorecon always excludes storage.
+The runtime tests reject every XDG_RUNTIME_DIR value other than /run/user/<euid>.
+The bundle test includes the two prod scripts and excludes the dev/ directory.
 
-Manifestfeil testes med filsti og image-feil med containernavn. En separat
-test rendrer de faktiske produktmanifestene med eksempelconfig og dummyfiler,
-uten Podman, og kontrollerer ressurser og image-navn.
+Manifest errors are tested with the file path and image errors with the container name. A separate
+test renders the real product manifests with merged defaults and dummy files,
+without Podman, and checks resources and image names.
 
-`test_health.py` krever én exec-liveness-probe i hvert faktisk appmanifest,
-med initialDelay 90, period 30, timeout 5 og failureThreshold 3. Init-containere
-har ingen probe. Backendens /livez og autentiseringsvakt prøves isolert uten
-appimport, database eller appavhengigheter.
+`test_health.py` requires one exec liveness probe in every real app manifest,
+with initialDelay 90, period 30, timeout 5 and failureThreshold 3. Init containers
+have no probe. The backend's /livez and its authentication guard are tested in isolation, without
+importing the app, a database or the app's dependencies.
+
+Manifest validation tests cover defined and missing ConfigMaps in all three
+reference forms, pod-local mounts, and required Never pull policies on ordinary
+and init containers. Nested Deployment pod specs use the same validation.
+
+Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
+0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement
+including symlinks, concurrent creation and output without secret values.
+
+The 142 acceptance-framework tests also cover pre-reboot launcher diagnostics:
+separate streams, safe journal/unit projections, strict command/parsing errors,
+audit collection after a diagnostic error, and stopping before reboot on a denial.
+The run-19 regression fixture distinguishes removed transient units from loaded
+services, without relaxing required properties for a loaded launcher.
+Registry framework tests cover separate log streams, strict JSON/Combined format
+parsing (including escaped quoted fields and final newlines), public run-21
+manifest/blob request fixtures, private query/header omission, malformed or
+unknown records, failing log commands and missing HTTP 200 GET evidence,
+expected negative exits, no build fallback, offline load/run ordering and cleanup
+of TLS keys/registry resources. Existing user registry certificates are preserved.
+
+Review regressions reject false-like non-map file groups and accept ConfigMap
+`data.spec` as ordinary data. Invalid config and YAML errors retain field/line
+context without echoing source values. Bundle tests reject declared generated
+secrets in shipped directories and symlink aliases before image operations.
+`test_smoke.py` isolates the login and CLI code without requests: callback URLs,
+form/session tokens and HTTP exception contents never appear in failure output.
+The generated-secrets example is rendered twice with temporary private files.
+
+## Component lifecycle
+
+Component tests cover strict resource/file-group prefixes, per-component output paths,
+unchanged siblings, immutable shared networking, core version comparisons, staged
+public route/client imports, current registration indexes, and scoped uninstall.
+Default uninstall retains private state and data volumes; explicit deletion targets
+only the selected component. Certificate tests verify component idempotence and the
+shared CA. The real app fixture has 8 pods, 10 containers and 6 distinct images.
+
+Component acceptance regressions cover both install orders, help-alone without
+state writes, all three archive transfers, app1-only upgrade, cross-file inventory
+collisions, untouched sibling observations/trust and retained-data uninstall.
+The cross-app SSO CLI regression withholds callback details on failure.
+
+Malformed PUBLIC_ORIGIN regressions cover both core rendering and public client
+staging, pre-generation refusal and CLI diagnostics without supplied values.
+
+
+## Explicit configuration layers
+
+`test_config.py` covers common/component/override precedence, whole-map/list
+replacement, incomplete layers and duplicate keys, authoritative persistent config,
+changed release defaults, missing required placeholders before writes, exclusive
+initialization with private modes, symlink rejection, inherited core common values,
+and regenerated dev output with retained credentials/data. Existing standalone
+fixtures still test their explicit `config.yaml` paths separately.
+
+Bundle regressions cover the new defaults files, exclusion of dev/private config
+and bytecode, and generated-secret symlink aliases resolved from materialized dev
+folders for all new config sources. Component lifecycle tests require exactly the
+expected restart set for both help registration cases and protect sibling files
+through newer-core upgrades and older-core refusal in both app orders.
+
+
+Import-archive regression tests normalize timestamps in addition to ownership and
+modes. Fresh staging-directory/file timestamps cannot change an archive checksum,
+while changed file contents must change its bytes. This keeps unchanged public
+core imports stable across controlled core upgrades without excluding them from
+persistent-state comparisons.
+
+
+## PostgreSQL credentials
+
+`test_database.py` covers text-only DB parameters/port validation, identical
+server/client Secret keys, exactly one GENERATED_SECRETS declaration per DB,
+exclusive private generation, independent app passwords, preservation of legacy
+password bytes, missing-file/existing-volume refusal, empty/invalid file refusal,
+volume-check failures, non-regular file refusal, actual generated Secret payloads,
+and pre-generation/pre-image/pre-state ordering in both dev
+and production. Python secret-reader tests preserve quotes, dollar signs, equals,
+semicolons, spaces and only remove trailing LF. These are unit/integration tests
+with Podman transport stubbed; they do not prove PostgreSQL authentication.
+
+Acceptance's `database-runtime` action uses disposable UUID-scoped PostgreSQL
+volumes on the dev VM. It tests actual initdb through kube Secrets, non-default
+host/port/user/database, Identity's environment connection interface and Python's
+file interface, special/Unicode credentials and legacy trailing LF, wrong-secret
+authentication and sanitized missing/invalid parameter/password failures. `database-auth` checks installed
+Identity and both Todo applications before lifecycle tests, after reboot and after
+upgrade. Each Todo must connect with its own secret before a sibling-secret attempt
+is allowed. Negative checks change only transient client input, never stored
+passwords. See [database verification](../acceptance/DATABASE-VERIFICATION.md) for real-run
+results and limits. Harness tests separately check private stdin, safe evidence and sequencing.

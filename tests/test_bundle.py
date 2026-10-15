@@ -42,7 +42,7 @@ class BundleTests(unittest.TestCase):
             "deploy": '#!/bin/sh\nexec python3 deploy.py "$@"\n',
             "deploy.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",
-            "config.example.yaml": "HTTPS_PORT: 8443\n",
+            "config.defaults.yaml": "HTTPS_PORT: 8443\n",
             "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
             "scripts/prepare-host.sh": "#!/bin/sh\nexit 0\n",
             "dev/dev.sh": "#!/bin/sh\nexit 0\n",
@@ -60,8 +60,15 @@ class BundleTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def save(self, args, check):
+    def save(self, args, check, **kwargs):
+        """Stub registry pulls and write deterministic bytes for the multi-image save."""
         self.assertTrue(check)
+        if args[:2] == ["podman", "pull"]:
+            self.assertEqual(args[2], "--policy=always")
+            self.assertEqual(
+                kwargs, {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+            )
+            return
         self.assertEqual(args[:4], ["podman", "save", "-m", "-o"])
         Path(args[4]).write_bytes(("stub images " + " ".join(args[5:])).encode("utf-8"))
 
@@ -111,7 +118,7 @@ class BundleTests(unittest.TestCase):
                     "deploy",
                     "deploy.py",
                     "README.md",
-                    "config.example.yaml",
+                    "config.defaults.yaml",
                     "scripts/generate-certificates.sh",
                     "scripts/prepare-host.sh",
                     "quadlet/myproduct.kube",
@@ -175,6 +182,33 @@ class BundleTests(unittest.TestCase):
                 self.archive_bytes(archive, "checksums.sha256"),
             )
 
+    def test_generated_secret_under_shipped_files_is_rejected(self):
+        """Refuse a bundle that would copy a declared generated secret."""
+        for config in ("config.yaml", "config.defaults.yaml"):
+            with self.subTest(config=config):
+                self.write(config, "GENERATED_SECRETS: [files/private/token]\n")
+                self.write("files/private/token", "synthetic-private-value")
+                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                    bundle.build()
+                self.process.assert_not_called()
+                self.assertFalse(bundle.DIST.exists())
+                (self.root / config).unlink()
+
+    def test_shipped_symlink_cannot_copy_a_generated_secret(self):
+        """Reject a files alias pointing at a private generated file or directory."""
+        self.write("config.yaml", "GENERATED_SECRETS: [private/token]\n")
+        secret = self.write("private/token", "synthetic-private-value")
+        (self.root / "files").mkdir()
+        for target in (secret, secret.parent):
+            with self.subTest(target=target.name):
+                alias = self.root / "files/alias"
+                alias.symlink_to(target, target_is_directory=target.is_dir())
+                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                    bundle.build()
+                self.process.assert_not_called()
+                self.assertFalse(bundle.DIST.exists())
+                alias.unlink()
+
     def test_multiple_files_documents_flow_maps_and_deployments(self):
         self.write(
             "manifests/second.yaml",
@@ -212,9 +246,7 @@ data: {image: ignored}
             "manifests/bad.yaml",
             "spec:\n  initContainers:\n  - image: team/app:1\n",
         )
-        with self.assertRaisesRegex(
-            bundle.BundleError, "team/app:1.*fullt kvalifisert"
-        ):
+        with self.assertRaisesRegex(bundle.BundleError, "team/app:1.*fully qualified"):
             bundle.build()
         self.assertEqual(old.read_text(), "previous build")
         self.process.assert_not_called()
@@ -242,10 +274,10 @@ data: {image: ignored}
 
     def test_no_images_or_no_manifests(self):
         manifest = self.write("manifests/app.yaml", "---\nkind: ConfigMap\n")
-        with self.assertRaisesRegex(bundle.BundleError, "Ingen images"):
+        with self.assertRaisesRegex(bundle.BundleError, "No images"):
             bundle.build()
         manifest.unlink()
-        with self.assertRaisesRegex(bundle.BundleError, "Ingen images"):
+        with self.assertRaisesRegex(bundle.BundleError, "No images"):
             bundle.build()
         self.process.assert_not_called()
 
@@ -276,6 +308,214 @@ data: {image: ignored}
 
     def test_main_success(self):
         self.assertEqual(bundle.main(), 0)
+
+    def test_registry_pulls_are_sorted_and_localhost_names_are_preserved(self):
+        """Pull each remote name once, including localhost:port, and never build."""
+        bundle.pull_images(
+            [
+                "registry.example.test/team/app:1",
+                "localhost/app:1",
+                "localhost:5000/test:2",
+                "registry.example.test/team/app:1",
+            ]
+        )
+        self.assertEqual(
+            self.process.call_args_list,
+            [
+                mock.call(
+                    ["podman", "pull", "--policy=always", image],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                for image in (
+                    "localhost:5000/test:2",
+                    "registry.example.test/team/app:1",
+                )
+            ],
+        )
+
+    def test_registry_pull_precedes_save_and_archive_checksums_verify(self):
+        """Bundle a registry image with its exact full name after a successful pull."""
+        self.write(
+            "manifests/remote.yaml",
+            "spec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
+        )
+        bundle.build()
+        self.assertEqual(
+            self.process.call_args_list[0].args[0],
+            [
+                "podman",
+                "pull",
+                "--policy=always",
+                "registry.example.test/app:2",
+            ],
+        )
+        self.assertEqual(
+            self.process.call_args_list[1].args[0][-3:],
+            [
+                "localhost/app:1",
+                "localhost/init:1",
+                "registry.example.test/app:2",
+            ],
+        )
+        with tarfile.open(
+            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+        ) as archive:
+            self.assertIn(
+                b"registry.example.test/app:2\n",
+                self.archive_bytes(archive, "images/images.txt"),
+            )
+            self.assertIn(
+                b"registry.example.test/app:2",
+                self.archive_bytes(archive, "images/images.tar"),
+            )
+            for line in (
+                self.archive_bytes(archive, "checksums.sha256")
+                .decode("utf-8")
+                .splitlines()
+            ):
+                digest, name = line.split("  ", 1)
+                self.assertEqual(
+                    hashlib.sha256(self.archive_bytes(archive, name)).hexdigest(),
+                    digest,
+                )
+
+    def test_failed_pull_reports_only_image_and_login_hint_without_save_or_build(self):
+        """Suppress registry diagnostic credentials and refuse cached/build fallback."""
+        self.write(
+            "manifests/remote.yaml",
+            "spec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
+        )
+        self.process.side_effect = subprocess.CalledProcessError(
+            125,
+            "podman pull",
+            output=b"private-auth-token",
+            stderr=b"private-auth-token",
+        )
+        self.assertEqual(bundle.main(), 1)
+        self.process.assert_called_once()
+        self.assertIn("registry.example.test/app:2", self.errors.getvalue())
+        self.assertIn("podman login registry.example.test", self.errors.getvalue())
+        self.assertEqual(len(self.errors.getvalue().splitlines()), 1)
+        self.assertNotIn(
+            "private-auth-token", self.errors.getvalue() + self.output.getvalue()
+        )
+        self.assertFalse(bundle.DIST.exists())
+
+    def test_component_default_and_dev_generated_paths_guard_materialized_aliases(self):
+        """Reject symlink copies of generated dev secrets declared by every new source."""
+        component = self.root / "components/app1"
+        for source in (
+            "config/common.defaults.yaml",
+            "components/app1/config.defaults.yaml",
+            "components/app1/config.yaml",
+            "config/dev.yaml",
+            "build/dev/app1/config.yaml",
+        ):
+            with self.subTest(source=source):
+                path = self.write(source, "GENERATED_SECRETS: [private/token]\n")
+                secret_base = (
+                    "components/app1"
+                    if source == "components/app1/config.yaml"
+                    else "build/dev/app1"
+                )
+                secret = self.write(
+                    secret_base + "/private/token", "private-generated-value"
+                )
+                alias = self.root / "files/alias"
+                alias.parent.mkdir(exist_ok=True)
+                alias.symlink_to(secret)
+                guard = bundle.generated_secret_guard([self.root, component])
+                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                    guard(alias.parent, [alias.name])
+                alias.unlink()
+                path.unlink()
+        self.process.assert_not_called()
+
+    def test_component_bundles_include_only_selected_components_and_images(self):
+        """Build three independent archives with matching core versions and no local state."""
+        self.write(
+            "bundles.yaml", "app1: [core, app1]\napp2: [core, app2]\nhelp: [help]\n"
+        )
+        self.write("CORE_VERSION", "1.0.0\n")
+        self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")
+        for component in ("core", "app1", "app2", "help"):
+            self.write(
+                "components/" + component + "/manifests/pod.yaml",
+                yaml.safe_dump(
+                    {
+                        "kind": "Pod",
+                        "spec": {
+                            "containers": [{"image": "localhost/" + component + ":1"}]
+                        },
+                    }
+                ),
+            )
+            self.write(
+                "components/" + component + "/config.defaults.yaml",
+                "HTTPS_PORT: 8443\n",
+            )
+            self.write(
+                "components/" + component + "/config.yaml", "PRIVATE: do-not-bundle\n"
+            )
+        bundle.build()
+        for name, components in (
+            ("app1", ("core", "app1")),
+            ("app2", ("core", "app2")),
+            ("help", ("help",)),
+        ):
+            with tarfile.open(
+                str(bundle.DIST / ("myproduct-" + name + "-1.2.3-offline.tar.gz"))
+            ) as archive:
+                prefix = "myproduct-" + name + "-1.2.3/"
+                members = {
+                    member.name[len(prefix) :] for member in archive.getmembers()
+                }
+                stream = archive.extractfile(prefix + "images/images.txt")
+                assert stream is not None
+                self.assertEqual(
+                    stream.read().decode().splitlines(),
+                    sorted("localhost/" + component + ":1" for component in components),
+                )
+                for component in ("core", "app1", "app2", "help"):
+                    self.assertEqual(
+                        "components/" + component + "/manifests/pod.yaml" in members,
+                        component in components,
+                    )
+                    self.assertNotIn(
+                        "components/" + component + "/config.yaml", members
+                    )
+                self.assertIn("config/common.defaults.yaml", members)
+                self.assertNotIn("config/dev.yaml", members)
+                self.assertFalse(
+                    any(
+                        "__pycache__" in name or name.endswith(".pyc")
+                        for name in members
+                    )
+                )
+                for component in components:
+                    self.assertIn(
+                        "components/" + component + "/config.defaults.yaml", members
+                    )
+                self.assertIn("CORE_VERSION", members)
+                checksum = archive.extractfile(prefix + "checksums.sha256")
+                assert checksum is not None
+                lines = checksum.read().decode().splitlines()
+                for line in lines:
+                    digest, filename = line.split("  ", 1)
+                    data = archive.extractfile(prefix + filename)
+                    assert data is not None
+                    self.assertEqual(hashlib.sha256(data.read()).hexdigest(), digest)
+                self.assertEqual(
+                    {line.split("  ", 1)[1] for line in lines},
+                    {
+                        member.name[len(prefix) :]
+                        for member in archive.getmembers()
+                        if member.isfile()
+                        and member.name != prefix + "checksums.sha256"
+                    },
+                )
 
     def test_sha256_reads_more_than_one_chunk(self):
         path = self.root / "large.bin"

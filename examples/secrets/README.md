@@ -1,27 +1,27 @@
 # secrets
 
-Kjør `./examples/run.sh secrets` etter [image-oppsettet](../README.md).
+Run `./examples/run.sh secrets` after [the image setup](../README.md).
 
-Tester tre `SECRET_FILES`-id-er: en katalog med to tekstfiler, en binærfil og
-en egen Secret fra samme tekstkatalog for å teste utvalg med `items`.
-Binærfilen genereres ved kjøring med alle byteverdier 0–255, NUL, 0xff og CR/LF.
-Alle mounts er read-only:
+Tests three `SECRET_FILES` ids: a directory with two text files, a binary file and
+a separate Secret from the same text directory to test selection with `items`.
+The binary file is generated at run time with all byte values 0–255, NUL, 0xff and CR/LF.
+All mounts are read-only:
 
-- `/inputs/text`: uten `items`, begge tekstfilene monteres med opprinnelig navn.
-- `/inputs/binary`: eksplisitt `items` med `key: binary.bin` og `path: binary.bin`,
-  tilsvarende mønsteret for en enkelt PFX-fil.
-- `/inputs/selected`: `items` velger bare `message.txt` og plasserer den som
-  `renamed.txt`. Den andre nøkkelen, `second.txt`, skal ikke monteres,
-  og `message.txt` skal ikke finnes under sitt opprinnelige navn i dette mountet.
+- `/inputs/text`: without `items`, both text files are mounted with their original names.
+- `/inputs/binary`: explicit `items` with `key: binary.bin` and `path: binary.bin`,
+  matching the pattern for a single PFX file.
+- `/inputs/selected`: `items` selects only `message.txt` and places it as
+  `renamed.txt`. The other key, `second.txt`, must not be mounted,
+  and `message.txt` must not exist under its original name in this mount.
 
-Forventet: SHA-256 fra hver fil på verten er lik SHA-256 lest med `podman exec`
-fra containeren, også for filen med endret navn. Ikke-valgte nøkler skal mangle.
-Ingen konvertering av binærdata tillates. Alle kontroller
-passerer og scriptet returnerer 0. Secrets og deres navngitte mount-volumer
-fjernes ved opprydding.
+Expected: the SHA-256 of each file on the host equals the SHA-256 read with `podman exec`
+from the container, also for the renamed file. Unselected keys must be missing.
+No conversion of binary data is allowed. All checks
+pass and the script returns 0. The Secrets and their named mount volumes
+are removed at cleanup.
 
-Testet med rootless Podman 5.7.0: samme filnavn i `key`/`path`, omdøping på
-toppnivå og filtrering av ikke-valgte nøkler fungerer. SHA-256-kontrollene passerer.
-En separat prøve med `path: nested/renamed.txt` feilet ved `kube play` med
-exit 125 og meldingen `must not contain path separator`. Bruk derfor et filnavn
-uten `/` i `items.path` på denne versjonen; katalogen velges med `mountPath`.
+Tested with rootless Podman 5.7.0: the same file name in `key`/`path`, top-level
+renaming and filtering out unselected keys work. The SHA-256 checks pass.
+A separate trial with `path: nested/renamed.txt` failed at `kube play` with
+exit 125 and the message `must not contain path separator`. Use a file name
+without `/` in `items.path` on this version; the directory is chosen with `mountPath`.

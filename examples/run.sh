@@ -3,12 +3,12 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 if [[ $# != 1 ]]; then
-    echo "Usage: $0 basic|secrets|volumes|init-containers|manifest-defined|failures" >&2
+    echo "Usage: $0 basic|secrets|generated-secrets|volumes|init-containers|manifest-defined|failures" >&2
     exit 2
 fi
 example=$1
 case "$example" in
-    basic|secrets|volumes|init-containers|manifest-defined|failures) ;;
+    basic|secrets|generated-secrets|volumes|init-containers|manifest-defined|failures) ;;
     *) echo "Unknown example: $example" >&2; exit 2 ;;
 esac
 work=$(mktemp -d "${TMPDIR:-/tmp}/offline-example.XXXXXXXX")
@@ -148,6 +148,43 @@ case "$example" in
             test ! -e /inputs/selected/message.txt
             test ! -e /inputs/selected/second.txt'
         echo 'PASS: secret items preserve binary bytes, rename paths and exclude unlisted keys'
+        ;;
+    generated-secrets)
+        python3 - "$container" <<'GENERATED_EXAMPLE'
+import subprocess
+import sys
+from pathlib import Path
+
+
+def main():
+    """Require private files, exact delivery and unchanged bytes after another play."""
+    path = Path("generated-certificates/app/API_TOKEN")
+    before = path.read_bytes()
+    if (len(before) != 32 or not before.decode("ascii").isalnum()
+            or path.stat().st_mode & 0o777 != 0o600
+            or path.parent.stat().st_mode & 0o777 != 0o700):
+        raise RuntimeError("Invalid generated secret file or permissions")
+    for attempt in range(2):
+        if attempt:
+            subprocess.run(["./deploy", "prepare"], check=True)
+            if path.read_bytes() != before:
+                raise RuntimeError("Prepare changed the existing generated secret")
+            subprocess.run(["podman", "kube", "play", "--replace", "build/install.yaml"], check=True)
+        result = subprocess.run(
+            ["podman", "exec", sys.argv[1], "sh", "-c", 'printf "%s" "$API_TOKEN"'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
+        )
+        if result.returncode or result.stdout != before:
+            raise RuntimeError("Delivered generated secret does not match its source")
+    print("PASS: private generated secret, exact envFrom delivery and reuse; values withheld")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        raise SystemExit("FAIL: generated-secret verification failed")
+GENERATED_EXAMPLE
         ;;
     volumes)
         for pair in 'files/single.txt /data/single.txt' 'files/tree/top.txt /data/top.txt' 'files/tree/nested/leaf.txt /data/nested/leaf.txt' 'files/tree/nested/run.sh /data/nested/run.sh'; do

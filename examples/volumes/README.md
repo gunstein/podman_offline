@@ -1,19 +1,19 @@
 # volumes
 
-Kjør `./examples/run.sh volumes` etter [image-oppsettet](../README.md).
+Run `./examples/run.sh volumes` after [the image setup](../README.md).
 
-Tester en `VOLUME_FILES`-id med en separat fil og et katalogtre. Katalogens
-innhold skal ligge direkte i `/data`, uten en ekstra `tree/`-katalog.
-SHA-256 kontrolleres for samtlige opplastede filer. Fra containeren skal
-filen eies av `0:0` med 0644, katalogen av `0:0` med 0755, og det kjørbare
-scriptet av `0:0` med 0755. Ved rootless viser dette eiere i containerens
-brukernavnerom, ikke vertens numeriske bruker-ID-er.
+Tests a `VOLUME_FILES` id with a separate file and a directory tree. The directory's
+content must be directly in `/data`, without an extra `tree/` directory.
+SHA-256 is checked for every uploaded file. From the container, the
+file must be owned by `0:0` with 0644, the directory by `0:0` with 0755, and the executable
+script by `0:0` with 0755. In rootless mode this shows owners in the container's
+user namespace, not the host's numeric user IDs.
 
-Deretter skriver appen `/data/app-created.txt` og overskriver `/data/single.txt`.
-Scriptet kjører `kube down` uten å fjerne volumet, endrer den opplastede
-kildefilen, kjører `prepare` igjen og spiller YAML-en på nytt.
+Then the app writes `/data/app-created.txt` and overwrites `/data/single.txt`.
+The script runs `kube down` without removing the volume, changes the uploaded
+source file, runs `prepare` again and plays the YAML again.
 
-Forventet: appens egen fil er bevart, mens `single.txt` er lik den nye
-opplastede filen. Hvis Podman-versjonen ikke importerer over et eksisterende
-volum, vil siste SHA-256-kontroll feile og scriptet returnere ulik 0.
-Volumet slettes etter testen, også ved verifikasjonsfeil.
+Expected: the app's own file is kept, while `single.txt` equals the newly
+uploaded file. If the Podman version does not import over an existing
+volume, the last SHA-256 check fails and the script returns non-zero.
+The volume is deleted after the test, also on verification failures.

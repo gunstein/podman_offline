@@ -1,0 +1,13 @@
+DB_HOST: app1-postgres
+DB_PORT: '5432'
+DB_USER: todo
+DB_NAME: todo
+GENERATED_SECRETS:
+- generated-certificates/todo/session-key
+- generated-certificates/database/password
+SECRET_FILES:
+  app1-database-password:
+  - generated-certificates/database
+VOLUME_FILES:
+  app1-signing:
+  - generated-certificates/todo

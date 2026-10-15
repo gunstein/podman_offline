@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: myproduct-identity
+  name: core-identity
 spec:
   restartPolicy: Always
   containers:
   - name: app
-    image: localhost/myproduct-identity:0.1.0
+    image: localhost/myproduct-identity:0.2.1
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90
@@ -14,22 +14,32 @@ spec:
         command:
         - bash
         - -c
-        - 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /identity/health HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r -t 2 status <&3; [[ $status == "HTTP/1.1 200 "* || $status == "HTTP/1.0 200 "* ]]'
+        - 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /identity/health HTTP/1.0\r\nHost:
+          localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r -t 2 status <&3;
+          [[ $status == "HTTP/1.1 200 "* || $status == "HTTP/1.0 200 "* ]]'
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
     envFrom:
+    - secretRef:
+        name: core-api-secrets
     - configMapRef:
-        name: myproduct-settings
+        name: core-settings
     env:
-    - name: DATABASE_HOST
-      value: myproduct-identity-postgres
+    - name: DB_HOST
+      value: '@@DB_HOST@@'
+    - name: DB_PORT
+      value: '@@DB_PORT@@'
+    - name: DB_USER
+      value: '@@DB_USER@@'
+    - name: DB_NAME
+      value: '@@DB_NAME@@'
     volumeMounts:
     - name: signing
       mountPath: /run/secrets/signing
       readOnly: true
-    - name: client
-      mountPath: /run/secrets/client
+    - name: clients
+      mountPath: /clients
       readOnly: true
     - name: password
       mountPath: /run/secrets/database
@@ -42,28 +52,25 @@ spec:
   volumes:
   - name: signing
     secret:
-      secretName: identity-signing
-      defaultMode: 0400
+      secretName: core-identity-signing
+      defaultMode: 256
       items:
       - key: identity.crt
         path: identity.crt
       - key: identity.key
         path: identity.key
-  - name: client
-    secret:
-      secretName: identity-client-certificate
-      items:
-      - key: todo-client.crt
-        path: todo-client.crt
+  - name: clients
+    persistentVolumeClaim:
+      claimName: core-clients
   - name: password
     secret:
-      secretName: identity-database-password
+      secretName: core-database-password
       items:
       - key: password
         path: password
   - name: users
     secret:
-      secretName: identity-demo-users
+      secretName: core-demo-users
   - name: protection
     persistentVolumeClaim:
-      claimName: identity-protection
+      claimName: core-identity-protection

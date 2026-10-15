@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app1-todo
+spec:
+  restartPolicy: Always
+  containers:
+  - name: backend
+    image: localhost/myproduct-todo-backend:0.2.1
+    imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - python
+        - -c
+        - import urllib.request; r = urllib.request.urlopen("http://127.0.0.1:8000/livez",
+          timeout=3); assert r.status == 204
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    envFrom:
+    - configMapRef:
+        name: app1-settings
+    env:
+    - name: DB_HOST
+      value: '@@DB_HOST@@'
+    - name: DB_PORT
+      value: '@@DB_PORT@@'
+    - name: DB_USER
+      value: '@@DB_USER@@'
+    - name: DB_NAME
+      value: '@@DB_NAME@@'
+    - name: REQUESTS_CA_BUNDLE
+      value: /certificates/ca.crt
+    - name: APP_ID
+      value: app1
+    - name: BASE_PATH
+      value: /app1
+    volumeMounts:
+    - name: certificates
+      mountPath: /certificates
+      readOnly: true
+    - name: password
+      mountPath: /run/secrets/database
+      readOnly: true
+  - name: frontend
+    image: localhost/myproduct-todo-frontend:0.2.0
+    imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 90
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8080/
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+  volumes:
+  - name: certificates
+    persistentVolumeClaim:
+      claimName: app1-signing
+  - name: password
+    secret:
+      secretName: app1-database-password
+      items:
+      - key: password
+        path: password

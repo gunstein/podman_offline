@@ -1,0 +1,7 @@
+id: app2
+base_path: /app2
+scopes:
+- openid
+- profile
+- app2
+certificate: generated-certificates/todo/todo-client.crt

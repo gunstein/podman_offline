@@ -1,0 +1,3 @@
+# Local overrides for every rendered component; maps/lists replace the whole value.
+PUBLIC_ORIGIN: https://myproduct-proxy:8443
+HTTPS_PORT: 8443

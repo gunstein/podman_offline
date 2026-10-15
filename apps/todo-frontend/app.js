@@ -1,12 +1,13 @@
 const element = (id) => document.getElementById(id);
+const basePath = new URL(".", location.href).pathname.replace(/\/$/, "");
 let csrf = "";
 async function api(path, method = "GET", body) {
-  const response = await fetch(path, {
+  const response = await fetch(basePath + path, {
     method,
     headers: {"Content-Type": "application/json", "X-CSRF-Token": csrf},
     body: body === undefined ? undefined : JSON.stringify(body)
   });
-  if (!response.ok) throw new Error(`Forespørselen feilet (${response.status})`);
+  if (!response.ok) throw new Error(`The request failed (${response.status})`);
   return response.status === 204 ? null : response.json();
 }
 async function refresh() {
@@ -24,7 +25,7 @@ async function refresh() {
     const label = document.createElement("span");
     label.textContent = ` ${todo.title} `;
     const remove = document.createElement("button");
-    remove.textContent = "Slett";
+    remove.textContent = "Delete";
     remove.onclick = () => action(async () => {
       await api(`/api/todos/${todo.id}`, "DELETE");
       await refresh();
@@ -53,11 +54,11 @@ element("logout").onclick = () => action(async () => {
 action(async () => {
   const state = await api("/auth/me");
   if (!state.user) {
-    element("user").textContent = "Logg inn for å se dine oppgaver.";
+    element("user").textContent = "Sign in to see your tasks.";
     return;
   }
   csrf = state.csrf;
-  element("user").textContent = `Innlogget som ${state.user.name}`;
+  element("user").textContent = `Signed in as ${state.user.name}`;
   element("login").hidden = true;
   element("logout").hidden = false;
   element("form").hidden = false;

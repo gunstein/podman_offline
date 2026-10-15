@@ -25,7 +25,7 @@ SSH = [
 
 
 def ssh(host, script):
-    """Logg og kjør et klargjøringsscript på dev-VM-en via SSH."""
+    """Log and run a preparation script on the dev VM over SSH."""
     print("$ ssh " + host + " bash -se\n" + script, flush=True)
     result = subprocess.run(
         SSH + [host, "bash -se"],
@@ -40,7 +40,7 @@ def ssh(host, script):
 
 
 def wait_ssh(host):
-    """Vent på SSH-tilgang til dev-VM-en eller avbryt ved timeout."""
+    """Wait for SSH access to the dev VM or stop on a timeout."""
     for _ in range(80):
         result = subprocess.run(
             SSH + [host, "true"],
@@ -58,7 +58,7 @@ def wait_ssh(host):
 
 
 def prepare(config, client):
-    """Lag clean-dev fra clean-agent uten å endre prod eller kildesnapshotet."""
+    """Create clean-dev from clean-agent without changing prod or the source snapshot."""
     if not re.fullmatch(r"[1-9][0-9]*", config["DEV_VMID"]):
         raise ValueError("Invalid DEV VM ID")
     if config["DEV_VMID"] == config["PROD_VMID"]:
@@ -94,7 +94,7 @@ def prepare(config, client):
     )
 
     def task(path, form=None):
-        """Logg og vent på én Proxmox-operasjon."""
+        """Log and wait for one Proxmox task."""
         print("Proxmox POST " + path + " " + json.dumps(form or {}), flush=True)
         client.task(path, form)
 
@@ -150,7 +150,7 @@ echo 'PASS: clean-dev booted with the required profile'
 
 
 def main():
-    """Les labconfig og start eksplisitt autorisert opprettelse av clean-dev."""
+    """Read the lab config and start an explicitly authorized creation of clean-dev."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config", default="~/.config/podman-offline-acceptance/lab.env"

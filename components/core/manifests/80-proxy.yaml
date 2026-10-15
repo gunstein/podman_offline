@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: myproduct-proxy
+  name: core-proxy
 spec:
   restartPolicy: Always
   containers:
   - name: nginx
-    image: localhost/myproduct-proxy:0.1.0
+    image: localhost/myproduct-proxy:0.2.0
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90
@@ -20,7 +20,7 @@ spec:
       failureThreshold: 3
     envFrom:
     - configMapRef:
-        name: myproduct-settings
+        name: core-settings
     ports:
     - containerPort: '@@HTTPS_PORT@@'
       hostPort: '@@HTTPS_PORT@@'
@@ -30,13 +30,20 @@ spec:
     - name: tls
       mountPath: /run/secrets/web
       readOnly: true
+    - name: routes
+      mountPath: /routes
+      readOnly: true
   volumes:
   - name: tls
     secret:
-      secretName: web-tls
-      defaultMode: 0400
+      secretName: core-web-tls
+      defaultMode: 256
       items:
       - key: web.crt
         path: web.crt
       - key: web.key
         path: web.key
+  - name: routes
+    persistentVolumeClaim:
+      claimName: core-routes
+  hostname: '@@PUBLIC_HOSTNAME@@'

@@ -1,80 +1,94 @@
-# Testresultater, 2026-10-12
+# Test results, 2026-10-12
 
-Arbeidsmiljø: Podman **5.7.0**, **rootless** (`podman info` rapporterte `true`),
-BusyBox **1.37.0**, lokalt tagget `localhost/offline-example:1`.
-Ingen rootful-installasjon, systemd-operasjoner eller reboot ble utført.
+Environment: Podman **5.7.0**, **rootless** (`podman info` reported `true`),
+BusyBox **1.37.0**, tagged locally as `localhost/offline-example:1`.
+No rootful installation, systemd operations or reboot were performed.
 
-| Kjøring | Resultat |
+| Run | Result |
 | --- | --- |
-| `./examples/run.sh basic` | Exit 0: miljø, HTTP-svar og eksakt loopback-portbinding stemte |
-| `./examples/run.sh secrets` | Exit 0: SHA-256 stemte også med `items`; samme filnavn, omdøping på toppnivå og utelating av ikke-valgte nøkler fungerte |
-| `./examples/run.sh volumes` | Exit 0: innhold, eiere/rettigheter, appdata etter down/play og overskriving fra nytt arkiv stemte |
-| `./examples/run.sh init-containers` | Exit 0: hovedcontaineren observerte `first`, deretter `second` |
-| `./examples/run.sh manifest-defined` | Exit 0: PVC og Secret/stringData/secretKeyRef fungerte |
-| `./examples/run.sh failures` | Exit 0: alle fire forventede prepare-feil ble kontrollert; ingen YAML/arkiver ble skrevet |
+| `./examples/run.sh basic` | Exit 0: environment, HTTP response and the exact loopback port binding matched |
+| `./examples/run.sh secrets` | Exit 0: SHA-256 matched also with `items`; the same file name, top-level renaming and leaving out unselected keys worked |
+| `./examples/run.sh volumes` | Exit 0: content, owners/permissions, app data after down/play and overwriting from a new archive matched |
+| `./examples/run.sh init-containers` | Exit 0: the main container observed `first`, then `second` |
+| `./examples/run.sh manifest-defined` | Exit 0: PVC and Secret/stringData/secretKeyRef worked |
+| `./examples/run.sh failures` | Exit 0: all four expected prepare errors were checked; no YAML/archives were written |
 
-**Avvik fra en helt ren Podman-kjøring:** Ved `kube down` skrev Podman
-`rootless netns: kill network process: permission denied` under en
-`Error: stopping container ... network`-melding. Podman returnerte likevel 0.
-Dette skjedde i de fem positive eksemplene, også mellom volumtestens to play.
-Alle funksjonskontroller passerte. Etter kjøring viste separate lister ingen
-av testenes containere, pods, secrets eller volumer. Nettverksprosessens
-livssyklus er ikke verifisert utover dette, og årsaken er ikke fastslått.
-Avviket må undersøkes dersom det gjentas på mål-VM-en.
+**Deviation from a completely clean Podman run:** On `kube down` Podman wrote
+`rootless netns: kill network process: permission denied` under an
+`Error: stopping container ... network` message. Podman still returned 0.
+This happened in the five positive examples, also between the volume test's two plays.
+All functional checks passed. After the run, separate listings showed none
+of the tests' containers, pods, secrets or volumes. The network process's
+life cycle is not verified beyond this, and the cause has not been determined.
+The deviation must be investigated if it repeats on the target VM.
 
-Første versjon av runneren etterlot Secret-mount-volumer. Runneren ble rettet
-til å fjerne også disse navngitte volumene, de første testvolumene ble fjernet,
-og alle seks eksemplene ble kjørt på nytt med resultatene i tabellen.
-Appenes PID 1 håndterer SIGTERM for å unngå unødvendig ti sekunders stopptimeout.
+The first version of the runner left Secret mount volumes behind. The runner was fixed
+to remove these named volumes as well, the first test volumes were removed,
+and all six examples were run again with the results in the table.
+The apps' PID 1 handles SIGTERM to avoid an unnecessary ten-second stop timeout.
 
-Oppfølging med `secret.items`: eksempelet beholder ett mount uten `items`, bruker
-eksplisitt `key: binary.bin` / `path: binary.bin` for binærfilen og har en tredje
-Secret som velger bare `message.txt` under navnet `renamed.txt`. Filhashene stemte,
-og både det opprinnelige filnavnet og den utelatte nøkkelen `second.txt` manglet
-i det filtrerte mountet. Den utvidede testen returnerte 0 på rootless Podman 5.7.0.
+Follow-up with `secret.items`: the example keeps one mount without `items`, uses
+an explicit `key: binary.bin` / `path: binary.bin` for the binary file and has a third
+Secret that selects only `message.txt` under the name `renamed.txt`. The file hashes matched,
+and both the original file name and the left-out key `second.txt` were missing
+in the filtered mount. The extended test returned 0 on rootless Podman 5.7.0.
 
-En prøve med `items.path: nested/renamed.txt` **feilet** med exit 125:
-`name "nested/renamed.txt" must not contain path separator`. Underkataloger i
-`items.path` er dermed ikke støttet i denne prøven. Det er en Podman-begrensning;
-`deploy prepare` rendret manifestet uten feil. Den vanlige eksempelkjøringen
-bruker derfor omdøping på toppnivå. Begge kjøringene ryddet opp egne ressurser;
-den vellykkede kjøringen hadde fortsatt nettverksavviket beskrevet over.
+A trial with `items.path: nested/renamed.txt` **failed** with exit 125:
+`name "nested/renamed.txt" must not contain path separator`. Subdirectories in
+`items.path` are therefore not supported in this trial. It is a Podman limitation;
+`deploy prepare` rendered the manifest without errors. The normal example run
+therefore uses top-level renaming. Both runs cleaned up their own resources;
+the successful run still had the network deviation described above.
 
-## Enhetstester og kvalitetskontroller
+## Unit tests and quality checks
 
-- 51 nye tester: 42 deploy-tester og 9 bundle-tester, med ytterligere varianter
-  i `subTest`.
-- Python 3.14.4 / PyYAML 6.0.3: alle 51 passerer.
-- Python 3.11.17 / PyYAML 5.4.1 (`.venv54`): alle 51 passerer.
-- Ruff 0.17.0: lint og formatkontroll rene.
-- Pyright 1.1.414: 0 feil og 0 advarsler.
-- Vermin 1.8.0: minstekrav Python 3.6, target `3.6-` godkjent.
-- `bash -n examples/run.sh`: godkjent.
+- 51 new tests: 42 deploy tests and 9 bundle tests, with further variants
+  in `subTest`.
+- Python 3.14.4 / PyYAML 6.0.3: all 51 pass.
+- Python 3.11.17 / PyYAML 5.4.1 (`.venv54`): all 51 pass.
+- Ruff 0.17.0: lint and format checks clean.
+- Pyright 1.1.414: 0 errors and 0 warnings.
+- Vermin 1.8.0: minimum Python 3.6, target `3.6-` accepted.
+- `bash -n examples/run.sh`: accepted.
 
-De oppgitte 21 originaltestene og flere originalfiler fantes ikke i arbeidsområdet.
-De kunne derfor ikke leses eller kjøres. Nye tester ligger i separate filer;
-ingen originaltester er erstattet. Testene på 5.4.1/6.x og den statiske
-kompatibilitetskontrollen er ikke det samme som en faktisk kjøring på Python 3.6.
+The 21 original tests mentioned and several original files did not exist in the workspace.
+They could therefore not be read or run. New tests are in separate files;
+no original tests were replaced. The tests on 5.4.1/6.x and the static
+compatibility check are not the same as an actual run on Python 3.6.
 
-## Python-koden og åpne observasjoner
+## The Python code and open observations
 
-Ved denne eksempelkjøringen var `deploy.py` og `bundle.py` uendret. Ingen av de implementerte testene eller
-Podman-eksemplene avdekket en Python-feil som krevde retting, og det er derfor
-ingen feilrettingscommit.
+During this example run, `deploy.py` and `bundle.py` were unchanged. None of the implemented tests or
+Podman examples revealed a Python bug that needed fixing, so there is
+no bug-fix commit.
 
-Følgende begrensninger er observert ved lesing, uten endring av eksisterende
-oppførsel:
+The following limitations were observed by reading, without changing existing
+behavior:
 
-- Koblingssjekken validerer Secret/PVC-navn, ikke om `secretKeyRef.key` finnes
-  eller hele Kubernetes/Podman-skjemaet. De ekte eksemplene utfyller dette.
-- Filarkiver skrives først etter vellykket validering, men skriving av flere
-  arkiver er ikke en atomisk transaksjon ved for eksempel diskfeil.
-- Volumimport overskriver opplastede filer ved neste play. Det er tilsiktet
-  oppførsel; appdata som skal beholdes bør ha andre filnavn eller eget volum.
+- The link check validates Secret/PVC names, not whether `secretKeyRef.key` exists
+  or the full Kubernetes/Podman schema. The real examples complement this.
+- File archives are written only after successful validation, but writing several
+  archives is not an atomic transaction, for example on disk errors.
+- A volume import overwrites uploaded files at the next play. This is intended
+  behavior; app data that must be kept should have other file names or its own volume.
 
-Produksjonsoppstart og faktisk reboot må kontrolleres manuelt med
-[VM-sjekklisten](VM-CHECKLIST.md) og en komplett bundle.
+Production start-up and an actual reboot must be checked manually with the
+[VM checklist](VM-CHECKLIST.md) and a complete bundle.
 
-Senere er image-håndteringen endret til strukturell YAML-lesing og ett felles
-image-arkiv. Gjeldende bygg- og installasjonsflyt er beskrevet i
-[README](../README.md#offline-bundle-og-rootful-quadlet).
+Later, the image handling was changed to structural YAML reading and one shared
+image archive. The current build and installation flow is described in the
+[README](../README.md#offline-bundle-and-rootless-quadlet).
+
+## Generated-secret example, 2026-10-13
+
+`./examples/run.sh generated-secrets` passed on rootless Podman 5.7.0 with the
+existing BusyBox example image. It checked 0600/0700 modes, exact envFrom bytes
+and unchanged values after a second prepare/play. Cleanup returned 0 without
+network warnings. No secret values or hashes were printed.
+
+A separate smoke run against the already-running local demo stopped at the
+help-link check: that installation still served `/help/innlogging.html`,
+`/help/oppgaver.html` and `/help/feilsoking.html`, while the current test expects
+the English filenames. HTTPS, discovery and anonymous rejection passed before
+that check. The existing images were not rebuilt or replaced in this review round.
+This does not constitute a new VM acceptance run.

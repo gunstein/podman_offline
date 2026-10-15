@@ -1,17 +1,17 @@
 # failures
 
-Kjør `./examples/run.sh failures`. Krever Python og PyYAML, men ikke Podman
-eller det lokale testimaget. Hvert undertilfelle har egen config og eget manifest.
+Run `./examples/run.sh failures`. Requires Python and PyYAML, but not Podman
+or the local test image. Each sub-case has its own config and manifest.
 
-| Tilfelle | Forventet feilmelding |
+| Case | Expected error message |
 | --- | --- |
-| `unused-id` | VOLUME_FILES-id-en «brukes ikke av noe manifest» |
-| `unknown-claim` | PersistentVolumeClaim «finnes ikke» |
-| `partial-placeholder` | «Uerstattet @@...@@» |
-| `large-secret` | SECRET_FILES-id-en «er for stor» |
+| `unused-id` | The VOLUME_FILES id “is not used by any manifest” |
+| `unknown-claim` | PersistentVolumeClaim “does not exist” |
+| `partial-placeholder` | “Unreplaced @@...@@” |
+| `large-secret` | The SECRET_FILES id “is too large” |
 
-Den store filen genereres som 400 000 byte i tempområdet. For hver variant
-må `./deploy prepare` feile, den forventede teksten må finnes i output, og
-verken `build/install.yaml` eller `build/files` skal finnes. Scriptet selv
-returnerer 0 bare når alle fire forventede feil er bekreftet; feil årsak eller
-uventet vellykket rendring gir exit ulik 0.
+The large file is generated as 400,000 bytes in the temporary area. For each variant,
+`./deploy prepare` must fail, the expected text must be in the output, and
+neither `build/install.yaml` nor `build/files` may exist. The script itself
+returns 0 only when all four expected errors are confirmed; a wrong cause or
+an unexpectedly successful render gives a non-zero exit.

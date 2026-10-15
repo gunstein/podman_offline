@@ -1,38 +1,22 @@
-# Lokal test-PKI
+# Demo PKI
 
-Kjør `./PKI/generate.sh` eller `./scripts/generate-certificates.sh` fra repo-roten.
-`PKI/generate.sh` er en wrapper rundt `scripts/generate-certificates.sh`.
-Scriptet i `scripts/` følger med offline-bundlen og oppretter PKI-katalogen ved behov. Standard TLS-navn er `myproduct-proxy`; valgfritt første
-argument angir et annet DNS-navn.
+`scripts/generate-certificates.sh [--root DIR] core|app1|app2|help [DNS hostname]`
+creates missing component material once. `PKI/generate.sh` forwards arguments to
+that script. Dev uses build/dev; prod passes --root /var/lib/myproduct explicitly.
+The shared CA lives in PKI/private. Core has identity signing and web TLS pairs,
+shared demo-user passwords. Each app has a separate client pair. Database
+passwords and session/API keys belong to deploy’s GENERATED_SECRETS mechanism,
+not this certificate script. See the PostgreSQL section in the root README for
+state preflight, persistent paths, backup/recovery and manual config additions.
 
-I prod brukes `bash scripts/generate-certificates.sh --root /var/lib/myproduct
-myproduct-proxy` (på én linje, som tjenestebrukeren). Da ligger nøkler,
-passord og CA utenfor release-katalogen. Standard uten `--root` er fortsatt
-prosjektroten. Generer bare ved første installasjon, aldri ved oppgradering;
-databaser og demobrukere beholder sine opprinnelige passord. CA på målverten
-er kun for demo; i ekte prod utstedes sertifikater eksternt.
+Identity receives only each client's public certificate; its private key and CA
+certificate reach the own Todo through its signing PVC. All directories/files
+are created privately. Repeating generation preserves existing nonempty files;
+partial certificate/CA pairs and empty demo-user password files fail. Database
+password validation happens in deploy’s lifecycle preflight. Adding app2 retains
+core/app1 material, except the CA serial advances when a new certificate is issued.
 
-CA-nøkkel og CA-sertifikat genereres i `PKI/private/`. Tre separate nøkkelpar
-signeres av CA-en:
-
-| Filer | Bruk | Leveranse til pod |
-| --- | --- | --- |
-| `generated-certificates/identity/identity.{key,crt}` | Duende signerer OIDC-token | Secret |
-| `generated-certificates/todo/todo-client.{key,crt}` | Todo autentiserer klienten med private_key_jwt | PVC via VOLUME_FILES |
-| `generated-certificates/web/web.{key,crt}` | nginx HTTPS | Secret |
-
-Duende får i tillegg en kopi av Todo-klientens offentlige sertifikat i
-`generated-certificates/client/`. Todo-volumet får CA-sertifikatet for HTTPS-
-verifisering og en separat tilfeldig cookie-signeringhemmelighet. Det opprettes
-også tilfeldige databasepassord og passord for demo-brukerne alice/bob.
-
-Alle utdata opprettes med `umask 077` og er ignorert av Git. CA-sertifikatet kan
-importeres i nettleseren; CA-privatnøkkelen skal bli hos den som utsteder
-sertifikatene. Scriptet avviser en ny kjøring når nøkkelmateriale allerede finnes,
-slik at en gjentatt kommando ikke bytter nøkler eller passord under en kjørende app.
-
-Todo-privatnøkkelen ligger i PVC som ønsket. Den er sensitiv selv om den er en
-volumfil: deploy normaliserer filmodusen i importarkivet til 0644. Bare backenden
-monterer volumet, read-only. Beskytt vertens Podman-lager og sikkerhetskopier.
-Bytt nøkkel og oppdater både Todo-PVC og Duendes offentlige klientsertifikat
-samtidig ved senere rotasjon. Dette scriptet implementerer ikke automatisk rotasjon.
+No keys, passwords or certificates are committed. A CA private key on the target
+is for the demo only: real production issues certificates elsewhere and delivers
+them to the persistent component paths. Do not replace database passwords or the
+CA during an upgrade. Keep private state outside releases and back it up.

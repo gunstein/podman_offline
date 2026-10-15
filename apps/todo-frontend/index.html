@@ -1,25 +1,25 @@
 <!doctype html>
-<html lang="nb">
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Todo</title>
 <body>
 <h1>Todo</h1>
-<nav aria-label="Hjelp">
-  <a href="/help/">Hjelp til Todo</a> ·
-  <a href="/help/innlogging.html">Innlogging</a> ·
-  <a href="/help/oppgaver.html">Bruke oppgavelisten</a> ·
-  <a href="/help/feilsoking.html">Feilsøking</a>
+<nav aria-label="Help">
+  <a href="/help/">Todo help</a> ·
+  <a href="/help/login.html">Signing in</a> ·
+  <a href="/help/tasks.html">Using the task list</a> ·
+  <a href="/help/troubleshooting.html">Troubleshooting</a>
 </nav>
-<p id="user">Sjekker innlogging …</p>
-<p><a id="login" href="/auth/login">Logg inn med Duende</a>
-<button id="logout" hidden>Logg ut</button></p>
+<p id="user">Checking sign-in …</p>
+<p><a id="login" href="auth/login">Sign in with Duende</a>
+<button id="logout" hidden>Sign out</button></p>
 <form id="form" hidden>
-  <input id="title" aria-label="Ny oppgave" maxlength="200" required>
-  <button>Legg til</button>
+  <input id="title" aria-label="New task" maxlength="200" required>
+  <button>Add</button>
 </form>
 <ul id="todos"></ul>
 <p id="error" role="alert"></p>
-<script src="/app.js" defer></script>
+<script src="app.js" defer></script>
 </body>
 </html>

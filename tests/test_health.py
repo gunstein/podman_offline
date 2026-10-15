@@ -8,6 +8,8 @@ from unittest import mock
 
 import yaml
 
+import deploy
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -16,7 +18,7 @@ class ProbeTests(unittest.TestCase):
 
     def containers(self):
         """Return every ordinary or init-container from product manifests."""
-        for path in sorted((ROOT / "manifests").glob("*.yaml")):
+        for path in sorted((ROOT / "components").glob("*/manifests/*.yaml")):
             with path.open() as stream:
                 for doc in yaml.safe_load_all(stream):
                     if isinstance(doc, dict) and doc.get("kind") == "Pod":
@@ -34,23 +36,26 @@ class ProbeTests(unittest.TestCase):
                 self.assertNotIn("readinessProbe", container)
                 continue
             count += 1
-            for key, period, timeout, failures in (("livenessProbe", 30, 5, 3),):
-                with self.subTest(
-                    path=path.name, container=container["name"], probe=key
-                ):
-                    probe = container[key]
-                    self.assertNotIn("httpGet", probe)
-                    self.assertNotIn("tcpSocket", probe)
-                    self.assertNotIn("readinessProbe", container)
-                    self.assertNotIn("startupProbe", container)
-                    self.assertEqual(probe["initialDelaySeconds"], 90)
-                    self.assertEqual(probe["periodSeconds"], period)
-                    self.assertEqual(probe["timeoutSeconds"], timeout)
-                    self.assertEqual(probe["failureThreshold"], failures)
-                    command = probe["exec"]["command"]
-                    self.assertTrue(command)
-                    self.assertTrue(all(isinstance(arg, str) for arg in command))
-                    self.assertNotIn("@@", " ".join(command))
+            with self.subTest(
+                path=path.name, container=container["name"], probe="livenessProbe"
+            ):
+                probe = container["livenessProbe"]
+                self.assertNotIn("httpGet", probe)
+                self.assertNotIn("tcpSocket", probe)
+                self.assertNotIn("readinessProbe", container)
+                self.assertNotIn("startupProbe", container)
+                self.assertEqual(probe["initialDelaySeconds"], 90)
+                self.assertEqual(probe["periodSeconds"], 30)
+                self.assertEqual(probe["timeoutSeconds"], 5)
+                self.assertEqual(probe["failureThreshold"], 3)
+                config = deploy.merge_config(
+                    ROOT / "config/common.defaults.yaml",
+                    path.parent.parent / "config.defaults.yaml",
+                )
+                command = deploy.replace(probe["exec"]["command"], config)
+                self.assertTrue(command)
+                self.assertTrue(all(isinstance(arg, str) for arg in command))
+                self.assertNotIn("@@", " ".join(str(arg) for arg in command))
         self.assertGreater(count, 0)
 
     def test_backend_probe_uses_livez_not_database_health(self):
@@ -60,10 +65,62 @@ class ProbeTests(unittest.TestCase):
             for _, _, container in self.containers()
             if container["name"] == "backend"
         )
-        for key in ("livenessProbe",):
-            command = " ".join(backend[key]["exec"]["command"])
-            self.assertIn("127.0.0.1:8000/livez", command)
-            self.assertNotIn("/api/health", command)
+        command = " ".join(backend["livenessProbe"]["exec"]["command"])
+        self.assertIn("127.0.0.1:8000/livez", command)
+        self.assertNotIn("/api/health", command)
+
+    def test_backend_routes_and_cookie_are_scoped_to_the_app(self):
+        """Keep auth/API routes and browser cookies independent for each Todo instance."""
+        tree = ast.parse((ROOT / "apps/todo-backend/app.py").read_text())
+        for component in ("app1", "app2"):
+            namespace = {"BASE_PATH": "/" + component, "APP_ID": component}
+            routes = []
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef):
+                    for decorator in node.decorator_list:
+                        if (
+                            isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Attribute)
+                            and decorator.func.attr
+                            in ("get", "post", "patch", "delete")
+                        ):
+                            expression = ast.Expression(decorator.args[0])
+                            routes.append(
+                                eval(
+                                    compile(expression, "backend route", "eval"),
+                                    namespace,
+                                )
+                            )
+            self.assertIn("/livez", routes)
+            self.assertTrue(
+                all(
+                    route == "/livez" or route.startswith("/" + component + "/")
+                    for route in routes
+                )
+            )
+            settings = next(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "update"
+                and any(key.arg == "SESSION_COOKIE_PATH" for key in node.keywords)
+            )
+            cookies = {
+                key.arg: eval(
+                    compile(ast.Expression(key.value), "cookie setting", "eval"),
+                    namespace,
+                )
+                for key in settings.keywords
+                if key.arg in ("SESSION_COOKIE_NAME", "SESSION_COOKIE_PATH")
+            }
+            self.assertEqual(
+                cookies,
+                {
+                    "SESSION_COOKIE_NAME": component + "-session",
+                    "SESSION_COOKIE_PATH": "/" + component + "/",
+                },
+            )
 
     def test_livez_is_anonymous_and_does_not_connect_to_database(self):
         """Execute liveness/auth functions without importing the app or its dependencies."""
@@ -77,6 +134,7 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(len(functions), 2)
         namespace = {
             "request": types.SimpleNamespace(path="/livez", method="GET"),
+            "BASE_PATH": "",
             "session": {},
             "time": types.SimpleNamespace(time=lambda: 1),
             "abort": mock.Mock(side_effect=AssertionError("Authentication required")),

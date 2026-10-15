@@ -1,12 +1,12 @@
 # init-containers
 
-Kjør `./examples/run.sh init-containers` etter [image-oppsettet](../README.md).
+Run `./examples/run.sh init-containers` after [the image setup](../README.md).
 
-To init-containere deler en manifestdefinert PVC med hovedcontaineren.
-`first` skriver linjen `first`. `second` krever at denne finnes før den legger
-til `second`. Hovedcontaineren sjekker begge linjene før den kopierer resultatet
-til `/tmp/observed`. Host-scriptet leser og kontrollerer denne kopien.
+Two init containers share a manifest-defined PVC with the main container.
+`first` writes the line `first`. `second` requires that line to exist before it adds
+`second`. The main container checks both lines before it copies the result
+to `/tmp/observed`. The host script reads and checks this copy.
 
-Forventet: nøyaktig `first` og `second`, i den rekkefølgen. Hovedcontaineren
-kan bare passere kontrollen etter begge init-containerne. Manglende/feil innhold
-eller en container som ikke starter gir exit ulik 0. PVC-volumet ryddes bort.
+Expected: exactly `first` and `second`, in that order. The main container
+can pass the check only after both init containers. Missing or wrong content,
+or a container that does not start, gives a non-zero exit. The PVC volume is cleaned up.

@@ -1,0 +1,5 @@
+HTTPS_PORT: 18080
+GENERATED_SECRETS:
+  - generated-certificates/app/API_TOKEN
+SECRET_FILES:
+  example-run-generated: [generated-certificates/app]

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Duende.IdentityServer;
 using Duende.IdentityServer.Models;
 using Duende.IdentityServer.Services;
@@ -11,15 +12,34 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Npgsql;
 
+try { DatabaseEnvironment.Initialize(); }
+catch (InvalidOperationException error) {
+    Console.Error.WriteLine("Database configuration error: " + error.Message);
+    return 1;
+}
+// This runtime environment value is the only connection interface used by Identity.
+var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default")!;
+var source = NpgsqlDataSource.Create(connectionString);
+// Focused container verification uses the exact same startup and environment path.
+if (args.Contains("--database-check")) {
+    try {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand("SELECT 1", connection);
+        await command.ExecuteScalarAsync();
+        Console.WriteLine("Database connection verified via ConnectionStrings__Default");
+        return 0;
+    } catch (PostgresException error) when (error.SqlState == "28P01") {
+        Console.Error.WriteLine("Database authentication failed (28P01); restore matching credentials; no password changed");
+        return 2;
+    } catch (NpgsqlException) {
+        Console.Error.WriteLine("Database connection failed");
+        return 3;
+    }
+}
 var builder = WebApplication.CreateBuilder(args);
 string Required(string key) => builder.Configuration[key]
     ?? throw new InvalidOperationException($"Missing {key}");
 var origin = Required("PUBLIC_ORIGIN").TrimEnd('/');
-var connectionString = new NpgsqlConnectionStringBuilder {
-    Host = Required("DATABASE_HOST"), Database = "identity", Username = "identity",
-    Password = File.ReadAllText("/run/secrets/database/password").Trim(), Timeout = 5
-}.ConnectionString;
-var source = NpgsqlDataSource.Create(connectionString);
 builder.Services.AddSingleton(source);
 builder.Services.AddAntiforgery();
 builder.Services.AddDataProtection()
@@ -32,7 +52,12 @@ builder.Services.Configure<ForwardedHeadersOptions>(options => {
 });
 var signing = X509Certificate2.CreateFromPemFile(
     "/run/secrets/signing/identity.crt", "/run/secrets/signing/identity.key");
-var clientCertificate = X509Certificate2.CreateFromPem(File.ReadAllText("/run/secrets/client/todo-client.crt"));
+// Client registrations contain only public certificates; new imports take effect on restart.
+var registrations = JsonSerializer.Deserialize<string[]>(File.ReadAllText("/clients/installed.json"))
+    ?? throw new InvalidOperationException("Missing client index");
+var clients = registrations.Select(path => LoadClient(Path.Combine("/clients", path))).ToArray();
+if (clients.Select(client => client.ClientId).Distinct().Count() != clients.Length)
+    throw new InvalidOperationException("Duplicate OIDC client IDs");
 builder.Services.AddIdentityServer(options => {
     options.IssuerUri = origin + "/identity";
     options.KeyManagement.Enabled = false;
@@ -42,17 +67,10 @@ builder.Services.AddIdentityServer(options => {
     .AddInMemoryIdentityResources(new IdentityResource[] {
         new IdentityResources.OpenId(), new IdentityResources.Profile()
     })
-    .AddInMemoryApiScopes(new[] { new ApiScope("todo") })
-    .AddInMemoryClients(new[] { new Client {
-        ClientId = "todo", ClientName = "Todo", AllowedGrantTypes = GrantTypes.Code,
-        RequirePkce = true, RequireConsent = false,
-        RedirectUris = { origin + "/auth/callback" },
-        AllowedScopes = { "openid", "profile", "todo" },
-        ClientSecrets = { new Duende.IdentityServer.Models.Secret {
-            Type = IdentityServerConstants.SecretTypes.X509CertificateBase64,
-            Value = Convert.ToBase64String(clientCertificate.RawData)
-        }}
-    }})
+    .AddInMemoryApiScopes(clients.SelectMany(client => client.AllowedScopes)
+        .Where(scope => scope != "openid" && scope != "profile").Distinct()
+        .Select(scope => new ApiScope(scope)))
+    .AddInMemoryClients(clients)
     .AddJwtBearerClientAuthentication();
 
 var app = builder.Build();
@@ -73,7 +91,16 @@ for (var attempt = 0; ; attempt++) {
             await insert.ExecuteNonQueryAsync();
         }
         break;
-    } catch (NpgsqlException) when (attempt < 59) { await Task.Delay(1000); }
+    } catch (PostgresException error) when (error.SqlState == "28P01") {
+        Console.Error.WriteLine("Database authentication failed (28P01); restore matching credentials; no password changed");
+        return 2;
+    } catch (NpgsqlException) {
+        if (attempt == 59) {
+            Console.Error.WriteLine("Database connection failed during startup");
+            return 3;
+        }
+        await Task.Delay(1000);
+    }
 }
 app.UseForwardedHeaders();
 app.UsePathBase("/identity");
@@ -85,14 +112,14 @@ app.MapGet("/account/login", (HttpContext context, IAntiforgery antiforgery,
     if (!interaction.IsValidReturnUrl(returnUrl)) return Results.BadRequest("Invalid return URL");
     var tokens = antiforgery.GetAndStoreTokens(context);
     string Escape(string? value) => HtmlEncoder.Default.Encode(value ?? "");
-    var html = "<!doctype html><html lang=nb><meta charset=utf-8><title>Logg inn</title>" +
-        "<h1>Duende – logg inn</h1><form method=post>" +
+    var html = "<!doctype html><html lang=en><meta charset=utf-8><title>Sign in</title>" +
+        "<h1>Duende – sign in</h1><form method=post>" +
         "<input type=hidden name=returnUrl value=\"" + Escape(returnUrl) + "\">" +
         "<input type=hidden name=\"" + Escape(tokens.FormFieldName) + "\" value=\"" +
         Escape(tokens.RequestToken) + "\">" +
-        "<p><label>Brukernavn <input name=username autocomplete=username required></label></p>" +
-        "<p><label>Passord <input name=password type=password autocomplete=current-password required></label></p>" +
-        "<button>Logg inn</button></form></html>";
+        "<p><label>User name <input name=username autocomplete=username required></label></p>" +
+        "<p><label>Password <input name=password type=password autocomplete=current-password required></label></p>" +
+        "<button>Sign in</button></form></html>";
     return Results.Content(html, "text/html; charset=utf-8");
 });
 app.MapPost("/account/login", async (HttpContext context, IAntiforgery antiforgery,
@@ -114,3 +141,24 @@ app.MapPost("/account/login", async (HttpContext context, IAntiforgery antiforge
     return Results.Redirect(returnUrl);
 });
 app.Run();
+return 0;
+
+// Load one validated public client registration and its adjacent certificate.
+static Client LoadClient(string path) {
+    var config = JsonSerializer.Deserialize<ClientConfig>(File.ReadAllText(path))
+        ?? throw new InvalidOperationException("Missing client registration");
+    if (config.Certificate != "client.crt") throw new InvalidOperationException("Invalid certificate filename");
+    var certificate = X509Certificate2.CreateFromPem(File.ReadAllText(Path.Combine(Path.GetDirectoryName(path)!, config.Certificate)));
+    return new Client {
+        ClientId = config.Id, ClientName = config.Id, AllowedGrantTypes = GrantTypes.Code,
+        RequirePkce = true, RequireConsent = false,
+        RedirectUris = config.RedirectUris, AllowedScopes = config.Scopes,
+        ClientSecrets = { new Duende.IdentityServer.Models.Secret {
+            Type = IdentityServerConstants.SecretTypes.X509CertificateBase64,
+            Value = Convert.ToBase64String(certificate.RawData)
+        }}
+    };
+}
+
+// Public registration data loaded from the imported clients volume.
+sealed record ClientConfig(string Id, string[] RedirectUris, string[] Scopes, string Certificate);

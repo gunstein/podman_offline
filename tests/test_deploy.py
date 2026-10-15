@@ -7,6 +7,7 @@ import os
 import runpy
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -135,10 +136,12 @@ class DeployFixture(unittest.TestCase):
                     "kind": "Pod",
                     "spec": {
                         "containers": [
-                            {"image": "@@APP_IMAGE@@"},
-                            {"image": "localhost/app:1"},
+                            {"image": "@@APP_IMAGE@@", "imagePullPolicy": "Never"},
+                            {"image": "localhost/app:1", "imagePullPolicy": "Never"},
                         ],
-                        "initContainers": [{"image": "localhost/init:1"}],
+                        "initContainers": [
+                            {"image": "localhost/init:1", "imagePullPolicy": "Never"}
+                        ],
                     },
                 }
             ],
@@ -161,15 +164,35 @@ class ConfigTests(DeployFixture):
                 self.config["VALUE"] = value
                 self.write_config()
                 with self.assertRaisesRegex(
-                    deploy.DeployError, "VALUE.*tekst eller heltall"
+                    deploy.DeployError, "VALUE.*string or an integer"
                 ):
                     deploy.load_config(deploy.CONFIG)
+
+    def test_invalid_values_are_not_disclosed(self):
+        """Keep secret-bearing invalid config values out of errors and CLI output."""
+        private = "synthetic-private-value"
+        for key, value in (
+            ("VALUE", [private]),
+            ("VALUE", {"token": private}),
+            ("HTTPS_PORT", private),
+        ):
+            with self.subTest(key=key, value_type=type(value).__name__):
+                self.config = {"HTTPS_PORT": 8443, key: value}
+                self.write_config()
+                with self.assertRaises(deploy.DeployError) as caught:
+                    deploy.load_config(deploy.CONFIG)
+                self.assertNotIn(private, str(caught.exception))
+                with mock.patch.object(sys, "argv", ["deploy", "prepare"]):
+                    self.assertEqual(deploy.main(), 1)
+                self.assertNotIn(
+                    private, self.stdout.getvalue() + self.stderr.getvalue()
+                )
 
     def test_rejects_non_mapping_document(self):
         for text in ("", "null", "[]", "text", "42"):
             with self.subTest(text=text):
                 self.write("config.yaml", text)
-                with self.assertRaisesRegex(deploy.DeployError, "KEY: verdi"):
+                with self.assertRaisesRegex(deploy.DeployError, "KEY: value"):
                     deploy.load_config(deploy.CONFIG)
 
     def test_rejects_non_string_keys(self):
@@ -178,7 +201,7 @@ class ConfigTests(DeployFixture):
                 self.write(
                     "config.yaml", yaml.safe_dump({key: "x", "HTTPS_PORT": 8443})
                 )
-                with self.assertRaisesRegex(deploy.DeployError, "nøkler.*tekst"):
+                with self.assertRaisesRegex(deploy.DeployError, "keys.*strings"):
                     deploy.load_config(deploy.CONFIG)
 
     def test_port_boundaries(self):
@@ -206,8 +229,20 @@ class ConfigTests(DeployFixture):
         )
         with self.assertRaises(yaml.YAMLError) as caught:
             deploy.load_config(deploy.CONFIG)
-        self.assertIn("duplikat nøkkel 'HOSTNAME'", str(caught.exception))
+        self.assertIn("duplicate key 'HOSTNAME'", str(caught.exception))
         self.assertIn("line 3", str(caught.exception))
+
+    def test_invalid_yaml_does_not_disclose_source_values(self):
+        """Retain YAML line diagnostics without echoing secret-bearing source lines."""
+        for text in (
+            "HTTPS_PORT: 8443\nTOKEN: first\nTOKEN: private-value\n",
+            "HTTPS_PORT: 8443\nTOKEN: [private-value\n",
+        ):
+            self.write("config.yaml", text)
+            with self.assertRaises(yaml.YAMLError) as caught:
+                deploy.load_config(deploy.CONFIG)
+            self.assertIn("line", str(caught.exception))
+            self.assertNotIn("private-value", str(caught.exception))
 
     def test_duplicate_nested_key_reports_line(self):
         self.write(
@@ -231,7 +266,7 @@ class ReplaceTests(unittest.TestCase):
                 self.assertIs(type(result), type(value))
 
     def test_missing_key(self):
-        with self.assertRaisesRegex(deploy.DeployError, "Mangler MISSING"):
+        with self.assertRaisesRegex(deploy.DeployError, "Missing MISSING"):
             deploy.replace("@@MISSING@@", {})
 
     def test_nested_maps_and_lists(self):
@@ -265,7 +300,7 @@ class FileGroupTests(DeployFixture):
         for name in ("with space", "æ.txt", "bad@name"):
             with self.subTest(name=name):
                 self.write(name)
-                with self.assertRaisesRegex(deploy.DeployError, "filnavnet"):
+                with self.assertRaisesRegex(deploy.DeployError, "the file name"):
                     self.file_config("SECRET_FILES", {"test": [name]})
         self.write("OK-a_b.c")
         self.assertIn("test", self.file_config("SECRET_FILES", {"test": ["OK-a_b.c"]}))
@@ -273,7 +308,7 @@ class FileGroupTests(DeployFixture):
     def test_secret_rejects_subdirectory(self):
         self.write("tree/nested/file")
         with self.assertRaisesRegex(
-            deploy.DeployError, "Secrets kan bare inneholde filer"
+            deploy.DeployError, "Secrets can only contain files"
         ):
             self.file_config("SECRET_FILES", {"test": ["tree"]})
 
@@ -284,12 +319,12 @@ class FileGroupTests(DeployFixture):
             "SECRET_FILES", {"first": ["first"], "second": ["second"]}
         )
         self.assertEqual(len(deploy.secret_documents(groups)), 2)
-        with self.assertRaisesRegex(deploy.DeployError, "for stor.*Podman-secret"):
+        with self.assertRaisesRegex(deploy.DeployError, "too large.*Podman secret"):
             deploy.secret_documents(
                 {"combined": [self.root / "first", self.root / "second"]}
             )
         self.write("boundary", b"x" * (deploy.MAX_SECRET_SIZE * 3 // 4))
-        with self.assertRaisesRegex(deploy.DeployError, "for stor"):
+        with self.assertRaisesRegex(deploy.DeployError, "too large"):
             deploy.secret_documents({"boundary": [self.root / "boundary"]})
 
     def test_tilde_and_absolute_paths(self):
@@ -320,13 +355,21 @@ class FileGroupTests(DeployFixture):
     def test_missing_file_and_name_collisions(self):
         for group in ("SECRET_FILES", "VOLUME_FILES"):
             with self.subTest(group=group):
-                with self.assertRaisesRegex(deploy.DeployError, "Mangler"):
+                with self.assertRaisesRegex(deploy.DeployError, "Missing"):
                     self.file_config(group, {"test": ["missing"]})
                 self.write("a/file")
                 self.write("b/file")
                 for entries in (["a", "b"], ["a/file", "a/file"]):
-                    with self.assertRaisesRegex(deploy.DeployError, "samme navn"):
+                    with self.assertRaisesRegex(deploy.DeployError, "same name"):
                         self.file_config(group, {"test": entries})
+
+    def test_false_like_groups_are_not_empty_mappings(self):
+        """Reject non-map file groups even when their values are false-like."""
+        for group in ("SECRET_FILES", "VOLUME_FILES"):
+            for value in (False, 0, "", [], None):
+                error = self.assertRaisesRegex(deploy.DeployError, group)
+                with self.subTest(group=group, value_type=type(value).__name__), error:
+                    self.file_config(group, value)
 
     def test_absent_groups(self):
         for group in ("SECRET_FILES", "VOLUME_FILES"):
@@ -380,6 +423,24 @@ class VolumeTests(DeployFixture):
                 with stream:
                     self.assertEqual(stream.read(), b"\x00\xff")
 
+    def test_archive_checksums_ignore_timestamps_but_detect_content_changes(self):
+        """Equivalent staged registrations have identical bytes despite fresh file/dir times."""
+        source = self.write("stage/app1/client.json", "public-client")
+        output = deploy.BUILD / "files"
+        volumes = {"core-clients": [source.parent]}
+        deploy.write_file_archives(volumes, output)
+        archive = output / "core-clients.tar"
+        before = archive.read_bytes()
+        os.utime(str(source), (10, 10))
+        os.utime(str(source.parent), (20, 20))
+        deploy.write_file_archives(volumes, output)
+        self.assertEqual(archive.read_bytes(), before)
+        with tarfile.open(str(archive)) as tar:
+            self.assertTrue(all(member.mtime == 0 for member in tar.getmembers()))
+        source.write_text("changed-public-client")
+        deploy.write_file_archives(volumes, output)
+        self.assertNotEqual(archive.read_bytes(), before)
+
     def test_existing_archive_permissions_are_restricted(self):
         item = self.write("item")
         output = deploy.BUILD / "files"
@@ -424,14 +485,14 @@ class LinkTests(unittest.TestCase):
         for kind in ("Secret", "PersistentVolumeClaim"):
             for ref in self.refs(kind, "missing"):
                 error = self.assertRaisesRegex(
-                    deploy.DeployError, kind + ".*missing.*finnes ikke"
+                    deploy.DeployError, kind + ".*missing.*does not exist"
                 )
                 with self.subTest(kind=kind, ref=ref), error:
                     deploy.check_links([ref], {})
 
     def test_duplicate_definitions(self):
         for kind in ("Secret", "PersistentVolumeClaim"):
-            error = self.assertRaisesRegex(deploy.DeployError, "definert flere ganger")
+            error = self.assertRaisesRegex(deploy.DeployError, "defined more than once")
             with self.subTest(kind=kind), error:
                 deploy.check_links([document(kind, "same"), document(kind, "same")], {})
 
@@ -439,7 +500,9 @@ class LinkTests(unittest.TestCase):
         kinds = ("Secret", "PersistentVolumeClaim", "ConfigMap")
         for first in kinds:
             for second in kinds:
-                error = self.assertRaisesRegex(deploy.DeployError, "same.*flere")
+                error = self.assertRaisesRegex(
+                    deploy.DeployError, "same.*more than once"
+                )
                 with self.subTest(first=first, second=second), error:
                     deploy.check_links(
                         [document(first, "same"), document(second, "same")], {}
@@ -447,7 +510,7 @@ class LinkTests(unittest.TestCase):
 
     def test_configmap_does_not_satisfy_secret_or_pvc_reference(self):
         for kind in ("Secret", "PersistentVolumeClaim"):
-            error = self.assertRaisesRegex(deploy.DeployError, "finnes ikke")
+            error = self.assertRaisesRegex(deploy.DeployError, "does not exist")
             with self.subTest(kind=kind), error:
                 deploy.check_links(
                     [document("ConfigMap", "known")] + self.refs(kind, "known"), {}
@@ -458,9 +521,7 @@ class LinkTests(unittest.TestCase):
             ("Secret", "SECRET_FILES"),
             ("PersistentVolumeClaim", "VOLUME_FILES"),
         ):
-            error = self.assertRaisesRegex(
-                deploy.DeployError, group + ".id.*brukes ikke"
-            )
+            error = self.assertRaisesRegex(deploy.DeployError, group + ".id.*not used")
             with self.subTest(kind=kind), error:
                 deploy.check_links(
                     [document(kind, "id")], {(kind, "id"): group + ".id"}
@@ -480,13 +541,274 @@ class LinkTests(unittest.TestCase):
         )
 
 
+class GeneratedSecretTests(DeployFixture):
+    """Test one-time private files and their existing SECRET_FILES delivery."""
+
+    def configure_generated(self):
+        """Add a generated file and a manifest envFrom Secret reference."""
+        self.config["GENERATED_SECRETS"] = ["generated-certificates/app/key"]
+        self.config["SECRET_FILES"] = {"app-secrets": ["generated-certificates/app"]}
+        self.write_config()
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "generated",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "app",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                                "envFrom": [{"secretRef": {"name": "app-secrets"}}],
+                            }
+                        ]
+                    },
+                )
+            ],
+            "30-generated.yaml",
+        )
+        return self.root / "generated-certificates/app/key"
+
+    def test_prepare_creates_private_alphanumeric_file_without_logging_value(self):
+        """Generate 32 characters once and deliver their bytes through SECRET_FILES."""
+        path = self.configure_generated()
+        deploy.prepare()
+        value = path.read_bytes()
+        self.assertEqual(len(value), 32)
+        self.assertTrue(
+            all(
+                chr(byte) in deploy.string.ascii_letters + deploy.string.digits
+                for byte in value
+            ),
+            "Invalid generated characters",
+        )
+        self.assertEqual(self.mode(path), 0o600)
+        self.assertEqual(self.mode(path.parent), 0o700)
+        self.assertEqual(self.mode(path.parent.parent), 0o700)
+        output = self.stdout.getvalue() + self.stderr.getvalue()
+        self.assertIn(str(path), output)
+        self.assertTrue(value.decode("ascii") not in output, "Generated value leaked")
+        docs = list(yaml.safe_load_all((deploy.BUILD / "install.yaml").read_text()))
+        secret = next(doc for doc in docs if doc["kind"] == "Secret")
+        self.assertTrue(
+            base64.b64decode(secret["data"]["key"]) == value, "Secret bytes differ"
+        )
+        deploy.prepare()
+        self.assertTrue(
+            path.read_bytes() == value, "Repeated prepare changed the secret"
+        )
+        self.process.assert_not_called()
+
+    def test_install_keeps_existing_home_secret_across_releases(self):
+        """Preserve home secrets on repeated install independently of dev/release paths."""
+        self.install_fixture()
+        self.config["VOLUME_FILES"] = {"uploads": ["files/message.txt"]}
+        dev_path = self.configure_generated()
+        deploy.prepare()
+        dev_value = dev_path.read_bytes()
+        prod_config = dict(self.config)
+        prod_config["VOLUME_FILES"] = {"uploads": ["../files/message.txt"]}
+        self.write("home/config.yaml", yaml.safe_dump(prod_config))
+        deploy.generate_secrets(self.config, deploy.HOME)
+        prod_path = deploy.HOME / "generated-certificates/app/key"
+        before = prod_path.read_bytes()
+        deploy.install()
+        deploy.install()
+        self.assertTrue(
+            prod_path.read_bytes() == before, "Install changed the persistent secret"
+        )
+        self.assertTrue(
+            dev_path.read_bytes() == dev_value, "Install changed the dev secret"
+        )
+        output = self.stdout.getvalue() + self.stderr.getvalue()
+        self.assertTrue(before.decode("ascii") not in output, "Install logged a secret")
+
+    def test_generated_secret_example_renders_and_reuses_its_file(self):
+        """Render the shipped example twice with private values only in temporary files."""
+        example = Path(__file__).resolve().parent.parent / "examples/generated-secrets"
+        self.write(
+            "config.yaml",
+            (example / "config.yaml").read_text() + "POD_NAME: example-run\n",
+        )
+        with mock.patch.object(deploy, "MANIFESTS", example / "manifests"):
+            first = list(yaml.safe_load_all(deploy.render()))
+            path = self.root / "generated-certificates/app/API_TOKEN"
+            before = path.read_bytes()
+            second = list(yaml.safe_load_all(deploy.render()))
+        self.assertTrue(path.read_bytes() == before, "Example regenerated its secret")
+        self.assertEqual(self.mode(path), 0o600)
+        self.assertTrue(first == second, "Example render changed its secret")
+        secret = next(doc for doc in first if doc["kind"] == "Secret")
+        self.assertTrue(
+            base64.b64decode(secret["data"]["API_TOKEN"]) == before,
+            "Example Secret changed the bytes",
+        )
+
+    def test_empty_or_directory_path_is_not_regenerated(self):
+        """Reject empty files and directory targets without replacing them."""
+        path = self.configure_generated()
+        self.write("generated-certificates/app/key", b"")
+        with self.assertRaisesRegex(deploy.DeployError, "empty"):
+            deploy.prepare()
+        self.assertEqual(path.stat().st_size, 0)
+        path.unlink()
+        path.mkdir()
+        with self.assertRaisesRegex(deploy.DeployError, "regular file"):
+            deploy.prepare()
+        self.assertTrue(path.is_dir())
+
+    def test_escaping_paths_and_symlink_parents_are_rejected(self):
+        """Reject lexical traversal, absolute paths and resolved symlink escapes."""
+        outside = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        (self.root / "outside-link").symlink_to(outside, target_is_directory=True)
+        for entry in (
+            "../key",
+            "nested/../key",
+            str(outside / "key"),
+            "outside-link/key",
+            "",
+            ".",
+        ):
+            with self.subTest(entry=entry):
+                with self.assertRaisesRegex(deploy.DeployError, "config directory"):
+                    deploy.generate_secrets({"GENERATED_SECRETS": [entry]}, self.root)
+                self.assertFalse((outside / "key").exists())
+
+    def test_invalid_list_and_entries_are_rejected(self):
+        """Require a list of relative path strings for GENERATED_SECRETS."""
+        for entries in (None, "key", {}, 1, [False], [1]):
+            error = self.assertRaisesRegex(deploy.DeployError, "list")
+            with self.subTest(entries=entries), error:
+                deploy.generate_secrets({"GENERATED_SECRETS": entries}, self.root)
+
+    def test_exclusive_creation_preserves_a_concurrent_nonempty_file(self):
+        """Use O_EXCL and retain a file created by another writer before open."""
+        path = self.configure_generated()
+        value = os.urandom(32)
+        original = os.open
+
+        def race(target, flags, mode):
+            """Simulate a competing creator without exposing its random contents."""
+            if Path(target) == path:
+                self.assertTrue(flags & os.O_EXCL)
+                self.assertEqual(mode, 0o600)
+                path.write_bytes(value)
+                raise FileExistsError()
+            return original(target, flags, mode)
+
+        with mock.patch.object(os, "open", side_effect=race):
+            deploy.generate_secrets(self.config, self.root)
+        self.assertTrue(path.read_bytes() == value, "Concurrent file was overwritten")
+
+
+class ManifestValidationTests(DeployFixture):
+    """Validate offline policies and object links in real rendered manifests."""
+
+    def pod(self, group="containers", mount="data", policy: object = "Never"):
+        """Build a minimal pod spec with one mounted ConfigMap volume."""
+        return document(
+            "Pod",
+            "app",
+            spec={
+                "volumes": [{"name": "data", "configMap": {"name": "settings"}}],
+                group: [
+                    {
+                        "name": "worker",
+                        "image": "localhost/app:1",
+                        "imagePullPolicy": policy,
+                        "volumeMounts": [{"name": mount, "mountPath": "/data"}],
+                    }
+                ],
+            },
+        )
+
+    def test_configmap_data_spec_is_not_a_pod_specification(self):
+        """Render valid ConfigMap data named spec without treating it as a pod."""
+        self.manifest([document("ConfigMap", "settings", data={"spec": "plain text"})])
+        docs = list(yaml.safe_load_all(deploy.render()))
+        self.assertEqual(docs[0]["data"]["spec"], "plain text")
+
+    def test_configmap_reference_forms_accept_later_definition(self):
+        """Resolve envFrom, env key and volume ConfigMaps across sorted files."""
+        doc = self.pod()
+        container = doc["spec"]["containers"][0]
+        container["envFrom"] = [{"configMapRef": {"name": "settings"}}]
+        container["env"] = [
+            {
+                "name": "VALUE",
+                "valueFrom": {"configMapKeyRef": {"name": "settings", "key": "value"}},
+            }
+        ]
+        self.manifest([doc], "10-app.yaml")
+        self.manifest(
+            [document("ConfigMap", "settings", data={"value": "ok"})],
+            "90-settings.yaml",
+        )
+        self.assertIn("settings", deploy.render())
+
+    def test_missing_configmap_forms_report_source(self):
+        """Reject every missing ConfigMap reference with the originating filename."""
+        for reference in (
+            {"configMapRef": {"name": "missing"}},
+            {"configMapKeyRef": {"name": "missing", "key": "value"}},
+            {"configMap": {"name": "missing"}},
+        ):
+            with self.subTest(reference=reference):
+                self.manifest([document("Pod", "app", spec=reference)], "10-app.yaml")
+                with self.assertRaisesRegex(
+                    deploy.DeployError, "10-app.yaml.*ConfigMap.*missing"
+                ):
+                    deploy.render()
+                self.assertFalse(deploy.BUILD.exists())
+
+    def test_mounts_and_never_policy_accept_containers_and_init(self):
+        """Validate regular and init containers in Pod and nested Deployment specs."""
+        self.manifest([document("ConfigMap", "settings")], "90-settings.yaml")
+        for group in ("containers", "initContainers"):
+            with self.subTest(group=group):
+                pod = self.pod(group)
+                deployment = document(
+                    "Deployment", "app", spec={"template": {"spec": pod["spec"]}}
+                )
+                self.manifest([pod, deployment], "10-app.yaml")
+                deploy.render(write_archives=False)
+
+    def test_unknown_mounts_report_file_and_container(self):
+        """Reject mounts absent from the pod volumes in both container groups."""
+        for group in ("containers", "initContainers"):
+            with self.subTest(group=group):
+                self.manifest([self.pod(group, mount="missing")], "10-app.yaml")
+                with self.assertRaisesRegex(
+                    deploy.DeployError, "10-app.yaml.*worker.*undefined volume.*missing"
+                ):
+                    deploy.render()
+                self.assertFalse(deploy.BUILD.exists())
+
+    def test_missing_or_online_pull_policies_report_file(self):
+        """Require Never for every regular/init container, including omitted policies."""
+        for group in ("containers", "initContainers"):
+            for policy in (None, "Always", "IfNotPresent"):
+                with self.subTest(group=group, policy=policy):
+                    pod = self.pod(group, policy=policy)
+                    if policy is None:
+                        del pod["spec"][group][0]["imagePullPolicy"]
+                    self.manifest([pod], "10-app.yaml")
+                    with self.assertRaisesRegex(
+                        deploy.DeployError,
+                        "10-app.yaml.*worker.*imagePullPolicy: Never",
+                    ):
+                        deploy.render()
+                    self.assertFalse(deploy.BUILD.exists())
+
+
 class RenderTests(DeployFixture):
     def test_manifest_errors_include_source_path(self):
-        """Pek på riktig manifest ved manglende config, ugyldig data og delvis placeholder."""
+        """Point at the right manifest for missing config, invalid data and partial placeholders."""
         for doc, message in (
-            (document("Pod", "bad", value="@@UNKNOWN@@"), "Mangler UNKNOWN"),
+            (document("Pod", "bad", value="@@UNKNOWN@@"), "Missing UNKNOWN"),
             (document("ConfigMap", "bad", data=["bad"]), "ConfigMap.data"),
-            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Uerstattet"),
+            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Unreplaced"),
         ):
             with self.subTest(message=message):
                 self.manifest([doc], "42-bad.yaml")
@@ -499,23 +821,39 @@ class RenderTests(DeployFixture):
                 self.assertFalse(deploy.BUILD.exists())
 
     def test_real_product_manifests_render_with_dummy_files(self):
-        """Rendr demoens faktiske manifestsett og eksempelconfig med lokale dummyfiler."""
+        """Render the demo manifests with merged defaults and local dummy files."""
         repo = Path(__file__).resolve().parent.parent
-        self.config = deploy.load_config(repo / "config.example.yaml")
-        for group in ("SECRET_FILES", "VOLUME_FILES"):
-            for paths in self.config[group].values():
-                for path in paths:
-                    self.write(path + "/dummy", b"dummy")
-        self.write_config()
-        for path in sorted((repo / "manifests").glob("*.yaml")):
-            self.write("manifests/" + path.name, path.read_bytes())
-        docs = list(yaml.safe_load_all(deploy.render(write_archives=False)))
+        docs = []
+        for component in ("core", "app1", "app2", "help"):
+            config = deploy.merge_config(
+                repo / "config/common.defaults.yaml",
+                repo / "components" / component / "config.defaults.yaml",
+            )
+            base = self.root / "state" / component
+            for group in ("SECRET_FILES", "VOLUME_FILES"):
+                for paths in config.get(group, {}).values():
+                    for path in paths:
+                        target = base / path
+                        target.mkdir(parents=True, exist_ok=True)
+                        (target / "dummy").write_bytes(b"dummy")
+            path = self.write(
+                "state/" + component + "/config.yaml", yaml.safe_dump(config)
+            )
+            text = deploy.render(
+                base / "files",
+                write_archives=False,
+                config_path=path,
+                manifests=repo / "components" / component / "manifests",
+                component=component,
+            )
+            docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]
-        self.assertEqual(kinds.count("Pod"), 6)
-        self.assertEqual(kinds.count("Secret"), 6)
-        self.assertEqual(kinds.count("PersistentVolumeClaim"), 4)
-        self.assertEqual(kinds.count("ConfigMap"), 1)
+        self.assertEqual(kinds.count("Pod"), 8)
+        self.assertEqual(kinds.count("Secret"), 7)
+        self.assertEqual(kinds.count("PersistentVolumeClaim"), 8)
+        self.assertEqual(kinds.count("ConfigMap"), 3)
         self.assertEqual(len(deploy.find_images(docs)), 6)
+        deploy.check_links(docs, {})
         self.process.assert_not_called()
 
     def test_render_without_archive_writes_still_validates(self):
@@ -524,7 +862,7 @@ class RenderTests(DeployFixture):
         self.assertIn(str(deploy.FILES_DIR / "uploads.tar"), text)
         self.assertFalse(deploy.FILES_DIR.exists())
         self.manifest([document("ConfigMap", "uploads")], "99-collision.yaml")
-        with self.assertRaisesRegex(deploy.DeployError, "uploads.*flere"):
+        with self.assertRaisesRegex(deploy.DeployError, "uploads.*more than once"):
             deploy.render(deploy.FILES_DIR, write_archives=False)
         self.assertFalse(deploy.FILES_DIR.exists())
 
@@ -554,8 +892,8 @@ class RenderTests(DeployFixture):
     def test_no_archives_written_on_validation_failure(self):
         self.volume_fixture()
         cases = [
-            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Uerstattet"),
-            (document("Pod", "bad", value="@@UNKNOWN@@"), "Mangler UNKNOWN"),
+            (document("Pod", "bad", value="prefix-@@HOSTNAME@@"), "Unreplaced"),
+            (document("Pod", "bad", value="@@UNKNOWN@@"), "Missing UNKNOWN"),
             (document("ConfigMap", "bad", data=["bad"]), "ConfigMap.data"),
             (
                 document(
@@ -563,9 +901,9 @@ class RenderTests(DeployFixture):
                     "bad",
                     spec={"persistentVolumeClaim": {"claimName": "unknown"}},
                 ),
-                "finnes ikke",
+                "does not exist",
             ),
-            (document("PersistentVolumeClaim", "uploads"), "definert flere ganger"),
+            (document("PersistentVolumeClaim", "uploads"), "defined more than once"),
         ]
         for doc, error in cases:
             with self.subTest(error=error):
@@ -582,12 +920,12 @@ class RenderTests(DeployFixture):
     def test_no_archives_for_unused_id_or_large_secret(self):
         self.volume_fixture()
         (deploy.MANIFESTS / "10-pod.yaml").unlink()
-        with self.assertRaisesRegex(deploy.DeployError, "brukes ikke"):
+        with self.assertRaisesRegex(deploy.DeployError, "not used"):
             deploy.render()
         self.assertFalse(deploy.BUILD.exists())
         self.write("large", b"x" * 400000)
         self.file_config("SECRET_FILES", {"large": ["large"]})
-        with self.assertRaisesRegex(deploy.DeployError, "for stor"):
+        with self.assertRaisesRegex(deploy.DeployError, "too large"):
             deploy.render()
         self.assertFalse(deploy.BUILD.exists())
 
@@ -599,7 +937,7 @@ class RenderTests(DeployFixture):
 
     def test_missing_config(self):
         deploy.CONFIG.unlink()
-        with self.assertRaisesRegex(deploy.DeployError, "Mangler"):
+        with self.assertRaisesRegex(deploy.DeployError, "Missing"):
             deploy.render()
 
 
@@ -717,7 +1055,7 @@ class CommandTests(DeployFixture):
         renderer = mock.patch.object(deploy, "render")
         with environment, renderer as render:
             with self.assertRaisesRegex(
-                deploy.DeployError, "HOME=.*avviker.*brukerdatabasen"
+                deploy.DeployError, "HOME=.*differs.*user database"
             ) as failure:
                 deploy.install()
             render.assert_not_called()
@@ -762,7 +1100,9 @@ class CommandTests(DeployFixture):
         directory = mock.patch.object(Path, "is_dir", return_value=False)
         renderer = mock.patch.object(deploy, "render")
         with directory, renderer as render:
-            with self.assertRaisesRegex(deploy.DeployError, "runtime-katalog.*linger"):
+            with self.assertRaisesRegex(
+                deploy.DeployError, "runtime directory.*linger"
+            ):
                 deploy.install()
             render.assert_not_called()
         self.process.assert_not_called()
@@ -780,7 +1120,7 @@ class CommandTests(DeployFixture):
                 renderer = mock.patch.object(deploy, "render")
                 with renderer as render:
                     with self.assertRaisesRegex(
-                        deploy.DeployError, "XDG_RUNTIME_DIR=.*forventet /run/user/1000"
+                        deploy.DeployError, "XDG_RUNTIME_DIR=.*expected /run/user/1000"
                     ) as error:
                         deploy.install()
                     self.assertIn(repr(configured), str(error.exception))
@@ -876,7 +1216,7 @@ class CommandTests(DeployFixture):
         (self.root / "images/images.tar").unlink()
         with mock.patch.object(deploy.sys, "argv", ["deploy", "install"]):
             self.assertEqual(deploy.main(), 1)
-        self.assertIn("Mangler image-arkivet", self.stderr.getvalue())
+        self.assertIn("Missing image archive", self.stderr.getvalue())
         self.assertIn("images.tar", self.stderr.getvalue())
         self.process.assert_not_called()
         self.assertFalse(deploy.QUADLET_DIR.exists())
@@ -927,7 +1267,7 @@ class CommandTests(DeployFixture):
                 self.assertEqual(archive.read_bytes(), b"previous archive")
                 self.assertFalse(deploy.QUADLET_DIR.exists())
         (self.root / "images/images.tar").unlink()
-        with self.assertRaisesRegex(deploy.DeployError, "Mangler image-arkivet"):
+        with self.assertRaisesRegex(deploy.DeployError, "Missing image archive"):
             deploy.install()
         self.assertEqual(archive.read_bytes(), b"previous archive")
 
@@ -938,7 +1278,7 @@ class CommandTests(DeployFixture):
                 self.config["APP_IMAGE"] = image
                 self.write_config()
                 self.process.reset_mock()
-                with self.assertRaisesRegex(deploy.DeployError, "fullt kvalifisert"):
+                with self.assertRaisesRegex(deploy.DeployError, "fully qualified"):
                     deploy.install()
                 self.process.assert_called_once_with(
                     ["podman", "load", "-i", str(self.root / "images/images.tar")],
@@ -949,7 +1289,7 @@ class CommandTests(DeployFixture):
 
 class ImageTests(unittest.TestCase):
     def test_image_errors_identify_container_and_group(self):
-        """Behold containernavnet i alle image-feil, også etter registry-partisjonering."""
+        """Keep the container name in every image error, also after splitting off the registry."""
         for group in ("containers", "initContainers"):
             for image in (None, "postgres:16", "@@IMAGE@@"):
                 with self.subTest(group=group, image=image):
@@ -1001,7 +1341,7 @@ class ImageTests(unittest.TestCase):
             [{"image": "localhost/ignored:1"}],
             [{"spec": {"containers": []}}],
         ):
-            error = self.assertRaisesRegex(deploy.DeployError, "Ingen images")
+            error = self.assertRaisesRegex(deploy.DeployError, "No images")
             with self.subTest(docs=docs), error:
                 deploy.find_images(docs)
 
@@ -1009,10 +1349,10 @@ class ImageTests(unittest.TestCase):
         for image, error in (
             ("@@IMAGE@@", "placeholders"),
             ("localhost/app:@@VERSION@@", "placeholders"),
-            ("postgres:16", "fullt kvalifisert"),
-            ("team/app:1", "fullt kvalifisert"),
-            ("localhost", "fullt kvalifisert"),
-            ("localhost/", "fullt kvalifisert"),
+            ("postgres:16", "fully qualified"),
+            ("team/app:1", "fully qualified"),
+            ("localhost", "fully qualified"),
+            ("localhost/", "fully qualified"),
         ):
             expected = self.assertRaisesRegex(deploy.DeployError, error)
             with self.subTest(image=image), expected:
@@ -1040,7 +1380,7 @@ class ImageTests(unittest.TestCase):
             {"image": []},
             "invalid",
         ):
-            error = self.assertRaisesRegex(deploy.DeployError, "image-navn som tekst")
+            error = self.assertRaisesRegex(deploy.DeployError, "image name as a string")
             with self.subTest(container=container), error:
                 deploy.find_images([{"spec": {"containers": [container]}}])
 

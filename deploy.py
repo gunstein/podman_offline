@@ -2,18 +2,25 @@
 
 ./deploy prepare   Dev: write build/install.yaml (+ build/files/*.tar).
 
-Filer angis i config.yaml under SECRET_FILES og VOLUME_FILES (id -> filer).
-./deploy install   Prod (tjenestebruker): render, podman load, install Quadlet, restart.
+Files are listed in config.yaml under SECRET_FILES and VOLUME_FILES (id -> files).
+./deploy install   Prod (service user): render, podman load, install Quadlet, restart.
 """
 
 import base64
+import json
 import os
 import pwd
 import re
+import secrets
+import shutil
+import ssl
+import string
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -21,25 +28,26 @@ HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
 MANIFESTS = ROOT / "manifests"
-CONFIG = ROOT / "config.yaml"
+CONFIG = ROOT / "config.yaml"  # Standalone manifest fixtures only.
 
 QUADLET_TEMPLATE = ROOT / "quadlet" / "myproduct.kube"
 QUADLET_DIR = HOME / ".config/containers/systemd"
 QUADLET_TARGET = QUADLET_DIR / "myproduct.kube"
-QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml i .kube
+QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml in .kube
 SERVICE = "myproduct.service"
 
 SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
+GENERATED_SECRETS = "GENERATED_SECRETS"
 
-# Tar-arkiver for VOLUME_FILES. Podman importerer dem i volumene ved hver
-# oppstart, så de må ligge fast i tjenestebrukerens hjemmekatalog.
+# Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
+# start, so they must stay in the service user's home directory.
 FILES_DIR = HOME / "files"
 IMPORT_SOURCE = "volume.podman.io/import-source"
 
 ID = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 SECRET_KEY = re.compile(r"^[-._a-zA-Z0-9]+$")
-# Podman avviser secrets over 512 000 byte (hele Secret-dokumentet).
+# Podman rejects secrets over 512,000 bytes (the whole Secret document).
 MAX_SECRET_SIZE = 500000
 
 PH = re.compile(r"^@@([A-Z0-9_]+)@@$")
@@ -47,70 +55,401 @@ MAX_PORT = 65535
 
 
 class DeployError(Exception):
-    """Feil som vises som én ERROR-linje uten traceback."""
+    """Error shown as a single ERROR line without a traceback."""
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """SafeLoader som avviser dupliserte nøkler i stedet for å ta siste verdi."""
+    """SafeLoader that rejects duplicate keys instead of keeping the last value."""
 
     def construct_mapping(self, node, deep=False):
-        """Konstruer en YAML-mapping og avvis dupliserte nøkler med linjenummer."""
+        """Build a YAML mapping and reject duplicate keys with their line number."""
         seen = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
             if key in seen:
                 raise yaml.constructor.ConstructorError(
-                    None, None, f"duplikat nøkkel {key!r}", key_node.start_mark
+                    None, None, f"duplicate key {key!r}", key_node.start_mark
                 )
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
 
 
 def load_yaml(path):
-    """Les ett YAML-dokument sikkert og avvis dupliserte nøkler."""
+    """Read one YAML document safely and reject duplicate keys."""
     with path.open(encoding="utf-8") as f:
-        # Egen SafeLoader avviser duplikater uten å tillate YAML-objektkonstruksjon.
+        # A SafeLoader subclass rejects duplicates without allowing object construction.
         return yaml.load(f, Loader=UniqueKeyLoader)
 
 
 def load_yaml_all(path):
-    """Les alle YAML-dokumentene sikkert og avvis dupliserte nøkler."""
+    """Read all YAML documents safely and reject duplicate keys."""
     with path.open(encoding="utf-8") as f:
         return list(yaml.load_all(f, Loader=UniqueKeyLoader))
 
 
-def load_config(path):
-    """Les config og valider nøkkeltyper, verdityper og HTTPS-port."""
-    config = load_yaml(path)
+def config_layer(path):
+    """Read one mapping, rejecting duplicate keys without exposing YAML values."""
+    try:
+        config = load_yaml(path)
+    except (yaml.YAMLError, TypeError) as error:
+        mark = getattr(error, "problem_mark", None)
+        location = f" at line {mark.line + 1}" if mark is not None else ""
+        problem = getattr(error, "problem", "") or ""
+        detail = problem if problem.startswith("duplicate key ") else "invalid YAML"
+        raise yaml.YAMLError(f"{path}{location}: {detail}") from None
 
     if not isinstance(config, dict):
-        raise DeployError(f"{path} må inneholde KEY: verdi-par")
+        raise DeployError(f"{path} must contain KEY: value pairs")
 
+    return config
+
+
+def validate_config(config, path):
+    """Validate the complete config; individual merge layers may be incomplete."""
     for key, value in config.items():
         if not isinstance(key, str):
-            raise DeployError("Alle nøkler i config.yaml må være tekst")
+            raise DeployError(f"All keys in {path} must be strings")
 
-        if key in (SECRET_FILES, VOLUME_FILES):
-            continue  # valideres i load_file_group()
+        if key in (SECRET_FILES, VOLUME_FILES, GENERATED_SECRETS):
+            continue  # File groups and generated paths validate their own structures.
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
             raise DeployError(
-                f"{key} i config.yaml må være tekst eller heltall, "
-                f"fikk {value!r}. Sett tekst i anførselstegn."
+                f"{key} in {path} must be a string or an integer, "
+                f"got type {type(value).__name__}. Put text in quotes."
             )
 
     port = config.get("HTTPS_PORT")
     if not isinstance(port, int) or not 1 <= port <= MAX_PORT:
         raise DeployError(
-            f"HTTPS_PORT i config.yaml må være et heltall 1-{MAX_PORT} "
-            f"uten anførselstegn, fikk {port!r}"
+            f"HTTPS_PORT in {path} must be an integer 1-{MAX_PORT} without quotes"
         )
+
+    for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
+        if key in config:
+            value = config[key]
+            if not isinstance(value, str) or not value or "\x00" in value:
+                raise DeployError(f"{key} in {path} must be non-empty text")
+    if "DB_PORT" in config:
+        port = config["DB_PORT"]
+        if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= MAX_PORT:
+            raise DeployError(
+                f"DB_PORT in {path} must be text containing an integer 1-{MAX_PORT}"
+            )
 
     return config
 
 
+def load_config(path):
+    """Production loads only the authoritative materialized file."""
+    return validate_config(config_layer(path), path)
+
+
+def merge_config(*paths, overrides=None):
+    """Merge mappings at the top level, in order, then validate the result."""
+    config = {}
+    for path in paths:
+        config.update(config_layer(path))
+    config.update(overrides or {})
+    return validate_config(config, paths[-1])
+
+
+def component_defaults(component, overrides=None, dev=False):
+    """Build complete config from common, component and explicit local overrides."""
+    paths = [
+        ROOT / "config/common.defaults.yaml",
+        ROOT / "components" / component / "config.defaults.yaml",
+    ]
+    local = ROOT / "config/dev.yaml"
+    if dev and (local.exists() or local.is_symlink()):
+        paths.append(local)
+    config = merge_config(*paths, overrides=overrides)
+    materialized = (BUILD / "dev" if dev else HOME) / component / "config.yaml"
+    validate_component_config(config, component, materialized)
+    return config
+
+
+def validate_component_config(config, component, path, check_placeholders=True):
+    """Require shared values and every whole-value manifest placeholder before writes."""
+    required = {"PUBLIC_ORIGIN", "HTTPS_PORT"}
+
+    def collect(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, str):
+            match = PH.fullmatch(value)
+            if match:
+                required.add(match[1])
+
+    if check_placeholders:
+        for manifest in sorted(
+            (ROOT / "components" / component / "manifests").glob("*.yaml")
+        ):
+            collect(load_yaml_all(manifest))
+    # PUBLIC_HOSTNAME is derived from the validated origin for core rendering.
+    if component == "core":
+        required.discard("PUBLIC_HOSTNAME")
+    for key in sorted(required):
+        if key not in config:
+            raise DeployError(
+                f"Missing {key} in {path}; add it explicitly before installation"
+            )
+    public_origin(config["PUBLIC_ORIGIN"], path)
+    check_component_config_names(config, component, path)
+    generated_secret_paths(config, path.parent)
+    for group in (SECRET_FILES, VOLUME_FILES):
+        mapping = config.get(group, {})
+        if not isinstance(mapping, dict):
+            raise DeployError(f"{group} in {path} must be a map")
+        for name, entries in mapping.items():
+            if (
+                not isinstance(name, str)
+                or not ID.fullmatch(name)
+                or not isinstance(entries, list)
+                or not entries
+                or any(not isinstance(entry, str) or not entry for entry in entries)
+            ):
+                raise DeployError(f"{group} in {path} must be id: [list of paths]")
+
+
+def init_config(component):
+    """Exclusively materialize one bundled config; never create private input files."""
+    production_environment()
+    if component not in bundle_components():
+        raise DeployError(f"Component {component} is not included in this bundle")
+    target = HOME / component / "config.yaml"
+    for path in [target] + list(target.parents):
+        if path.is_symlink():
+            raise DeployError(f"Refuse symlinked config path: {path}")
+    if target.exists():
+        print(
+            f"[OK] Existing config retained unchanged: {target}; install validates it"
+        )
+        return
+    overrides = {}
+    core_path = component_paths("core")[0]
+    if (
+        component != "core"
+        and (HOME / "installed/core").exists()
+        and not core_path.exists()
+    ):
+        raise DeployError(
+            f"Missing {core_path}; restore installed core config before initializing {component}"
+        )
+    if component != "core" and core_path.exists():
+        core = load_config(core_path)
+        validate_component_config(
+            core,
+            "core",
+            core_path,
+            check_placeholders=not (HOME / "installed/core").is_file(),
+        )
+        overrides = {key: core[key] for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")}
+    config = component_defaults(component, overrides=overrides)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target.parent.chmod(0o700)
+    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        yaml.safe_dump(config, stream, sort_keys=False)
+    print(
+        f"[OK] Initialized {target}; edit config and prepare credentials before install"
+    )
+
+
+def public_origin(value, path):
+    """Validate an HTTPS origin without exposing its supplied value in errors."""
+    message = f"PUBLIC_ORIGIN in {path} must be an HTTPS origin without credentials, path or query"
+    if not isinstance(value, str):
+        raise DeployError(message)
+    try:
+        address = urlsplit(value.rstrip("/"))
+        hostname = address.hostname
+    except ValueError:
+        raise DeployError(message) from None
+    if (
+        address.scheme != "https"
+        or not hostname
+        or address.path
+        or address.query
+        or address.fragment
+        or address.username is not None
+        or address.password is not None
+    ):
+        raise DeployError(message)
+    return address
+
+
+def generated_secret_paths(config, base_dir):
+    """Resolve declared secret paths without generating or reading their contents."""
+    entries = config.get(GENERATED_SECRETS, [])
+    if not isinstance(entries, list) or not all(
+        isinstance(entry, str) for entry in entries
+    ):
+        raise DeployError(f"{GENERATED_SECRETS} must be a list of relative file paths")
+    base = base_dir.resolve()
+    paths = []
+    for entry in entries:
+        relative = Path(entry)
+        if relative.is_absolute() or ".." in relative.parts or not relative.name:
+            raise DeployError(
+                f"{GENERATED_SECRETS}: {entry!r} must stay under the config directory"
+            )
+        path = (base / relative).resolve()
+        try:
+            path.relative_to(base)
+        except ValueError:
+            raise DeployError(
+                f"{GENERATED_SECRETS}: {entry!r} resolves outside the config directory"
+            ) from None
+        paths.append(path)
+    return paths
+
+
+def database_preflight(config, config_path, manifests):
+    """Guard PostgreSQL password creation using its manifest's actual named volume.
+
+    This lifecycle check runs before rendering/generation, never inside the
+    general secret generator. Existing volumes are conservatively retained.
+    """
+    for manifest in sorted(manifests.glob("*.yaml")):
+        for doc in load_yaml_all(manifest):
+            if not doc or doc.get("kind") != "Pod":
+                continue
+            spec = doc.get("spec", {})
+            volumes = {v["name"]: v for v in spec.get("volumes", [])}
+            for container in spec.get("containers", []):
+                env = {e["name"]: e.get("value") for e in container.get("env", [])}
+                if "POSTGRES_PASSWORD_FILE" not in env:
+                    continue
+                reference = env["POSTGRES_PASSWORD_FILE"]
+                if not isinstance(reference, str) or not Path(reference).is_absolute():
+                    raise DeployError(f"Invalid POSTGRES_PASSWORD_FILE in {manifest}")
+                password_file = Path(reference)
+                mounts = container.get("volumeMounts", [])
+                secret_mount = next(
+                    (m for m in mounts if m["mountPath"] == str(password_file.parent)),
+                    None,
+                )
+                data_mount = next(
+                    (m for m in mounts if m["mountPath"] == "/var/lib/postgresql/data"),
+                    None,
+                )
+                if not secret_mount or not data_mount:
+                    raise DeployError(
+                        f"Unsupported PostgreSQL password/data mounts in {manifest}"
+                    )
+                try:
+                    secret = volumes[secret_mount["name"]]["secret"]
+                    claim = volumes[data_mount["name"]]["persistentVolumeClaim"][
+                        "claimName"
+                    ]
+                    keys = [
+                        item["key"]
+                        for item in secret.get("items", [])
+                        if item["path"] == password_file.name
+                    ]
+                    if len(keys) != 1:
+                        raise KeyError("password key")
+                    key = keys[0]
+                except (KeyError, TypeError):
+                    raise DeployError(
+                        f"Unsupported PostgreSQL Secret/PVC binding in {manifest}"
+                    ) from None
+                entries = config.get(SECRET_FILES, {}).get(secret["secretName"], [])
+                candidates = []
+                for entry in entries:
+                    source = resolve_path(entry, config_path.parent)
+                    candidates.append(source if source.name == key else source / key)
+                if len(candidates) != 1:
+                    raise DeployError(
+                        f"{config_path}: {SECRET_FILES}.{secret['secretName']} must identify one password file"
+                    )
+                password = candidates[0]
+                if password.exists() or password.is_symlink():
+                    if not password.is_file():
+                        raise DeployError(
+                            f"Invalid database password file {password}; restore from backup"
+                        )
+                    try:
+                        content = password.read_bytes().decode("utf-8").rstrip("\n")
+                    except (OSError, UnicodeError):
+                        raise DeployError(
+                            f"Invalid database password file {password}; restore from backup"
+                        ) from None
+                    if not content or any(c in content for c in ("\x00", "\n", "\r")):
+                        raise DeployError(
+                            f"Empty or invalid database password file {password}; restore from backup"
+                        )
+                    continue
+                try:
+                    result = subprocess.run(  # noqa: UP022 - Python 3.6
+                        ["podman", "volume", "exists", claim],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+                except OSError:
+                    raise DeployError(
+                        f"Cannot check database volume {claim}; no password generated"
+                    ) from None
+                if result.returncode == 0:
+                    raise DeployError(
+                        f"Missing database password file {password} with existing volume {claim}; "
+                        "restore the password from backup or use a separate recovery procedure; no password generated"
+                    )
+                if result.returncode != 1:
+                    raise DeployError(
+                        f"Cannot check database volume {claim}; no password generated"
+                    )
+                if password.resolve() not in generated_secret_paths(
+                    config, config_path.parent
+                ):
+                    raise DeployError(
+                        f"Missing database password file {password}; add its path to {GENERATED_SECRETS} in {config_path}"
+                    )
+
+
+def generate_secrets(config, base_dir):
+    """Create missing private secret files once, within the config directory."""
+    for path in generated_secret_paths(config, base_dir):
+        if path.exists():
+            if not path.is_file() or path.stat().st_size == 0:
+                raise DeployError(
+                    f"Generated secret file {path} is empty or not a regular file"
+                )
+            continue
+        missing, parent = [], path.parent
+        while not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700, exist_ok=True)
+        path.parent.chmod(0o700)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            if not path.is_file() or path.stat().st_size == 0:
+                raise DeployError(
+                    f"Generated secret file {path} is empty or not a regular file"
+                ) from None
+            continue
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(
+                "".join(
+                    secrets.choice(string.ascii_letters + string.digits)
+                    for _ in range(32)
+                )
+            )
+        print(f"[OK] Generated secret file {path}")
+
+
 def replace(value, config):
-    """Erstatt hele placeholders rekursivt og behold config-verdiens type."""
+    """Replace whole placeholders recursively and keep the config value's type."""
     if isinstance(value, dict):
         return {key: replace(item, config) for key, item in value.items()}
 
@@ -122,33 +461,33 @@ def replace(value, config):
         if match:
             key = match.group(1)
             if key not in config:
-                raise DeployError(f"Mangler {key} i config.yaml")
+                raise DeployError(f"Missing {key} in config.yaml")
             return config[key]
 
     return value
 
 
 def write_private(path, text):
-    """Skriv filen med mode 0600 fra første byte."""
+    """Write the file with mode 0600 from the first byte."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        os.fchmod(f.fileno(), 0o600)  # i tilfelle filen fantes med annen mode
+        os.fchmod(f.fileno(), 0o600)  # in case the file existed with another mode
         f.write(text)
 
 
 def resolve_path(value, base_dir=None):
-    """Relativ sti regnes fra config-katalogen. ~ er tillatt."""
+    """Resolve a relative path from the config directory; ~ is allowed."""
     path = Path(value).expanduser()
     return path if path.is_absolute() else (base_dir or CONFIG.parent) / path
 
 
 def load_file_group(config, group, base_dir=None):
-    """Les filgrupper og ekspander katalogstier ett nivå fra config-katalogen."""
-    spec = config.get(group) or {}
+    """Read file groups and expand directory paths one level, relative to the config."""
+    spec = config.get(group, {})
 
     if not isinstance(spec, dict):
-        raise DeployError(f"{group} i config.yaml må være id: [liste med filer]")
+        raise DeployError(f"{group} in config.yaml must be id: [list of files]")
 
     groups = {}
 
@@ -157,7 +496,7 @@ def load_file_group(config, group, base_dir=None):
 
         if not isinstance(group_id, str) or not ID.fullmatch(group_id):
             raise DeployError(
-                f"Ugyldig id {group_id!r} i {group}. Bruk små bokstaver, tall og -"
+                f"Invalid id {group_id!r} in {group}. Use lowercase letters, digits and -"
             )
 
         if (
@@ -165,31 +504,33 @@ def load_file_group(config, group, base_dir=None):
             or not entries
             or not all(isinstance(entry, str) for entry in entries)
         ):
-            raise DeployError(f"{where} må være en liste med filstier")
+            raise DeployError(f"{where} must be a list of file paths")
 
         items = []
 
         for path in (resolve_path(entry, base_dir) for entry in entries):
             if not path.exists():
-                raise DeployError(f"Mangler {path} ({where})")
+                raise DeployError(f"Missing {path} ({where})")
             items += sorted(path.iterdir()) if path.is_dir() else [path]
 
         names = [item.name for item in items]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
-            raise DeployError(f"{where} har flere filer med samme navn: {duplicates}")
+            raise DeployError(
+                f"{where} has several files with the same name: {duplicates}"
+            )
 
         if group == SECRET_FILES:
             for item in items:
                 if not item.is_file():
                     raise DeployError(
-                        f"{where}: {item} er en katalog. Secrets kan bare "
-                        "inneholde filer; bruk VOLUME_FILES for katalogtrær"
+                        f"{where}: {item} is a directory. Secrets can only "
+                        "contain files; use VOLUME_FILES for directory trees"
                     )
                 if not SECRET_KEY.fullmatch(item.name):
                     raise DeployError(
-                        f"{where}: filnavnet {item.name!r} kan bare inneholde "
-                        "bokstaver, tall, . - og _"
+                        f"{where}: the file name {item.name!r} may only contain "
+                        "letters, digits, . - and _"
                     )
 
         groups[group_id] = items
@@ -198,7 +539,7 @@ def load_file_group(config, group, base_dir=None):
 
 
 def secret_documents(secrets):
-    """Lag base64-kodede Secrets innenfor Podmans størrelsesgrense."""
+    """Build base64-encoded Secrets within Podman's size limit."""
     docs = []
 
     for secret_id, items in secrets.items():
@@ -215,9 +556,9 @@ def secret_documents(secrets):
 
         if len(yaml.safe_dump(doc)) > MAX_SECRET_SIZE:
             raise DeployError(
-                f"{SECRET_FILES}.{secret_id} er for stor for en Podman-secret "
-                f"(maks ca. {MAX_SECRET_SIZE * 3 // 4} byte filinnhold). "
-                "Bruk VOLUME_FILES for store filer"
+                f"{SECRET_FILES}.{secret_id} is too large for a Podman secret "
+                f"(max about {MAX_SECRET_SIZE * 3 // 4} bytes of file content). "
+                "Use VOLUME_FILES for large files"
             )
 
         docs.append(doc)
@@ -226,22 +567,23 @@ def secret_documents(secrets):
 
 
 def normalize(info):
-    """Normaliser tar-eier til root og filmoduser til 0644 eller 0755."""
+    """Normalize ownership, modes and timestamps for stable import checksums."""
     info.uid = 0
     info.gid = 0
     info.uname = "root"
     info.gname = "root"
+    info.mtime = 0
     info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
     return info
 
 
 def archive_path(files_dir, volume_id):
-    """Returner stien til importarkivet for en volum-id."""
+    """Return the import archive path for a volume id."""
     return files_dir / f"{volume_id}.tar"
 
 
 def write_file_archives(volumes, files_dir):
-    """Lag ett tar-arkiv per VOLUME_FILES-id."""
+    """Write one tar archive per VOLUME_FILES id."""
     if not volumes:
         return
 
@@ -254,14 +596,14 @@ def write_file_archives(volumes, files_dir):
 
         with os.fdopen(fd, "wb") as raw:
             os.fchmod(raw.fileno(), 0o600)
-            # Offline-arkivet må inneholde målfiler, ikke lenker til byggemaskinen.
+            # The offline archive must contain link targets, not links to the build machine.
             with tarfile.open(fileobj=raw, mode="w", dereference=True) as tar:
                 for item in items:
                     tar.add(str(item), arcname=item.name, filter=normalize)
 
 
 def volume_claims(volumes, files_dir):
-    """Lag PVC-er som lar Podman importere hvert VOLUME_FILES-arkiv."""
+    """Build PVCs that let Podman import each VOLUME_FILES archive."""
     return [
         {
             "apiVersion": "v1",
@@ -270,7 +612,7 @@ def volume_claims(volumes, files_dir):
                 "name": volume_id,
                 "annotations": {IMPORT_SOURCE: str(archive_path(files_dir, volume_id))},
             },
-            # Podman bruker ikke spec, men Kubernetes krever feltene.
+            # Podman ignores spec, but Kubernetes requires the fields.
             "spec": {
                 "accessModes": ["ReadWriteOnce"],
                 "resources": {"requests": {"storage": "1Gi"}},
@@ -281,7 +623,7 @@ def volume_claims(volumes, files_dir):
 
 
 def references(value, found):
-    """Finn alle Secret- og PVC-navn manifestene bruker."""
+    """Find Secret, PVC and ConfigMap references used by the manifests."""
     if isinstance(value, dict):
         secret = value.get("secret")
         if isinstance(secret, dict) and "secretName" in secret:
@@ -291,10 +633,15 @@ def references(value, found):
         if isinstance(claim, dict) and "claimName" in claim:
             found.add(("PersistentVolumeClaim", claim["claimName"]))
 
-        for key in ("secretKeyRef", "secretRef"):
+        config_map = value.get("configMap")
+        if isinstance(config_map, dict) and "name" in config_map:
+            found.add(("ConfigMap", config_map["name"]))
+
+        for key in ("secretKeyRef", "secretRef", "configMapRef", "configMapKeyRef"):
             ref = value.get(key)
             if isinstance(ref, dict) and "name" in ref:
-                found.add(("Secret", ref["name"]))
+                kind = "ConfigMap" if key.startswith("configMap") else "Secret"
+                found.add((kind, ref["name"]))
 
         for item in value.values():
             references(item, found)
@@ -306,8 +653,8 @@ def references(value, found):
     return found
 
 
-def check_links(docs, from_config):
-    """Valider unike volumnavn og koblinger mellom config og manifester."""
+def check_links(docs, from_config, sources=None):
+    """Validate unique volume names and links between config and manifests."""
     defined = [
         (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
         for doc in docs
@@ -318,42 +665,150 @@ def check_links(docs, from_config):
     names = [name for _, name in defined]
     for name in sorted({n for n in names if names.count(n) > 1}, key=str):
         raise DeployError(
-            f"Navnet {name!r} er definert flere ganger som Secret/PVC/ConfigMap. "
-            "Podman lager ett volum per navn, så navnene må være unike på tvers av typene"
+            f"The name {name!r} is defined more than once as Secret/PVC/ConfigMap. "
+            "Podman creates one volume per name, so names must be unique across kinds"
         )
 
-    defined = {(kind, name) for kind, name in defined if kind != "ConfigMap"}
+    defined = set(defined)
     used = references(docs, set())
 
     for kind, name in sorted(used - set(defined)):
-        group = SECRET_FILES if kind == "Secret" else VOLUME_FILES
+        source = ""
+        if sources:
+            for doc, path in zip(docs, sources):
+                if path and (kind, name) in references(doc, set()):
+                    source = f"{path}: "
+                    break
+        if kind == "ConfigMap":
+            hint = "Define it in a manifest"
+        else:
+            group = SECRET_FILES if kind == "Secret" else VOLUME_FILES
+            hint = f"Add it under {group} in config.yaml or in a manifest"
         raise DeployError(
-            f"Et manifest bruker {kind} {name!r}, men den finnes ikke. "
-            f"Legg den til under {group} i config.yaml eller i et manifest"
+            f"{source}A manifest uses {kind} {name!r}, but it does not exist. {hint}"
         )
 
     for key, where in sorted(from_config.items()):
         if key not in used:
             raise DeployError(
-                f"{where} i config.yaml brukes ikke av noe manifest. "
-                "Sjekk at id-en er lik secretName/claimName i manifestet"
+                f"{where} in config.yaml is not used by any manifest. "
+                "Check that the id matches secretName/claimName in the manifest"
             )
 
 
-def render(files_dir=None, write_archives=True, config_path=None):
-    """Rendr validert YAML og skriv importarkiver hvis write_archives er satt."""
+def check_pod_spec(value):
+    """Validate offline pull policy and mounts within each pod specification."""
+    if isinstance(value, dict):
+        spec = value.get("spec")
+        if not isinstance(spec, dict):
+            spec = {}
+        volumes = {
+            volume.get("name")
+            for volume in spec.get("volumes", [])
+            if isinstance(volume, dict)
+        }
+        for group in ("containers", "initContainers"):
+            for container in spec.get(group, []):
+                if not isinstance(container, dict):
+                    raise DeployError(f"{group} entries must be maps")
+                name = container.get("name", "<unnamed>")
+                if container.get("imagePullPolicy") != "Never":
+                    raise DeployError(
+                        f"Container {name!r} ({group}) must use imagePullPolicy: Never"
+                    )
+                for mount in container.get("volumeMounts", []):
+                    if not isinstance(mount, dict) or mount.get("name") not in volumes:
+                        raise DeployError(
+                            f"Container {name!r} ({group}) mounts an undefined volume: {mount.get('name') if isinstance(mount, dict) else mount!r}"
+                        )
+        for child in value.values():
+            check_pod_spec(child)
+    elif isinstance(value, list):
+        for child in value:
+            check_pod_spec(child)
+
+
+def check_component_names(documents, component, source):
+    """Reject unprefixed component resources before generating or writing files."""
+    for doc in documents:
+        if not isinstance(doc, dict) or doc.get("kind") not in (
+            "Pod",
+            "Secret",
+            "PersistentVolumeClaim",
+            "ConfigMap",
+        ):
+            continue
+        name = (doc.get("metadata") or {}).get("name")
+        if (
+            not isinstance(name, str)
+            or not name.startswith(component + "-")
+            or not ID.fullmatch(name)
+        ):
+            raise DeployError(
+                f"{source}: {doc['kind']} name must start with {component}- and be a valid resource name"
+            )
+
+
+def check_component_config_names(config, component, path):
+    """Validate every configured Secret/PVC prefix without generating any files."""
+    for group, kind in (
+        (SECRET_FILES, "Secret"),
+        (VOLUME_FILES, "PersistentVolumeClaim"),
+    ):
+        mapping = config.get(group, {})
+        if not isinstance(mapping, dict):
+            raise DeployError(f"{group} in {path} must be a map")
+        check_component_names(
+            [{"kind": kind, "metadata": {"name": name}} for name in mapping],
+            component,
+            path,
+        )
+
+
+def render(
+    files_dir=None,
+    write_archives=True,
+    config_path=None,
+    manifests=None,
+    component=None,
+    extra_volumes=None,
+):
+    """Render validated YAML and write import archives if write_archives is set."""
     config_path = config_path or CONFIG
     if not config_path.exists():
-        raise DeployError(f"Mangler {config_path}")
+        raise DeployError(f"Missing {config_path}")
 
     files_dir = files_dir or BUILD / "files"
     config = load_config(config_path)
+    manifests = manifests or MANIFESTS
+    if component:
+        for path in sorted(manifests.glob("*.yaml")):
+            check_component_names(load_yaml_all(path), component, path)
+        check_component_config_names(config, component, config_path)
+    if component == "core" and "PUBLIC_ORIGIN" in config:
+        config["PUBLIC_HOSTNAME"] = public_origin(
+            config["PUBLIC_ORIGIN"], config_path
+        ).hostname
+    if component:
+        validate_component_config(config, component, config_path)
+    generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, SECRET_FILES, config_path.parent)
-    volumes = load_file_group(config, VOLUME_FILES, config_path.parent)
+    volume_config = dict(config)
+    mapping = config.get(VOLUME_FILES, {})
+    if not isinstance(mapping, dict):
+        raise DeployError(f"{VOLUME_FILES} in {config_path} must be a map")
+    volume_config[VOLUME_FILES] = {
+        key: entries
+        for key, entries in mapping.items()
+        if key not in (extra_volumes or {})
+    }
+    volumes = load_file_group(volume_config, VOLUME_FILES, config_path.parent)
+    volumes.update(extra_volumes or {})
 
     docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
+    sources: list = [None] * len(docs)
 
-    for path in sorted(MANIFESTS.glob("*.yaml")):
+    for path in sorted(manifests.glob("*.yaml")):
         try:
             rendered = [
                 replace(document, config)
@@ -361,31 +816,36 @@ def render(files_dir=None, write_archives=True, config_path=None):
                 if document is not None
             ]
             for doc in rendered:
+                check_pod_spec(doc)
                 if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
                     data = doc.get("data") or {}
                     if not isinstance(data, dict):
-                        raise DeployError("ConfigMap.data må være et map")
+                        raise DeployError("ConfigMap.data must be a map")
                     doc["data"] = {str(key): str(value) for key, value in data.items()}
             if "@@" in yaml.safe_dump_all(rendered, sort_keys=False):
                 raise DeployError(
-                    'Uerstattet @@...@@. Kun hele verdier som "@@NAVN@@" støttes.'
+                    'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'
                 )
         except DeployError as error:
-            raise DeployError(f"{path}: {error}") from None
+            raise DeployError(f"{path} (config {config_path}): {error}") from None
         docs += rendered
+        sources.extend([path] * len(rendered))
 
     from_config = {("Secret", i): f"{SECRET_FILES}.{i}" for i in secrets}
     from_config.update(
         {("PersistentVolumeClaim", i): f"{VOLUME_FILES}.{i}" for i in volumes}
     )
-    check_links(docs, from_config)
+    try:
+        check_links(docs, from_config, sources)
+    except DeployError as error:
+        raise DeployError(f"{config_path}: {error}") from None
 
     text = yaml.safe_dump_all(docs, sort_keys=False)
 
-    # Base64 inneholder aldri '@', så Secret-data gir ikke falske treff.
+    # Base64 never contains '@', so Secret data cannot give false matches.
     if "@@" in text:
         raise DeployError(
-            'Uerstattet @@...@@ i manifestene. Kun hele verdier som "@@NAVN@@" støttes.'
+            'Unreplaced @@...@@ in the manifests. Only whole values like "@@NAME@@" are supported.'
         )
 
     if write_archives:
@@ -393,21 +853,70 @@ def render(files_dir=None, write_archives=True, config_path=None):
     return text
 
 
+def prepare_components():
+    """Render all source components with private dev state and shared imported registrations."""
+    state = BUILD / "dev"
+    settings_by_component = {
+        component: component_defaults(component, dev=True)
+        for component in ("core", "app1", "app2", "help")
+    }
+    for component, settings in settings_by_component.items():
+        database_preflight(
+            settings,
+            state / component / "config.yaml",
+            ROOT / "components" / component / "manifests",
+        )
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for component in ("core", "app1", "app2", "help"):
+        target = state / component / "config.yaml"
+        settings = settings_by_component[component]
+        write_private(target, yaml.safe_dump(settings, sort_keys=False))
+    with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
+        imports, updates = registration_stage(
+            ["app1", "app2", "help"], Path(directory), home=state
+        )
+        documents = []
+        for component in ("core", "app1", "app2", "help"):
+            text = render(
+                state / component / "files",
+                config_path=state / component / "config.yaml",
+                manifests=ROOT / "components" / component / "manifests",
+                component=component,
+                extra_volumes=imports if component == "core" else None,
+            )
+            documents.extend(yaml.safe_load_all(text))
+        check_links(documents, {})
+        write_registrations(updates, home=state)
+        write_private(
+            BUILD / "install.yaml", yaml.safe_dump_all(documents, sort_keys=False)
+        )
+    print(f"[OK] {BUILD / 'install.yaml'}")
+
+
 def prepare():
-    """Skriv validert dev-YAML og importarkiver uten å kjøre Podman."""
+    """Write validated dev YAML and import archives without running Podman."""
+    if (ROOT / "components").is_dir():
+        if (ROOT / "bundle.yaml").exists():
+            raise DeployError(
+                "Run prepare from the source checkout; production bundles use persistent config with install"
+            )
+        prepare_components()
+        return
     output = BUILD / "install.yaml"
+    if CONFIG.is_file():
+        database_preflight(load_config(CONFIG), CONFIG, MANIFESTS)
     write_private(output, render())
     print(f"[OK] {output}")
 
 
 def run(*args):
-    """Vis og kjør en kommando; avbryt ved feilstatus."""
+    """Show and run a command; stop on a failing status."""
     print("+", " ".join(map(str, args)))
     subprocess.run(list(map(str, args)), check=True)
 
 
 def find_images(documents):
-    """Finn unike, fullt kvalifiserte images i pod-spesifikasjoner."""
+    """Find unique, fully qualified images in pod specs."""
     images = set()
     pending = list(documents)
     while pending:
@@ -424,18 +933,18 @@ def find_images(documents):
                             else None
                         )
                         container_name = (
-                            container.get("name", "<uten navn>")
+                            container.get("name", "<unnamed>")
                             if isinstance(container, dict)
-                            else "<uten navn>"
+                            else "<unnamed>"
                         )
                         where = f"container {container_name!r} ({key})"
                         if not isinstance(image, str) or not image.strip():
                             raise DeployError(
-                                f"Container må ha et image-navn som tekst: {where}"
+                                f"Container must have an image name as a string: {where}"
                             )
                         if "@@" in image:
                             raise DeployError(
-                                f"Image {image}: placeholders støttes ikke i {where}"
+                                f"Image {image}: placeholders are not supported in {where}"
                             )
                         registry, separator, name = image.partition("/")
                         if (
@@ -448,57 +957,63 @@ def find_images(documents):
                             )
                         ):
                             raise DeployError(
-                                f"Image {image} må være fullt kvalifisert i {where}"
+                                f"Image {image} must be fully qualified in {where}"
                             )
                         images.add(image)
                 pending.append(child)
     if not images:
-        raise DeployError("Ingen images funnet i manifestene")
+        raise DeployError("No images found in the manifests")
     return sorted(images)
 
 
-def install():
-    """Installer rootless Quadlet fra releasen med tjenestebrukerens varige config."""
+def production_environment():
+    """Validate the service user and set its runtime before rendering or commands."""
     if os.geteuid() == 0:
-        raise DeployError("Kjør install som tjenestebrukeren, ikke som root")
+        raise DeployError("Run install as the service user, not as root")
 
     configured_home = os.environ.get("HOME")
     if configured_home is not None and Path(configured_home) != HOME:
         raise DeployError(
-            f"HOME={configured_home!r} avviker fra hjemmekatalogen {HOME} i "
-            "brukerdatabasen. Kjør install med tjenestebrukerens HOME"
+            f"HOME={configured_home!r} differs from the home directory {HOME} in "
+            "the user database. Run install with the service user's HOME"
         )
 
     runtime = Path(f"/run/user/{os.geteuid()}")
     configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if configured_runtime is not None and configured_runtime != str(runtime):
         raise DeployError(
-            f"XDG_RUNTIME_DIR={configured_runtime!r} avviker fra forventet {runtime} "
-            "for tjenestebrukeren"
+            f"XDG_RUNTIME_DIR={configured_runtime!r} differs from the expected {runtime} "
+            "for the service user"
         )
     if not runtime.is_dir():
         raise DeployError(
-            f"Mangler runtime-katalog {runtime}. Aktiver linger for tjenestebrukeren "
-            "med loginctl enable-linger og kontroller at brukerinstansen kjører"
+            f"Missing runtime directory {runtime}. Enable linger for the service user "
+            "with loginctl enable-linger and check that the user instance is running"
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
 
+
+def install_legacy():
+    """Install a standalone rootless manifest fixture using the persistent config."""
+    production_environment()
     config_path = HOME / "config.yaml"
+    if config_path.is_file():
+        database_preflight(load_config(config_path), config_path, MANIFESTS)
     text = render(FILES_DIR, write_archives=False, config_path=config_path)
     archive = ROOT / "images" / "images.tar"
     if not archive.is_file():
-        raise DeployError(f"Mangler image-arkivet {archive}")
+        raise DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     for image in find_images(yaml.safe_load_all(text)):
         try:
             run("podman", "image", "exists", image)
         except subprocess.CalledProcessError as error:
             raise DeployError(
-                f"Image {image} er ikke tilgjengelig etter podman load "
-                f"(podman image exists ga exit {error.returncode})"
+                f"Image {image} is not available after podman load "
+                f"(podman image exists returned exit {error.returncode})"
             ) from None
 
-    # Gammel YAML må ikke importere nye filer etter en mislykket image-kontroll.
+    # Old YAML must not import new files after a failed image check.
     render(FILES_DIR, config_path=config_path)
 
     QUADLET_DIR.mkdir(parents=True, exist_ok=True)
@@ -516,25 +1031,464 @@ def install():
     run("systemctl", "--user", "is-active", "--quiet", SERVICE)
     run("podman", "ps", "--all", "--pod")
 
-    print(f"[OK] {SERVICE} kjører. Sjekk at containerne over er 'Up'.")
+    print(f"[OK] {SERVICE} is running. Check that the containers above are 'Up'.")
+
+
+def bundle_components():
+    """Read a release's fixed component selection and reject an invalid descriptor."""
+    descriptor = load_yaml(ROOT / "bundle.yaml")
+    if not isinstance(descriptor, dict) or set(descriptor) != {"name", "components"}:
+        raise DeployError("Invalid bundle.yaml")
+    name = descriptor["name"]
+    expected = ["help"] if name == "help" else ["core", name]
+    if name not in ("app1", "app2", "help") or descriptor["components"] != expected:
+        raise DeployError("Invalid bundle component selection")
+    return expected
+
+
+def version_number(value):
+    """Parse a three-part numeric version for deterministic core comparisons."""
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+        raise DeployError(
+            "Versions must contain three numeric parts: major.minor.patch"
+        )
+    return tuple(int(part) for part in value.split("."))
+
+
+def core_upgrade_needed(version):
+    """Install missing/newer core, retain an equal core and reject downgrades."""
+    requested = version_number(version)
+    marker = HOME / "installed/core"
+    if not marker.is_file():
+        return True
+    installed = version_number(marker.read_text().strip())
+    if requested < installed:
+        raise DeployError(
+            f"Core downgrade refused: requested {version}, installed {marker.read_text().strip()}"
+        )
+    return requested > installed
+
+
+def component_paths(component, home=None):
+    """Return one component's persistent config, archives and Quadlet paths."""
+    base = (home or HOME).resolve()
+    state = base / component
+    paths = [
+        state,
+        state / "files",
+        state / "config.yaml",
+        base / "installed" / component,
+    ]
+    paths.extend((state / "files").glob("*.tar"))
+    if home is None:
+        paths.extend(
+            [
+                QUADLET_DIR / ("myproduct-" + component + suffix)
+                for suffix in (".yaml", ".kube")
+            ]
+        )
+    if any(path.is_symlink() for path in paths):
+        raise DeployError(
+            f"Refuse symlinked component state or output paths for {component}"
+        )
+    return (
+        state / "config.yaml",
+        state / "files",
+        QUADLET_DIR / ("myproduct-" + component + ".yaml"),
+        QUADLET_DIR / ("myproduct-" + component + ".kube"),
+    )
+
+
+def registration_stage(components, directory, home=None):
+    """Stage existing and proposed public routes and clients without changing live state."""
+    home = home or HOME
+    for name in ("routes", "clients"):
+        source = home / name
+        if source.is_symlink():
+            raise DeployError(
+                f"Refuse symlinked shared registration directory: {source}"
+            )
+        (directory / name).mkdir()
+        if not source.exists():
+            continue
+        for path in sorted(source.iterdir()):
+            if path.is_symlink():
+                raise DeployError(f"Refuse symlinked public registration: {path}")
+            if name == "routes":
+                if path.suffix == ".conf":
+                    shutil.copy2(path, directory / name / path.name)
+            elif path.is_dir() and path.name in ("app1", "app2"):
+                target = directory / name / path.name
+                target.mkdir()
+                for filename in ("client.json", "client.crt"):
+                    public = path / filename
+                    if public.is_symlink():
+                        raise DeployError(
+                            f"Refuse symlinked public client file: {public}"
+                        )
+                    shutil.copy2(public, target / filename)
+            else:
+                raise DeployError(f"Unexpected public client registration: {path}")
+    updates = {}
+    for component in components:
+        source = ROOT / "components" / component
+        route = source / "route.conf"
+        client = source / "client.yaml"
+        if not route.is_file() and not client.is_file():
+            continue
+        config = load_config(component_paths(component, home)[0])
+        core = load_config(component_paths("core", home)[0])
+        if any(
+            config.get(key) != core.get(key) for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")
+        ):
+            raise DeployError(
+                f"{component} PUBLIC_ORIGIN and HTTPS_PORT must match the persistent core config"
+            )
+        if route.is_file():
+            updates["routes/" + component + ".conf"] = route.read_bytes()
+        if client.is_file():
+            metadata = load_yaml(client)
+            if (
+                not isinstance(metadata, dict)
+                or set(metadata) != {"id", "base_path", "scopes", "certificate"}
+                or metadata["id"] != component
+                or metadata["base_path"] != "/" + component
+                or metadata["scopes"] != ["openid", "profile", component]
+                or not isinstance(metadata["certificate"], str)
+                or Path(metadata["certificate"]).is_absolute()
+                or ".." in Path(metadata["certificate"]).parts
+            ):
+                raise DeployError(f"Invalid public client descriptor: {client}")
+            certificate = resolve_path(
+                metadata["certificate"], component_paths(component, home)[0].parent
+            )
+            certificate_bytes = certificate.read_bytes()
+            try:
+                ssl.PEM_cert_to_DER_cert(certificate_bytes.decode("ascii"))
+            except (ValueError, UnicodeError):
+                raise DeployError(
+                    f"Expected a public PEM certificate in {certificate}"
+                ) from None
+            public_origin(
+                config.get("PUBLIC_ORIGIN"), component_paths(component, home)[0]
+            )
+            origin = config["PUBLIC_ORIGIN"].rstrip("/")
+            prefix = "clients/" + component + "/"
+            updates[prefix + "client.crt"] = certificate_bytes
+            updates[prefix + "client.json"] = json.dumps(
+                {
+                    "Id": component,
+                    "RedirectUris": [origin + metadata["base_path"] + "/auth/callback"],
+                    "Scopes": metadata["scopes"],
+                    "Certificate": "client.crt",
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+    for relative, data in updates.items():
+        target = directory / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    routes = directory / "routes/installed.conf"
+    routes.write_text(
+        "\n".join(
+            path.read_text()
+            for path in sorted((directory / "routes").glob("*.conf"))
+            if path != routes
+        ),
+        encoding="utf-8",
+    )
+    client_dirs = sorted(
+        path for path in (directory / "clients").iterdir() if path.is_dir()
+    )
+    index = directory / "clients/installed.json"
+    index.write_text(
+        json.dumps([path.name + "/client.json" for path in client_dirs]),
+        encoding="utf-8",
+    )
+    # Imports overwrite files without deleting old entries; only these current indexes are read.
+    imports = {"core-routes": [routes], "core-clients": client_dirs + [index]}
+    return imports, updates
+
+
+def write_registrations(updates, home=None):
+    """Write changed public registrations privately and report whether core must restart."""
+    changed = False
+    if any(((home or HOME) / relative).is_symlink() for relative in updates):
+        raise DeployError("Refuse symlinked public registration output")
+    for relative, data in updates.items():
+        target = (home or HOME) / relative
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target.parent.chmod(0o700)
+        write_private(target, data.decode("utf-8"))
+        changed = True
+    return changed
+
+
+def install_component_plan(components, source_components, imports, updates):
+    """Apply a preflighted plan after validating images, changing only selected components."""
+    network = QUADLET_DIR / "myproduct.network"
+    network_text = QUADLET_TEMPLATE.with_suffix(".network").read_text(encoding="utf-8")
+    if network.exists() and network.read_text(encoding="utf-8") != network_text:
+        raise DeployError(f"Existing shared network differs from the bundle: {network}")
+    rendered = {}
+    for component in components:
+        config, files, _, _ = component_paths(component)
+        extra = (
+            imports
+            if component == "core"
+            and "core-routes" in load_config(config).get(VOLUME_FILES, {})
+            else None
+        )
+        rendered[component] = render(
+            files,
+            write_archives=False,
+            config_path=config,
+            manifests=ROOT / "components" / component / "manifests",
+            component=component,
+            extra_volumes=extra,
+        )
+    archive = ROOT / "images/images.tar"
+    if not archive.is_file():
+        raise DeployError(f"Missing image archive {archive}")
+    run("podman", "load", "-i", archive)
+    documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
+    if "core" in source_components and "core" not in components:
+        for path in sorted((ROOT / "components/core/manifests").glob("*.yaml")):
+            documents.extend(load_yaml_all(path))
+    for image in find_images(documents):
+        try:
+            run("podman", "image", "exists", image)
+        except subprocess.CalledProcessError as error:
+            raise DeployError(
+                f"Image {image} is unavailable after load (exit {error.returncode})"
+            ) from None
+    changed = write_registrations(updates)
+    QUADLET_DIR.mkdir(parents=True, exist_ok=True)
+    if not network.exists():
+        network.write_text(network_text, encoding="utf-8")
+        network.chmod(0o644)
+    for component in components:
+        config, files, output, quadlet = component_paths(component)
+        extra = (
+            imports
+            if component == "core"
+            and "core-routes" in load_config(config).get(VOLUME_FILES, {})
+            else None
+        )
+        render(
+            files,
+            config_path=config,
+            manifests=ROOT / "components" / component / "manifests",
+            component=component,
+            extra_volumes=extra,
+        )
+        write_private(output, rendered[component])
+        quadlet.write_text(
+            QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
+                "Yaml=myproduct.yaml", "Yaml=" + output.name
+            ),
+            encoding="utf-8",
+        )
+        quadlet.chmod(0o644)
+    if changed and "core" not in components:
+        write_file_archives(imports, component_paths("core")[1])
+    run("systemctl", "--user", "daemon-reload")
+    services = [component for component in components if component != "core"]
+    if "core" in components or changed:
+        services.append("core")
+    for component in services:
+        service = "myproduct-" + component + ".service"
+        run("systemctl", "--user", "restart", service)
+        run("systemctl", "--user", "is-active", "--quiet", service)
+    for component in components:
+        version = (
+            (ROOT / ("CORE_VERSION" if component == "core" else "VERSION"))
+            .read_text()
+            .strip()
+        )
+        write_private(HOME / "installed" / component, version + "\n")
+    run("podman", "ps", "--all", "--pod")
+
+
+def install_components():
+    """Validate the selected components and images before writing scoped services."""
+    production_environment()
+    components = bundle_components()
+    version_number((ROOT / "VERSION").read_text().strip())
+    source_components = list(components)
+    if "core" in components and not core_upgrade_needed(
+        (ROOT / "CORE_VERSION").read_text().strip()
+    ):
+        components.remove("core")
+    if components == ["help"] and not (HOME / "installed/core").is_file():
+        raise DeployError("Install an app bundle with core before installing help")
+    for component in source_components:
+        for path in sorted(
+            (ROOT / "components" / component / "manifests").glob("*.yaml")
+        ):
+            check_component_names(load_yaml_all(path), component, path)
+        config_path = component_paths(component)[0]
+        validate_component_config(
+            load_config(config_path),
+            component,
+            config_path,
+            check_placeholders=component in components,
+        )
+    core_path = component_paths("core")[0]
+    core = load_config(core_path)
+    validate_component_config(
+        core, "core", core_path, check_placeholders="core" in components
+    )
+    for component in source_components:
+        if component == "core":
+            continue
+        path = component_paths(component)[0]
+        config = load_config(path)
+        for key in ("PUBLIC_ORIGIN", "HTTPS_PORT"):
+            if config[key] != core[key]:
+                raise DeployError(f"{key} in {path} must match {core_path}")
+    for component in components:
+        config_path = component_paths(component)[0]
+        database_preflight(
+            load_config(config_path),
+            config_path,
+            ROOT / "components" / component / "manifests",
+        )
+    with tempfile.TemporaryDirectory(
+        prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
+    ) as directory:
+        imports, updates = registration_stage(source_components, Path(directory))
+        install_component_plan(components, source_components, imports, updates)
+
+
+def install():
+    """Install the selected component bundle or a standalone manifest fixture."""
+    if (ROOT / "bundle.yaml").exists():
+        install_components()
+    elif (ROOT / "components").is_dir():
+        raise DeployError(
+            "Run install from an unpacked app/help bundle, not the source checkout"
+        )
+    else:
+        install_legacy()
+
+
+def uninstall(component=None, delete_data=False):
+    """Remove one scoped service and registration, preserving data unless explicitly requested."""
+    production_environment()
+    selected = bundle_components()
+    own = next(name for name in selected if name != "core")
+    component = component or own
+    if component not in (own, "core"):
+        raise DeployError(
+            "This bundle can only uninstall its own app/help or unused core"
+        )
+    marker = HOME / "installed" / component
+    if not marker.is_file():
+        raise DeployError(f"Component {component} is not installed")
+    if component == "core":
+        dependents = [
+            name
+            for name in ("app1", "app2", "help")
+            if (HOME / "installed" / name).is_file()
+        ]
+        if dependents:
+            raise DeployError("Core is still required by: " + ", ".join(dependents))
+    _, _, output, quadlet = component_paths(component)
+    documents = load_yaml_all(output)
+    check_component_names(documents, component, output)
+    volumes = [
+        doc["metadata"]["name"]
+        for doc in documents
+        if isinstance(doc, dict)
+        and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
+    ]
+    run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
+    for path in (output, quadlet):
+        path.unlink()
+    route = HOME / "routes" / (component + ".conf")
+    if route.is_file():
+        route.unlink()
+    client = HOME / "clients" / component
+    if client.exists():
+        if client.is_symlink():
+            raise DeployError("Refuse symlinked client registration")
+        shutil.rmtree(client)
+    marker.unlink()
+    if component != "core":
+        with tempfile.TemporaryDirectory(
+            prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+        ) as directory:
+            imports, _ = registration_stage([], Path(directory))
+            write_file_archives(imports, component_paths("core")[1])
+        run("systemctl", "--user", "restart", "myproduct-core.service")
+        run("systemctl", "--user", "is-active", "--quiet", "myproduct-core.service")
+    run("systemctl", "--user", "daemon-reload")
+    if delete_data:
+        for name in volumes:
+            result = subprocess.run(  # noqa: UP022 - Python 3.6
+                ["podman", "volume", "exists", name],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if result.returncode == 0:
+                run("podman", "volume", "rm", name)
+            elif result.returncode != 1:
+                raise DeployError(f"Cannot check volume {name} before deletion")
+        shutil.rmtree(HOME / component)
+    print(
+        f"[OK] Uninstalled {component}; shared network retained; data {'deleted' if delete_data else 'preserved'}"
+    )
 
 
 def main():
-    """Kjør valgt deploy-kommando og returner exit-kode for forventede feil."""
-    commands = {"prepare": prepare, "install": install}
+    """Run the chosen deploy command and return an exit code for expected errors."""
+    commands = {
+        "prepare": prepare,
+        "install": install,
+        "uninstall": uninstall,
+        "init-config": init_config,
+    }
     args = sys.argv[1:]
-
-    if len(args) != 1 or args[0] not in commands:
-        print("Usage: ./deploy prepare|install")
+    removing = bool(args and args[0] == "uninstall")
+    valid_remove = removing and args[1:] in (
+        [],
+        ["core"],
+        ["--delete-data"],
+        ["core", "--delete-data"],
+    )
+    initializing = bool(args and args[0] == "init-config" and len(args) == 2)
+    if (
+        not args
+        or args[0] not in commands
+        or (
+            not valid_remove
+            and not initializing
+            and (len(args) != 1 or args[0] == "init-config")
+        )
+    ):
+        print(
+            "Usage: ./deploy prepare|install|uninstall [core] [--delete-data] | init-config <component>"
+        )
         return 2
 
     try:
-        commands[args[0]]()
+        if initializing:
+            init_config(args[1])
+        elif removing:
+            uninstall(
+                "core" if "core" in args[1:] else None, "--delete-data" in args[1:]
+            )
+        else:
+            commands[args[0]]()
     except subprocess.CalledProcessError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         if args[0] == "install":
             print(
-                f"Feilsøk: journalctl --user -u {SERVICE} og "
+                f"Troubleshoot: journalctl --user -u {SERVICE} and "
                 "/usr/lib/systemd/user-generators/podman-user-generator --dryrun",
                 file=sys.stderr,
             )

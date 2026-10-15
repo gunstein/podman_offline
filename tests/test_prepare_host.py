@@ -11,7 +11,9 @@ class HostLabelTests(unittest.TestCase):
             Path(__file__).resolve().parent.parent / "scripts/prepare-host.sh"
         ).read_text()
         block = script[
-            script.index("# SELinux: lageret") : script.index("loginctl enable-linger")
+            script.index("# SELinux: storage needs") : script.index(
+                "loginctl enable-linger"
+            )
         ]
         stubs = r"""
 service_home=/var/lib/myproduct
@@ -66,8 +68,8 @@ restorecon() { echo "restorecon $*"; }
     def test_old_home_rule_requires_manual_removal(self):
         result = self.run_labels(old=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Uventet SELinux-ekvivalens", result.stdout)
-        self.assertIn("Fjern den manuelt", result.stdout)
+        self.assertIn("Unexpected SELinux equivalence", result.stdout)
+        self.assertIn("Remove it manually", result.stdout)
         self.assertNotIn("fcontext -d", result.stdout)
         self.assertNotIn("restorecon", result.stdout)
 
@@ -87,7 +89,9 @@ class HostPortTests(unittest.TestCase):
         script = (
             Path(__file__).resolve().parent.parent / "scripts/prepare-host.sh"
         ).read_text()
-        block = script[script.index("# Påkrevd port") : script.index("for command in")]
+        block = script[
+            script.index("# The required port") : script.index("for command in")
+        ]
         for args, valid in (
             ([], False),
             (["--port", "1024"], True),

@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: myproduct-help
+  name: help-web
 spec:
   restartPolicy: Always
   containers:
   - name: web
-    image: localhost/myproduct-help:0.1.0
+    image: localhost/myproduct-help:0.2.0
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90

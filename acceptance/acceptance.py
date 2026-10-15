@@ -41,12 +41,12 @@ SCP = [
 
 
 def stamp():
-    """Returner nåværende UTC-tid i ISO-format for loggene."""
+    """Return the current UTC time in ISO format for the logs."""
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def validate(config):
-    """Valider labens VM-er, adresser, subnett, navn og HTTPS-port."""
+    """Validate the lab VMs, addresses, subnet, names and HTTPS port."""
     for role in ("DEV", "PROD"):
         ipaddress.IPv4Address(config[role + "_IP"])
         if not re.fullmatch(r"[1-9][0-9]*", config[role + "_VMID"]):
@@ -74,11 +74,13 @@ def validate(config):
 
 
 class Run:
-    """Utfør én uforanderlig akseptansekjøring med logger og første-feil-stopp."""
+    """Perform one immutable acceptance run with logs and stop at the first failure."""
 
-    def __init__(self, run_id, config):
-        """Opprett en ny, privat run-mappe og initialiser kjøringens tilstand."""
+    def __init__(self, run_id, config, first_app="app1"):
+        """Create a new, private run folder and initialize the run state."""
         self.id = run_id
+        self.first_app = first_app
+        self.help_only = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -97,7 +99,7 @@ class Run:
         self.warnings = set()
 
     def write(self, text):
-        """Skriv til stegets logg etter å ha maskert kjente hemmeligheter."""
+        """Write to the step log after masking known secrets."""
         for value in self.redactions:
             text = text.replace(value, "[REDACTED]")
         if self.log:
@@ -105,7 +107,7 @@ class Run:
             self.log.flush()
 
     def log_streams(self, stdout, stderr, log_stdout=True):
-        """Logg adskilte strømmer og navngi SSH-advarsler uten å vise private hashverdier."""
+        """Log separate streams and name warnings without showing private hash values."""
         stdout, stderr = stdout or "", stderr or ""
         if isinstance(stdout, bytes):
             stdout = stdout.decode(errors="replace")
@@ -122,7 +124,7 @@ class Run:
         self.write("\n[stderr]\n" + stderr + "\n")
 
     def command(self, args, script=None, timeout=3600, log_stdout=True):
-        """Logg adskilte strømmer, avvis feilstatus og returner bare stdout."""
+        """Log separate streams, reject a failing status and return only stdout."""
         self.write("$ " + " ".join(shlex.quote(str(a)) for a in args) + "\n")
         if script:
             self.write("# stdin script:\n" + script + "\n")
@@ -150,17 +152,19 @@ class Run:
         return result.stdout or ""
 
     def host(self, role):
-        """Returner SSH-bruker og adresse for den valgte VM-rollen."""
+        """Return the SSH user and address for the chosen VM role."""
         return self.cfg["SSH_USER"] + "@" + self.cfg[role + "_IP"]
 
     def ssh(self, role, script, timeout=3600, log_stdout=True):
-        """Kjør et script via SSH og samle output i stegets logg."""
+        """Run a script over SSH and collect its output in the step log."""
         return self.command(
             SSH + [self.host(role), "bash -se"], script, timeout, log_stdout
         )
 
-    def guest(self, role, action, version="", log_stdout=True, old_version=""):
-        """Kjør et fast VM-steg via SSH med parametre for denne kjøringen."""
+    def guest(
+        self, role, action, version="", log_stdout=True, old_version="", bundle="app1"
+    ):
+        """Run a fixed VM step over SSH with this run's parameters."""
         args = [
             action,
             self.id,
@@ -173,13 +177,14 @@ class Run:
             self.started_epoch,
             version,
             old_version,
+            bundle,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
         return self.ssh(role, prefix + script, log_stdout=log_stdout)
 
     def step(self, name, action):
-        """Kjør ett steg én gang, logg utfallet og stopp ved første feil."""
+        """Run one step once, log the outcome and stop at the first failure."""
         print("START " + name, flush=True)
         started = stamp()
         clock = time.monotonic()
@@ -212,7 +217,7 @@ class Run:
             raise RuntimeError("STOP at " + name) from None
 
     def readiness(self):
-        """Kontroller ren checkout, labtilgang og profiler før VM-ene endres."""
+        """Check a clean checkout, lab access and profiles before the VMs change."""
         self.cfg = env_file(self.config_file)
         validate(self.cfg)
         for program in ("git", "ssh", "scp"):
@@ -224,6 +229,8 @@ class Run:
             revision=self.revision,
             clean=clean,
             version=(ROOT / "VERSION").read_text().strip(),
+            core_version=(ROOT / "CORE_VERSION").read_text().strip(),
+            first_app=self.first_app,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -275,7 +282,7 @@ class Run:
         )
 
     def wait_ssh(self, role, old_boot=None):
-        """Vent på SSH og eventuelt en boot-ID som avviker fra den forrige."""
+        """Wait for SSH and, if given, a boot ID that differs from the previous one."""
         deadline = time.monotonic() + 240
         while time.monotonic() < deadline:
             args = SSH + [self.host(role), "cat /proc/sys/kernel/random/boot_id"]
@@ -297,7 +304,7 @@ class Run:
         raise RuntimeError("SSH/new boot did not become ready: " + role)
 
     def reset(self, role):
-        """Tilbakestill en VM til snapshot og registrer ren tilstand etter oppstart."""
+        """Roll a VM back to its snapshot and record the clean state after boot."""
         endpoint = "/nodes/{node}/qemu/" + self.cfg[role + "_VMID"]
         status = self.pve.request("GET", endpoint + "/status/current")["status"]
         if status != "stopped":
@@ -314,7 +321,7 @@ class Run:
         self.meta[role.lower() + "_facts"] = self.guest(role, "clean")
 
     def source(self):
-        """Send en Git-bundle av valgt HEAD til dev-VM-en og klon den der."""
+        """Send a Git bundle of the chosen HEAD to the dev VM and clone it there."""
         source = self.folder / "source.bundle"
         self.command(["git", "-C", ROOT, "bundle", "create", source, "HEAD"])
         base = "podman-offline-acceptance/" + self.id
@@ -322,11 +329,11 @@ class Run:
         self.command(SCP + [source, self.host("DEV") + ":" + base + "/source.bundle"])
         self.guest("DEV", "clone")
 
-    def transfer(self, version=None):
-        """Overfør valgt produktbundle via kontrolleren og registrer SHA256."""
+    def transfer(self, version=None, bundle="app1"):
+        """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["version"]
-        archive = "myproduct-" + version + "-offline.tar.gz"
+        archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
             local = self.folder / (archive + suffix)
@@ -344,19 +351,57 @@ class Run:
             digest = hashlib.sha256()
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        self.meta.setdefault("bundles", {})[version] = digest.hexdigest()
+        self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
-        self.guest("PROD", "unpack", version)
+        self.guest("PROD", "unpack", version, bundle=bundle)
+
+    def transfer_bundles(self):
+        """Transfer all three scoped bundles before testing independent installations."""
+        bundles = ("app1", "help") if self.help_only else ("app1", "app2", "help")
+        for bundle in bundles:
+            self.transfer(bundle=bundle)
 
     def boot_id(self, output):
-        """Valider en boot-ID fra stdout uten å godta advarsler eller tomme svar."""
+        """Validate a boot ID from stdout without accepting warnings or empty output."""
         boot = output.strip()
         if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", boot):
             raise RuntimeError("Invalid or empty boot-ID on stdout")
         return boot
 
+    def registry_transfer(self):
+        """Transfer the small registry fixture bundle through the controller with its checksum."""
+        base = "podman-offline-acceptance/" + self.id
+        folder = self.folder / "registry"
+        folder.mkdir(mode=0o700)
+        self.ssh("PROD", "mkdir -p " + shlex.quote(base + "/registry"))
+        archive = "myproduct-0.0.0-offline.tar.gz"
+        for suffix in ("", ".sha256"):
+            local = folder / (archive + suffix)
+            self.command(
+                SCP
+                + [
+                    self.host("DEV")
+                    + ":"
+                    + base
+                    + "/registry-fixture/dist/"
+                    + archive
+                    + suffix,
+                    local,
+                ]
+            )
+            self.command(
+                SCP
+                + [
+                    local,
+                    self.host("PROD") + ":" + base + "/registry/" + archive + suffix,
+                ]
+            )
+        self.meta["registry_bundle_sha256"] = hashlib.sha256(
+            (folder / archive).read_bytes()
+        ).hexdigest()
+
     def persistent_state(self, phase):
-        """Sammenlign private hashverdier og logg bare filnavn og likt/endret."""
+        """Compare private hash values and log only file names and same/changed."""
         try:
             state = json.loads(self.guest("PROD", "persistent-state", log_stdout=False))
         except (ValueError, TypeError):
@@ -392,7 +437,7 @@ class Run:
             same = before["files_sha256"].get(name) == state["files_sha256"].get(name)
             if name == "PKI/private/ca.crt":
                 same = same and before["ca_der_sha256"] == state["ca_der_sha256"]
-            comparisons[name] = "likt" if same else "endret"
+            comparisons[name] = "same" if same else "changed"
             self.write(name + ": " + comparisons[name] + "\n")
         self.meta["persistent_" + phase] = comparisons
         if phase == "after" and state != before:
@@ -401,7 +446,7 @@ class Run:
             )
 
     def upgrade(self):
-        """Bygg og installer ny versjon, og kontroller varig tilstand og e2e."""
+        """Build and install a new version, and check persistent state and e2e."""
         version = self.meta["version"]
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
             raise RuntimeError("Upgrade test requires a three-part numeric VERSION")
@@ -409,6 +454,7 @@ class Run:
         parts[-1] = str(int(parts[-1]) + 1)
         new_version = ".".join(parts)
         self.meta["upgrade_version"] = new_version
+        self.step("10-siblings-before", lambda: self.guest("PROD", "siblings-before"))
         self.step(
             "10-build-upgrade", lambda: self.guest("DEV", "upgrade-bundle", new_version)
         )
@@ -417,13 +463,105 @@ class Run:
             "10-install-upgrade",
             lambda: self.guest("PROD", "upgrade", old_version=version),
         )
+        self.step("10-siblings-after", lambda: self.guest("PROD", "siblings-after"))
         self.step("10-check-upgrade", lambda: self.guest("PROD", "check"))
         self.step("10-persistent-after", lambda: self.persistent_state("after"))
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
 
+    def upgrade_core(self):
+        """Verify a newer shared core and reject an older core before persistent changes."""
+        parts = self.meta["version"].split(".")
+        parts[-1] = str(int(parts[-1]) + 3)
+        version = ".".join(parts)
+        self.meta["core_upgrade_release"] = version
+        self.step(
+            "10-core-siblings-before",
+            lambda: self.guest("PROD", "core-siblings-before"),
+        )
+        self.step("10-core-before", lambda: self.guest("PROD", "core-before"))
+        self.step(
+            "10-core-build", lambda: self.guest("DEV", "core-upgrade-bundle", version)
+        )
+        self.step("10-core-transfer", lambda: self.transfer(version))
+        self.step(
+            "10-core-install", lambda: self.guest("PROD", "core-upgrade", version)
+        )
+        self.step("10-core-after", lambda: self.guest("PROD", "core-after", version))
+        self.step(
+            "10-core-siblings-after", lambda: self.guest("PROD", "core-siblings-after")
+        )
+        self.step("10-core-persistent", lambda: self.persistent_state("after"))
+        self.step("10-core-e2e", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("10-core-markers", lambda: self.guest("DEV", "markers-check"))
+        self.step(
+            "10-core-downgrade",
+            lambda: self.guest(
+                "PROD",
+                "core-downgrade",
+                version,
+                old_version=self.meta["upgrade_version"],
+            ),
+        )
+        self.step("10-core-e2e-after-refusal", lambda: self.guest("DEV", "prod-e2e"))
+        self.step(
+            "10-core-retire",
+            lambda: self.guest(
+                "PROD", "core-retire", version, old_version=self.meta["upgrade_version"]
+            ),
+        )
+        self.step(
+            "10-core-final-siblings", lambda: self.guest("PROD", "core-siblings-after")
+        )
+
+    def upgrade_help(self):
+        """Transfer only a new help image/content release; unchanged route forbids core restart."""
+        version = self.meta["version"]
+        parts = version.split(".")
+        parts[-1] = str(int(parts[-1]) + 2)
+        new_version = ".".join(parts)
+        self.meta["help_upgrade_version"] = new_version
+        self.step(
+            "10-help-before",
+            lambda: self.guest("PROD", "help-siblings-before", bundle="help"),
+        )
+        self.step(
+            "10-help-build",
+            lambda: self.guest(
+                "DEV", "help-upgrade-bundle", new_version, bundle="help"
+            ),
+        )
+        self.step("10-help-transfer", lambda: self.transfer(new_version, bundle="help"))
+        self.step(
+            "10-help-install",
+            lambda: self.guest("PROD", "help-upgrade", new_version, bundle="help"),
+        )
+        self.step(
+            "10-help-content",
+            lambda: self.guest("PROD", "help-content", new_version, bundle="help"),
+        )
+        self.step(
+            "10-help-after",
+            lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
+        )
+        self.step("10-help-persistent", lambda: self.persistent_state("after"))
+        e2e = "app1-e2e" if self.help_only else "prod-e2e"
+        markers = "app1-markers-check" if self.help_only else "markers-check"
+        self.step("10-help-e2e", lambda: self.guest("DEV", e2e))
+        self.step("10-help-markers", lambda: self.guest("DEV", markers))
+        self.step(
+            "10-help-retire",
+            lambda: self.guest(
+                "PROD", "help-retire", new_version, old_version=version, bundle="help"
+            ),
+        )
+        self.step(
+            "10-help-retired-siblings",
+            lambda: self.guest("PROD", "help-siblings-after", bundle="help"),
+        )
+
     def credentials(self):
-        """Flytt CA og demo-passord via private runtime-filer uten å logge innhold."""
+        """Move the CA and demo passwords through private runtime files without logging content."""
         assert self.private is not None
         output = self.ssh("DEV", 'printf "%s" "${XDG_RUNTIME_DIR:?}"')
         runtime = output.strip()
@@ -434,8 +572,8 @@ class Run:
         base = "/var/lib/myproduct/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
-            "alice-password": "generated-certificates/users/alice-password",
-            "bob-password": "generated-certificates/users/bob-password",
+            "alice-password": "core/generated-certificates/users/alice-password",
+            "bob-password": "core/generated-certificates/users/bob-password",
         }
         for name, relative in files.items():
             local = self.private / name
@@ -461,7 +599,7 @@ class Run:
             )
 
     def cleanup(self):
-        """Slett overførte runtime-hemmeligheter, også når fjernoppryddingen feiler."""
+        """Delete transferred runtime secrets, even when the remote cleanup fails."""
         try:
             if self.dev_private:
                 self.guest("DEV", "cleanup")
@@ -472,7 +610,7 @@ class Run:
 
     def finalize(self):
         # Read-only audit evidence is required even after a failed prod step.
-        """Samle lesende prod-audit og rydd hemmeligheter, også etter første feil."""
+        """Collect read-only prod audit and clean up secrets, also after the first failure."""
         if self.prod_ready:
             try:
                 action = "audit-check" if self.finished else "audit"
@@ -485,14 +623,14 @@ class Run:
             print(str(error), file=sys.stderr)
 
     def reboot(self):
-        """Bestill prod-reboot og registrer at SSH kommer tilbake med ny boot-ID."""
+        """Schedule a prod reboot and record that SSH returns with a new boot ID."""
         old = self.boot_id(self.guest("PROD", "boot"))
         self.meta["prod_boot_before_reboot"] = old
         self.guest("PROD", "reboot")
         self.meta["prod_boot_after_reboot"] = self.wait_ssh("PROD", old)
 
     def execute(self):
-        """Kjør hele akseptanseløpet i fast rekkefølge uten å gjenta feilede steg."""
+        """Run the whole acceptance flow in a fixed order without repeating failed steps."""
         self.step("00-readiness", self.readiness)
         for role in ("DEV", "PROD"):
             self.step("01-reset-" + role.lower(), lambda r=role: self.reset(r))
@@ -501,9 +639,12 @@ class Run:
         actions = [
             "unit",
             "build-images",
+            "pull-images",
+            "database-runtime",
             "dev-up",
             "venv",
             "dev-e2e",
+            "registry-test",
             "examples-setup",
         ]
         actions += [
@@ -511,6 +652,7 @@ class Run:
             for name in (
                 "basic",
                 "secrets",
+                "generated-secrets",
                 "volumes",
                 "init-containers",
                 "manifest-defined",
@@ -521,16 +663,47 @@ class Run:
         for action in actions:
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
-        self.step("05-transfer", self.transfer)
-        self.step("06-install", lambda: self.guest("PROD", "install"))
+        self.step("05-transfer", self.transfer_bundles)
+        self.step("05-registry-transfer", self.registry_transfer)
+        self.step(
+            "06-prepare-host", lambda: self.guest("PROD", "prepare-host", bundle="help")
+        )
+        self.step(
+            "06-help-alone", lambda: self.guest("PROD", "help-alone", bundle="help")
+        )
+        order = [self.first_app, "app2" if self.first_app == "app1" else "app1", "help"]
+        if self.help_only:
+            order = ["app1", "help"]
+        for bundle in order:
+            self.step(
+                "06-install-" + bundle,
+                lambda b=bundle: self.guest("PROD", "install", bundle=b),
+            )
+            self.step("06-healthy-" + bundle, lambda: self.guest("PROD", "health"))
+        self.step("07-registry-offline", lambda: self.guest("PROD", "registry-offline"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
+        self.step("07-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)
+        if self.help_only:
+            self.step("08-app1-e2e", lambda: self.guest("DEV", "app1-e2e"))
+            self.step(
+                "08-app1-markers", lambda: self.guest("DEV", "app1-markers-create")
+            )
+            self.upgrade_help()
+            self.finished = True
+            return
         self.step("08-e2e", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("08-shared-login", lambda: self.guest("DEV", "shared-login"))
         self.step("08-markers", lambda: self.guest("DEV", "markers-create"))
         self.step("09-stop", lambda: self.guest("PROD", "stop"))
         for action in ("start", "restart", "crash", "hang"):
             self.step("09-" + action, lambda a=action: self.guest("PROD", a))
+            if action in ("crash", "hang"):
+                self.step(
+                    "09-launch-audit-" + action,
+                    lambda: self.guest("PROD", "launch-audit-check"),
+                )
             self.step(
                 "09-markers-" + action, lambda: self.guest("DEV", "markers-check")
             )
@@ -541,12 +714,20 @@ class Run:
         self.step("09-offline-after-reboot", lambda: self.guest("PROD", "offline"))
         self.step("09-check-after-reboot", lambda: self.guest("PROD", "check"))
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
+        self.step("09-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
+        self.upgrade_help()
         self.upgrade()
+        self.upgrade_core()
+        self.step("10-database-auth", lambda: self.guest("PROD", "database-auth"))
+        self.step("10-uninstall-app1", lambda: self.guest("PROD", "uninstall"))
+        self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
+        self.step("10-e2e-uninstall", lambda: self.guest("DEV", "survivor-e2e"))
+        self.step("10-markers-uninstall", lambda: self.guest("DEV", "survivor-markers"))
         self.finished = True
 
     def report(self):
-        """Generer rapport og bevis; bare fullført, feilfri kjøring gir CLEAN PASS."""
+        """Generate report and evidence; only a complete, error-free run gives CLEAN PASS."""
         records = [
             json.loads(line)
             for line in (self.folder / "record.jsonl").read_text().splitlines()
@@ -564,7 +745,7 @@ class Run:
             "",
             "Warnings: " + ("; ".join(sorted(self.warnings)) or "none recorded"),
             "",
-            "Persistent files: only names and likt/endret are recorded; hashes remain in memory.",
+            "Persistent files: only names and same/changed are recorded; hashes remain in memory.",
             "",
             "Metadata recorded by the runner:",
             fence + "json",
@@ -581,7 +762,7 @@ class Run:
         lines += [
             "",
             "A failed step stops execution. Later steps were NOT TESTED.",
-            "Only read-only prod audit collection and secret cleanup may run after failure. No retries or repairs.",
+            "Only read-only prod launch diagnostics, audit collection and secret cleanup may run after failure. No retries or repairs.",
             "",
         ]
         report = "\n".join(lines)
@@ -596,6 +777,7 @@ class Run:
                 fence + "text",
                 data.decode()
                 if record["step"] == "11-prod-audit"
+                or record["step"].startswith("09-launch-audit-")
                 else "\n".join(data.decode().splitlines()[-65:]),
                 fence,
             ]
@@ -605,18 +787,25 @@ class Run:
 
 
 def main():
-    """Start en ny run-id og produser rapport og opprydding også ved feil."""
+    """Start a new run ID and produce report and cleanup even on failure."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
     parser.add_argument(
         "--config", default="~/.config/podman-offline-acceptance/lab.env"
+    )
+    parser.add_argument("--first-app", choices=["app1", "app2"], default="app1")
+    parser.add_argument(
+        "--help-only",
+        action="store_true",
+        help="Install app1/core then help and upgrade only help",
     )
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
     os.umask(0o077)
-    run = Run(args.run, args.config)
+    run = Run(args.run, args.config, args.first_app)
+    run.help_only = args.help_only
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

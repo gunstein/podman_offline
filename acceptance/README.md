@@ -1,27 +1,29 @@
-# Akseptanse: dev → bundle → offline prod
+# Acceptance: dev → bundle → offline prod
 
-Kjør fra kontrolleren (Linux-laptop med Python 3.11+, git, SSH og scp):
+Run from the controller (a Linux laptop with Python 3.11+, git, SSH and scp):
 
 ```sh
-python3 acceptance/acceptance.py --run 2026-10-12-run-13 run
+python3 acceptance/acceptance.py --run 2026-10-13-run-24 run
+# Separate fresh-snapshot run for the reverse installation order.
+python3 acceptance/acceptance.py --run 2026-10-13-run-25 --first-app app2 run
 ```
 
-**Dette ruller begge konfigurerte VM-er tilbake til snapshots og sletter deres
-nåværende tilstand.** Bruk bare de to disponible lab-VM-ene. En kjøring er
-samtykke til rollback, nettisolasjon, installasjon og reboot i disse VM-ene.
-Ingen root-tilgang på kontrolleren trengs. Alle controller-verktøy bruker bare
-Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
+**This rolls both configured VMs back to their snapshots and deletes their
+current state.** Use only the two disposable lab VMs. Starting a run is
+consent to rollback, network isolation, installation and reboot in these VMs.
+No root access is needed on the controller. All controller tools use only the
+Python standard library. VM-1 uses a separate venv for the HTTP tests.
 
-## Engangsoppsett
+## One-time setup
 
-1. Opprett to Oracle Linux 9-VM-er på lab-nettet. Bruk samme CPU-arkitektur,
-   tilstrekkelig disk til .NET/Python/nginx-images og bundle, SELinux enforcing
-   og aktiv firewalld. VM-2 er det herdede produksjonsmålet og skal ha aktiv
-   fapolicyd. VM-1 er utviklermaskinen, tilsvarende laptopen i `podman_test`,
-   og skal ha fapolicyd inaktiv og deaktivert. Den forskjellen etableres bare
-   ved opprettelse av `clean-dev`, ikke under en akseptansekjøring.
-   VM-1 skal ha internett. VM-2 trenger internett bare under denne forberedelsen.
-2. Installer forutsetningene **før snapshot**, på begge VM-er:
+1. Create two Oracle Linux 9 VMs on the lab network. Use the same CPU architecture,
+   enough disk for the .NET/Python/nginx images and the bundle, SELinux enforcing
+   and active firewalld. VM-2 is the hardened production target and must have fapolicyd
+   active. VM-1 is the developer machine, matching the laptop in `podman_test`,
+   and must have fapolicyd inactive and disabled. That difference is established only
+   when `clean-dev` is created, never during an acceptance run.
+   VM-1 must have internet. VM-2 needs internet only during this preparation.
+2. Install the prerequisites **before the snapshot**, on both VMs:
 
    ```sh
    sudo dnf install -y podman python3 python3-pyyaml openssl curl git tar gzip nftables firewalld fapolicyd policycoreutils-python-utils
@@ -31,13 +33,13 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
    test -x /usr/lib/systemd/user-generators/podman-user-generator
    ```
 
-   VM-1 må kunne bygge rootless og laste ned Python-pakker. Systemets Python på
-   VM-2 med PyYAML er tilstrekkelig; ingen pip-installering der. Bruk Podman med
-   bruker-Quadlet og multi-image-save (Podman 5.x); faktiske versjoner registreres i rapporten.
-   Ingen app-images skal forhåndslastes for å skjule mangler i bundlen.
-3. Legg laptopens SSH-nøkkel i brukerens authorized_keys og bekreft SSH-hostnøkler
-   på laptop. Testen bruker `StrictHostKeyChecking=yes`. Aktiver lingering for
-   labbrukeren slik at rootless containere og runtime-katalogen overlever SSH:
+   VM-1 must be able to build rootless and download Python packages. The system Python on
+   VM-2 with PyYAML is enough; nothing is installed with pip there. Use Podman with
+   user Quadlet and multi-image save (Podman 5.x); the actual versions are recorded in the report.
+   No app images may be preloaded to hide gaps in the bundle.
+3. Add the laptop's SSH key to the user's authorized_keys and confirm the SSH host keys
+   on the laptop. The test uses `StrictHostKeyChecking=yes`. Enable lingering for
+   the lab user so that rootless containers and the runtime directory survive SSH:
 
    ```sh
    sudo loginctl enable-linger "$USER"
@@ -47,142 +49,167 @@ Python-standardbiblioteket. VM-1 bruker en separat venv til HTTP-testene.
    sudo -n true
    ```
 
-   Dette er lab-rettigheter, ikke en produksjonsanbefaling. Journalen bør være
-   persistent. Kontroller klokke/NTP før offline-testen.
-4. Lag en Proxmox API-tokenbruker avgrenset til disse to VM-ID-ene med
-   `VM.Audit`, `VM.PowerMgmt`, `VM.Snapshot.Rollback`, samt audit-tilgang til
-   task-status, HA og brannmurinnstillinger. Tokenet trenger ingen rett til å
-   endre node-/datacenterbrannmur. Lag tokenfil med mode 0600 utenfor Git:
+   These are lab permissions, not a production recommendation. The journal should be
+   persistent. Check the clock/NTP before the offline test.
+4. Create a Proxmox API token user limited to these two VM IDs with
+   `VM.Audit`, `VM.PowerMgmt`, `VM.Snapshot.Rollback`, plus audit access to
+   task status, HA and firewall settings. The token needs no right to
+   change node/datacenter firewalls. Create a token file with mode 0600 outside Git:
 
    ```text
-   PVE_HOST=<DNS-navn som matcher Proxmox-sertifikatet>
+   PVE_HOST=<DNS name matching the Proxmox certificate>
    PVE_NODE=<node>
    PVE_TOKEN_ID=<user@realm!token>
-   PVE_TOKEN_SECRET=<hemmelig verdi>
-   PVE_CA=/absolutt/sti/pve-root-ca.pem
+   PVE_TOKEN_SECRET=<secret value>
+   PVE_CA=/absolute/path/pve-root-ca.pem
    ```
 
-   Eksisterende token og CA fra `podman_test` kan brukes. TLS-kjede og vertsnavn
-   verifiseres; bare Pythons nyere STRICT-krav til Key Usage i Proxmox-root-CA
-   fravikes, som i inspirasjonsrepoets klient. Tokenet sendes bare i HTTP-header.
-5. Kontroller at begge VM-er er rene: ingen pods, containere, volumer eller
-   Secrets i verken rootless eller rootful lager; ingen
-   `/etc/containers/systemd/myproduct.*`; ingen bruker `myproduct` eller
-   `/var/lib/myproduct`. Disse tilstandskravene kontrolleres etter rollback,
-   før isolasjon/installasjon (eksisterende feilet kjøring kan ligge før rollback). Ikke ha lab-VM-ene under Proxmox HA.
-   Slå av VM-ene ryddig, ta snapshot `clean-agent` og start dem igjen. Snapshotet
-   skal inneholde SSH/sudo, pakker og nett, men ingen applikasjonstilstand.
-   Dette tilsvarer forberedelsen i `podman_test` sitt
-   `deploy/scripts/lab/prepare-agent-snapshots.sh`. Ikke kjør det scriptet blindt:
-   det har labspesifikke VM-ID-er og overskriver gjestetilstand.
-   For VM-1 lages et separat snapshot fra `clean-agent` med scriptet nedenfor.
-   Det opprinnelige snapshotet beholdes for `podman_test`. Ingen pakker,
-   trust-regler, SELinux- eller brannmurinnstillinger endres.
+   An existing token and CA from `podman_test` can be used. The TLS chain and host name
+   are verified; only Python's newer STRICT requirement for Key Usage in the Proxmox root CA
+   is relaxed, as in the inspiration repo's client. The token is sent only in an HTTP header.
+5. Check that both VMs are clean: no pods, containers, volumes or
+   Secrets in either rootless or rootful storage; no
+   `/etc/containers/systemd/myproduct.*`; no user `myproduct` or
+   `/var/lib/myproduct`. These state requirements are checked after rollback,
+   before isolation/installation (an earlier failed run may remain before rollback). Do not put the lab VMs under Proxmox HA.
+   Shut the VMs down cleanly, take the snapshot `clean-agent` and start them again. The snapshot
+   must contain SSH/sudo, packages and network, but no application state.
+   This matches the preparation in `podman_test`'s
+   `deploy/scripts/lab/prepare-agent-snapshots.sh`. Do not run that script blindly:
+   it has lab-specific VM IDs and overwrites guest state.
+   For VM-1 a separate snapshot is created from `clean-agent` with the script below.
+   The original snapshot is kept for `podman_test`. No packages,
+   trust rules, SELinux or firewall settings are changed.
 
-6. Proxmox VM-brannmur skal være deaktivert og NIC-er tilkoblet i baseline.
-   Snapshot rollback nullstiller ikke nødvendigvis eksterne brannmurregler.
-   Readiness avviser avvik; den endrer ikke node-/datacenterregler.
-7. Kopier `lab.example.env` til
-   `~/.config/podman-offline-acceptance/lab.env`, fyll inn verifiserte verdier,
-   sett katalogen til 0700 og filen til 0600. Ingen gjetting av VM-ID/IP.
-   `LAB_CIDR` er det faktiske lab-subnettet (/24 eller smalere).
-   `PROD_HOST` er appens navn, ikke nødvendigvis VM-ens OS-vertsnavn. Nåværende
-   produkt bruker `myproduct-proxy`, som også løses internt av Podman DNS.
-   Ekstern HTTP-test bruker `CONNECT_IP` og trenger ikke endring i `/etc/hosts`.
+6. The Proxmox VM firewall must be disabled and the NICs connected in the baseline.
+   A snapshot rollback does not necessarily reset external firewall rules.
+   Readiness rejects deviations; it does not change node/datacenter rules.
+7. Copy `lab.example.env` to
+   `~/.config/podman-offline-acceptance/lab.env`, fill in verified values,
+   set the directory to 0700 and the file to 0600. Never guess VM IDs or IPs.
+   `LAB_CIDR` is the actual lab subnet (/24 or narrower).
+   `PROD_HOST` is the app's name, not necessarily the VM's OS host name. The current
+   product uses `myproduct-proxy`, which Podman DNS also resolves internally.
+   The external HTTP test uses `CONNECT_IP` and needs no change to `/etc/hosts`.
 
-## Lag utviklerprofilen én gang
+## Create the developer profile once
 
-Etter at konfigurasjonsfilen over er fylt ut, kjør på kontrolleren:
+After filling in the configuration file above, run on the controller:
 
 ```sh
 mkdir -p -m 700 ~/podman-offline-acceptance-runs/preparations
-# Bruk et nytt loggfilnavn og bevar loggen.
+# Use a new log file name and keep the log.
 (umask 077; python3 acceptance/prepare_dev_snapshot.py --create   > ~/podman-offline-acceptance-runs/preparations/clean-dev.log 2>&1)
 ```
 
-Scriptet stopper VM-en som er konfigurert som DEV, ruller den tilbake til
-`clean-agent`, starter den, kontrollerer baseline og kjører nøyaktig
-`sudo systemctl disable --now fapolicyd`. Det kontrollerer fortsatt Enforcing
-og aktiv firewalld, stenger ned VM-en ryddig, oppretter `clean-dev` og starter
-igjen med ny profilkontroll. Det avviser et eksisterende `clean-dev`, kontrollerer
-at `clean-agent` sin snapshot-konfigurasjon er bevart og sender ingen operasjoner
-til PROD. Oppdater så lokal `lab.env` til `DEV_SNAPSHOT=clean-dev`;
-`PROD_SNAPSHOT=clean-agent` beholdes.
+The script stops the VM configured as DEV, rolls it back to
+`clean-agent`, starts it, checks the baseline and runs exactly
+`sudo systemctl disable --now fapolicyd`. It still checks Enforcing
+and active firewalld, shuts the VM down cleanly, creates `clean-dev` and starts
+it again with a new profile check. It rejects an existing `clean-dev`, checks
+that `clean-agent`'s snapshot configuration is preserved and sends no operations
+to PROD. Then update the local `lab.env` to `DEV_SNAPSHOT=clean-dev`;
+`PROD_SNAPSHOT=clean-agent` stays.
 
-Readiness krever DEV: fapolicyd inactive/disabled, PROD: fapolicyd active,
-og begge: SELinux Enforcing og firewalld active. Profilene registreres før
-rollback og kontrolleres igjen fra snapshotene etter rollback. Feil profil
-gir stopp, aldri automatisk endring. Begge VM-er må derfor være startet med
-riktig profil før readiness.
+Readiness requires DEV: fapolicyd inactive/disabled, PROD: fapolicyd active,
+and both: SELinux Enforcing and firewalld active. The profiles are recorded before
+rollback and checked again from the snapshots after rollback. A wrong profile
+stops the run, never an automatic change. Both VMs must therefore be running with
+the right profile before readiness.
 
-## Kjøring og bevis
+## Running and evidence
 
-Commit først testkode og eventuelle tillatte smoke-endringer: readiness krever
-ren checkout. Ingen push trengs: en Git-bundle av nøyaktig HEAD sendes til VM-1
-og klones der. Dermed er både lokale commits og offline Git-tilgang støttet.
-Produktets offline-bundle bygges deretter med det uendrede byggescriptet.
+Commit test code and any allowed smoke changes first: readiness requires a
+clean checkout. No push is needed: a Git bundle of exactly HEAD is sent to VM-1
+and cloned there. Both local commits and offline Git access are therefore supported.
+The product's offline bundle uses prepared localhost/ demo images and pulls any
+registry names before saving. Dev build and pull are separate steps; the demo
+still builds its app images from source in every clean run.
 
-Stegene utføres i fast rekkefølge: ren start, isolasjon, dev, bundle, installasjon,
-kontroller, livssyklus, reboot og oppgradering. VM-2 isoleres **før overføring**, med
-et separat nftables-filter og en aktivert systemd oneshot-enhet før nettstart.
-Bare innkommende SSH/HTTPS fra lab-subnettet tillates, i tillegg til etablert
-trafikk og Podmans interne DNS. Utgående trafikk utenfor lab-nettet blokkeres,
-og eksterne DNS-forespørsler blokkeres også mot labens DNS-server. Internt
-Podman-nett tillates. IPv6 får ingen ekstern utgående tillatelse.
-Firewalld forblir aktiv; HTTPS-åpning for lab-subnettet er et dokumentert
-installasjonskrav. Ingen innkommende databaseporter åpnes.
+For a private container registry deployment, VM-1's build user must already have a
+working `podman login <registry>` and public CA certificate under
+`~/.config/containers/certs.d/<registry-host[:port]>/ca.crt` (or the system
+`/etc/containers/certs.d` equivalent) in the clean dev profile. Never put an
+auth file, password or registry token in lab.env, Git or evidence. The default
+demo needs no private registry credentials; real container registry authentication and
+repository paths are not tested by the temporary registry scenario below.
 
-Isolasjon bevises med registry-curl, offentlig DNS-oppslag og et mislykket pull,
-og gjentas etter reboot. Et mislykket programoppslag teller ikke som nettbevis.
-Testens bevis-pull skjer før installasjon; senere journalføring av produktets
-pull-forsøk starter først ved install. Nettisolasjonen fjernes ikke etterpå.
+The steps run in a fixed order: clean start, isolation, dev, bundle, installation,
+checks, life cycle, reboot and upgrade. VM-2 is isolated **before the transfer**, with
+a separate nftables filter and an enabled systemd oneshot unit before the network starts.
+Only incoming SSH/HTTPS from the lab subnet is allowed, plus established
+traffic and Podman's internal DNS. Outgoing traffic outside the lab network is blocked,
+and external DNS requests are blocked too, also against the lab's DNS server. The internal
+Podman network is allowed. IPv6 gets no external outgoing permission.
+Firewalld stays active; opening HTTPS for the lab subnet is a documented
+installation requirement. No incoming database ports are opened.
 
-Rapporter og artefakter ligger i
-`~/podman-offline-acceptance-runs/<run-id>/` (0700), utenfor Git:
+Isolation is proven with a registry curl, a public DNS lookup and a failed pull,
+and repeated after reboot. A failed program lookup does not count as network evidence.
+The test's evidence pull happens before installation; later journal checks for the product's
+pull attempts start only at install. The network isolation is not removed afterwards.
 
-- `logs/<steg>.log`: tidspunkt, eksakt kommando og eventuell stdin-kode, full
-  output og exit-koder. Forventede feil i blokkeringstestene er eksplisitt merket.
-- `record.jsonl`: ett sluttresultat per steg med varighet og loggsti.
-- `REPORT.md`: dom, revisjon, ren checkout, VERSION, bundle-SHA256, VM-fakta,
-  boot-ID-er og tidsbruk. Felt som ikke ble nådd, finnes ikke.
-- `EVIDENCE.md`: generert rapport pluss utdrag og SHA256 for hver full logg.
-- Kilde-Git-bundle og produktbundle/checksum når disse stegene er nådd.
+Reports and artifacts are stored in
+`~/podman-offline-acceptance-runs/<run-id>/` (0700), outside Git:
 
-Første feil gir `NOT CLEAN` og stopper alle følgende teststeg. Etter en feil kjøres bare lesende
-innsamling av prod-audit og opprydding av overførte hemmeligheter. Også en Podman `Error:` med
-exit 0 regnes som feil. Run-id og steg kan aldri gjenbrukes. Readiness kan
-feile før rollback: da er ingen ren-start-test gjennomført, og rapporten sier det.
-Ikke reparer VM-er eller endre kode midt i en kjøring. Ingen automatiske nye runs.
+- `logs/<step>.log`: time, exact command and any stdin code, full
+  output and exit codes. Expected failures in the blocking tests are explicitly marked.
+- `record.jsonl`: one final result per step with duration and log path.
+- `REPORT.md`: verdict, revision, clean checkout, VERSION, bundle SHA256, VM facts,
+  boot IDs and timings. Fields that were not reached are absent.
+- `EVIDENCE.md`: the generated report plus excerpts and SHA256 for each full log.
+- The source Git bundle and the product bundle/checksum when those steps are reached.
 
-CA-sertifikat og demo-passord overføres med scp til 0700-kataloger under
-`$XDG_RUNTIME_DIR` på kontroller og VM-1. Ingen private signerings-/CA-nøkler
-flyttes. Passord logges ikke; kjente token/passord maskeres også i loggskriveren.
-`11-cleanup` fjerner overførte filer, også etter feil. Hvis SSH til VM-1 er nede,
-blir oppryddingen feil og dommen kan ikke bli CLEAN PASS; den fjernliggende
-runtime-katalogen må da fjernes ved gjenopprettet tilgang/reboot. SIGKILL/strømtap
-kan avbryte cleanup; behold run-mappen og bruk en ny run-id ved neste forsøk.
-Produktets egne Secret-volumer på VM-2 blir liggende som bevis etter stopp.
+The first failure gives `NOT CLEAN` and stops all following test steps. After a failure only read-only
+prod launcher diagnostics, collection of the prod audit and cleanup of transferred secrets run. A Podman `Error:` with
+exit 0 also counts as a failure. Run IDs and steps can never be reused. Readiness can
+fail before rollback: then no clean-start test has run, and the report says so.
+Do not repair VMs or change code during a run. There are no automatic new runs.
 
-## Hva testen faktisk krever
+The CA certificate and demo passwords are transferred with scp to 0700 directories under
+`$XDG_RUNTIME_DIR` on the controller and VM-1. No private signing or CA keys
+are moved. Passwords are not logged; known tokens/passwords are also masked in the log writer.
+`11-cleanup` removes transferred files, also after a failure. If SSH to VM-1 is down,
+the cleanup fails and the verdict cannot be CLEAN PASS; the remote
+runtime directory must then be removed when access returns or after a reboot. SIGKILL or power loss
+can interrupt the cleanup; keep the run folder and use a new run ID next time.
+The product's own Secret volumes on VM-2 stay as evidence after a stop.
 
-Produktet bruker Always, network-Quadlet, navnekontroll og utsatt arkivskriving. Testen oppretter derfor ikke produktnettverket manuelt.
-Den sjekker også hjelp-appen og alle sju appcontainere i seks pods.
+## What the test actually requires
 
-`09-crash` tester et uventet
-prosesskrasj. Steget leser PID, starttid og restart-teller fra inspect-JSON og
-sender ett `sudo -n kill -KILL <verts-PID>`. Innen 60 sekunder kreves Running,
-restart-teller økt med nøyaktig én, ny PID, ny starttid og ingen StoppedByUser.
-Deretter kontrolleres alle containere og `/api/health` gjennom HTTPS-proxyen
-med installasjonens CA før markørene leses.
+The product uses Always, a network Quadlet, name checks and deferred archive writes. The test therefore does not create the product network manually.
+It checks every container from all installed component YAML files: ten app containers
+in eight pods after app1, app2 and help. The first app is selected by --first-app;
+run both app1-first and app2-first as separate clean-snapshot runs. Help alone must
+refuse missing core without writing component state. Each subsequent install has
+an explicit health wait, with no unknown, missing or duplicate app containers allowed.
 
-`podman kill` brukes ikke til å simulere krasj: Podman merker dette som en
-[eksplisitt brukerstopp](https://github.com/containers/podman/blob/v5.8.2/docs/source/markdown/options/restart.md)
-og hindrer automatisk restart. Run-11 dokumenterer den tidligere testen;
-dens resultat og bevis er bevart.
-Markører opprettes for Alice og Bob, sjekkes etter start/restart/krasj/reboot og
-beholdes i databasen for inspeksjon. HTTP-testene kjører ikke JavaScript i nettleser.
+The two Todo instances get full HTTPS e2e and independent Alice/Bob markers.
+The shared-login step signs in once per direction and proves that the other app
+uses that identity session without another password form, keeps app cookies scoped,
+and cannot read the first app's database rows. Help is upgraded independently,
+then app1 with equal core, then app1 with newer core. All private config/credential
+hashes must remain identical; only names and same/changed are logged.
+Before/after observations require app2/help PID, StartedAt and RestartCount, their
+version markers and their own trust records to be unchanged. App1 is then
+uninstalled with data retained: its route returns 404 and app2/help e2e, markers,
+health and the shared network must still work.
 
-## Lokale kontroller av testrammen
+`09-crash` tests an unexpected
+process crash. The step reads PID, start time and restart count from inspect JSON and
+sends one `sudo -n kill -KILL <host PID>`. Within 60 seconds it requires Running,
+a restart count increased by exactly one, a new PID, a new start time and no StoppedByUser.
+Then all containers and `/app1/api/health` through the HTTPS proxy are checked
+with the installation's CA before the markers are read.
+
+`podman kill` is not used to simulate a crash: Podman marks it as an
+[explicit user stop](https://github.com/containers/podman/blob/v5.8.2/docs/source/markdown/options/restart.md)
+and prevents an automatic restart. Run-11 documents the earlier test;
+its result and evidence are preserved.
+Markers are created for Alice and Bob, checked after start/restart/crash/reboot and
+kept in the database for inspection. The HTTP tests do not run JavaScript in a browser.
+
+## Local checks of the test harness
 
 ```sh
 python3 -m unittest discover -s acceptance -p 'test_*.py'
@@ -192,44 +219,88 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-De 85 lokale testene stubber/simulerer feil og dekker stoppregler, maskering av hemmeligheter,
-opprydding, dupliserte run-id-er/steg og at ufullstendige runs aldri blir CLEAN PASS.
+The 141 local tests stub/simulate failures and cover stop rules, masking of secrets,
+cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
-## Prod-operatør og audit-bevis
+## Registry source acceptance
 
-Prod kjøres som labbrukeren med sudo akkurat som i produktets [README](../README.md):
-midlertidig utpakking, prepare-host, release under /var/lib/myproduct, indre
-checksums som root og trust av bare deploy.py, sertifikater som myproduct,
-config med install -o myproduct -g myproduct -m 0600,
-og install som myproduct. Brukerens HOME settes med sudo -H, og bash bytter arbeidskatalog som
-tjenestebrukeren før install og Podman. Dette er nødvendig når operatørens
-hjem er 0700; sudo -H alene beholder den utilgjengelige arbeidskatalogen. Ingen rootful
-produktressurser skal opprettes. Steg 07 sjekker eierskap/mode, SELinux-labels,
-bruker-generatorens nettavhengighet og at rootful containerlager er tomt.
-Steg 07 bruker samme Python-heredoc på stdin til sudo python3 som før.
-Modulen selinux er påkrevd (policycoreutils-python-utils); fravær gir tydelig FAIL.
-Policy-prober bekrefter ekvivalensen; faktiske typer sammenlignes med
-selinux.matchpathcon med stat.S_IFMT(os.lstat(sti).st_mode) for eksisterende
-stier. Bare de to eksplisitte policy-probene bruker modus 0. Lstat-feil gir
-FAIL uten reserveoppslag; lenkemålet følges ikke. Overlay, overlay-layers og overlay-images er ro, men
-overlay-containers er container_var_lib_t og voluminnhold container_file_t.
-Utenfor storage kreves tom restorecon -n -v -R -e <storage> /var/lib/myproduct.
-Storage dry-run logges separat og alle linjer må klassifiseres med [reglene og
-run-6-tabellen](SELINUX-DIAGNOSIS.md). Ukjente linjer gir FAIL.
-Ingen AVC/USER_AVC/FANOTIFY siden start tillates. Ingen labels repareres i
-kontrollstegene, og ingen restorecon uten -n, -F eller chcon brukes der.
-Klargjøringen ekskluderer storage fra rekursiv relabeling, også ved gjentakelse;
-kjør aldri restorecon -R eller -F på et fylt lager.
-Prepare-host åpner HTTPS i firewalld; nft-filteret avgrenser til lab-subnettet.
+`03-build-images` builds local demo images using their manifest tags;
+`03-pull-images` fetches any registry names without a build fallback.
+`03-registry-test` starts the pinned `docker.io/library/registry:3.0.0` image
+rootless on VM-1, bound only to a randomly allocated 127.0.0.1 port. It uses
+a self-signed TLS test certificate and an authority-specific user certs.d entry.
+No insecure-registry flag, system CA update, SELinux relabeling or fapolicyd
+policy change is made. Private TLS files live in a 0700 runtime directory.
+The server, its anonymous storage, the test CA entry and private files are
+removed automatically, including after an unexpected test failure.
 
-CA og passord leses via sudo som myproduct direkte til private filer på
-kontrolleren, aldri til logg; deretter scp til VM-1 sin private runtime-katalog.
-Livssyklus bruker systemctl --user -M myproduct@, og Podman som myproduct med
-brukerens XDG_RUNTIME_DIR. Reboot skal virke uten innlogging som myproduct.
+The test pulls public BusyBox, pushes it to that registry, removes its source
+image and all fixture aliases from the local image cache, then bundles its
+fully qualified registry name in a separate fixture checkout. It requires
+successful manifest and blob GETs in the projected registry access log and
+an exact pull/save sequence with zero builds. The log parser validates JSON
+objects and complete Combined Log Format access records separately on each
+stream. Registry 3.0.0 emits Combined records even when its application logger
+uses JSON ([Distribution handler](https://github.com/distribution/distribution/blob/v3.0.0/registry/registry.go#L145),
+[Gorilla format](https://github.com/gorilla/handlers/blob/v1.5.2/logging.go#L192)).
+Only GET method, an allowlisted manifest/blob path without a query, and status
+are projected. Referrers, user agents, headers and arbitrary messages are never
+printed. Unknown or malformed lines fail, as does a failing log command or
+missing HTTP 200 evidence for either artifact type.
 
-Når PROD har blitt rullet tilbake og SSH er tilgjengelig, hentes FANOTIFY,
-AVC og USER_AVC til slutt, både ved suksess og ved feil. Starttid lagres som epoch.
-VM-ens ausearch forventer dato i lokalens %x-format og tid som et eget argument:
+It also runs both dev helpers:
+the build helper must do nothing for registry-only manifests, and the pull
+helper must fetch the registry image.
+
+Two planned negative cases must fail without save or build fallback: a missing
+registry tag with a cached alias, and a stopped registry with a cached valid
+image. Each requires bundle exit 1 and the image/login hint. Their public
+diagnostics are marked as expected failures, not ignored acceptance failures.
+The examples use the BusyBox image downloaded by the positive case.
+
+`05-registry-transfer` copies only the positive fixture bundle and checksum
+through the controller. After the real product installation,
+`07-registry-offline` verifies outer/inner checksums, loads the archive as
+myproduct and proves the exact registry name exists. A temporary container
+runs with `--pull=never --network=none` and removes itself; the product's exact
+healthy inventory and audit are checked afterwards. VM-2 has no test registry
+or its CA/credentials and remains offline. No test container is left behind.
+
+## Prod operator and audit evidence
+
+Prod runs as the lab user with sudo exactly as in the product's [README](../README.md):
+temporary unpacking, prepare-host, a release under /var/lib/myproduct, inner
+checksums as root and trust of deploy.py only, certificates as myproduct,
+per-component config created exclusively with mode 0600,
+and install as myproduct. The user's HOME is set with sudo -H, and bash changes the working directory as
+the service user before install and Podman. This is needed when the operator's
+home is 0700; sudo -H alone keeps the inaccessible working directory. No rootful
+product resources may be created. Step 07 checks ownership/mode, SELinux labels,
+the user generator's network dependency and that the rootful container storage is empty.
+Step 07 uses the same Python heredoc on stdin to sudo python3 as before.
+The selinux module is required (policycoreutils-python-utils); its absence gives a clear FAIL.
+Policy probes confirm the equivalence; actual types are compared with
+selinux.matchpathcon using stat.S_IFMT(os.lstat(path).st_mode) for existing
+paths. Only the two explicit policy probes use mode 0. An lstat error gives
+FAIL without a fallback lookup; link targets are not followed. Overlay, overlay-layers and overlay-images are ro, while
+overlay-containers is container_var_lib_t and volume content container_file_t.
+Outside storage, an empty restorecon -n -v -R -e <storage> /var/lib/myproduct is required.
+The storage dry run is logged separately and every line must be classified with [the rules and
+the run-6 table](SELINUX-DIAGNOSIS.md). Unknown lines give FAIL.
+No AVC/USER_AVC/FANOTIFY since the start is allowed. No labels are repaired in
+the check steps, and no restorecon without -n, -F or chcon is used there.
+The preparation excludes storage from recursive relabeling, also when repeated;
+never run restorecon -R or -F on populated storage.
+Prepare-host opens HTTPS in firewalld; the nft filter restricts access to the lab subnet.
+
+The CA and passwords are read through sudo as myproduct directly into private files on
+the controller, never into a log; then they go with scp to VM-1's private runtime directory.
+The life cycle uses systemctl --user -M myproduct@, and Podman as myproduct with
+the user's XDG_RUNTIME_DIR. Reboot must work without a login as myproduct.
+
+Once PROD has been rolled back and SSH is available, FANOTIFY,
+AVC and USER_AVC are collected at the end, both on success and on failure. The start time is stored as an epoch.
+The VM's ausearch expects the date in the locale's %x format and the time as a separate argument:
 
 ```sh
 start_date=$(LC_ALL=C date -d "@$run_started" +%x)
@@ -237,118 +308,257 @@ start_time=$(date -d "@$run_started" +%H:%M:%S)
 sudo env LC_ALL=C ausearch --input-logs -m FANOTIFY,AVC,USER_AVC -ts "$start_date" "$start_time" -i </dev/null
 ```
 
-På OL9-laben betyr dette MM/DD/YY. Fire sifre i årstallet eller dato og tid i
-ett argument blir avvist; dette ble kontrollert lesende før ny kjøring.
-Hele audit-utdraget tas med i EVIDENCE.md, også avvisninger som ikke stoppet et
-produktsteg. Ingen treff er gyldig; utilgjengelig audit gir NOT CLEAN.
-Originalfeilen beholdes selv om audit-innsamlingen feiler. Gamle runs og
-separate diagnoselogger endres aldri.
+On the OL9 lab this means MM/DD/YY. A four-digit year, or date and time in
+one argument, is rejected; this was checked read-only before a new run.
+The whole audit excerpt goes into EVIDENCE.md, including denials that did not stop a
+product step. No matches is valid; an unavailable audit gives NOT CLEAN.
+The original failure is kept even if the audit collection fails. Old runs and
+separate diagnosis logs are never changed.
 
-## Varig tilstand og oppgradering
+`09-launch-audit-crash` and `09-launch-audit-hang` collect launcher evidence and
+check the audit immediately after their respective tests, before marker checks
+and reboot. Any denial stops the run at that point. This preserves evidence
+that would otherwise be lost on a VM with a volatile journal, as in run-18.
+The final audit also collects these read-only diagnostics after an earlier failure.
+No journald configuration, labels, security rules or service state are changed.
 
-Første installasjon skriver config, generated-certificates og PKI direkte i
-`/var/lib/myproduct`, utenfor releases. Steg 07 beholder CA-sertifikatets
-SHA256-fingeravtrykk (DER) og filhashene for config, sertifikater, passord og CA
-bare i minnet for sammenligning. Bevisene viser filnavn og «likt/endret»,
-uten hashverdier eller filinnhold.
+Launcher diagnostics read the service user's journal since run start and the
+transient healthcheck services' selected state properties: Result, ExecMainPID,
+ExecMainCode, ExecMainStatus and related state. ExecStart is printed only when
+it is the expected `/usr/bin/podman healthcheck run <container-ID>` command;
+other arguments are withheld. Journal output is projected to recognized systemd
+execution failures and safe PID, time and unit identifiers. Arbitrary messages,
+environments and raw inspect data are never logged. A command or parsing error
+fails the diagnostic check, while the final audit is still collected.
+An audit record with `exe=systemd`, `comm=(podman)` and no PATH does not by itself
+identify the target executable or prove a crun failure.
 
-Etter livssyklus/reboot øker steg 10 patch-delen i VERSION bare i VM-1 sin
-arbeidskopi. Git-diffen og ny versjon registreres; ingen commit eller andre
-kodeendringer gjøres. Ny bundle bygges og overføres med separat SHA256 i
-rapporten. Oppgraderingen følger README: checksums, trust av ny deploy.py,
-install som tjenestebrukeren og helsekontroll før gammel trust fjernes. Ingen generering
-eller config-kopiering. Testen krever uendrede filhashverdier og CA, full e2e
-med de opprinnelig overførte passordene, bevarte todo-markører og at gammel
-trust er borte. Steg 11 samler audit og rydder overførte hemmeligheter.
-Hvis et tidligere steg stopper, er oppgraderingen ikke testet.
+Historical transient units may have been removed by Podman cleanup. A
+`LoadState=not-found` response without ExecStart is recorded as unavailable
+execution evidence; systemd's default success/zero fields are not logged as
+proof of a successful launch. Loaded units still require every selected property.
+Other missing fields or malformed output fail the diagnostic check.
 
-Kontroll A–E kjøres på nytt etter reboot og oppgradering. Hashsammenligningen
-omfatter config, generated-certificates, PKI/private og files/. Begge e2e- og
-markørkontrollene bruker de opprinnelige passordene.
+## Persistent state and upgrade
 
-### Maskinlesbare kommandosvar
+The first installation writes config, generated-certificates and PKI directly into
+`/var/lib/myproduct`, outside the releases. Step 07 keeps the CA certificate's
+SHA256 fingerprint (DER) and the file hashes for config, certificates, passwords and CA
+only in memory for comparison. The evidence shows file names and “same/changed”,
+without hash values or file content.
 
-Rammeverket fanger stdout og stderr separat. Bare stdout brukes som JSON,
-runtime-sti, boot-ID eller i VM-kontrollenes strengsammenligninger. Stderr
-logges under egen etikett, inkludert OpenSSH-advarselen om manglende
-postkvante-nøkkelutveksling; advarselen navngis i rapporten. Ikke-null exit
-stopper steget selv om stdout inneholder gyldige data. Tomme eller ugyldige
-maskinlesbare svar stoppes også. Tomme ressurslister og restorecon-utskrifter
-er forventede resultater i kontrollene som uttrykkelig krever det.
+After the life cycle and reboot, step 10 first builds a new help image/content
+release in a temporary clone. Only its help bundle is built/transferred. Core and
+app processes, versions, protected files, network and other bundles’ trust must
+remain unchanged. Verified HTTPS content, e2e and markers gate retirement of the
+old help release/trust.
 
-Audit har ett dokumentert unntak: `ausearch` returnerer 1, tom stdout og
-`<no matches>` på stderr når ingen hendelser finnes. Andre audit-feil stoppes.
-SSH-polling etter rollback/reboot og de eksplisitte isolasjonsprobene godtar
-ventede feilstatuser. Pull-proben undersøker bare sin egen stderr for en konkret
-nettfeil; stdout og stderr slås aldri sammen til et maskinlesbart svar.
+The app1-only regression then increments VERSION in VM-1's working copy and
+retains CORE_VERSION. Three scoped bundles are rebuilt, but only app1 is
+transferred; app2/help process identity, versions and trust must remain unchanged.
+A final temporary clone increments CORE_VERSION and builds/transfers an app1
+bundle. Core must change version and restart, while app2/help remain untouched.
+The prior trusted app1 release must refuse its older core before image operations,
+with all managed files and services preserved. Both apps’ e2e and markers run
+after upgrade and after refusal. No configuration initialization or credential
+generation occurs during any upgrade. Step 11 collects audit and cleans up
+transferred secrets. A failed step stops all later operations.
 
-Hashverdier for varige filer beholdes bare i kontrollerens minne gjennom
-kjøringen. Logger, rapport og evidence inneholder bare filnavn og
-«likt/endret» fra sammenligningen. Kommandoen leser filene for hashing og
-skriver aldri filinnhold. Oversikten nedenfor beskriver stedene hvor
-kommandosvar parses; den er dokumentasjon, ikke et automatisk testbevis.
+Checks A–E run again after reboot and upgrade. The hash comparison
+covers each component config, generated-certificates and files, plus shared PKI/private, routes and clients. Both the e2e and
+marker checks use the original passwords.
 
-Pull-proben beholder stdout og merker sin egen stderr med `pull-probe:`.
-Exit 124 godtas som timeout. Exit 125 krever en konkret nettfeil i stderr
+### Machine-readable command output
+
+The harness captures stdout and stderr separately. Only stdout is used as JSON,
+a runtime path, a boot ID or in the VM checks' string comparisons. Stderr
+is logged under its own label, including the OpenSSH warning about the missing
+post-quantum key exchange; the warning is named in the report. A non-zero exit
+stops the step even if stdout contains valid data. Empty or invalid
+machine-readable output also stops it. Empty resource lists and restorecon output
+are expected results in the checks that explicitly require them.
+
+The audit has one documented exception: `ausearch` returns 1, empty stdout and
+`<no matches>` on stderr when no events exist. Other audit errors stop the step.
+SSH polling after rollback/reboot and the explicit isolation probes accept
+expected failing statuses. The pull probe inspects only its own stderr for a specific
+network error; stdout and stderr are never merged into a machine-readable answer.
+
+The full persistent-state comparison keeps hashes only in controller memory.
+Focused lifecycle observations also use private mode-0600 baseline files on the
+target, alongside the existing private process/trust snapshots. Logs, report and
+evidence contain only file names and
+“same/changed” from the comparison. The command reads the files for hashing and
+never writes file content. The overview below describes where
+command output is parsed; it is documentation, not automatic test evidence.
+
+The pull probe keeps stdout and labels its own stderr with `pull-probe:`.
+Exit 124 is accepted as a timeout. Exit 125 requires a specific network error on stderr
 (lookup, dial tcp, i/o timeout, connection refused, network is unreachable
-eller no such host); rettighets- og lagringsfeil gir FAIL. Vellykket pull og
-andre statuser stopper steget. SSH-advarsler merkes ikke om.
+or no such host); permission and storage errors give FAIL. A successful pull and
+other statuses stop the step. SSH warnings are not relabeled.
 
-Etter reboot venter `09-wait-boot-service` på automatisk oppstart i inntil
-240 sekunder. `failed` stopper straks; steget starter eller restarter aldri
-tjenesten. Sluttaudit bruker kontrollmodus etter fullført kjøring, slik at
-avvisninger under de siste e2e-stegene også gir NOT CLEAN. Etter en tidligere
-feil samles hendelsene fortsatt inn som bevis.
+After reboot, `09-wait-boot-service` waits up to 240 seconds per installed component for automatic
+start. `failed` stops at once; the step never starts or restarts
+the service. The final audit uses check mode after a complete run, so that
+denials during the last e2e steps also give NOT CLEAN. After an earlier
+failure the events are still collected as evidence.
 
-Ikke-tom stderr fra restorecon gir FAIL også ved exit 0. Regelen for
-`CUSTOM_WRITABLE_LAYER` godtar bare UpperDir-lag fra inspect av eksisterende
-containere; et image-lag med samme label godtas ikke.
+Non-empty stderr from restorecon gives FAIL also with exit 0. The rule for
+`CUSTOM_WRITABLE_LAYER` accepts only UpperDir layers from inspect of existing
+containers; an image layer with the same label is not accepted.
 
-### Oversikt over parsing av kommandosvar
+### Overview of command output parsing
 
-- `acceptance.py`: `persistent_state` leser JSON; `credentials` validerer runtime-sti;
-  `boot_id`, `wait_ssh` og `reboot` validerer boot-ID.
-- `09-crash` parser inspect-JSON til fem validerte tilstandsfelt og logger bare
-  disse. Starttiden behandles som én JSON-streng, også når den har mellomrom.
-  `wait_backend` kontrollerer curl-exit og HTTP-status fra proxyen.
-- `remote.sh`: `profile`/`facts` sammenligner getenforce og systemctl; `clean`,
-  `check` og `stop` kontrollerer Podman-lister og find-output.
-- `clone`, `bundle` og `upgrade-bundle` kontrollerer Git-status/diff; release-stegene
-  leser VERSION og `upgrade` kontrollerer trust-databasen.
-- `healthy` leser Podman-JSON; `check` kontrollerer generatoren og filtrert journal,
-  bruker-ID og installasjonstid; `wait-boot-service` leser systemd-tilstand.
-- LABELS leser UpperDir fra inspect og restorecon-linjer; `audit_events` leser
-  ausearch-resultatet med adskilte strømmer.
-- Snapshot-klargjøring sammenligner getenforce/systemctl. Proxmox-data er HTTP-JSON;
-  markørkontrollen leser lokale JSON-filer og HTTP-svar.
-- Git-revisjon/status, VERSION og record.jsonl på kontrolleren er lokale data.
+- `acceptance.py`: `persistent_state` reads JSON; `credentials` validates the runtime path;
+  `boot_id`, `wait_ssh` and `reboot` validate the boot ID.
+- `09-crash` parses inspect JSON into five validated state fields and logs only
+  those. The start time is handled as one JSON string, also when it contains spaces.
+  `wait_backend` checks the curl exit and the HTTP status from the proxy.
+- `remote.sh`: `profile`/`facts` compare getenforce and systemctl; `clean`,
+  `check` and `stop` check Podman lists and find output.
+- `clone`, `bundle` and `upgrade-bundle` check Git status/diff; the release steps
+  read VERSION and `upgrade` checks the trust database.
+- `healthy` reads Podman JSON; `check` checks the generator and the filtered journal,
+  user ID and install time; `wait-boot-service` reads the systemd state.
+- LABELS reads UpperDir from inspect and restorecon lines; `audit_events` reads
+  the ausearch result with separate streams.
+- Snapshot preparation compares getenforce/systemctl. Proxmox data is HTTP JSON;
+  the marker check reads local JSON files and HTTP responses.
+- Git revision/status, VERSION and record.jsonl on the controller are local data.
 
-Alle registrerte stderr-linjer som begynner med `WARNING`, `** WARNING` eller
-`Warning:` navngis som «stderr warning» i rapporten. Kilden kan være SSH-klienten
-eller fjernkommandoen; den utledes ikke fra teksten. Kjente hemmeligheter maskeres.
+Every recorded stderr line that starts with `WARNING`, `** WARNING` or
+`Warning:` is named as a “stderr warning” in the report. The source can be the SSH client
+or the remote command; it is not inferred from the text. Known secrets are masked.
 
-Trust-oppdateringer kontrolleres med avgrenset, lesende venting: `--update`
-varsler daemonen uten å vente på ferdig database. Før installasjon kreves den
-nye stien, og etter oppgradering kreves også at den gamle stien er fjernet.
-Databaseinnhold og hashverdier skrives ikke til loggen.
+Trust updates are checked with a bounded, read-only wait: `--update`
+notifies the daemon without waiting for the database to finish. Before installation the
+new path is required, and after an upgrade the old path must also be gone.
+Database content and hash values are not written to the log.
 
-## Containerhelse og hengtest
+## Container health and hang test
 
-`healthy()` leser forventede `<pod>-<container>`-navn fra installert YAML,
-avviser manglende, ekstra eller dupliserte appcontainere og krever `running`
-og `State.Health.Status=healthy`. Infra-/servicecontainere og manifestdefinerte
-init-containere er unntatt. Helsekontrollen venter inntil 150 sekunder;
-kommando-/parsefeil og unhealthy stopper straks. `initialDelaySeconds: 90`
-dekker oppstarten. Status er starting i inntil 90 sekunder etter hver start,
-og healthy først når neste sjekk lykkes.
+`healthy()` reads the expected `<pod>-<container>` names from the installed YAML,
+rejects missing, extra or duplicate app containers and requires `running`
+and `State.Health.Status=healthy`. Infra/service containers and manifest-defined
+init containers are excluded. The health check waits up to 150 seconds;
+command/parse errors and unhealthy stop at once. `initialDelaySeconds: 90`
+covers startup. The status is starting for up to 90 seconds after each start,
+and healthy only once the next check succeeds.
 
-`09-hang` følger `09-crash` og markørsjekken: inspect registrerer PID, starttid,
-restart-teller og helse. Alle verts-PID-er fra `podman top ... hpid` får SIGSTOP,
-uten pause/stop/kill via Podman. Innen 240 sekunder kreves observert unhealthy,
-nøyaktig én restart med ny PID/starttid, StoppedByUser=false og til slutt healthy.
-Podmans helsestyrte stopp kan midlertidig sette StoppedByUser=true på den
-opprinnelige, ikke-kjørende unhealthy prosessen før restart. Bare den fasen
-tillates; flagget må være false på den nye prosessen.
-Deretter kontrolleres alle containere, HTTPS-backend og `09-markers-hang`.
-Ingen SIGCONT eller reparasjon brukes ved feil. Samme helsekrav gjelder etter
-reboot og oppgradering, og sluttaudit må fortsatt være uten avvisninger.
+`09-hang` follows `09-crash` and the marker check: inspect records PID, start time,
+restart count and health. Every host PID from `podman top ... hpid` gets SIGSTOP,
+without pause/stop/kill through Podman. Within 300 seconds it requires an observed unhealthy,
+exactly one restart with a new PID/start time, StoppedByUser=false and finally healthy.
+Then all containers, the HTTPS backend and `09-markers-hang` are checked.
+No SIGCONT or repair is used on failure. The same health requirement applies after
+reboot and upgrade, and the final audit must still be free of denials.
+
+The hang-test limit is 300 seconds: 3 × (30 s interval + 5 s timeout) + 10 s stop + 90 s start period + 30 s
+for the first healthy check is about 235 s; 300 s leaves a scheduling margin.
+The temporary stop flag on the original non-running unhealthy process is allowed;
+`StoppedByUser` must be false after restart.
+
+The English baseline is supplemented with the previously verified run-16 stop-flag
+transition handling; `StoppedByUser` must be false on the restarted process.
+
+The demo generates one additional persistent API-secret file through
+GENERATED_SECRETS. Step 07 checks its 0600 mode, its private parent directory,
+and delivery through identity envFrom by checking length only. The persistent
+file comparison after upgrade includes this file without logging hashes or values.
+
+Generated API-secret delivery compares the source file's bytes with the container
+environment in memory; another 32-character value fails. Neither values nor
+hashes are logged. Crash and hang checks explicitly project `StoppedByUser`
+through a Podman template, because native inspect JSON omits false values.
+Missing or invalid projected fields fail rather than defaulting to false.
+Smoke-test failure messages withhold response URLs and bodies, including OIDC
+callback code/state and form/session tokens. The generated-secrets example also
+checks private file modes and reuse after a second prepare/play.
+
+## Component acceptance
+
+The 0.2 source and bundles use core/app1/app2/help with independent units,
+configs and databases. The component flow checks both installation orders,
+shared sign-in, scoped data/markers, app1-only upgrade and app1 uninstall while
+app2/help remain available. Each bundle has its own deploy.py trust file; shared
+core is reused on an equal CORE_VERSION. Run-23 proves the previous monolithic
+layout only. Component runtime results are recorded in new runs, never inferred
+from it. See the root README for fresh installation and retained-data uninstall.
+
+Upgrade-build regressions execute the named remote action with only scoped
+app1/app2/help artifacts. The app1 checksum must pass before its image list is
+read; a damaged archive stops the action. The monolithic filename is not used.
+
+
+## Help-only upgrade regression
+
+```sh
+python3 acceptance/acceptance.py --run CONFIG-HELP-UNIQUE --help-only run
+```
+
+This uses the same two configured disposable snapshots and authorization as a
+full run. It installs app1/core then help and verifies health. It builds a newer
+help release with a new image tag and `help-release-<version>` content marker,
+packages and transfers only that help bundle, then installs on the existing host.
+HTTPS must serve the marker. Core/app1 PID, start time and restart count must
+remain identical, as must versions, config, credentials, imports, installed YAML,
+network ID and other bundles’ trust. App1 e2e and persistent task markers must
+pass. Only then does it retire old help trust and delete the old help release.
+An unchanged route permits no core restart. Focused product tests separately
+require exactly one core restart for a changed route, without a core version
+upgrade or app1 restart.
+
+Both full installation orders remain covered and include this help upgrade before
+the existing app1-only upgrade and sibling checks. Dev config uses
+`config/dev.yaml`; production setup calls the real `init-config` command, edits
+core before initializing dependents and retains configs during upgrades.
+Harness tests stub guest calls and verify sequencing and failure gates; only a
+completed target-machine run proves offline install, TLS, health and trust behavior.
+
+
+The full flows also build a newer `CORE_VERSION` in an app1 bundle, require a
+changed core PID/start time and updated core marker, retain app2/help observations
+and private state, and rerun both apps’ e2e and task markers. Reinstalling the prior
+trusted app1 release must refuse its older core before image commands or any
+persistent mutation, followed by successful e2e. Old own trust is retired only
+after those checks. Product tests additionally exercise both app orders with
+newer/older core and exact expected service restarts.
+
+Current config/lifecycle results and their exact verification limits are recorded
+in [CONFIG-VERIFICATION.md](CONFIG-VERIFICATION.md).
+
+
+## PostgreSQL runtime verification
+
+Full runs execute `database-runtime` after images are built and before dev startup.
+It creates and removes only UUID-scoped disposable resources on the dev VM. Kube
+Secrets initialize PostgreSQL and feed the .NET Identity verifier; the verifier
+builds and uses `ConnectionStrings__Default` at runtime with Npgsql. Python tests
+its file-secret/keyword-parameter interface. Non-standard DB identities and port,
+quotes, dollar signs, semicolons, spaces, equals, Unicode and legacy hexadecimal
+credentials with trailing LF are checked by real connections; wrong credentials must fail authentication rather
+than DNS/network setup. Missing/invalid parameter and empty/invalid password diagnostics must not reveal
+credentials. The lifecycle guard is also checked against an actually initialized
+disposable volume. Existing fixture password bytes survive GENERATED_SECRETS,
+and negative client input is a separate temporary copy.
+
+`database-auth` runs on the offline prod VM after initial installation, after
+reboot and after upgrades. Identity must connect through its environment interface.
+For both Todo directions, the correct local password must connect before the same
+connection with a sibling's secret is required to fail password authentication. Npgsql checks SQLSTATE 28P01; Python
+checks either that code or libpq’s exact PostgreSQL FATAL password-authentication
+reply (handshake errors may have no SQLSTATE). Neither private diagnostic is
+dumped. This tests
+credential separation, **not network isolation** between applications. No persistent
+password is modified by negative checks. Installed database/client logs are
+checked privately for password or complete connection-string disclosure. Inputs remain in memory/stdin, never
+argv, full inspect/environment dumps or report output. Existing CRUD/e2e/persistent
+hash and volume checks remain in the full run. Failed scenarios stop before later
+checks; the original audit and cleanup rules are unchanged.
+
+See the root README for manual DB config additions before upgrading existing
+0.2.0 installs. Passwords and database volumes must be restored together. Rotating
+a file alone does not change a PostgreSQL role password; rotation is out of scope.
+
+Actual database results and limitations: [DATABASE-VERIFICATION.md](DATABASE-VERIFICATION.md).

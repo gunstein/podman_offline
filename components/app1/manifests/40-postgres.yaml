@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: myproduct-identity-postgres
+  name: app1-postgres
 spec:
   restartPolicy: Always
   containers:
@@ -14,17 +14,19 @@ spec:
         command:
         - pg_isready
         - -U
-        - identity
+        - '@@DB_USER@@'
         - -d
-        - identity
+        - '@@DB_NAME@@'
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
     env:
     - name: POSTGRES_DB
-      value: identity
+      value: '@@DB_NAME@@'
     - name: POSTGRES_USER
-      value: identity
+      value: '@@DB_USER@@'
+    - name: PGPORT
+      value: '@@DB_PORT@@'
     - name: POSTGRES_PASSWORD_FILE
       value: /run/secrets/database/password
     - name: PGDATA
@@ -38,10 +40,10 @@ spec:
   volumes:
   - name: data
     persistentVolumeClaim:
-      claimName: identity-data
+      claimName: app1-data
   - name: password
     secret:
-      secretName: identity-database-password
+      secretName: app1-database-password
       items:
       - key: password
         path: password

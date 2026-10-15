@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: myproduct-todo
+  name: app2-todo
 spec:
   restartPolicy: Always
   containers:
   - name: backend
-    image: localhost/myproduct-todo-backend:0.1.0
+    image: localhost/myproduct-todo-backend:0.2.1
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90
@@ -14,18 +14,29 @@ spec:
         command:
         - python
         - -c
-        - import urllib.request; r = urllib.request.urlopen("http://127.0.0.1:8000/livez", timeout=3); assert r.status == 204
+        - import urllib.request; r = urllib.request.urlopen("http://127.0.0.1:8000/livez",
+          timeout=3); assert r.status == 204
       periodSeconds: 30
       timeoutSeconds: 5
       failureThreshold: 3
     envFrom:
     - configMapRef:
-        name: myproduct-settings
+        name: app2-settings
     env:
-    - name: DATABASE_HOST
-      value: myproduct-todo-postgres
+    - name: DB_HOST
+      value: '@@DB_HOST@@'
+    - name: DB_PORT
+      value: '@@DB_PORT@@'
+    - name: DB_USER
+      value: '@@DB_USER@@'
+    - name: DB_NAME
+      value: '@@DB_NAME@@'
     - name: REQUESTS_CA_BUNDLE
       value: /certificates/ca.crt
+    - name: APP_ID
+      value: app2
+    - name: BASE_PATH
+      value: /app2
     volumeMounts:
     - name: certificates
       mountPath: /certificates
@@ -34,7 +45,7 @@ spec:
       mountPath: /run/secrets/database
       readOnly: true
   - name: frontend
-    image: localhost/myproduct-todo-frontend:0.1.0
+    image: localhost/myproduct-todo-frontend:0.2.0
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90
@@ -51,10 +62,10 @@ spec:
   volumes:
   - name: certificates
     persistentVolumeClaim:
-      claimName: todo-signing
+      claimName: app2-signing
   - name: password
     secret:
-      secretName: todo-database-password
+      secretName: app2-database-password
       items:
       - key: password
         path: password
