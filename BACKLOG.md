@@ -1381,3 +1381,120 @@ Rapporter:
 6. Eventuelle begrensninger.
 
 Foretrekk små, tydelige funksjoner og eksplisitte steg. Målet er at en middels erfaren Python-utvikler enkelt skal kunne forstå hvorfor et nytt forsøk er trygt.
+
+## 14. Tighten app credential delivery and remove unused API secret
+
+Status: planned; bounded follow-up to the credential-flow review. No implementation
+or target-runtime verification has been performed for this item. The full agent
+message follows.
+
+Rett credential-håndteringen i `gunstein/podman_offline` med en liten, målrettet endring.
+Behold dagens komponentarkitektur og offline installasjonsmodell.
+
+### 1. Bakgrunn og bekreftede observasjoner
+
+App1 og app2 deklarerer `credentials/todo/session-key` i `GENERATED_SECRETS`.
+Hele `credentials/todo/`, inkludert session key og privat klientnøkkel, leveres i dag
+gjennom `VOLUME_FILES` til appens signing-PVC og monteres skrivebeskyttet på
+`/certificates` i backend. Frontend får ikke denne mounten.
+
+`deployment/render.py: generate_secrets()` oppretter originalfilen med modus `0600`.
+`write_file_archives()` oppretter selve arkivet med `0600`, men `normalize()` setter
+vanlige filer inne i arkivet til `0644`. Dette er lokalt reprodusert med en syntetisk
+session key. Faktiske rettigheter etter Podman-import er ikke verifisert her.
+PVC-bruk alene er ikke et bekreftet sikkerhetshull; vurder tilgang og livssyklus,
+ikke bare navnet på YAML-ressursen.
+
+Identity deklarerer også `credentials/app/ApiResources__0__ApiSecrets__0__Value` og
+leverer den via `identity-api-secrets` og `envFrom`. Gjennomgangen fant ingen bruk
+av verdien i dagens Identity-kode. Bekreft dette før den fjernes.
+
+### 2. Kartlegg før endring
+
+Les `AGENTS.md` dersom den finnes, README, ARCHITECTURE og relevante tester.
+Følg de faktiske filene gjennom:
+
+- `components/app1/config.defaults.yaml` og tilsvarende for app2/identity.
+- Komponentenes manifester og `scripts/generate-certificates.sh`.
+- `deployment/render.py`: generering, filgrupper, Secret/PVC og importarkiver.
+- `deployment/deploy.py`: installasjon, retry og avinstallasjon.
+- `apps/todo-backend/app.py` og `apps/identity/Program.cs`.
+
+Session key brukes som Flask `SECRET_KEY` til sesjonscookies. Den private
+klientnøkkelen brukes til `private_key_jwt` mot Identity. Dette er forskjellige
+hemmeligheter med forskjellige oppgaver; ingen av dem skal leveres til frontend.
+
+### 3. Stram inn levering og rettigheter
+
+Foretrekk å levere session key og privat klientnøkkel gjennom eksisterende
+`SECRET_FILES`, som for databasepassord og Identitys signeringsnøkkel. Avklar at
+valgt løsning støttes av målversjonen av Podman og eksisterende `.kube`-flyt.
+En liten credential-gruppe per app er tilstrekkelig; ikke innfør et nytt rammeverk.
+
+- Behold persistente originalfiler og samme bytes gjennom normale oppgraderinger,
+  gjentatt installasjon og retry. Ikke regenerer eller roter nøkler ved flyttingen.
+- Sørg for eksplisitte restriktive rettigheter for hemmelige filer i containeren,
+  for eksempel `0400` eller `0600`, med eierskap som passer prosessen som leser dem.
+  Verifiser at Podman faktisk anvender feltene; ikke anta Kubernetes-oppførsel.
+- Behold skrivebeskyttet mount og tilgang bare i backend. Behold eksisterende
+  filstier i containeren hvis dette gir den enkleste og tydeligste løsningen.
+- Offentlige sertifikater kan følge samme beskyttede gruppe når det forenkler
+  mounten; ikke skap ekstra abstraksjoner bare for å skille offentlige filer.
+- Session key og privat klientnøkkel skal ikke samtidig bli liggende i et aktivt
+  generert `VOLUME_FILES`-arkiv etter endringen.
+- Ikke sett alle generelle importfiler til `0600` uten å vurdere offentlige
+  payloads, katalogtilgang og containernes UID/GID. Dersom hemmeligheter fortsatt
+  må leveres gjennom importarkiv, begrunn valget og bevar restriktive rettigheter.
+- Bevar avinstallasjonens skille mellom å beholde state og eksplisitt
+  `--delete-data`. Sletting skal fortsatt være avgrenset til valgt komponent.
+
+En Secret gir ikke automatisk kryptering eller minnebasert lagring i Podman.
+Renderet YAML med base64-kodede secrets er sensitiv. Beskytt YAML, originalfiler,
+eventuelle arkiver og runtime-kopier, og unngå verdier i logger og testutskrifter.
+
+### 4. Fjern ubrukt API-secret
+
+Hvis kartleggingen bekrefter at API-secret-en er ubrukt, fjern dens generering,
+Secret-deklarasjon, `envFrom`-referanse og eventuelle unødvendige katalogopprettelser.
+Oppdater relevante tester og dokumentasjon. Ikke fjern legitime API-scopes,
+klientsertifikatautentisering, databasepassord eller Identitys tokensignering.
+Ingen automatisk sletting av ukjente eksisterende credential-filer.
+
+### 5. Tester og dokumentasjon
+
+Legg til målrettede tester som verifiserer:
+
+- Riktig leveringsmåte, mount, eierskap/rettighetsinnstillinger og uendrede
+  credential-bytes. Undersøk faktisk generert YAML og eventuelle arkivmedlemmer.
+- Separate nøkler for app1 og app2 og ingen credential-mount i frontend.
+- Ingen duplisert privat nøkkel/session key i appens genererte importarkiv.
+- Installasjon, upgrade og retry beholder nøklene, samt fortsatt trygg og avgrenset
+  avinstallasjon med og uten datasletting.
+- Ubrukt API-secret genereres eller refereres ikke lenger.
+- Private filer og bytecode følger fortsatt ikke med i offline-bundles.
+
+Oppdater README og relevant test-/arkitekturdokumentasjon med faktisk filflyt og
+skillet mellom en hemmelig verdi og YAML-typen `Secret`. Brukerens diagramskisser
+er foreløpig til diskusjon; ikke legg dem inn uten egen avtale.
+
+Kjør repoets dokumenterte produkttester, acceptance-harness-tester, ruff,
+formatkontroll, pyright, vermin og shellcheck. Behold Python 3.6-kompatibilitet
+for host-verktøyene. Oppdater berørte image-/releaseversjoner etter repoets
+konvensjoner dersom endringen krever nye images; ikke gjenbruk en uforanderlig tag.
+
+Beskriv eller utvid målrettet labverifikasjon av reelle filmoduser, lesetilgang,
+innlogging, sesjoner etter restart/upgrade, klientautentisering og avinstallasjon.
+Ikke start destruktive VM-/snapshot-kjøringer uten eksplisitt autorisasjon.
+Skill mellom lokale tester, statisk vurdering og faktisk Podman-verifikasjon.
+
+### 6. Avgrensning og leveranse
+
+Ingen eksisterende installasjoner trenger migrering fra gamle layouts. Ikke bygg
+migreringskode, fallback, automatisk nøkkelrotasjon eller en ny secret manager.
+Normale oppgraderinger i den støttede modellen skal fortsatt bevare private filer
+og data. Ikke redesign Flask-/OIDC-autentiseringen eller tilpass demoen til en
+hypotetisk C#/GraphQL-applikasjon som del av denne oppgaven.
+
+Rapporter valgt løsning, konkrete endringer, testresultater og hva som gjenstår i
+lab. Forklar hvilke sikkerhetsegenskaper som faktisk er forbedret, uten å påstå at
+et bytte fra PVC til Secret alene gir kryptering eller en ny isolasjonsgrense.
