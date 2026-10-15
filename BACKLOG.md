@@ -1,11 +1,15 @@
 # Backlog
 
 Planned work, not implemented behavior. Each item requires separate implementation
-and verification. Recommended order: establish the test baseline, rename core to
-platform (item 8), extract Identity (item 9), then perform the deploy refactor
-(item 1). Item numbers are stable references, not execution priority.
+and verification. Item numbers are stable references, not execution priority.
+Recommended execution order:
 
-The full agent task descriptions for items 8 and 9 are preserved below, with
+1. [Supplement test coverage (item 10)](#10-supplement-test-coverage-before-structural-changes).
+2. [Rename core to platform (item 8)](#8-rename-core-to-platform).
+3. [Extract Identity (item 9)](#9-extract-identity-into-a-separate-component-and-bundle).
+4. [Deploy maintainability refactor (item 1)](#1-deploy-maintainability-refactor).
+
+The full agent task descriptions for items 8, 9 and 10 are preserved below, with
 heading levels adjusted for this document. The later clarification in item 9
 supersedes item 8's bundled-platform assumptions: platform is to be a separate
 bundle with explicit dependencies, and app bundles must not embed it. Do not
@@ -16,9 +20,161 @@ The refactor must preserve the behavior and naming established by items 8 and 9;
 its original core terminology below is historical scope, not an instruction to
 restore core or merge Identity back into platform.
 
+## 10. Supplement test coverage before structural changes
+
+Status: planned; first in execution order, before items 8, 9 and 1.
+This task includes the retained 0.2.0 upgrade scenario already tracked in item 5;
+implement it once and cross-reference its evidence rather than duplicating it.
+
+Suppler testdekningen i `gunstein/podman_offline` før den planlagte refaktoreringen av deploy-koden.
+
+Målet er å etablere en tydelig, testet baseline for eksisterende oppførsel. Dette er en avgrenset testoppgave, ikke selve refaktoreringen.
+
+### 1. Kartlegg eksisterende dekning og kjør baseline
+
+Les dagens kode, tester og verifikasjonsrapporter. Kontroller særlig:
+
+- `tests/`
+- `acceptance/`
+- `deploy.py`
+- `bundle.py`
+- Rotkommandoene og bundle-innholdet.
+
+Kjør eksisterende produkt- og acceptance-harness-tester før endringer. Registrer commit og resultater.
+
+Gjenbruk eksisterende fixtures og testverktøy. Ikke dupliser tester som allerede dekker kravene nedenfor.
+
+### 2. Test reell oppgradering fra 0.2.0
+
+Legg til et målrettet acceptance-scenario som oppgraderer en faktisk 0.2.0-installasjon til dagens versjon.
+
+Bruk en identifisert historisk commit for gammel kode og gamle images. Ikke simuler gammel release ved bare å endre `VERSION` i dagens kode.
+
+Scenario:
+
+1. Bygg og installer gammel app1/core og app2.
+2. Opprett brukerdata gjennom eksisterende e2e-/markørmekanisme.
+3. Registrer eksisterende versjoner, config, credential-filer, databasevolumer og relevante tjenesteobservasjoner.
+4. Følg dagens dokumenterte manuelle oppgraderingssteg: legg til nødvendige DB-felter og `GENERATED_SECRETS`-oppføringer i persistent config.
+5. Overfør og installer ny app1/core-bundle.
+6. Verifiser at app1/core fungerer, og at gammel app2 fortsatt fungerer uten utilsiktede endringer.
+7. Oppgrader deretter app2 og verifiser hele installasjonen.
+
+Kontroller spesielt:
+
+- Eksisterende databasepassord beholdes byte-for-byte.
+- Databasevolumer beholdes, og eksisterende brukerdata er tilgjengelige.
+- Persistent config endres bare gjennom de eksplisitte operatørstegene.
+- Ingen credentials regenereres eller databasebrukere endres automatisk.
+- App1-oppgraderingen ikke endrer app2s tjeneste, versjon, config eller credentials.
+- Innlogging og databaseoperasjoner fungerer etter hvert oppgraderingstrinn.
+- Trust for gammel release fjernes først etter vellykket verifikasjon, uten å berøre sibling-bundles.
+
+Test også at manglende nødvendige configtillegg avvises før image-operasjoner og endringer i installert tilstand. Dette kan dekkes av en fokusert lokal test dersom eksisterende dekning er tilstrekkelig.
+
+Hold scenarioet avgrenset. Ikke gjenta hele matrisen av reboot-, crash- og hang-tester hvis disse allerede dekkes separat.
+
+### 3. Lås feiloppførselen under installasjon
+
+Undersøk eksisterende dekning og suppler for:
+
+- Feil under `podman load`.
+- Feil eller manglende image ved `podman image exists`.
+- Feil ved restart eller `is-active` for en berørt systemd-tjeneste.
+
+Bruk eksisterende komponentinstallasjon som utgangspunkt.
+
+Test relevante observasjoner:
+
+- Persistent config og credentials.
+- Importarkiver.
+- Route- og OIDC-klientregistreringer.
+- Quadlet- og YAML-filer.
+- Versjonsmarkører.
+- Hvilke tjenester som er forsøkt restartet, og i hvilken rekkefølge.
+- At upåvirkede sibling-komponenter beholdes.
+
+Skille mellom feil før og etter at installasjonen begynner å endre tilstand. Ikke anta at installasjon er atomisk eller at rollback allerede finnes.
+
+Ved servicefeil skal testen beskrive den faktiske delvis gjennomførte tilstanden og kontrollere at videre steg stopper, og at versjonsmarkører ikke feilaktig hevder en fullført installasjon.
+
+Bruk konkrete feilscenarioer fremfor tester som bare gjentar interne funksjonskall.
+
+Hvis du finner en eksisterende feil, dokumenter den med en fokusert reproduksjon. Ikke lås en kjent feil som ønsket oppførsel eller gjør urelaterte produktendringer uten å synliggjøre dem.
+
+### 4. Test rotkommandoer fra en annen arbeidsmappe
+
+Legg til integrasjonstester som starter de faktiske wrapper-scriptene fra en arbeidsmappe utenfor checkout/release:
+
+```text
+./deploy prepare
+./deploy init-config <component>
+./deploy install
+./deploy uninstall
+./build-bundle.sh
+```
+
+Bruk absolutt sti til wrapperen i testen.
+
+Test kommandoene i riktig kontekst:
+
+- `prepare` og bundling fra kildekoden.
+- `init-config`, `install` og `uninstall` fra en utpakket bundle.
+
+Verifiser at ressursstier og configvalg fungerer uavhengig av callerens arbeidsmappe, og at output ikke utilsiktet skrives dit.
+
+Bruk isolerte midlertidige mapper og eksisterende stubs for Podman/systemd der det er hensiktsmessig. Ikke kjør produksjonskommandoer mot utviklerens virkelige hjem eller containermiljø.
+
+Der realistisk testing krever tjenestebruker, brukerhjem og systemd-runtime, legg kontrollen i det eksisterende autoriserte labscenarioet fremfor å bygge et komplisert nytt mock-rammeverk.
+
+### 5. Avgrensning
+
+Ikke implementer:
+
+- Oppdeling i `deployment/`-pakken.
+- Ny CLI-arkitektur.
+- Directory trust for fapolicyd.
+- Passordrotasjon.
+- Automatisk config- eller databasemigrering.
+- Ny rollback-mekanisme.
+
+Tester for den kommende pakkestrukturen, `python -B`, bytecode-ekskludering og directory trust hører til refaktoreringsoppgaven.
+
+Behold eksisterende sikkerhetskontroller og testassertions. Ikke svekk dem for å få nye scenarioer til å passere.
+
+### 6. Verifikasjon
+
+Kjør etter endringene:
+
+- Alle produkttester.
+- Alle acceptance-harness-tester.
+- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller med prosjektets eksisterende oppsett.
+
+Behold Python 3.6-kompatibilitet for host-verktøy og produkttester.
+
+Kjør det nye reelle oppgraderingsscenarioet dersom det etablerte labmiljøet er tilgjengelig og kjøring er autorisert. Ikke reset eller endre andre miljøer.
+
+Skill tydelig mellom lokale tester, harness-tester og faktiske målmaskinkjøringer. Hvis labkjøring ikke er mulig, implementer scenarioet og rapporter at oppgraderingen fortsatt ikke er operasjonelt verifisert.
+
+### 7. Leveranse
+
+Rapporter kort:
+
+1. Baseline-commit og testresultater før endringer.
+2. Hvilken dekning som allerede fantes.
+3. Nye tester og hvilke konkrete feil de beskytter mot.
+4. Historisk og ny revision brukt i upgrade-scenarioet.
+5. Testresultater, inkludert faktisk labkjøring.
+6. Eventuelle oppdagede produktfeil og verifikasjonshull.
+7. Om baseline er tilstrekkelig til å starte refaktoreringen.
+
+Oppdater relevant testdokumentasjon med garantiene og begrensningene.
+
+Foretrekk noen få sterke tester fremfor mange overlappende tester.
+
 ## 1. Deploy maintainability refactor
 
-Status: planned; after items 8 and 9 and a verified test baseline.
+Status: planned; after items 10, 8 and 9.
 
 Refactor the deploy implementation for maintainability without redesigning the architecture or changing behavior.
 
@@ -146,6 +302,7 @@ Status: requires investigation and an explicit migration plan.
 ## 5. Close documented runtime verification gaps
 
 Status: planned verification work; current evidence remains unchanged.
+The retained 0.2.0 upgrade scenario below is implemented as part of item 10.
 
 - Run a full retained 0.2.0 → 0.2.1 upgrade with the documented manual DB config
   additions, verifying existing credentials, volumes and sibling state.
