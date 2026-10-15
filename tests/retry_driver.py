@@ -75,6 +75,19 @@ def main():
         return private(path, text)
 
     vars(rendering)["write_private"] = write_private
+    replace = os.replace
+
+    def replace_record(source, destination):
+        relative = str(Path(destination).relative_to(root / "home"))
+        if relative == parameters.get("record_failure"):
+            raise OSError("Injected install record failure")
+        if relative == parameters.get("record_interrupt"):
+            # Simulate a process dying with an incompletely written temporary file.
+            Path(source).write_text("partial")
+            os._exit(99)
+        return replace(source, destination)
+
+    os.replace = replace_record
     clear = state["clear_pending"]
 
     def clear_pending():

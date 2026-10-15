@@ -230,6 +230,67 @@ class RetryTests(ComponentFixture):
         self.assert_finished(self.attempt(), ["app1", "identity", "platform"])
         self.assert_imports(True)
 
+    def test_identity_install_records_resume_before_publishing_completion(self):
+        # Start without installed dependents, as on a first Identity installation.
+        for component in ("app1", "app2"):
+            (common.HOME / "installed" / component).unlink()
+        platform_config = common.HOME / "platform/config.yaml"
+        config = yaml.safe_load(platform_config.read_text())
+        config["VOLUME_FILES"] = {"platform-routes": ["../routes"]}
+        platform_config.write_text(yaml.safe_dump(config))
+        self.before = self.protected()
+        self.select("identity")
+        marker = common.HOME / "installed/identity"
+        metadata = common.HOME / "dependencies/identity.json"
+        requirements = yaml.safe_load((self.root / "bundle.yaml").read_text())[
+            "requires"
+        ]
+        for first_install in (True, False):
+            for target in ("dependencies/identity.json", "installed/identity"):
+                for interrupted in (False, True):
+                    with self.subTest(
+                        first_install=first_install,
+                        target=target,
+                        interrupted=interrupted,
+                    ):
+                        self.write("IDENTITY_VERSION", "1.2.0\n")
+                        if first_install:
+                            marker.unlink()
+                            metadata.unlink()
+                            previous = None
+                        else:
+                            self.write("home/installed/identity", "1.1.0\n")
+                            self.write("home/dependencies/identity.json", "{}")
+                            previous = b"1.1.0\n"
+                        option = "record_interrupt" if interrupted else "record_failure"
+                        events = self.attempt(
+                            expected=99 if interrupted else 1, **{option: target}
+                        )
+                        self.assertIn(service("identity", "is-active"), events)
+                        self.assertEqual(
+                            marker.read_bytes() if marker.exists() else None, previous
+                        )
+                        if target == "installed/identity":
+                            self.assertEqual(
+                                json.loads(metadata.read_text()), requirements
+                            )
+                        else:
+                            self.assertEqual(
+                                metadata.read_bytes() if metadata.exists() else None,
+                                None if first_install else b"{}",
+                            )
+                        events = self.attempt()
+                        self.assertIn(service("identity"), events)
+                        self.assertEqual(marker.read_bytes(), b"1.2.0\n")
+                        self.assertEqual(json.loads(metadata.read_text()), requirements)
+                        for path in (marker, metadata):
+                            self.assertEqual(self.mode(path), 0o600)
+                        self.assertEqual(self.protected(), self.before)
+        # A later platform upgrade can read the completed Identity contract.
+        self.select("platform")
+        self.write("PLATFORM_VERSION", "1.2.0\n")
+        self.attempt()
+
     def test_uninstall_owner_failure_resumes_without_yaml_and_preserves_data(self):
         self.attempt("uninstall", expected=1, failure=service("platform", "is-active"))
         self.assertFalse(deploy.component_paths("app1")[2].exists())

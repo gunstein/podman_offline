@@ -1011,22 +1011,42 @@ def restart_component_services(components, changed, pending):
                 pending = None
 
 
+def write_install_record(path, text):
+    """Atomically publish a private record, retaining the old file on write failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".install-", dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, str(path))
+        directory = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def write_installed_markers(components):
-    """Record versions/contracts only after every required service check succeeds."""
+    """Persist contracts first; publish the version last as completion confirmation."""
     for component in components:
         version = (
             (common.ROOT / common.VERSION_FILES.get(component, "VERSION"))
             .read_text()
             .strip()
         )
-        rendering.write_private(common.HOME / "installed" / component, version + "\n")
-        rendering.write_private(
+        write_install_record(
             common.HOME / "dependencies" / (component + ".json"),
             json.dumps(
                 rendering.load_yaml(common.ROOT / "bundle.yaml")["requires"],
                 sort_keys=True,
             ),
         )
+        write_install_record(common.HOME / "installed" / component, version + "\n")
 
 
 def install_component_plan(components, source_components, imports, updates):
