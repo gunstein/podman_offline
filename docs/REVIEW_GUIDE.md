@@ -1,0 +1,187 @@
+# Product contracts and review guide
+
+This is the shared review baseline for implementation agents and human reviewers.
+Read it with [ARCHITECTURE.md](../ARCHITECTURE.md), [README.md](../README.md), the
+[test instructions](../tests/README.md), [acceptance instructions](../acceptance/README.md)
+and the relevant [backlog item](../BACKLOG.md). Review the product contract and
+complete affected lifecycle, not just the changed lines or passing demo tests.
+
+## 1. Product contracts
+
+These are requirements, not a claim that every requirement is implemented today.
+The known gaps below explicitly identify outstanding work.
+
+| Contract | Required behavior |
+| --- | --- |
+| Declarative components | Selected YAML declarations and component files define components, dependencies and roles; adding or renaming components needs no generic Python/shell edits. |
+| Independent images | Externally built images work without application source in `apps/`; demo builds and demo credential provisioning are explicit. |
+| Isolated offline bundles | An unpacked bundle works without the original checkout or sibling source/release directories; target installation does not fetch dependencies or images. |
+| Authoritative production config | Explicit `init-config` creates persistent config; subsequent production operations use it. Automatic init-config is not existing functionality. |
+| Credential retention | Generate missing secrets only when allowed; preserve valid existing credentials byte-for-byte. Do not expose credentials or complete connection strings in logs. |
+| Database safety | Missing password plus existing database volume is refused. Inspection failure is not evidence of absence. Server and client receive the same password. |
+| Retry | Durable pending work survives a new process and is acknowledged only after required work succeeds. |
+| Isolation | Operate on the selected component's resources/state; preserve sibling data and registrations and avoid sibling app restarts. |
+| Compatibility | Preserve host Python 3.6, checksums, offline delivery, version/dependency rules, SELinux and fapolicyd behavior. |
+
+For items 20 and 21 there are no existing installations requiring migration to a
+new schema. Do not add migration code, aliases or old-layout fallback. This does
+not remove normal restart/redeploy/retry or data-retention requirements within
+the supported model. Historical evidence and pinned historical fixtures remain
+unchanged and must not be represented as current verification.
+
+### Known gaps at the review baseline
+
+Baseline: source reviewed at `1d3e3b7` (2026-10-16). Recheck actual code when using
+this list; update entries with implementation/test evidence when resolved.
+
+| Gap | Owner |
+| --- | --- |
+| Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance | Backlog 20 |
+| Mandatory public origin/port for every component; hostname derivation tied to `platform` | Backlog 20 |
+| Initial image validation includes unselected component directories; generic dev still has demo dependencies | Backlog 20 |
+| OIDC client ID/path/scopes coupled to component ID; contract needs explicit validation/documentation | Backlog 20 |
+| Database preflight uses raw placeholders rather than effective manifest values | Backlog 21 |
+| Resource kinds receive inconsistent lifecycle checks: Deployment can bypass Pod checks | Backlog 21 |
+| Removing route/client declarations from a release does not remove prior registrations | Backlog 21 |
+| Some invalid manifests create generated secrets before validation rejects them | Backlog 21 |
+| PostgreSQL data mount and explicit Secret items mapping restrict supported layouts | Backlog 7 |
+
+External image support does not by itself demonstrate arbitrary component support.
+The baseline review ran 66 existing database/config/bundle/Identity tests
+successfully while isolated reproductions still exposed four gaps: literal PVC
+placeholder inspection, Deployment bypass, retained route and secret generation
+before mount validation. Client removal follows the same retention code but needs
+its own regression. Subprocesses were mocked; these are not real runtime results.
+
+## 2. Challenge demo assumptions
+
+For component-model changes, verify both a renamed product (for example gateway,
+login-service, orders, inventory and manual) and a minimal worker with no gateway,
+Identity, public URL, database, certificates or apps directory. Use declarative
+configuration and application inputs, not patches to generic deployment code.
+Other changes should use the relevant focused cases, not automatically run every
+possible scenario.
+
+| Variation | Expected result |
+| --- | --- |
+| Add/rename a selected component | No Python component-list edit; validate safe IDs rather than silently rewriting them. |
+| Exclude a component | No implicit render/build/install or image validation of that directory. |
+| Invalid image in an unselected directory | Selected build is unaffected. |
+| Gateway/help only | No Identity or app-database requirement. |
+| Empty/missing apps directory with external images | No implicit demo build or provisioning. |
+| Configured PVC or Secret binding | Same effective values in validation, preflight and runtime. |
+| Alternative resource kind/wrapper | Consistent supported lifecycle or clear rejection before side effects. |
+
+Distinguish component IDs, image names, resource names, public URLs and OIDC
+client IDs. Explain deliberate protocol constraints; do not infer generic support
+from fixtures that repeat demo names. For supported Podman behavior, consult the
+project's supported-version evidence and verify runtime where necessary.
+
+## 3. Trace information across the lifecycle
+
+| Information | Trace to review |
+| --- | --- |
+| Component/dependencies | Source declarations -> bundled metadata -> install checks -> durable installed metadata -> upgrade/uninstall checks |
+| Manifest values | Effective config -> placeholder replacement -> validation/preflight -> rendered YAML -> runtime |
+| Database password | Declared source -> existing-volume check -> allowed generation -> Secret -> server and client |
+| Route/client | Declaration -> planned change -> pending state -> persistent registration -> import -> owner restart/check -> acknowledgement |
+| Volumes | Validated resources -> installed YAML -> durable uninstall plan -> scoped deletion |
+| Images | Selected manifests including init-containers -> registry pull/local availability -> archive -> offline load -> availability check |
+
+For each trace, identify the authoritative source, validation point, derived
+representations, persistence boundary and deletion behavior. Check that all
+consumers use the same effective values. Installed dependency/owner information
+must remain usable without the original source catalog or sibling release.
+
+## 4. Review removal and failure paths
+
+- The selected release's registration set is authoritative for that component.
+  Removing a route/client must update active indexes/imports; omission of an
+  unrelated component from the source catalog must not delete its registrations.
+- Persist required owner work before writes/deletions can hide its necessity.
+  Retry in a fresh process with the same persistent state, including after
+  import-write, service-restart and subsequent-check failures.
+- Reject invalid declarations before side effects whenever validation does not
+  require generated bytes. Do not promise rollback of arbitrary I/O failures or
+  delete existing credentials as cleanup.
+- Preserve config, credentials and database volumes on ordinary uninstall.
+  With --delete-data, remove only the selected component's relevant state/data.
+- Preserve a validated uninstall plan after rendered YAML is removed; already
+  deleted volumes may be absent on retry, but inspection errors still fail.
+- Refuse conflicting retry flags/operations clearly. Never acknowledge or remove
+  another operation's pending work.
+
+| Registration change | Extra owner restarts |
+| --- | --- |
+| None, with no pending work | None |
+| Route only, including removal | Route owner |
+| Client only, including removal | Client owner |
+| Both | Both owners |
+| Pending work from a prior failure | Owners with unfinished work |
+
+These are additional registration-owner actions, not a claim that the selected
+application never restarts. Sibling applications must not restart as a side effect.
+
+## 5. Assess evidence, including the tests themselves
+
+Review shared assumptions between tests and implementation. A mock accepting any
+volume name does not verify that the correct volume was inspected. Tests repeating
+only shipped component names cannot demonstrate configurable names. Assert the
+arguments and state transitions relevant to the contract, not just exit status.
+
+| Evidence | What it establishes |
+| --- | --- |
+| Unit/product tests | Validation, planning, command arguments, file changes and injected failure/retry behavior |
+| Acceptance-harness tests | Scenario wiring, assertions and failure reporting |
+| Real acceptance runs | Actual Podman/systemd, mounts, init-containers, proxy, OIDC, database and persistence behavior |
+
+Use fresh isolated fixtures, and fresh processes for retry coverage. Add focused
+regressions for fixed defects. Component-model work also requires runnable real
+acceptance scenarios for renamed apps, not just renamed fixture strings. Implement
+and document scenarios even if the current agent cannot run the lab. Record exact
+commands/prerequisites and mark unexecuted scenarios as outstanding. Never reset
+unrelated environments.
+
+Use existing project test and CI conventions for appropriate automated gates.
+State which checks actually ran, with results and scope. Do not claim green CI,
+real container verification or new enforcement merely because a guide was added.
+Keep historical lab evidence clearly separate from current results.
+
+## 6. Mandatory understandability review
+
+For implementation work, explicitly review the final affected flow separately
+from automated checks. A moderately experienced Python developer should be able
+to answer these questions without reconstructing hidden conventions:
+
+1. Where does the authoritative component/config model come from, and what
+   metadata is derived for bundles and installed state?
+2. What is validated before writes, generation or host actions? Which checks
+   necessarily require generated bytes?
+3. Which functions decide the work, and which perform side effects?
+4. Why is their order safe, and when is completion recorded?
+5. What durable state lets a new process resume after each failure boundary?
+6. Which behavior is explicitly demo/application-specific, and why?
+
+Trace one successful operation and one failure/retry relevant to the change,
+naming functions and state ownership. Prefer small named functions, explicit data
+and ordinary control flow. Comments should explain why constraints/order matter.
+Keep the current module structure as a starting point. A small helper can be
+justified by readability; a plugin system, class hierarchy or generic transaction
+engine is not required by the current findings.
+
+If many mode flags, parallel models or indirect special cases accumulate, reassess
+and simplify before continuing. Report simplifications and justify remaining
+complexity. Passing tests alone does not complete this review.
+
+## Delivery and maintenance
+
+For each change report: relevant contracts, findings/fixes, meaningful regression
+evidence, understandability outcome, and remaining gaps. Mark non-applicable
+areas briefly rather than inventing work. Do not fix unrelated backlog items as
+incidental scope expansion. Documentation-only work needs consistency/link checks
+and git diff --check, not runtime tests merely to satisfy this template.
+
+When closing a known gap, update its status/reference here and in the backlog,
+linking to actual verification where available. Keep contracts here as the shared
+source; backlog items add task-specific requirements instead of copying this
+guide wholesale. Update tests and existing CI gates as implementations land.

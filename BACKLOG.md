@@ -1,5 +1,9 @@
 # Backlog
 
+Use [the review guide](docs/REVIEW_GUIDE.md) for product contracts, lifecycle
+review, evidence levels and the required understandability check. Follow
+[AGENTS.md](AGENTS.md) when implementing or reviewing these tasks.
+
 Planned work, not implemented behavior. Each item requires separate implementation
 and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
@@ -1780,6 +1784,9 @@ Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.
 
 ## 20. Make components and bundles declarative instead of hardcoding demo names
 
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
 Status: planned. Analysis and agent instructions only; no implementation performed.
 This addresses custom installations failing when a component is renamed, for
 example from `identity` to `my-identity`. Component IDs currently reject `_`;
@@ -2154,6 +2161,9 @@ plugin framework or large object hierarchy.
 
 
 ## 21. Fix manifest validation gaps and removal of obsolete registrations
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
 
 Status: planned. Four findings reproduced in isolated Python checks; no fix or
 real Podman/systemd verification performed. Prioritize the database preflight
