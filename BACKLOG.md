@@ -1777,3 +1777,306 @@ Rydd eventuelle tilsvarende lokale brancher og foreldede remote-referanser uten
 å miste lokale endringer. Ikke endre kildekode, releaseversjoner eller historikk
 på `main`, og ikke opprett en ny merge bare for å markere branchene som merget.
 Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.
+
+## 20. Make components and bundles declarative instead of hardcoding demo names
+
+Status: planned. Analysis and agent instructions only; no implementation performed.
+This addresses custom installations failing when a component is renamed, for
+example from `identity` to `my-identity`. Component IDs currently reject `_`;
+retain the existing lowercase/digit/hyphen rule and explain it clearly.
+
+### Analysis of the current implementation
+
+The current component model is fixed in `deployment/common.py` through
+`DEPENDENCIES`, `COMPONENTS` and `VERSION_FILES`. `bundles.yaml` is validated
+against that model rather than defining it. Changing a directory or the YAML
+alone therefore cannot define a new component.
+
+Name-dependent behavior also exists in:
+
+- `deployment/deploy.py`: config initialization and platform config inheritance;
+  dev preparation; bundle selection and dependency/version checks; registration
+  staging; allowed client directories; fixed import IDs; registration owner
+  restarts; pending-state validation; install markers; uninstall dependents and
+  registration-owner updates.
+- `deployment/render.py`: compulsory PUBLIC_ORIGIN/HTTPS_PORT for every component
+  and deriving PUBLIC_HOSTNAME only for the literal platform name.
+- `deployment/cli.py`: fixed component validation and the special platform
+  argument to uninstall.
+- `bundle.py`: component admission, version-file selection, dependencies and
+  generated bundle descriptors.
+- `dev/dev.sh`: three named databases, a named platform config and five named
+  components passed to the certificate script.
+- `scripts/generate-certificates.sh`: demo component names, certificate paths,
+  signing material and demo users. This is application-specific provisioning,
+  not a requirement every deployment should inherit.
+
+Image delivery is already mostly independent of app sources: `bundle.py` and
+production deploy do not need `apps/`; registry images are discovered from YAML.
+`dev/build-images.sh` is a demo build helper with an explicit naming convention.
+Demo source code, OIDC routes and smoke tests may legitimately name demo apps.
+They must not determine which components the general deployment tools accept.
+
+The most sensitive part is lifecycle metadata across isolated offline bundles.
+The source catalog is unavailable on the target, and another component's release
+may have been removed. Reverse dependencies, registration ownership and pending
+work must remain understandable from validated bundled/installed metadata.
+Replacing constants with a source-file lookup everywhere would not solve this.
+
+### Message to the implementing agent
+
+Make component selection and lifecycle behavior in `gunstein/podman_offline`
+declarative. A user must be able to define their own components under
+`components/` and in `bundles.yaml`, use externally built images and run dev,
+build bundles and install them offline without editing Python or shell code to
+add/rename components. Treat the shipped five components as one demo product
+configuration, not a built-in platform model.
+
+Read the current repository and any AGENTS.md first. Inspect the files and
+functions identified above, the dependency/retry/registration tests, config
+precedence, certificate preparation and existing image/bundle helpers. Work from
+the actual branch; recent changes include Secret source-level generation,
+standard nginx from YAML and app1 database init. Preserve these behaviors.
+
+### 1. Define one authoritative source model
+
+Choose a small, explicit YAML schema. `bundles.yaml` selects the components to
+package/run, and their directories provide defaults/manifests. Put component
+metadata in that YAML or in one referenced descriptor per component; do not
+maintain duplicate independent graphs in Python and YAML.
+
+The model must express, where relevant:
+
+- Component ID and selection, dependency IDs and compatible version rules.
+- Release version source and the existing install/upgrade behavior (including
+  unchanged-version shared-component handling), without inferring behavior from
+  an ID or from the existence of a particular version filename.
+- Route and OIDC-client registration owners and their destination VOLUME_FILES
+  resource IDs. Route changes and client changes remain different operations.
+- Any explicit config inheritance/equality contract, such as a component taking
+  PUBLIC_ORIGIN and HTTPS_PORT from its declared gateway dependency.
+
+Use one component per bundle as today, with bundle/component IDs matching, unless
+inspection reveals a concrete requirement otherwise. Multi-component bundles,
+new plugin systems and arbitrary executable hooks are outside this task.
+
+Keep metadata declarative and validate it before writes, credential generation,
+image operations or service changes. Reject duplicate YAML keys, invalid IDs,
+unknown dependencies, self-dependencies, cycles, conflicting owners, missing
+selected directories/files, unsafe paths and inconsistent resource ownership.
+Version-file paths must remain confined to the source/release; reject traversal
+and symlink escape. Report the filename/component and expected declaration, not
+an unhandled FileNotFoundError.
+
+Define the directory-selection rule explicitly: selected catalog entries require
+matching component directories; unselected directories must not be installed or
+built implicitly. A bare directory must not silently invent missing dependency
+or ownership metadata. Topologically order selected components, with a stable
+order for unrelated nodes. Preserve manifest order within each component.
+
+Keep component IDs restricted to the existing safe naming rules. Explain that
+`my-identity` is valid and `my_identity` is not; do not silently rewrite names.
+Do not introduce a renamed default component list as a fallback.
+
+### 2. Support isolated production bundles and installed metadata
+
+Compile the required validated metadata into `bundle.yaml` (or a minimal bundled
+catalog). An unpacked bundle must support init-config/install/uninstall without
+source `bundles.yaml`, sibling source directories, `apps/`, or the original
+checkout. Its own payload remains component-scoped.
+
+Persist enough public metadata to discover installed dependents and registration
+owners independently of the incoming source catalog and retained release files.
+Read installed metadata with the same strictness as current dependency records;
+do not infer installed components from arbitrary home directories. Keep the
+existing atomic ordering: dependency/ownership metadata is durable before the
+installation completion marker makes a component available.
+
+Preserve version range checks, missing/incompatible dependency refusal, reverse
+upgrade checks, downgrade refusal and uninstall dependency guards. A component
+with pending uninstall is not an available dependency. Adding a component to a
+new source catalog must not hide an already-installed dependent or erase its
+registrations because it is absent from that source checkout.
+
+Define how conflicting owner/config metadata is rejected. Do not let a newly
+supplied descriptor silently reassign another installed component's registrations
+or state. Keep bundle checksums and validation of untrusted paths/names.
+
+### 3. Resolve registration behavior through declarations
+
+Replace literal platform/identity owner selection and fixed `platform-routes` /
+`identity-clients` import IDs with validated metadata. Existing nginx route and
+Identity client formats can remain supported protocols; their component IDs
+must be arbitrary. No change to demo application protocols is required.
+
+The existing demo may retain its component names, resources, URLs and OIDC IDs.
+A renamed test product must be expressed through YAML/config/application
+inputs, with no edits to generic deploy code. Retain strict public descriptor
+validation, public-certificate handling and protection against importing private
+keys. Keep existing client URL/scope conventions where needed; do not turn this
+into an arbitrary OIDC integration framework.
+
+Remove the app1/app2-only client-directory allowlist. Validate registered clients
+against authoritative installed/pending metadata and their public descriptors.
+Continue rebuilding the current route/client indexes so removed entries do not
+remain active due to stale imported files.
+
+Restart only affected owners. No change means no owner restart; route-only means
+route owner; client-only means client owner; both means both. Never restart
+sibling applications as a side effect. Order restarts by declared dependencies,
+not a literal pair of owner names. No declaration of routes or OIDC must mean
+no requirement for either service.
+
+### 4. Generalize config, dev and CLI
+
+Remove the unconditional requirement to load platform config during every
+installation. A standalone worker or service with no gateway, Identity, database
+or public URL must work with only its own required manifest placeholders/config.
+Validate shared URL/port rules only for components declaring that contract.
+Handle derived values such as PUBLIC_HOSTNAME through the relevant declared
+behavior or validated config, rather than a test of the component's name.
+Preserve common/component/dev precedence and authoritative persistent production
+config. Keep init-config an explicit operation; do not implement automatic
+init-config as part of this task.
+
+Run manifest-driven database preflight for selected components before any secret
+creation. A component without PostgreSQL needs no database settings. Keep the
+current PostgreSQL layout checks and lost-password/existing-volume refusal;
+broader database image/layout support remains backlog item 7.
+
+`dev/dev.sh up/down` and `./deploy prepare` must use the catalog and dependency
+order, including the real app1 database-before-init order. Generic dev startup
+must work with a missing/empty `apps/` and externally prepared credentials/images.
+It must not invoke demo certificate/user generation for arbitrary components.
+
+Separate demo provisioning explicitly: the existing certificate/demo-user logic
+may remain in a clearly identified demo helper with an explicit documented call.
+Do not rename or rotate existing demo credential files merely to achieve this.
+Keep a simple documented command sequence for starting the shipped demo. Do not
+introduce implicit arbitrary script execution from YAML as a shortcut.
+
+Generalize CLI component arguments from validated bundle/catalog metadata.
+Retain the existing root commands and `--delete-data`. A production bundle must
+still refuse operations on another component. Document generic syntax and remove
+special treatment of a literal platform argument.
+
+### 5. Keep image building independent
+
+Continue discovering ordinary and init-container images from manifests.
+A selected set of registry-image components must build offline bundles and run
+dev without an `apps/` directory. Build/pull/image discovery must use the same
+selected component set as prepare, not all stray directories under components/.
+
+Keep the current demo image build helper or clearly label it as demo-specific.
+Do not add a Python image-builder refactor or automatic build fallback. Local
+images must be explicitly prepared; external registry images use existing pull
+and offline save/load behavior. Do not fetch code/packages/images on targets.
+
+### 6. Preserve retries, isolation and safety
+
+Adapt pending-state validation to declared/installed component IDs and owners.
+Retain durable registration work recorded before writes, regenerated import
+archives, owner checks and acknowledgement only after success. A retry must work
+in a fresh process even when files already match or the source release is gone.
+
+Uninstall must retain its validated component-scoped volume plan, including
+mounted ConfigMaps, after deleting YAML. Keep flag-conflict refusal, missing
+volume handling versus inspection errors, dependency guards and private atomic
+state writes. No operation may clear another operation's pending work.
+
+Preserve current credentials, generated-file byte retention, resource prefixes,
+Secret/PVC names, container mounts, data isolation, symlink/path protections,
+logging hygiene, SELinux/fapolicyd checks and offline checksum guarantees. Reject
+invalid declarations before destructive side effects.
+
+There are no existing installations requiring an upgrade to this metadata
+schema. Implement only the new source/bundle/installed metadata layout. Do not
+add migration code, legacy aliases, old-schema fallbacks or automatic state moves.
+Use fresh isolated state in tests, then exercise normal restart/redeploy/retry
+within that new model. Keep historical evidence and pinned release fixtures.
+
+### 7. Required verification
+
+Keep the existing demo regression suite and add focused tests demonstrating:
+
+1. A fully renamed product, for example `gateway`, `login-service`, `orders` and
+   `manual`, with renamed resources and separate route/client owners, operates
+   without changing Python/shell source. No former component directory exists.
+2. A minimal component such as `worker`, with no dependencies, PUBLIC_ORIGIN,
+   HTTPS_PORT, database, registration provider, certificates or apps directory,
+   supports prepare, bundle, init-config, install and uninstall.
+3. Adding a valid new catalog entry/directory requires no code edits. Unselected
+   directories are excluded from images, dev output and bundles.
+4. Dependency order is deterministic; missing nodes/cycles/duplicate IDs/unsafe
+   paths/ambiguous roles fail before writes or host commands. Error messages
+   explain the actual declaration error.
+5. Offline bundles work from another directory with no source catalog/sibling
+   releases. Installed reverse dependencies and version contracts remain enforced
+   even if the incoming bundle's source did not contain those dependents.
+6. Renamed clients survive another component's install/upgrade/uninstall;
+   route-only/client-only/both/no-change restart sets remain exact.
+7. Registration write, import write and owner restart/check failures are retried
+   in fresh processes with the new IDs. Partial uninstall/data deletion resumes
+   after rendered YAML removal and preserves unrelated state.
+8. The original demo still passes credential, database, init-container, nginx,
+   image/build, checksum, config precedence, isolation and wrapper tests.
+9. Registry-only dev/bundling requires no apps directory or demo provisioning;
+   the explicitly selected demo bootstrap still provisions its original layout.
+
+Renaming coverage is mandatory at both levels:
+
+- Unit/product tests must rename application components as well as the gateway
+  and Identity components. Use at least two renamed apps (for example `orders`
+  and `inventory`) to verify selection, dependencies, rendering, client/route
+  registration, exact restart sets, retries and isolation from the sibling app.
+  Change only declarative configuration/component fixtures, never generic
+  Python/shell code. Do not merely test renaming Identity.
+- Add executable real acceptance scenarios to the existing harness for this
+  renamed product. From fresh isolated state, exercise dev startup and the
+  offline production lifecycle: bundle creation, explicit init-config,
+  dependency-ordered install, access through the proxy, OIDC login and database
+  CRUD for both renamed apps, restart/redeploy with persisted data, and
+  component-scoped uninstall. Verify app init-container behavior where declared.
+  Run the offline target portion without source checkout or original component
+  directories. Application images may be reused with declarative runtime inputs;
+  the scenario must not require code patches to accept the new component IDs.
+- Include harness tests for scenario wiring, assertions and failure reporting.
+  These complement but do not replace real Podman/systemd acceptance runs.
+
+Implement these acceptance scenarios even if the execution environment cannot
+run them. Document the exact commands, prerequisites and expected assertions so
+an operator can run them later. Report unit/product results, harness results and
+real acceptance results separately; unavailable lab access means runtime
+verification is outstanding, not that acceptance coverage may be omitted.
+Renaming here means defining a fresh installation with different component IDs,
+not migrating an existing installation's names or state.
+
+Run all product and acceptance-harness tests, ruff, format, pyright, vermin,
+shellcheck and git diff --check with the project's existing setup. Keep host
+Python 3.6 compatibility. Adapt generic acceptance inventory/packaging as needed
+and retain existing demo login/CRUD scenarios alongside the renamed-app scenarios.
+
+If authorized lab access is available, verify fresh installs and lifecycle for
+both the shipped demo and a renamed/minimal fixture. Otherwise give exact
+remaining lab scenarios. Do not reset other environments, claim stubbed tests
+prove Podman/systemd behavior, or count historical runs as current evidence.
+
+### 8. Documentation and delivery
+
+Document the final YAML schema, selection rules, dependency/version contracts,
+optional registration/config roles, installed metadata, explicit demo bootstrap
+and a complete example of adding a custom component using an external image.
+Explain the source catalog versus compiled bundle metadata versus installed
+metadata; distinguish component IDs, image names, resource names and public URLs.
+
+Search active generic code for the former component names and explain every
+remaining match. Names are acceptable in demo configuration/application code,
+explicit demo provisioning/smoke tests, tests and historical evidence; they must
+not restrict the generic tool's supported components. Do not replace literals
+with indirect demo-specific conditionals or silently default to the demo graph.
+
+Report the original coupling, selected schema and rationale, changed files,
+verified custom/demo scenarios, test results, runtime gaps and confirmation that
+no migration/fallback was added. Apply repository release version rules.
+Favor small explicit functions and one validated metadata model over a generic
+plugin framework or large object hierarchy.
