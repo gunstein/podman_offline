@@ -1,15 +1,14 @@
-"""Separate platform bundles and explicit refusal of retained core layouts."""
+"""Separate platform bundles, dependency contracts and scoped state operations."""
 
 import json
 import subprocess
+from pathlib import Path
 from unittest import mock
 
 import yaml
 from test_components import ComponentFixture
 
 from deployment import cli, common, deploy
-
-LEGACY_VOLUME_EXISTS = deploy.legacy_volume_exists
 
 
 class PlatformSafetyTests(ComponentFixture):
@@ -22,114 +21,24 @@ class PlatformSafetyTests(ComponentFixture):
             if path.is_file()
         }
 
-    def test_legacy_and_mixed_files_refuse_all_operations_without_commands(self):
-        deploy.install()
+    def test_config_initialization_and_repetition_need_no_podman_volume_checks(self):
+        """Initialize current defaults without generating credentials or querying old volumes."""
+        repo = Path(__file__).resolve().parent.parent
         for name in (
-            "core/config.yaml",
-            "installed/core",
-            ".config/containers/systemd/myproduct-core.yaml",
-            ".config/containers/systemd/myproduct-core.kube",
-            ".config/systemd/user/myproduct-core.service",
+            "config/common.defaults.yaml",
+            "components/app1/config.defaults.yaml",
         ):
-            for operation in (
-                lambda: deploy.init_config("app1"),
-                deploy.install,
-                deploy.uninstall,
-            ):
-                with self.subTest(path=name, operation=operation):
-                    path = self.write("home/" + name, "legacy retained state")
-                    before = self.snapshot()
-                    self.process.reset_mock()
-                    with self.assertRaisesRegex(
-                        common.DeployError, "Legacy core layout.*migration"
-                    ):
-                        operation()
-                    self.process.assert_not_called()
-                    self.assertEqual(self.snapshot(), before)
-                    path.unlink()
-                    if name.startswith("core/"):
-                        path.parent.rmdir()
-
-    def test_leftover_core_directory_or_broken_alias_is_not_treated_as_absent(self):
-        old = common.HOME / "core"
-        old.mkdir()
-        for alias in (False, True):
-            with self.subTest(alias=alias):
-                if alias:
-                    old.rmdir()
-                    old.symlink_to(self.root / "missing")
-                before = self.snapshot()
-                with self.assertRaisesRegex(common.DeployError, "Legacy core layout"):
-                    deploy.install()
-                self.assertEqual(self.snapshot(), before)
-        old.unlink()
-
-    def test_old_database_volumes_without_marker_refuse_before_generation_or_images(
-        self,
-    ):
-        deploy.install()
-        for volume in (
-            "core-identity-data",
-            "core-identity-protection",
-            "core-routes",
-            "core-clients",
-        ):
-            for operation in (
-                lambda: deploy.init_config("app1"),
-                deploy.install,
-                deploy.uninstall,
-            ):
-                with self.subTest(volume=volume, operation=operation):
-
-                    def command(args, volume=volume, **kwargs):
-                        self.assertEqual(args[:3], ["podman", "volume", "exists"])
-                        return subprocess.CompletedProcess(
-                            args, 0 if args[-1] == volume else 1
-                        )
-
-                    before = self.snapshot()
-                    self.process.reset_mock()
-                    self.process.side_effect = command
-                    transport = mock.patch.object(
-                        deploy, "legacy_volume_exists", side_effect=LEGACY_VOLUME_EXISTS
-                    )
-                    refusal = self.assertRaisesRegex(
-                        common.DeployError, "Legacy core volume.*migration"
-                    )
-                    with transport, refusal:
-                        operation()
-                    self.assertEqual(self.snapshot(), before)
-                    self.assertEqual(
-                        self.process.call_args_list[-1].args[0][-1], volume
-                    )
-
-    def test_legacy_volume_check_errors_refuse_without_exposing_transport_output(self):
-        for result in (
-            subprocess.CompletedProcess(
-                [], 125, stdout=b"sensitive", stderr=b"sensitive"
-            ),
-            FileNotFoundError("private"),
-            subprocess.TimeoutExpired("private", 30),
-        ):
-            with self.subTest(result=result):
-                self.process.reset_mock()
-                self.process.side_effect = (
-                    result if isinstance(result, Exception) else None
-                )
-                self.process.return_value = result
-                before = self.snapshot()
-                transport = mock.patch.object(
-                    deploy, "legacy_volume_exists", side_effect=LEGACY_VOLUME_EXISTS
-                )
-                refusal = self.assertRaisesRegex(
-                    common.DeployError, "Cannot check legacy core"
-                )
-                with transport, refusal as caught:
-                    deploy.install()
-                self.assertNotIn("sensitive", str(caught.exception))
-                self.assertNotIn("private", str(caught.exception))
-                self.assertEqual(self.snapshot(), before)
-                self.assertEqual(self.process.call_count, 1)
+            self.write(name, (repo / name).read_bytes())
+        target = common.HOME / "app1/config.yaml"
+        target.unlink()
+        self.process.reset_mock()
+        deploy.init_config("app1")
+        before = self.snapshot()
+        deploy.init_config("app1")
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((common.HOME / "app1/credentials").exists())
+        self.process.assert_not_called()
 
     def test_apps_never_embed_platform_and_missing_dependency_writes_nothing(self):
         for name in ("app1", "app2", "help"):
@@ -222,10 +131,10 @@ class PlatformSafetyTests(ComponentFixture):
         self.assertFalse((common.HOME / "platform").exists())
         self.assertTrue((common.QUADLET_DIR / "myproduct.network").exists())
 
-    def test_old_cli_arguments_refuse_before_any_operation(self):
+    def test_invalid_component_arguments_refuse_before_any_operation(self):
         for arguments in (
-            ["init-config", "core"],
-            ["uninstall", "core", "--delete-data"],
+            ["init-config", "unknown"],
+            ["uninstall", "unknown", "--delete-data"],
         ):
             command_line = mock.patch.object(cli.sys, "argv", ["deploy"] + arguments)
             with self.subTest(arguments=arguments), command_line:
@@ -234,4 +143,4 @@ class PlatformSafetyTests(ComponentFixture):
                 self.assertEqual(cli.main(), 2)
                 self.process.assert_not_called()
                 self.assertEqual(self.snapshot(), before)
-        self.assertIn("renamed to platform", self.stderr.getvalue())
+        self.assertIn("Usage:", self.stdout.getvalue())

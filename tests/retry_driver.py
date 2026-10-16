@@ -23,9 +23,7 @@ def main():
         QUADLET_DIR=root / "home/.config/containers/systemd",
         QUADLET_TEMPLATE=root / "quadlet/myproduct.kube",
     )
-    state.update(
-        production_environment=lambda: None, legacy_volume_exists=lambda name: False
-    )
+    state.update(production_environment=lambda: None)
     os.environ["XDG_RUNTIME_DIR"] = str(root)
     events = []
     record = Path(parameters["record"])

@@ -11,10 +11,6 @@ if [[ ${1:-} == --root ]]; then
     root=$2
     shift 2
 fi
-if [[ ${1:-} == core ]]; then
-    echo 'ERROR: core was renamed to platform; retained core installations require a separate migration procedure' >&2
-    exit 2
-fi
 if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; then
     component=$1
     shift
@@ -22,54 +18,6 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
     [[ $# -le 1 && $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || {
         echo 'Usage: generate-certificates.sh [--root DIR] platform|identity|app1|app2|help [DNS hostname]' >&2; exit 2;
     }
-    # Refuse both old and mixed layouts before creating any CA/certificate material.
-    runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-    for old in "$root/core" "$root/installed/core" \
-        "$root/.config/containers/systemd/myproduct-core.kube" \
-        "$root/.config/containers/systemd/myproduct-core.yaml" \
-        "$root/.config/systemd/user/myproduct-core.service" \
-        "$runtime/systemd/generator/myproduct-core.service" \
-        "$runtime/systemd/generator.early/myproduct-core.service" \
-        "$runtime/systemd/generator.late/myproduct-core.service"; do
-        if [[ -e $old || -L $old ]]; then
-            echo 'ERROR: legacy core layout requires a separate migration procedure; no certificates changed' >&2
-            exit 1
-        fi
-    done
-    for old in identity identity-db app users; do
-        if [[ -e $root/platform/generated-certificates/$old || -L $root/platform/generated-certificates/$old ]]; then
-            echo 'ERROR: combined platform/Identity credentials require a separate migration procedure' >&2; exit 1;
-        fi
-    done
-    if [[ -e $root/platform/files/platform-clients.tar || -L $root/platform/files/platform-clients.tar ]]; then
-        echo 'ERROR: combined platform/Identity imports require a separate migration procedure' >&2; exit 1;
-    fi
-    if [[ -f $root/installed/platform ]]; then
-        installed=$(cat "$root/installed/platform")
-        if [[ $installed =~ ^0\.[0-3]\. ]]; then
-            echo 'ERROR: combined platform/Identity version requires a separate migration procedure' >&2; exit 1;
-        fi
-    fi
-    for old in "$root/platform/config.yaml" "$root/.config/containers/systemd/myproduct-platform.yaml"; do
-        if [[ -f $old ]]; then
-            status=0
-            grep -Eq 'platform-(identity|api-secrets|database-password|demo-users|clients)|generated-certificates/(identity-db|identity/|app/|users/)' "$old" || status=$?
-            if [[ $status != 1 ]]; then
-                echo 'ERROR: combined platform/Identity config present or inspection failed; migration required' >&2; exit 1;
-            fi
-        fi
-    done
-    command -v podman >/dev/null || {
-        echo 'ERROR: cannot check legacy core volumes without Podman; no certificates changed' >&2; exit 1;
-    }
-    for old in core-identity-data core-identity-protection core-routes core-clients platform-identity-data platform-identity-protection platform-clients; do
-        status=0
-        timeout 30 podman volume exists "$old" >/dev/null 2>&1 || status=$?
-        if [[ $status != 1 ]]; then
-            echo 'ERROR: legacy core volume present or volume check failed; no certificates changed' >&2
-            exit 1
-        fi
-    done
     mkdir -p "$root/PKI/private" "$root/$component/credentials"
     chmod 700 "$root/PKI" "$root/PKI/private" "$root/$component" "$root/$component/credentials"
     cd "$root"

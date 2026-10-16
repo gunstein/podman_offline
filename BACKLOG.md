@@ -10,10 +10,14 @@ platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credenti
 path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), and
 retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)),
 and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)),
-and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)).
+and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)),
+and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance/LEGACY-CHECK-CLEANUP.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
-current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
+current platform/lifecycle scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
+
+Item 15 removes historical layout refusal checks; the earlier task descriptions
+and reports retain their original scope and are not current requirements.
 
 The full agent task descriptions for items 8, 9 and 10 are preserved below, with
 heading levels adjusted for this document. The later clarification in item 9
@@ -1506,7 +1510,9 @@ et bytte fra PVC til Secret alene gir kryptering eller en ny isolasjonsgrense.
 
 ## 15. Remove obsolete legacy layout refusal checks
 
-Status: planned, separate cleanup. No existing installations require migration.
+Status: implemented in 0.4.5; local checks and remaining target verification are
+reported in [layout cleanup](acceptance/LEGACY-CHECK-CLEANUP.md). The original
+agent message follows. No existing installations require migration.
 
 Melding til agenten:
 
@@ -1643,4 +1649,97 @@ og relevante lint-, format-, type-, kompatibilitets- og shellkontroller samt
 Beskriv nødvendig labverifikasjon av faktisk Podman-oppførsel, inkludert fersk
 installasjon og restart med beholdte data. Ikke påstå at stubbede tester beviser
 reell init-container-rekkefølge. Rapporter valgt app, konkret flyt, endrede filer,
+testresultater og verifikasjonshull.
+
+## 18. Extract app image building into Python and use stock nginx for proxy
+
+Status: planned. Separate build/manifest cleanup; no implementation performed.
+
+Melding til agenten:
+
+Skill ut koden som bygger demoappene under `apps/` til en egen Python-fil i
+`gunstein/podman_offline`. Fjern samtidig behovet for å bygge et eget proxy-image:
+platform skal referere et versjonert standard nginx-image direkte, og alt som
+trengs for proxyens konfigurasjon/oppstart skal deklareres i manifest-YAML.
+Behold eksisterende komponentarkitektur, CLI og offline installasjonsmodell.
+
+### 1. Les eksisterende flyt
+
+Les `AGENTS.md` dersom den finnes, README, ARCHITECTURE, BACKLOG og relevante
+tester. Undersøk minst `dev/build-images.sh`, `dev/pull-images.sh`,
+`bundle.py: manifest_images()` / image-validering / arkivering,
+`apps/*/Containerfile`, `apps/proxy/default.conf`, `15-resolver.envsh`,
+platform-manifestene, ruteregistreringene og image-/registry-acceptance-hjelperne.
+Funksjonsnavn og filer kan ha endret seg; bruk faktisk gjeldende repo-status.
+
+### 2. Egen Python-fil for image-bygging
+
+- Flytt image-utvalg, validering og byggekommandoer fra shell til en liten,
+  forståelig Python-fil, for eksempel `dev/build_images.py`. Behold
+  `./dev/build-images.sh` som en tynn wrapper som bruker `python3 -B`.
+- Bruk manifestenes faktiske, entydige image-referanser som kilde til hvilke
+  demo-images som skal bygges, og hvilke tags de får. Gjenbruk eksisterende
+  image-discovery/validering uten sirkulære imports eller duplisert image-liste.
+- Behold dagens skille: bygg lokale demoapp-images med passende Containerfile
+  og build context; registry-images hentes gjennom eksisterende pull-flyt.
+  Behold PostgreSQLs eksplisitte upstream-pull/lokale tag dersom dette fortsatt
+  er gjeldende modell. Ikke innfør skjult bygging som fallback ved pull-feil.
+- Stopp tydelig ved ukjent lokal build-oppskrift, ugyldig referanse eller feilet
+  Podman-kommando. Behold feilkoder og unngå shell-interpolering av argumenter.
+- Ingen bygging eller andre handlinger ved import. Wrapper og Python-entrypoint
+  skal finne repoet korrekt også fra en annen arbeidsmappe, uten bytecode-filer.
+  Bruk Python 3.6-kompatibel kode og eksisterende avhengigheter.
+
+### 3. Proxy uten eget image-bygg
+
+- Erstatt `localhost/myproduct-proxy:...` med et fullt kvalifisert, eksplisitt
+  versjonert standard nginx-image i platform-manifestet. Ikke bruk `latest`.
+  Undersøk dagens baseimage og unngå en unødvendig nginx-versjonsendring.
+- Flytt nødvendig nginx-konfigurasjon, template og eventuell liten oppstartskode
+  inn i YAML, for eksempel ConfigMap-data og eksplisitt command/args eller det
+  valgte imagets støttede entrypoint-mekanisme. Det skal ikke kreves et nytt
+  image, proxy-Containerfile eller separate proxy-konfigurasjons-/scriptfiler i
+  `apps/proxy/`. Fjern disse når aktive avhengigheter er erstattet.
+- Behold runtime DNS fra containerens `/etc/resolv.conf` og dynamisk oppslag av
+  komponentnavn. Platform må kunne starte uten appene/Identity, og routes skal
+  fungere når tjenester kommer til eller restartes med nye adresser.
+- Behold HTTPS_PORT, TLS-filer, begrensninger, `/livez`, ukjent-route 404 og
+  `/routes/installed.conf`. Ikke hardkod app-/Identity-ruter i proxyens grunnconfig.
+  Behold TLS-mount, rutemount, readOnly, hostname, hostIP/port og healthcheck.
+- Respekter rendererens eksisterende hele-verdi-`@@...@@`-kontrakt. Hvis nginx-
+  templating skjer ved containeroppstart, begrens variabelsubstitusjon slik at
+  nginx-variabler i konfigurasjon/ruter ikke utilsiktet erstattes. Ikke innfør en
+  generell endring av deploy-rendereren for å løse proxy-templating.
+- Verifiser nødvendig shell/verktøystøtte, ConfigMap-mounts, filmoduser og
+  oppstartsrekkefølge for faktisk valgt image og Podman-versjon. Ikke skriv til
+  skrivebeskyttede mounts; kjør nginx som hovedprosess med korrekt signalhåndtering.
+
+### 4. Offline, tester og dokumentasjon
+
+Det nye nginx-imaget skal oppdages fra manifestet, hentes på byggemaskinen via
+pull-flyten, arkiveres med platform-bundlen og lastes/verifiseres før installasjon.
+Behold `imagePullPolicy: Never` på målmaskinen, checksums, image-navnvalidering og
+isolasjon mellom bundles. Produksjon skal ikke hente images eller pakker fra nett.
+Oppdater dev-/acceptance-hjelpere som fortsatt forventer egen proxy-build eller
+filene under `apps/proxy`. Ikke endre historiske rapporter eller pinned fixtures.
+
+Legg til målrettede tester for Python-entrypoint/wrapper fra annen arbeidsmappe,
+korrekte manifest-tags/build contexts, deduplisering, build-/pull-feil og ingen
+build av nginx. Verifiser renderet proxy-YAML, runtime-templating/DNS, bevarte
+nginx-variabler, image-inkludering i offline-bundle og uendrede TLS-/rutemounts.
+Oppdater tester som tidligere leste `apps/proxy/default.conf`, uten å svekke
+kontrollene for separate komponenter og dynamiske ruteregistreringer.
+
+Kjør produkttester, acceptance-harness-tester, ruff, formatkontroll, pyright,
+vermin, shellcheck og `git diff --check` med repoets oppsett. Oppdater relevante
+releaseversjoner etter repoets regler, uten å endre uendrede app-images/tags.
+Dokumenter ny byggeflyt og hvordan proxyen konfigureres fra YAML. Beskriv nødvendig
+labverifikasjon av HTTPS, innlogging, platform/help uten Identity, app-tillegg,
+DNS etter restart, helse og offline installasjon. Ikke reset labmiljøer uten
+autorisasjon og ikke påstå at stubbede tester beviser faktisk nginx/Podman-atferd.
+
+Ingen config-/credential-migrering, fallback for gammel proxy-layout,
+passordrotasjon, ny komponentmodell eller bred deploy-refaktorering. Behold
+persistente config-/credential-bytes, databasedata, retry og SELinux-/fapolicyd-
+kontroller. Rapporter endrede filer, valgt YAML-/entrypoint-løsning, faktiske
 testresultater og verifikasjonshull.

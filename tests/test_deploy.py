@@ -48,9 +48,6 @@ class DeployFixture(unittest.TestCase):
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(common, name, path))
         self.process = self.stack.enter_context(mock.patch.object(subprocess, "run"))
-        self.stack.enter_context(
-            mock.patch.object(deploy, "legacy_volume_exists", return_value=False)
-        )
         self.euid = self.stack.enter_context(
             mock.patch.object(os, "geteuid", return_value=1000)
         )

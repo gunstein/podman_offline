@@ -8,8 +8,7 @@ case "${1:-}" in
 from urllib.parse import urlsplit
 from deployment import common, deploy
 from deployment import render as rendering
-# Explicit Podman dependency before certificates, config output or secret creation.
-deploy.reject_legacy_layout(home=common.BUILD / "dev", volumes=True)
+# Check current database state before certificates, config output or secret creation.
 for component in ("identity", "app1", "app2"):
     deploy.database_preflight(
         rendering.component_defaults(component, dev=True),

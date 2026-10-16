@@ -18,11 +18,6 @@ from . import render as rendering
 def init_config(component):
     """Exclusively materialize one bundled config; never create private input files."""
     production_environment()
-    reject_legacy_layout()
-    if component == "core":
-        raise common.DeployError(
-            "core was renamed to platform; use init-config platform"
-        )
     if component not in bundle_components():
         raise common.DeployError(
             f"Component {component} is not included in this bundle"
@@ -35,7 +30,6 @@ def init_config(component):
         if path.is_symlink():
             raise common.DeployError(f"Refuse symlinked config path: {path}")
     if target.exists():
-        reject_legacy_layout(volumes=True)
         print(
             f"[OK] Existing config retained unchanged: {target}; install validates it"
         )
@@ -60,7 +54,6 @@ def init_config(component):
         )
         overrides = {key: platform[key] for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")}
     config = rendering.component_defaults(component, overrides=overrides)
-    reject_legacy_layout(volumes=True)
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
     fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -183,7 +176,6 @@ def database_preflight(config, config_path, manifests):
 def prepare_components():
     """Render all source components with private dev state and shared imported registrations."""
     state = common.BUILD / "dev"
-    reject_legacy_layout(home=state)
     settings_by_component = {
         component: rendering.component_defaults(component, dev=True)
         for component in common.COMPONENTS
@@ -194,7 +186,6 @@ def prepare_components():
             state / component / "config.yaml",
             common.ROOT / "components" / component / "manifests",
         )
-    reject_legacy_layout(home=state, volumes=True)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     for component in common.COMPONENTS:
         target = state / component / "config.yaml"
@@ -426,112 +417,6 @@ def check_version_requirement(component, version, requirement, dependent):
         raise common.DeployError(
             component.title() + " version does not satisfy dependency for " + dependent
         )
-
-
-def reject_legacy_layout(home=None, volumes=False):
-    """Refuse known core state; never migrate, delete or infer absence after an error."""
-    home = common.HOME if home is None else home
-    paths = [
-        home / "core",
-        home / "installed/core",
-        home / ".config/containers/systemd/myproduct-core.yaml",
-        home / ".config/containers/systemd/myproduct-core.kube",
-        home / ".config/systemd/user/myproduct-core.service",
-    ]
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime:
-        paths.extend(
-            Path(runtime) / "systemd" / directory / "myproduct-core.service"
-            for directory in ("generator", "generator.early", "generator.late")
-        )
-    for path in paths:
-        try:
-            path.lstat()
-        except FileNotFoundError:
-            continue
-        raise common.DeployError(
-            "Legacy core layout detected; use its previous release. A separate migration procedure or an explicitly fresh installation is required; mixed core/platform state is refused"
-        )
-    reject_combined_platform(home)
-    if not volumes:
-        return
-    for name in (
-        "core-identity-data",
-        "core-identity-protection",
-        "core-routes",
-        "core-clients",
-        "platform-identity-data",
-        "platform-identity-protection",
-        "platform-clients",
-    ):
-        if legacy_volume_exists(name):
-            raise common.DeployError(
-                "Legacy core volume/combined platform volume detected: "
-                + name
-                + "; use the previous release or a separate migration procedure; no automatic migration"
-            )
-
-
-def reject_combined_platform(home):
-    """Proxy-only platform is valid; reject concrete signs of its former Identity ownership."""
-    old = [
-        home / "platform/generated-certificates" / name
-        for name in ("identity", "identity-db", "app", "users")
-    ]
-    old.append(home / "platform/files/platform-clients.tar")
-    for path in old:
-        try:
-            path.lstat()
-        except FileNotFoundError:
-            continue
-        raise common.DeployError(
-            "Combined platform/Identity layout detected; use its previous release or a separate migration procedure; mixed layouts are refused"
-        )
-    marker = home / "installed/platform"
-    if marker.is_file() and version_number(marker.read_text().strip()) < (0, 4, 0):
-        raise common.DeployError(
-            "Combined platform/Identity version detected; a separate migration procedure is required"
-        )
-    for path in (
-        home / "platform/config.yaml",
-        home / ".config/containers/systemd/myproduct-platform.yaml",
-    ):
-        if not path.exists():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            raise common.DeployError(
-                "Cannot check combined platform/Identity layout; no changes made"
-            ) from None
-        if re.search(
-            r"platform-(?:identity|api-secrets|database-password|demo-users|clients)|generated-certificates/(?:identity-db|identity/|app/|users/)",
-            text,
-        ):
-            raise common.DeployError(
-                "Combined platform/Identity config or service detected; a separate migration procedure is required"
-            )
-
-
-def legacy_volume_exists(name):
-    """Distinguish an absent legacy volume from an unavailable volume store."""
-    try:
-        result = subprocess.run(  # noqa: UP022 - Python 3.6
-            ["podman", "volume", "exists", name],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        raise common.DeployError(
-            "Cannot check legacy core volumes; no changes made"
-        ) from None
-    if result.returncode not in (0, 1):
-        raise common.DeployError(
-            "Cannot check legacy core volume " + name + "; no changes made"
-        )
-    return result.returncode == 0
 
 
 def version_number(value):
@@ -1067,7 +952,6 @@ def install_component_plan(components, source_components, imports, updates):
 def install_components():
     """Validate the selected components and images before writing scoped services."""
     production_environment()
-    reject_legacy_layout()
     components = bundle_components()
     component_dependencies(components[0])
     version_number((common.ROOT / "VERSION").read_text().strip())
@@ -1105,7 +989,6 @@ def install_components():
         for key in ("PUBLIC_ORIGIN", "HTTPS_PORT"):
             if config[key] != platform[key]:
                 raise common.DeployError(f"{key} in {path} must match {platform_path}")
-    reject_legacy_layout(volumes=True)
     for component in components:
         config_path = component_paths(component)[0]
         database_preflight(
@@ -1135,7 +1018,6 @@ def install():
 def uninstall(component=None, delete_data=False):
     """Resume one scoped uninstall from validated metadata, even after removing its YAML."""
     production_environment()
-    reject_legacy_layout()
     own = bundle_components()[0]
     component = component or own
     if component != own:
@@ -1154,7 +1036,6 @@ def uninstall(component=None, delete_data=False):
         raise common.DeployError(
             component.title() + " is still required by: " + ", ".join(dependents)
         )
-    reject_legacy_layout(volumes=True)
     _, _, output, quadlet = component_paths(component)
     route = common.HOME / "routes" / (component + ".conf")
     client = common.HOME / "clients" / component

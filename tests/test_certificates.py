@@ -29,11 +29,13 @@ class CertificateTests(unittest.TestCase):
         stub.mkdir()
         podman = stub / "podman"
         podman.write_text(
-            '#!/bin/sh\nif [ "$3" = core-identity-data ]; then exit "${LEGACY_VOLUME_RC:-1}"; fi\nexit 1\n'
+            '#!/bin/sh\necho unexpected-podman-call > "$CERTIFICATE_PODMAN_LOG"\nexit 125\n'
         )
         podman.chmod(0o755)
         self.environment = dict(
-            os.environ, PATH=str(stub) + os.pathsep + os.environ["PATH"]
+            os.environ,
+            PATH=str(stub) + os.pathsep + os.environ["PATH"],
+            CERTIFICATE_PODMAN_LOG=str(self.root / "podman-calls"),
         )
 
     def run_script(self, *args):
@@ -111,6 +113,7 @@ class CertificateTests(unittest.TestCase):
             "Adding app2 changed existing credentials",
         )
         self.assertFalse((target / "identity/credentials/app").exists())
+        self.assertFalse((self.root / "podman-calls").exists())
         before_repeat = after
         for component in ("platform", "identity", "app1", "app2"):
             result = self.run_script("--root", str(target), component, "example.test")
@@ -131,37 +134,6 @@ class CertificateTests(unittest.TestCase):
         for path in target.rglob("*"):
             if path.is_file():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-
-    def test_legacy_names_files_and_volumes_refuse_before_certificate_generation(self):
-        target = self.root / "retained"
-        target.mkdir()
-        old = target / "core"
-        old.mkdir()
-        for component in ("platform", "app1", "core"):
-            result = self.run_script("--root", str(target), component)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("core", result.stdout)
-            self.assertFalse((target / "PKI").exists())
-        old.rmdir()
-        for status in ("0", "125"):
-            self.environment["LEGACY_VOLUME_RC"] = status
-            result = self.run_script("--root", str(target), "platform")
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("no certificates changed", result.stdout)
-            self.assertEqual(list(target.iterdir()), [])
-
-    def test_combined_platform_credentials_refuse_before_ca_or_new_identity(self):
-        target = self.root / "combined"
-        old = target / "platform/generated-certificates/identity/identity.key"
-        old.parent.mkdir(parents=True)
-        old.write_bytes(b"retained signing key")
-        for component in ("platform", "identity", "app1", "help"):
-            result = self.run_script("--root", str(target), component)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("migration", result.stdout)
-            self.assertEqual(old.read_bytes(), b"retained signing key")
-            self.assertFalse((target / "PKI").exists())
-            self.assertFalse((target / "identity").exists())
 
     def test_invalid_arguments_do_not_generate_material(self):
         for args in (("--root",), ("--root", ""), ("bad/name",), ("one", "two")):

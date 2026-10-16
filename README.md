@@ -56,14 +56,13 @@ registrations even when old files remain in imported volumes. An app's private
 client key never goes to Identity. Issuer, public paths, client IDs, scopes and
 cookies retain their existing values.
 
-Release 0.4.0 separates Identity from the former combined platform of 0.3.0.
-It requires a fresh installation. Concrete old core/combined platform config,
-credentials, services, version markers or retained volumes cause refusal before
-secret generation, image loading or installed-state writes. Missing markers do
-not bypass volume checks; failed checks also refuse. Mixed/partial layouts are
-refused. No data, keys or credentials are automatically migrated or deleted.
-Manage retained installations with their previous release pending a separately
-reviewed migration procedure. Monolithic 0.1.x likewise needs a separate plan.
+The supported layout has separate platform and Identity bundles. No existing
+installation needs migration from the former core or combined platform layouts.
+Deploy and certificate preparation do not scan for those historical paths,
+markers or volume names. They neither migrate nor clean up unrelated state.
+Normal upgrades in the current model retain config, credentials and data;
+current dependency/version checks, database preflight and retry validation remain
+in force. See [layout cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md).
 
 Every `bundle.yaml` declares exact dependencies with inclusive `min` and exclusive
 `before` ranges, for example `{platform: {min: 0.4.0, before: 0.5.0}, identity:
@@ -587,7 +586,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.3
+version=0.4.5
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -954,9 +953,10 @@ existing database.
 The 0.2.0-to-0.2.1 manual database-config upgrade applies only to the former core
 layout. Its original instructions and evidence are retained at
 [commit 511099e](https://github.com/gunstein/podman_offline/tree/511099e7e056d0d18c4ade95067c30a54c48bec4).
-Do not apply those steps as a migration to 0.4.0: this release explicitly
-refuses retained core and combined platform/Identity state. See [IDENTITY-SPLIT.md](acceptance/IDENTITY-SPLIT.md)
-for the compatibility boundary and lab commands.
+These are historical instructions, not a migration procedure for the current
+layout. The current release contains no migration or old-layout refusal scan;
+no existing installations require such an upgrade. Historical reports and
+fixtures retain their original names and results.
 
 Credentials in the runtime environment are sensitive: do not dump environment,
 full inspect objects or connection strings during diagnosis. Administrators and

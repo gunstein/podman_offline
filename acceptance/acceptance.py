@@ -908,16 +908,6 @@ def main():
         help="Install app1/platform then help and upgrade only help",
     )
     parser.add_argument(
-        "--upgrade-020",
-        action="store_true",
-        help="Focused real 0.2.0 upgrade on the configured disposable lab VMs",
-    )
-    parser.add_argument(
-        "--legacy-refusal",
-        action="store_true",
-        help="Install genuine core 0.2.0 and verify refusal by platform",
-    )
-    parser.add_argument(
         "--identity-only",
         action="store_true",
         help="Install all components and verify only the independent Identity upgrade",
@@ -931,19 +921,12 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
-    if args.upgrade_020:
-        parser.error(
-            "The historical 0.2.0-to-0.2.1 upgrade must run at commit 511099e; platform 0.3.0 refuses core migration. Use --legacy-refusal for the new boundary"
-        )
-    if args.legacy_refusal and args.help_only:
-        parser.error("--legacy-refusal cannot be combined with --help-only")
     if (
         sum(
             (
                 args.help_only,
                 args.identity_only,
                 args.platform_help_only,
-                args.legacy_refusal,
             )
         )
         > 1
@@ -955,12 +938,7 @@ def main():
     run.identity_only = args.identity_only
     run.platform_help_only = args.platform_help_only
     try:
-        if args.legacy_refusal:
-            from legacy_refusal import execute
-
-            execute(run)
-        else:
-            run.execute()
+        run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence
         print(str(error), file=sys.stderr)
     finally:

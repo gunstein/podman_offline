@@ -670,40 +670,6 @@ legacy-build)
     mkdir -p "$src/dist"
     cp dist/myproduct-*-0.2.0-offline.tar.gz* "$src/dist/"
     ;;
-legacy-refusal)
-    prepare_release
-    as_product python3 - "$product/deploy" <<'LEGACY_REFUSAL'
-import subprocess
-import sys
-from pathlib import Path
-
-root = Path.home()
-new_paths = [root / "platform", root / "identity", root / "installed/platform", root / "installed/identity", root / "dependencies",
-             root / ".config/containers/systemd/myproduct-platform.yaml",
-             root / ".config/containers/systemd/myproduct-platform.kube",
-             root / ".config/containers/systemd/myproduct-identity.yaml",
-             root / ".config/containers/systemd/myproduct-identity.kube"]
-
-def no_parallel_platform():
-    if any(path.exists() or path.is_symlink() for path in new_paths):
-        raise SystemExit("FAIL: parallel platform files exist on retained core host")
-    for volume in ("platform-identity-data", "platform-identity-protection", "platform-routes", "platform-clients",
-                   "identity-data", "identity-protection", "identity-clients"):
-        check = subprocess.run(["podman", "volume", "exists", volume], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, check=False, timeout=30)
-        if check.returncode != 1:
-            raise SystemExit("FAIL: new platform volume exists or its absence cannot be verified")
-
-no_parallel_platform()
-for arguments in (("init-config", "platform"), ("install",), ("uninstall", "platform", "--delete-data")):
-    result = subprocess.run(["bash", sys.argv[1]] + list(arguments), stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, universal_newlines=True, check=False)
-    if result.returncode != 1 or "Legacy core layout detected" not in result.stderr or "+ podman" in result.stdout:
-        raise SystemExit("FAIL: retained core was not refused before image/state operations")
-no_parallel_platform()
-print("PASS: platform init/install/uninstall refuse retained core without mutation")
-LEGACY_REFUSAL
-    ;;
 legacy-install)
     sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-before"
     prepare_release

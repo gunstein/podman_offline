@@ -1,3 +1,15 @@
+# Supported layout cleanup (0.4.5)
+
+Current deploy/dev/certificate preparation no longer scans for former core or
+combined platform/Identity state. No migration or cleanup is introduced. The
+active runner's old-layout refusal scenario is removed; current fresh install,
+upgrade, retry and scoped uninstall checks remain. See
+[cleanup verification](LEGACY-CHECK-CLEANUP.md) for scope, retained historical
+fixtures and local results. Historical sections below do not describe current
+old-layout refusal behavior.
+
+---
+
 # App credential delivery (0.4.4)
 
 Apps now deliver session/client credentials through backend-only read-only
@@ -62,12 +74,13 @@ See [IDENTITY-SPLIT.md](IDENTITY-SPLIT.md) for evidence and remaining lab work.
 
 The former platform/core documentation below is historical. Current bundles are
 platform, identity, app1, app2 and help; current credentials belong under identity.
-`--legacy-refusal` still checks retained genuine core 0.2.0 against current code.
-The successful historical `--upgrade-020` must run at commit `511099e`.
+Historical `--legacy-refusal` and `--upgrade-020` scenarios are not options in
+the current runner. Their historical versions are available in git; the successful
+0.2.0 upgrade must run at commit `511099e`, as documented below.
 
 ---
 
-# Current platform acceptance (0.3.0)
+# Historical platform acceptance (0.3.0)
 
 Run the normal fresh-install/lifecycle matrix from a clean committed checkout:
 
@@ -82,20 +95,14 @@ installed separately before the chosen first app. All four bundles are checked;
 app-only, help-only and platform-only upgrades preserve unaffected components.
 Platform version requirements and installed dependency metadata are enforced.
 
-Check the new compatibility boundary against genuine old code/images:
-
-```sh
-python3 acceptance/acceptance.py --run platform-core-refusal --legacy-refusal run
-```
-
-This installs pinned core 0.2.0 using the unchanged historical harness, creates
-user data, then requires current platform init/install/uninstall to refuse it.
-Private state, volumes, credentials, process identities and old user data must
-remain unchanged. No migration or cleanup is performed.
+The former core-layout refusal scenario is retired from the current runner.
+Its implementation and instructions are retained in git at `b95df9c`, and the
+original results remain in [PLATFORM-RENAME.md](PLATFORM-RENAME.md). Those results
+are historical evidence, not expected behavior of the current release.
 
 The historical successful 0.2.0-to-0.2.1 upgrade remains at commit `511099e`:
 run `--upgrade-020` from a checkout of that commit, before running a resettable
-platform scenario. The current CLI rejects that flag before resetting any VM.
+platform scenario. The current CLI does not offer that flag; unknown options fail before lab setup.
 See [PLATFORM-RENAME.md](PLATFORM-RENAME.md) for scope, local checks and lab gaps.
 
 The documentation below is retained verbatim as historical core-layout guidance

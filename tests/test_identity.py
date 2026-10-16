@@ -1,17 +1,14 @@
-"""Identity ownership, independent registration restarts, dependencies and retained-state refusal."""
+"""Identity ownership, independent registration restarts, dependencies and scoped deletion."""
 
 import shutil
 import subprocess
 from pathlib import Path
-from unittest import mock
 
 import yaml
 from test_components import ComponentFixture
 
 from deployment import common, deploy
 from deployment import render as rendering
-
-LEGACY_VOLUME_EXISTS = deploy.legacy_volume_exists
 
 
 class IdentityTests(ComponentFixture):
@@ -225,85 +222,6 @@ class IdentityTests(ComponentFixture):
                 "myproduct.network"
             ):
                 self.assertEqual(after[name], value)
-
-    def test_combined_credentials_config_marker_and_unit_are_refused_unchanged(self):
-        self.select("identity")
-        paths = (
-            "platform/generated-certificates/identity/key",
-            "platform/generated-certificates/identity-db/password",
-            "platform/generated-certificates/users/alice-password",
-            "platform/generated-certificates/app/token",
-            "platform/files/platform-clients.tar",
-        )
-        for name in paths:
-            path = self.write("home/" + name, "retained old private state")
-            before = self.snapshot()
-            self.process.reset_mock()
-            with self.assertRaisesRegex(
-                common.DeployError, "Combined platform/Identity.*migration"
-            ):
-                deploy.install()
-            self.process.assert_not_called()
-            self.assertEqual(self.snapshot(), before)
-            path.unlink()
-            if "generated-certificates/" in name:
-                path.parent.rmdir()
-        for name, text in (
-            ("platform/config.yaml", "DB_HOST: platform-identity-postgres\n"),
-            ("installed/platform", "0.3.0\n"),
-            (
-                ".config/containers/systemd/myproduct-platform.yaml",
-                "kind: Pod\nmetadata: {name: platform-identity}\n",
-            ),
-        ):
-            path = common.HOME / name
-            original = path.read_bytes()
-            path.write_text(text)
-            before = self.snapshot()
-            with self.assertRaisesRegex(
-                common.DeployError, "Combined platform/Identity.*migration"
-            ):
-                deploy.install()
-            self.assertEqual(self.snapshot(), before)
-            path.write_bytes(original)
-
-    def test_retained_combined_volumes_without_marker_refuse_all_component_operations(
-        self,
-    ):
-        self.select("identity")
-        for volume in (
-            "platform-identity-data",
-            "platform-identity-protection",
-            "platform-clients",
-        ):
-            for operation in (
-                lambda: deploy.init_config("identity"),
-                deploy.install,
-                deploy.uninstall,
-            ):
-                with self.subTest(volume=volume, operation=operation):
-                    self.process.side_effect = lambda args, volume=volume, **kwargs: (
-                        subprocess.CompletedProcess(
-                            args, 0 if args[-1] == volume else 1
-                        )
-                    )
-                    before = self.snapshot()
-                    volume_check = mock.patch.object(
-                        deploy, "legacy_volume_exists", side_effect=LEGACY_VOLUME_EXISTS
-                    )
-                    refusal = self.assertRaisesRegex(
-                        common.DeployError, "combined platform volume.*migration"
-                    )
-                    with volume_check, refusal:
-                        operation()
-                    self.assertEqual(self.snapshot(), before)
-                    self.assertTrue(
-                        all(
-                            call.args[0][:3] == ["podman", "volume", "exists"]
-                            for call in self.process.call_args_list
-                        )
-                    )
-                    self.process.reset_mock()
 
     def test_identity_owns_database_signing_and_clients_and_proxy_has_no_fixed_identity(
         self,

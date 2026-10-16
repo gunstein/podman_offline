@@ -119,3 +119,18 @@ value. Its API scopes, signing credentials, users and database are unchanged.
 There are no new images, automatic migration, credential cleanup or rotation.
 Real Podman permissions/isolation remain unverified; see
 [credential delivery verification](acceptance/CREDENTIAL-DELIVERY.md).
+
+## Supported layout checks (0.4.5)
+
+Lifecycle commands, dev preparation and the certificate script no longer inspect
+historical core/combined-platform paths, services, markers or volumes. There is
+no old-layout detector, migration, fallback or automatic cleanup. The supported
+component graph and ordinary version/dependency contracts are unchanged. Current
+DB preflight still refuses a missing password for an existing database volume;
+private path checks, pending-operation validation and scoped deletion remain.
+Certificate preparation no longer requires Podman just to check obsolete volumes.
+
+The active acceptance runner no longer offers historical migration/refusal
+scenarios. Pinned 0.2.0 fixtures and verification reports remain unchanged;
+[cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md) lists the retained
+historical references and current checks.

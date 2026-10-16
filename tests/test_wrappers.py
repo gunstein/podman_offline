@@ -156,12 +156,8 @@ class WrapperTests(unittest.TestCase):
 
             run(source, "deploy", "prepare")
             self.assertTrue((source / "build/install.yaml").is_file())
-            self.assertTrue(
-                all(
-                    json.loads(line)[:3] == ["podman", "volume", "exists"]
-                    for line in commands.read_text().splitlines()
-                )
-            )
+            # This fixture has no database pods, so prepare needs no host commands.
+            self.assertFalse(commands.exists())
             run(source, "build-bundle.sh")
             version = (source / "VERSION").read_text().strip()
             extracted = root / "extracted"

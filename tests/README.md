@@ -1,3 +1,15 @@
+# Supported layout cleanup (0.4.5)
+
+Legacy core/combined-platform detectors and their refusal tests have been removed.
+Current config initialization performs no obsolete Podman checks; certificate
+preparation works even when a stubbed Podman command would fail. The real dev
+preflight still checks exactly the three current database volumes. Existing
+DB preflight, safe paths, dependency/version checks, fresh-process retry,
+credential preservation, bundle protections and scoped uninstall tests remain.
+See [cleanup verification](../acceptance/LEGACY-CHECK-CLEANUP.md) for results.
+
+---
+
 # App credential delivery (0.4.4)
 
 Apps now deliver session/client credentials through backend-only read-only
@@ -62,7 +74,7 @@ older counts and lab evidence below remain historical.
 
 Five separate bundles implement the fixed platform/Identity/app/help dependency
 graph. `test_identity.py` covers independent versions, exact route/client restart
-ownership, help without Identity, retained combined-layout refusal and scoped
+ownership, help without Identity and scoped
 Identity deletion. Bundle tests inspect real archives and checksums. See
 [IDENTITY-SPLIT.md](../acceptance/IDENTITY-SPLIT.md) for current results and lab gaps.
 Host code and product tests retain Python 3.6 compatibility. Commands below remain
@@ -74,8 +86,8 @@ valid; earlier baseline counts and runtime evidence are historical.
 
 The active component is `platform`, shipped in its own offline bundle. The current
 suite covers separate installation/dependencies, renamed resources, preserved
-sibling state, equal/newer/older platform versions, scoped deletion, legacy/mixed
-layout refusal, retained core volumes, failed volume checks and certificate guards.
+sibling state, equal/newer/older platform versions and scoped deletion. Historical
+layout checks were removed in 0.4.5; current database/credential guards remain.
 See [PLATFORM-RENAME.md](../acceptance/PLATFORM-RENAME.md) for the full mapping,
 checks and lab commands. Host code and product tests retain Python 3.6 syntax/APIs.
 

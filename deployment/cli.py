@@ -17,12 +17,6 @@ def main():
         "init-config": deploy.init_config,
     }
     args = sys.argv[1:]
-    if "core" in args:
-        print(
-            "ERROR: core was renamed to platform; use the separate platform bundle",
-            file=sys.stderr,
-        )
-        return 2
     removing = bool(args and args[0] == "uninstall")
     valid_remove = removing and args[1:] in (
         [],
@@ -30,7 +24,12 @@ def main():
         ["--delete-data"],
         ["platform", "--delete-data"],
     )
-    initializing = bool(args and args[0] == "init-config" and len(args) == 2)
+    initializing = bool(
+        args
+        and args[0] == "init-config"
+        and len(args) == 2
+        and args[1] in common.COMPONENTS
+    )
     if (
         not args
         or args[0] not in commands
