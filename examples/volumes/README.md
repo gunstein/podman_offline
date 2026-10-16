@@ -17,3 +17,7 @@ Expected: the app's own file is kept, while `single.txt` equals the newly
 uploaded file. If the Podman version does not import over an existing
 volume, the last SHA-256 check fails and the script returns non-zero.
 The volume is deleted after the test, also on verification failures.
+
+The source list uses `{path: files/single.txt}` and directory mappings. The same
+format permits optional `generate: [filename]` on a local directory source;
+this example uses provided files without generation.

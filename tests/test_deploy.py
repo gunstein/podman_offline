@@ -95,7 +95,20 @@ class DeployFixture(unittest.TestCase):
         return self.write("manifests/" + name, yaml.safe_dump_all(docs))
 
     def file_config(self, group, spec):
-        self.config[group] = spec
+        """Build source declarations from the tests' shorthand path specifications."""
+        self.config[group] = (
+            {
+                name: [
+                    {"path": value} if isinstance(value, str) else value
+                    for value in sources
+                ]
+                if isinstance(sources, list)
+                else sources
+                for name, sources in spec.items()
+            }
+            if isinstance(spec, dict)
+            else spec
+        )
         self.write_config()
         return rendering.load_file_group(self.config, group)
 
@@ -125,7 +138,7 @@ class DeployFixture(unittest.TestCase):
         self.stack.enter_context(
             mock.patch.dict(os.environ, {"HOME": str(self.root / "home")})
         )
-        self.config["VOLUME_FILES"] = {"uploads": ["../files/message.txt"]}
+        self.config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
         self.write("quadlet/myproduct.kube", "[Kube]\nYaml=myproduct.yaml\n")
         self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
         self.write("images/images.tar")
@@ -249,13 +262,16 @@ class ConfigTests(DeployFixture):
 
     def test_duplicate_nested_key_reports_line(self):
         self.write(
-            "config.yaml", "HTTPS_PORT: 8443\nSECRET_FILES:\n  a: [one]\n  a: [two]\n"
+            "config.yaml",
+            "HTTPS_PORT: 8443\nSECRET_FILES:\n  a: [{path: one}]\n  a: [{path: two}]\n",
         )
         with self.assertRaisesRegex(yaml.YAMLError, "line 4"):
             rendering.load_config(common.CONFIG)
 
     def test_groups_are_validated_separately(self):
-        self.config.update(SECRET_FILES={"a": ["one"]}, VOLUME_FILES={"b": ["two"]})
+        self.config.update(
+            SECRET_FILES={"a": [{"path": "one"}]}, VOLUME_FILES={"b": [{"path": "two"}]}
+        )
         self.write_config()
         self.assertEqual(rendering.load_config(common.CONFIG), self.config)
 
@@ -555,8 +571,9 @@ class GeneratedSecretTests(DeployFixture):
 
     def configure_generated(self):
         """Add a generated file and a manifest envFrom Secret reference."""
-        self.config["GENERATED_SECRETS"] = ["credentials/app/key"]
-        self.config["SECRET_FILES"] = {"app-secrets": ["credentials/app"]}
+        self.config["SECRET_FILES"] = {
+            "app-secrets": [{"path": "credentials/app", "generate": ["key"]}]
+        }
         self.write_config()
         self.manifest(
             [
@@ -612,12 +629,12 @@ class GeneratedSecretTests(DeployFixture):
     def test_install_keeps_existing_home_secret_across_releases(self):
         """Preserve home secrets on repeated install independently of dev/release paths."""
         self.install_fixture()
-        self.config["VOLUME_FILES"] = {"uploads": ["files/message.txt"]}
+        self.config["VOLUME_FILES"] = {"uploads": [{"path": "files/message.txt"}]}
         dev_path = self.configure_generated()
         deploy.prepare()
         dev_value = dev_path.read_bytes()
         prod_config = dict(self.config)
-        prod_config["VOLUME_FILES"] = {"uploads": ["../files/message.txt"]}
+        prod_config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
         self.write("home/config.yaml", yaml.safe_dump(prod_config))
         rendering.generate_secrets(self.config, common.HOME)
         prod_path = common.HOME / "credentials/app/key"
@@ -682,16 +699,28 @@ class GeneratedSecretTests(DeployFixture):
             with self.subTest(entry=entry):
                 with self.assertRaisesRegex(common.DeployError, "config directory"):
                     rendering.generate_secrets(
-                        {"GENERATED_SECRETS": [entry]}, self.root
+                        {
+                            "SECRET_FILES": {
+                                "generated": [{"path": ".", "generate": [entry]}]
+                            }
+                        },
+                        self.root,
                     )
                 self.assertFalse((outside / "key").exists())
 
     def test_invalid_list_and_entries_are_rejected(self):
-        """Require a list of relative path strings for GENERATED_SECRETS."""
+        """Require generation to be a list of relative file paths on a source."""
         for entries in (None, "key", {}, 1, [False], [1]):
             error = self.assertRaisesRegex(common.DeployError, "list")
             with self.subTest(entries=entries), error:
-                rendering.generate_secrets({"GENERATED_SECRETS": entries}, self.root)
+                rendering.generate_secrets(
+                    {
+                        "SECRET_FILES": {
+                            "generated": [{"path": ".", "generate": entries}]
+                        }
+                    },
+                    self.root,
+                )
 
     def test_exclusive_creation_preserves_a_concurrent_nonempty_file(self):
         """Use O_EXCL and retain a file created by another writer before open."""
@@ -843,8 +872,8 @@ class RenderTests(DeployFixture):
             base = self.root / "state" / component
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for paths in config.get(group, {}).values():
-                    for path in paths:
-                        target = base / path
+                    for source in paths:
+                        target = base / source["path"]
                         target.mkdir(parents=True, exist_ok=True)
                         (target / "dummy").write_bytes(b"dummy")
             path = self.write(
@@ -1014,8 +1043,10 @@ class CommandTests(DeployFixture):
                     yaml.safe_dump(
                         {
                             "HTTPS_PORT": 8443,
-                            "SECRET_FILES": {"secret": ["generated/key"]},
-                            "VOLUME_FILES": {"uploads": ["generated/message"]},
+                            "SECRET_FILES": {"secret": [{"path": "generated/key"}]},
+                            "VOLUME_FILES": {
+                                "uploads": [{"path": "generated/message"}]
+                            },
                         }
                     ),
                 )

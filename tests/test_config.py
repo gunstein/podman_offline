@@ -31,22 +31,19 @@ class ConfigTests(ComponentFixture):
         """Every later layer replaces a whole value, including empty maps and lists."""
         common = self.write(
             "config/common.defaults.yaml",
-            "HTTPS_PORT: 8443\nCHOICE: common\nSECRET_FILES: {platform-one: [one]}\nVOLUME_FILES: {platform-old: [old]}\nGENERATED_SECRETS: [old]\n",
+            "HTTPS_PORT: 8443\nCHOICE: common\nSECRET_FILES:\n  platform-one:\n  - path: one\nVOLUME_FILES:\n  platform-old:\n  - path: .\n    generate:\n    - old\n",
         )
         component = self.write(
             "components/platform/config.defaults.yaml",
-            "CHOICE: component\nSECRET_FILES: {platform-two: [two]}\nGENERATED_SECRETS: [new]\n",
+            "CHOICE: component\nSECRET_FILES:\n  platform-two:\n  - path: two\n  platform-generated:\n  - path: .\n    generate:\n    - new\n",
         )
         merged = rendering.merge_config(common, component)
         self.assertEqual(merged["CHOICE"], "component")
-        self.assertEqual(merged["SECRET_FILES"], {"platform-two": ["two"]})
-        self.assertEqual(merged["GENERATED_SECRETS"], ["new"])
-        overrides = {
-            "CHOICE": "override",
-            "SECRET_FILES": {},
-            "VOLUME_FILES": {},
-            "GENERATED_SECRETS": [],
-        }
+        self.assertEqual(merged["SECRET_FILES"]["platform-two"], [{"path": "two"}])
+        self.assertEqual(
+            merged["SECRET_FILES"]["platform-generated"][0]["generate"], ["new"]
+        )
+        overrides = {"CHOICE": "override", "SECRET_FILES": {}, "VOLUME_FILES": {}}
         merged = rendering.merge_config(common, component, overrides=overrides)
         for key, value in overrides.items():
             self.assertEqual(merged[key], value)
@@ -101,30 +98,32 @@ class ConfigTests(ComponentFixture):
             production = rendering.load_config(target)
             dev = rendering.component_defaults(component, dev=True)
             for settings in (production, dev):
-                paths = list(settings.get("GENERATED_SECRETS", []))
+                paths = []
                 for group in ("SECRET_FILES", "VOLUME_FILES"):
                     for entries in settings.get(group, {}).values():
                         paths.extend(
-                            path for path in entries if not path.startswith("../")
+                            source["path"]
+                            for source in entries
+                            if not source["path"].startswith("../")
                         )
                 self.assertTrue(all(path.startswith("credentials/") for path in paths))
-            self.assertEqual(
-                production.get("GENERATED_SECRETS"), dev.get("GENERATED_SECRETS")
-            )
+            self.assertEqual(production.get("SECRET_FILES"), dev.get("SECRET_FILES"))
 
     def test_init_modes_references_and_no_secret_or_image_operations(self):
         """Initialize complete config and private directories, without creating input files."""
         shutil.rmtree(common.HOME / "platform")
         self.write(
             "components/platform/config.defaults.yaml",
-            "GENERATED_SECRETS: [private/token]\nSECRET_FILES: {platform-token: [private/token]}\n",
+            "SECRET_FILES:\n  platform-token:\n  - path: private\n    generate:\n    - token\n",
         )
         self.select("platform")
         deploy.init_config("platform")
         target = common.HOME / "platform/config.yaml"
         config = rendering.load_config(target)
         self.assertEqual(config["PUBLIC_ORIGIN"], "https://defaults.test:8443")
-        self.assertEqual(config["GENERATED_SECRETS"], ["private/token"])
+        self.assertEqual(
+            config["SECRET_FILES"]["platform-token"][0]["generate"], ["token"]
+        )
         self.assertEqual(self.mode(target), 0o600)
         self.assertEqual(self.mode(target.parent), 0o700)
         self.assertFalse((target.parent / "private").exists())
@@ -226,7 +225,7 @@ class ConfigTests(ComponentFixture):
         )
         self.write(
             "home/platform/config.yaml",
-            "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\nGENERATED_SECRETS: [private/token]\n",
+            "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\nSECRET_FILES:\n  platform-generated:\n  - path: private\n    generate:\n    - token\n",
         )
         with self.assertRaisesRegex(
             common.DeployError, "NEW_REQUIRED.*app1/config.yaml"
@@ -242,7 +241,7 @@ class ConfigTests(ComponentFixture):
         """Secret/volume/generated paths use component state in production and dev."""
         self.write(
             "components/platform/config.defaults.yaml",
-            "SECRET_FILES: {platform-token: [inputs/token]}\nVOLUME_FILES: {platform-content: [content/message]}\nGENERATED_SECRETS: [private/generated]\n",
+            "SECRET_FILES:\n  platform-token:\n  - path: inputs/token\n  platform-generated:\n  - path: private\n    generate:\n    - generated\nVOLUME_FILES:\n  platform-content:\n  - path: content/message\n",
         )
         self.write("components/platform/inputs/token", "wrong-source")
         self.write("components/platform/content/message", "wrong-source")
@@ -259,6 +258,7 @@ class ConfigTests(ComponentFixture):
                     target = base / directory / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(contents)
+                rendering.generate_secrets(config, base)
                 secrets = rendering.load_file_group(config, "SECRET_FILES", base)
                 volumes = rendering.load_file_group(config, "VOLUME_FILES", base)
                 self.assertEqual(secrets["platform-token"], [base / "inputs/token"])
@@ -269,7 +269,7 @@ class ConfigTests(ComponentFixture):
                     rendering.generated_secret_paths(config, base),
                     [base / "private/generated"],
                 )
-                self.assertFalse((base / "private/generated").exists())
+                self.assertTrue((base / "private/generated").is_file())
 
     def test_install_rejects_shared_mismatch_without_rewriting_configs(self):
         """Consistent shared settings are an explicit preflight, not an auto-correction."""
@@ -318,6 +318,25 @@ class ConfigTests(ComponentFixture):
         for name in ("app2", "help"):
             self.component_manifest(name)
             self.write("components/" + name + "/config.defaults.yaml", "{}\n")
+        for component in common.COMPONENTS:
+            self.write(
+                "components/" + component + "/config.defaults.yaml",
+                yaml.safe_dump(
+                    {
+                        "SECRET_FILES": {
+                            component + "-generated": [
+                                {"path": "credentials", "generate": ["token"]}
+                            ]
+                        }
+                    }
+                ),
+            )
+            manifest = self.root / "components" / component / "manifests/10-pod.yaml"
+            pod = yaml.safe_load(manifest.read_text())
+            pod["spec"]["containers"][0]["envFrom"] = [
+                {"secretRef": {"name": component + "-generated"}}
+            ]
+            manifest.write_text(yaml.safe_dump(pod))
         output = self.write("build/dev/app1/config.yaml", "invalid: [\n")
         private = self.write(
             "build/dev/app1/credentials/token", "existing-private", 0o600
@@ -325,7 +344,7 @@ class ConfigTests(ComponentFixture):
         data = self.write("build/dev/app1/data/item", "persistent-data", 0o600)
         self.write(
             "config/dev.yaml",
-            "CHOICE: developer\nGENERATED_SECRETS: [credentials/token]\n",
+            "CHOICE: developer\n",
         )
         # Other components generate once; app1 reuses its existing credential.
         with mock.patch.object(deploy, "registration_stage", return_value=({}, {})):
@@ -334,7 +353,7 @@ class ConfigTests(ComponentFixture):
         before = private.read_bytes(), private.stat().st_mtime_ns
         self.write(
             "config/dev.yaml",
-            "CHOICE: changed\nGENERATED_SECRETS: [credentials/token]\n",
+            "CHOICE: changed\n",
         )
         with mock.patch.object(deploy, "registration_stage", return_value=({}, {})):
             deploy.prepare()

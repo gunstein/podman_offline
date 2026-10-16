@@ -114,6 +114,13 @@ def generated_secret_guard(config_dirs=None):
             try:
                 config = rendering.config_layer(path)
                 secrets.update(rendering.generated_secret_paths(config, base))
+                for entries in rendering.file_group_sources(
+                    config, common.SECRET_FILES
+                ).values():
+                    secrets.update(
+                        rendering.resolve_path(entry["path"], base).resolve()
+                        for entry in entries
+                    )
             except (common.DeployError, yaml.YAMLError):
                 raise BundleError(
                     f"Cannot validate generated secret paths in {path}"
@@ -133,7 +140,7 @@ def generated_secret_guard(config_dirs=None):
                         f"Cannot bundle credentials via {Path(directory) / name}"
                     )
             for secret in secrets:
-                if path == secret or path in secret.parents:
+                if path == secret or path in secret.parents or secret in path.parents:
                     raise BundleError(
                         f"Cannot bundle generated secret via {Path(directory) / name}"
                     )

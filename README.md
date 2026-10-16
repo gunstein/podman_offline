@@ -87,7 +87,7 @@ coverage, local evidence and pending lab commands.
 Initialization and dev use exactly one merge rule: common defaults first,
 component defaults next, explicit overrides last. Merge is at the top level.
 A later value replaces the entire earlier value, including `SECRET_FILES`,
-`VOLUME_FILES` and `GENERATED_SECRETS` maps/lists; no recursive merge or list
+`VOLUME_FILES` maps (including their source lists and generate declarations); no recursive merge or list
 concatenation takes place. Duplicate YAML keys are rejected in each source file.
 Individual layers may be incomplete; the complete merged result is validated.
 Dev overrides apply to all rendered components, with no per-component override
@@ -233,8 +233,8 @@ private files out of shipped directories and retain their declarations.
 
 Component `credentials/` directories contain passwords, session keys, private
 keys and certificates, whether generated locally or supplied externally.
-`GENERATED_SECRETS` selects the files deploy creates; `SECRET_FILES` and
-`VOLUME_FILES` describe how files reach containers. Dev uses
+`SECRET_FILES` and `VOLUME_FILES` describe how files reach containers; optional
+`generate` on each source selects files deploy creates. Dev uses
 `build/dev/<component>/credentials/`; production uses
 `/var/lib/myproduct/<component>/credentials/`. Shared `PKI/private` stays in place.
 Release 0.4.1 uses this layout for fresh state only, with no path migration,
@@ -254,7 +254,8 @@ Duplicate YAML keys, partial placeholders, unresolved references, missing mounts
 and colliding Secret/PVC/ConfigMap names are rejected. Whole `@@NAME@@` values
 preserve int/string types; ConfigMap data becomes text.
 
-`SECRET_FILES: {id: [paths]}` encodes files into Secrets (about 375 kB per id).
+`SECRET_FILES` maps resource IDs to lists of source mappings, each with a `path`
+and optional `generate`. It encodes file contents into Secrets (about 375 kB per id).
 Directories expand one level; nested directories are not allowed for Secrets.
 `VOLUME_FILES` creates private import tar archives and PVCs. Import archives
 normalize ownership, modes and timestamps (mtime 0), so identical imported
@@ -262,14 +263,50 @@ content has a stable checksum across fresh staging directories. Podman imports a
 start, overwriting matching files while preserving app-created/unlisted files.
 Symlinks in product output/state paths are refused to prevent sibling writes.
 
-`GENERATED_SECRETS` lists relative files beneath the config directory. Missing
-files are created exclusively with 32 random alphanumeric characters, mode 0600
-and private parents. Existing nonempty files are retained; empty files are errors.
-Absolute/traversing/escaping paths are rejected. Only filenames are logged.
-Add new entries to an existing component's persistent config when upgrading,
-then deliver them through `SECRET_FILES`; never replace old database passwords.
-Back these files up with all other persistent state. See the
-[generated-secrets example](examples/generated-secrets/README.md).
+Both delivery groups use the same declaration format:
+
+```yaml
+SECRET_FILES:
+  app2-database-password:
+  - path: credentials/database
+    generate:
+    - password
+  app2-signing:
+  - path: credentials/todo
+    generate:
+    - session-key
+```
+
+`path` can identify a file or a directory. Multiple sources may be listed under
+one resource ID. Without `generate`, the source must already exist: certificates
+and private keys are still prepared separately by the certificate script or
+provided externally. With `generate`, `path` identifies a directory and each
+listed filename is relative to that directory. The example creates
+`credentials/database/password` and `credentials/todo/session-key` if missing,
+then delivers the files from those directories through their respective Secrets.
+Other existing files in a declared directory are delivered as before.
+
+The same source list works in `VOLUME_FILES`, including optional `generate`:
+
+```yaml
+VOLUME_FILES:
+  identity-clients:
+  - path: ../clients
+```
+
+Generated files must stay under the config directory: absolute, tilde,
+traversing and symlink-escaping generation paths are rejected. Provided sources
+without generation still support relative/absolute paths and `~`. Missing
+selected files are created exclusively with 32 random alphanumeric characters,
+mode `0600` and private parents. Existing nonempty files are retained; empty
+files and duplicate generation declarations are errors. No values are logged.
+Add new source/generate declarations explicitly to authoritative persistent
+config during ordinary future upgrades; never replace old database passwords.
+Back these files up with the database and other persistent state. See the
+[generated-secret example](examples/generated-secrets/README.md).
+
+`GENERATED_SECRETS` and string-only source lists are no longer valid config.
+There is no migration, fallback or automatic rewrite of persistent config.
 
 ```text
 /var/lib/myproduct/                         service-user home, 0700
@@ -295,8 +332,9 @@ files left in volumes must not keep an uninstalled route/client active.
 The certificate script creates the shared demo CA and platform web TLS pair once.
 Identity owns its signing pair and demo-user passwords. Deploy generates database passwords separately. Each app gets
 its own client private key/certificate and database password. Database passwords,
-session keys and API keys use GENERATED_SECRETS. Identity receives only public client certificates. Its signing
-key is a Secret; each Todo's private signing/session material is in its own PVC.
+session keys use source-level `generate`. Identity receives only public client
+certificates. Its signing key and each Todo's private signing/session material
+are delivered through their own backend-only Secrets.
 `PKI/private/ca.key` on the target is for the demo only. In real prod, issue
 certificates elsewhere and deliver them to the persistent component paths.
 See [PKI](PKI/README.md). PostgreSQL's entrypoint creates a superuser in each
@@ -383,7 +421,7 @@ installation steps described in [ARCHITECTURE.md](ARCHITECTURE.md).
 Base64 is encoding, not encryption: generated YAML containing Secret data must
 be protected along with credential files and private import archives. A PVC's
 YAML contains the archive reference, not the files inside it. Missing-secret
-generation is controlled by `GENERATED_SECRETS` and lifecycle preflight;
+generation is controlled by source-level `generate` and lifecycle preflight;
 certificates must already have been prepared separately. The following diagrams
 show how specific credentials pass through these two delivery mechanisms.
 
@@ -404,7 +442,7 @@ through app-specific Secrets; public registration directories still use PVC impo
 ```mermaid
 flowchart TD
     CONFIG["`Config declares files and delivery
-    GENERATED_SECRETS, SECRET_FILES, VOLUME_FILES
+    SECRET_FILES / VOLUME_FILES sources with optional generate
     components/*/config.defaults.yaml`"]
 
     GENERATE["`Deploy creates missing secret files
@@ -586,7 +624,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.5
+version=0.4.6
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -873,8 +911,9 @@ be recorded separately and old evidence is never changed.
 ## PostgreSQL configuration and credentials
 
 Host, port, user and database name are ordinary component configuration. The
-password is generated once with `GENERATED_SECRETS` and retained as persistent
-secret state. `SECRET_FILES` delivers it as a Kubernetes Secret. PostgreSQL uses
+password is generated once by `generate: [password]` on its `SECRET_FILES` source
+and retained as persistent secret state. That same declaration delivers it as
+a Kubernetes Secret. PostgreSQL uses
 that Secret for first initialization, and its client uses the same password.
 Applications requiring a complete connection string build it at runtime and
 consume it as an environment variable.

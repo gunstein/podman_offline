@@ -2,15 +2,15 @@ DB_HOST: identity-postgres
 DB_PORT: '5432'
 DB_USER: identity
 DB_NAME: identity
-GENERATED_SECRETS:
-- credentials/identity-db/password
 SECRET_FILES:
   identity-signing:
-  - credentials/identity
+  - path: credentials/identity
   identity-database-password:
-  - credentials/identity-db
+  - path: credentials/identity-db
+    generate:
+    - password
   identity-demo-users:
-  - credentials/users
+  - path: credentials/users
 VOLUME_FILES:
   identity-clients:
-  - ../clients
+  - path: ../clients

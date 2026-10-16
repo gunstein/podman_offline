@@ -17,11 +17,18 @@ class InstallFailureTests(ComponentFixture):
         for component in ("platform", "app1"):
             path = common.HOME / component / "config.yaml"
             config = yaml.safe_load(path.read_text())
-            config["VOLUME_FILES"] = {component + "-payload": ["payload"]}
-            config["GENERATED_SECRETS"] = ["credential"]
+            config["VOLUME_FILES"] = {component + "-payload": [{"path": "payload"}]}
+            config["SECRET_FILES"] = {
+                component + "-private": [
+                    {"path": "private", "generate": ["credential"]}
+                ]
+            }
             path.write_text(yaml.safe_dump(config))
             manifest = common.ROOT / "components" / component / "manifests/10-pod.yaml"
             pod = yaml.safe_load(manifest.read_text())
+            pod["spec"]["containers"][0]["envFrom"] = [
+                {"secretRef": {"name": component + "-private"}}
+            ]
             pod["spec"]["volumes"] = [
                 {
                     "name": "payload",
@@ -30,7 +37,9 @@ class InstallFailureTests(ComponentFixture):
             ]
             manifest.write_text(yaml.safe_dump(pod))
             self.write("home/" + component + "/payload", "old import")
-            self.write("home/" + component + "/credential", "retained secret\n", 0o600)
+            self.write(
+                "home/" + component + "/private/credential", "retained secret\n", 0o600
+            )
         for name in (
             "app2/config.yaml",
             "app2/credential",

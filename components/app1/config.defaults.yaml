@@ -2,11 +2,12 @@ DB_HOST: app1-postgres
 DB_PORT: '5432'
 DB_USER: todo
 DB_NAME: todo
-GENERATED_SECRETS:
-- credentials/todo/session-key
-- credentials/database/password
 SECRET_FILES:
   app1-database-password:
-  - credentials/database
+  - path: credentials/database
+    generate:
+    - password
   app1-signing:
-  - credentials/todo
+  - path: credentials/todo
+    generate:
+    - session-key

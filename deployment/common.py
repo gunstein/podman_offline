@@ -19,7 +19,6 @@ SERVICE = "myproduct.service"
 
 SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
-GENERATED_SECRETS = "GENERATED_SECRETS"
 
 # Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
 # start, so they must stay in the service user's home directory.

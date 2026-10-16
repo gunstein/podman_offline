@@ -11,7 +11,8 @@ path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), a
 retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)),
 and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)),
 and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)),
-and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance/LEGACY-CHECK-CLEANUP.md)).
+and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance/LEGACY-CHECK-CLEANUP.md)),
+and unified file-source declarations (item 16, 0.4.6; [verification](acceptance/FILE-SOURCES.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/lifecycle scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -1547,8 +1548,9 @@ historiske referanser som er beholdt, testresultater og eventuelle labhull.
 
 ## 16. Combine secret generation and file delivery declarations
 
-Status: planned, separate config simplification. Coordinate with item 14 using
-the actual repository state; this task does not choose a new delivery mechanism.
+Status: implemented in 0.4.6 after item 14; source-level generate is supported
+for both delivery groups. See [file sources](acceptance/FILE-SOURCES.md) for
+verification and remaining lab work. The original agent message follows.
 
 Melding til agenten:
 

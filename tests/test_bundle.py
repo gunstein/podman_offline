@@ -189,10 +189,48 @@ class BundleTests(unittest.TestCase):
             )
 
     def test_package_symlink_cannot_bundle_declared_private_state(self):
-        self.write("config.yaml", "GENERATED_SECRETS: [private/token]\n")
+        self.write(
+            "config.yaml",
+            "SECRET_FILES:\n  generated-files:\n  - path: private\n    generate:\n    - token\n",
+        )
         private = self.write("private/token", "private-fixture")
         (self.root / "deployment/alias.py").symlink_to(private)
         with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+            bundle.build()
+        self.process.assert_not_called()
+
+    def test_external_secret_source_and_directory_alias_are_private_without_generation(
+        self,
+    ):
+        private = self.write("outside-credentials/key", "private-fixture")
+        self.write("files/public", "public-fixture")
+        alias = self.root / "files/alias"
+        for source in (private, private.parent):
+            self.write(
+                "config.yaml",
+                yaml.safe_dump({"SECRET_FILES": {"private": [{"path": str(source)}]}}),
+            )
+            alias.symlink_to(source, target_is_directory=source.is_dir())
+            with self.assertRaisesRegex(bundle.BundleError, "secret"):
+                bundle.build()
+            self.process.assert_not_called()
+            alias.unlink()
+
+    def test_generated_volume_file_alias_stays_out_of_offline_archive(self):
+        self.write(
+            "config.yaml",
+            yaml.safe_dump(
+                {
+                    "VOLUME_FILES": {
+                        "private": [{"path": "private", "generate": ["key"]}]
+                    }
+                }
+            ),
+        )
+        private = self.write("private/key", "private-fixture")
+        self.write("files/public", "public-fixture")
+        (self.root / "files/alias").symlink_to(private)
+        with self.assertRaisesRegex(bundle.BundleError, "secret"):
             bundle.build()
         self.process.assert_not_called()
 
@@ -215,7 +253,10 @@ class BundleTests(unittest.TestCase):
         """Refuse a bundle that would copy a declared generated secret."""
         for config in ("config.yaml", "config.defaults.yaml"):
             with self.subTest(config=config):
-                self.write(config, "GENERATED_SECRETS: [files/private/token]\n")
+                self.write(
+                    config,
+                    "SECRET_FILES:\n  generated-files:\n  - path: files/private\n    generate:\n    - token\n",
+                )
                 self.write("files/private/token", "synthetic-private-value")
                 with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
                     bundle.build()
@@ -225,7 +266,10 @@ class BundleTests(unittest.TestCase):
 
     def test_shipped_symlink_cannot_copy_a_generated_secret(self):
         """Reject a files alias pointing at a private generated file or directory."""
-        self.write("config.yaml", "GENERATED_SECRETS: [private/token]\n")
+        self.write(
+            "config.yaml",
+            "SECRET_FILES:\n  generated-files:\n  - path: private\n    generate:\n    - token\n",
+        )
         secret = self.write("private/token", "synthetic-private-value")
         (self.root / "files").mkdir()
         for target in (secret, secret.parent):
@@ -239,7 +283,7 @@ class BundleTests(unittest.TestCase):
                 alias.unlink()
 
     def test_private_credentials_and_symlink_aliases_cannot_enter_archives(self):
-        """Externally delivered keys are private even without GENERATED_SECRETS."""
+        """Externally delivered keys are private without any generation declaration."""
         component = self.root / "components/app1"
         for base in (
             "credentials",
@@ -472,7 +516,10 @@ data: {image: ignored}
             "build/dev/app1/config.yaml",
         ):
             with self.subTest(source=source):
-                path = self.write(source, "GENERATED_SECRETS: [private/token]\n")
+                path = self.write(
+                    source,
+                    "SECRET_FILES:\n  generated-files:\n  - path: private\n    generate:\n    - token\n",
+                )
                 secret_base = (
                     "components/app1"
                     if source == "components/app1/config.yaml"

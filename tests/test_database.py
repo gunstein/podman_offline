@@ -66,6 +66,19 @@ class DatabaseTests(DeployFixture):
             passwords.append((base / "credentials/database/password").read_bytes())
         self.assertNotEqual(passwords[0], passwords[1])
 
+    def test_generation_source_directory_can_have_the_password_key_name(self):
+        self.settings[common.SECRET_FILES]["app1-database-password"][0]["path"] = (
+            "credentials/password"
+        )
+        self.password = self.path.parent / "credentials/password/password"
+        self.preflight()
+        rendering.generate_secrets(self.settings, self.path.parent)
+        before = self.password.read_bytes()
+        self.process.reset_mock()
+        self.preflight()
+        self.process.assert_not_called()
+        self.assertEqual(len(before), 32)
+
     def test_generated_password_is_the_shared_kube_secret_and_never_a_placeholder(self):
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
         self.write("home/app1/credentials/todo/public-fixture", b"fixture")
@@ -224,10 +237,8 @@ class DatabaseTests(DeployFixture):
         self.process.assert_not_called()
 
     def test_missing_generation_declaration_requires_manual_config_addition(self):
-        self.settings[common.GENERATED_SECRETS] = []
-        with self.assertRaisesRegex(
-            common.DeployError, "GENERATED_SECRETS.*config.yaml"
-        ):
+        self.settings[common.SECRET_FILES]["app1-database-password"][0]["generate"] = []
+        with self.assertRaisesRegex(common.DeployError, "generate.*config.yaml"):
             self.preflight()
         self.assertFalse(self.password.exists())
 
@@ -269,7 +280,12 @@ class DatabaseTests(DeployFixture):
             relative = "identity-db" if component == "identity" else "database"
             self.assertIn(
                 "credentials/" + relative + "/password",
-                config[common.GENERATED_SECRETS],
+                [
+                    str(path.relative_to(common.HOME / component))
+                    for path in rendering.generated_secret_paths(
+                        config, common.HOME / component
+                    )
+                ],
             )
             serialized = yaml.safe_dump(docs)
             self.assertNotIn("ConnectionStrings__Default", serialized)

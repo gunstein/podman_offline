@@ -101,7 +101,7 @@ class ComponentFixture(DeployFixture):
             ("identity", "identity-clients", "../clients"),
         ):
             config = rendering.load_config(common.HOME / component / "config.yaml")
-            config["VOLUME_FILES"] = {group: [relative]}
+            config["VOLUME_FILES"] = {group: [{"path": relative}]}
             self.write("home/" + component + "/config.yaml", yaml.safe_dump(config))
             path = self.root / "components" / component / "manifests/10-pod.yaml"
             pod = yaml.safe_load(path.read_text())
@@ -152,7 +152,7 @@ class ComponentTests(ComponentFixture):
         """Perform namespace preflight before generating even a missing private file."""
         self.write(
             "home/platform/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES:\n  platform-generated:\n  - path: generated\n    generate:\n    - token\n",
         )
         self.select("platform")
         self.write("PLATFORM_VERSION", "1.1.0\n")
@@ -166,11 +166,11 @@ class ComponentTests(ComponentFixture):
         """Preflight every component config before rendering any component secrets."""
         self.write(
             "home/platform/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES:\n  platform-generated:\n  - path: generated\n    generate:\n    - token\n",
         )
         self.write(
             "home/app1/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES: {other-token: [missing]}\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES:\n  other-token:\n  - path: missing\n",
         )
         with self.assertRaisesRegex(common.DeployError, "config.yaml.*app1-"):
             deploy.install()
@@ -181,7 +181,7 @@ class ComponentTests(ComponentFixture):
         """Reject an unprefixed config Secret without generating private material."""
         self.write(
             "home/platform/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\nSECRET_FILES: {other-token: [generated/token]}\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES:\n  other-token:\n  - path: generated\n    generate:\n    - token\n",
         )
         with self.assertRaisesRegex(common.DeployError, "config.yaml.*platform-"):
             deploy.install()
@@ -312,7 +312,7 @@ class ComponentTests(ComponentFixture):
         self.write("home/installed/platform", "2.0.0\n")
         self.write(
             "home/platform/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nGENERATED_SECRETS: [generated/token]\n",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES:\n  platform-generated:\n  - path: generated\n    generate:\n    - token\n",
         )
         with self.assertRaisesRegex(common.DeployError, "downgrade refused"):
             deploy.install()
@@ -402,7 +402,9 @@ class ComponentTests(ComponentFixture):
                 {
                     "HTTPS_PORT": 8443,
                     "PUBLIC_ORIGIN": "https://" + secret + "＠example.test",
-                    "GENERATED_SECRETS": ["generated/token"],
+                    "SECRET_FILES": {
+                        "platform-token": [{"path": "generated", "generate": ["token"]}]
+                    },
                 }
             ),
         )
@@ -513,7 +515,8 @@ class ComponentTests(ComponentFixture):
             )
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for entries in config.get(group, {}).values():
-                    for entry in entries:
+                    for source in entries:
+                        entry = source["path"]
                         if ".." not in Path(entry).parts:
                             self.write(
                                 "build/dev/" + component + "/" + entry + "/dummy",

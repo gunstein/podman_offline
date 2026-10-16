@@ -1,3 +1,13 @@
+# File source declarations (0.4.6)
+
+Current SECRET_FILES/VOLUME_FILES IDs contain lists of `{path: ...}` sources
+with optional `generate: [filename]`. Generation and delivery share one
+source declaration; there is no separate generation field or old-format fallback.
+See [file-source verification](../acceptance/FILE-SOURCES.md) for local checks and target gaps.
+Earlier schema/counts below are historical, not the active config contract.
+
+---
+
 # Supported layout cleanup (0.4.5)
 
 Legacy core/combined-platform detectors and their refusal tests have been removed.

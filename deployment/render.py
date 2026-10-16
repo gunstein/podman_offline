@@ -66,7 +66,12 @@ def validate_config(config, path):
         if not isinstance(key, str):
             raise common.DeployError(f"All keys in {path} must be strings")
 
-        if key in (common.SECRET_FILES, common.VOLUME_FILES, common.GENERATED_SECRETS):
+        if key == "GENERATED_SECRETS":
+            raise common.DeployError(
+                f"{path}: use generate on a file source; GENERATED_SECRETS is not supported"
+            )
+
+        if key in (common.SECRET_FILES, common.VOLUME_FILES):
             continue  # File groups and generated paths validate their own structures.
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
@@ -162,21 +167,6 @@ def validate_component_config(config, component, path, check_placeholders=True):
     public_origin(config["PUBLIC_ORIGIN"], path)
     check_component_config_names(config, component, path)
     generated_secret_paths(config, path.parent)
-    for group in (common.SECRET_FILES, common.VOLUME_FILES):
-        mapping = config.get(group, {})
-        if not isinstance(mapping, dict):
-            raise common.DeployError(f"{group} in {path} must be a map")
-        for name, entries in mapping.items():
-            if (
-                not isinstance(name, str)
-                or not common.ID.fullmatch(name)
-                or not isinstance(entries, list)
-                or not entries
-                or any(not isinstance(entry, str) or not entry for entry in entries)
-            ):
-                raise common.DeployError(
-                    f"{group} in {path} must be id: [list of paths]"
-                )
 
 
 def public_origin(value, path):
@@ -202,31 +192,80 @@ def public_origin(value, path):
     return address
 
 
-def generated_secret_paths(config, base_dir):
-    """Resolve declared secret paths without generating or reading their contents."""
-    entries = config.get(common.GENERATED_SECRETS, [])
-    if not isinstance(entries, list) or not all(
-        isinstance(entry, str) for entry in entries
-    ):
+def file_group_sources(config, group):
+    """Validate one delivery map without reading or generating its source files."""
+    if "GENERATED_SECRETS" in config:
         raise common.DeployError(
-            f"{common.GENERATED_SECRETS} must be a list of relative file paths"
+            "Use generate on a file source; GENERATED_SECRETS is not supported"
         )
+    mapping = config.get(group, {})
+    if not isinstance(mapping, dict):
+        raise common.DeployError(f"{group} must be id: [list of file sources]")
+    for name, sources in mapping.items():
+        if not isinstance(name, str) or not common.ID.fullmatch(name):
+            raise common.DeployError(
+                f"Invalid id in {group}; use lowercase letters, digits and -"
+            )
+        where = f"{group}.{name}"
+        if not isinstance(sources, list) or not sources:
+            raise common.DeployError(f"{where} must be a nonempty list of file sources")
+        for source in sources:
+            if not isinstance(source, dict) or set(source) - {"path", "generate"}:
+                raise common.DeployError(
+                    f"{where}: each source must contain path and optional generate"
+                )
+            path = source.get("path")
+            if not isinstance(path, str) or not path or "\x00" in path:
+                raise common.DeployError(f"{where}: path must be nonempty text")
+            names = source.get("generate", [])
+            if not isinstance(names, list) or any(
+                not isinstance(value, str) or "\x00" in value for value in names
+            ):
+                raise common.DeployError(
+                    f"{where}: generate must be a list of relative file paths"
+                )
+    return mapping
+
+
+def generated_secret_paths(config, base_dir):
+    """Resolve generation declared on delivery sources; never read or create files."""
     base = base_dir.resolve()
     paths = []
-    for entry in entries:
-        relative = Path(entry)
-        if relative.is_absolute() or ".." in relative.parts or not relative.name:
-            raise common.DeployError(
-                f"{common.GENERATED_SECRETS}: {entry!r} must stay under the config directory"
-            )
-        path = (base / relative).resolve()
-        try:
-            path.relative_to(base)
-        except ValueError:
-            raise common.DeployError(
-                f"{common.GENERATED_SECRETS}: {entry!r} resolves outside the config directory"
-            ) from None
-        paths.append(path)
+    seen = set()
+    for group in (common.SECRET_FILES, common.VOLUME_FILES):
+        for name, sources in file_group_sources(config, group).items():
+            for source in sources:
+                for filename in source.get("generate", []):
+                    directory, relative = Path(source["path"]), Path(filename)
+                    if (
+                        directory.is_absolute()
+                        or source["path"].startswith("~")
+                        or ".." in directory.parts
+                        or relative.is_absolute()
+                        or ".." in relative.parts
+                        or not relative.name
+                    ):
+                        raise common.DeployError(
+                            f"{group}.{name}: generated paths must stay under the config directory"
+                        )
+                    path = (base / directory / relative).resolve()
+                    try:
+                        path.relative_to(base)
+                    except ValueError:
+                        raise common.DeployError(
+                            f"{group}.{name}: generated path resolves outside the config directory"
+                        ) from None
+                    if path in seen:
+                        raise common.DeployError(
+                            f"{group}.{name}: duplicate generated file declaration"
+                        )
+                    source_path = base / directory
+                    if source_path.exists() and not source_path.is_dir():
+                        raise common.DeployError(
+                            f"{group}.{name}: a generate source must be a directory"
+                        )
+                    seen.add(path)
+                    paths.append(path)
     return paths
 
 
@@ -300,31 +339,13 @@ def resolve_path(value, base_dir=None):
 
 def load_file_group(config, group, base_dir=None):
     """Read file groups and expand directory paths one level, relative to the config."""
-    spec = config.get(group, {})
-
-    if not isinstance(spec, dict):
-        raise common.DeployError(f"{group} in config.yaml must be id: [list of files]")
-
+    spec = file_group_sources(config, group)
     groups = {}
-
     for group_id, entries in spec.items():
         where = f"{group}.{group_id}"
-
-        if not isinstance(group_id, str) or not common.ID.fullmatch(group_id):
-            raise common.DeployError(
-                f"Invalid id {group_id!r} in {group}. Use lowercase letters, digits and -"
-            )
-
-        if (
-            not isinstance(entries, list)
-            or not entries
-            or not all(isinstance(entry, str) for entry in entries)
-        ):
-            raise common.DeployError(f"{where} must be a list of file paths")
-
         items = []
 
-        for path in (resolve_path(entry, base_dir) for entry in entries):
+        for path in (resolve_path(entry["path"], base_dir) for entry in entries):
             if not path.exists():
                 raise common.DeployError(f"Missing {path} ({where})")
             items += sorted(path.iterdir()) if path.is_dir() else [path]

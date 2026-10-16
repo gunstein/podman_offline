@@ -134,3 +134,21 @@ The active acceptance runner no longer offers historical migration/refusal
 scenarios. Pinned 0.2.0 fixtures and verification reports remain unchanged;
 [cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md) lists the retained
 historical references and current checks.
+
+## File sources and generation (0.4.6)
+
+`SECRET_FILES` and `VOLUME_FILES` each map resource IDs to lists of sources:
+`{path: credentials/database, generate: [password]}` creates the missing local
+password and delivers files from that directory. `{path: ../clients}` only reads
+prepared files. Multiple file/directory sources are supported by one model.
+`file_group_sources()` validates the structure; `generated_secret_paths()` resolves
+and validates generation without creating or reading files. Generation still
+occurs at the same lifecycle boundary after database preflight. The obsolete
+separate top-level field and string-only source entries are rejected.
+
+Bundle protection follows every declared Secret source and generated file,
+including generation under VOLUME_FILES and symlink aliases outside credentials/.
+No config migration/fallback or eager credential creation is introduced.
+Persistent config precedence, mounts/names, images and the current component
+architecture remain unchanged. See
+[file-source verification](acceptance/FILE-SOURCES.md) for results and limits.

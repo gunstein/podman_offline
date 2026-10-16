@@ -110,7 +110,11 @@ class CredentialDeliveryTests(DeployFixture):
     def test_identity_has_no_unused_api_secret_or_environment_delivery(self):
         config = self.defaults("identity")
         self.assertEqual(
-            config["GENERATED_SECRETS"], ["credentials/identity-db/password"]
+            [
+                str(path.relative_to(self.root))
+                for path in rendering.generated_secret_paths(config, self.root)
+            ],
+            ["credentials/identity-db/password"],
         )
         self.assertEqual(
             set(config["SECRET_FILES"]),

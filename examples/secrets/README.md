@@ -25,3 +25,6 @@ renaming and filtering out unselected keys work. The SHA-256 checks pass.
 A separate trial with `path: nested/renamed.txt` failed at `kube play` with
 exit 125 and the message `must not contain path separator`. Use a file name
 without `/` in `items.path` on this version; the directory is chosen with `mountPath`.
+
+Each source is a mapping such as `{path: files/binary.bin}`. No `generate` is
+declared here: these externally supplied fixture files must already exist.

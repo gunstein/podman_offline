@@ -117,13 +117,16 @@ def database_preflight(config, config_path, manifests):
                     raise common.DeployError(
                         f"Unsupported PostgreSQL Secret/PVC binding in {manifest}"
                     ) from None
-                entries = config.get(common.SECRET_FILES, {}).get(
+                entries = rendering.file_group_sources(config, common.SECRET_FILES).get(
                     secret["secretName"], []
                 )
                 candidates = []
                 for entry in entries:
-                    source = rendering.resolve_path(entry, config_path.parent)
-                    candidates.append(source if source.name == key else source / key)
+                    source = rendering.resolve_path(entry["path"], config_path.parent)
+                    directory = "generate" in entry or source.is_dir()
+                    candidates.append(
+                        source if source.name == key and not directory else source / key
+                    )
                 if len(candidates) != 1:
                     raise common.DeployError(
                         f"{config_path}: {common.SECRET_FILES}.{secret['secretName']} must identify one password file"
@@ -169,7 +172,7 @@ def database_preflight(config, config_path, manifests):
                     config, config_path.parent
                 ):
                     raise common.DeployError(
-                        f"Missing database password file {password}; add its path to {common.GENERATED_SECRETS} in {config_path}"
+                        f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
                     )
 
 

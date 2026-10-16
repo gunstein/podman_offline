@@ -1,5 +1,6 @@
 HTTPS_PORT: 18080
-GENERATED_SECRETS:
-  - credentials/app/API_TOKEN
 SECRET_FILES:
-  example-run-generated: [credentials/app]
+  example-run-generated:
+  - path: credentials/app
+    generate:
+    - API_TOKEN

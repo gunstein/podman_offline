@@ -122,7 +122,7 @@ class CertificateTests(unittest.TestCase):
             before_repeat == self.fingerprints(target),
             "Repeated generation changed files",
         )
-        # Database passwords now belong exclusively to deploy's GENERATED_SECRETS.
+        # Database passwords now belong exclusively to deploy's file-source generate declarations.
         for component, relative in (
             ("identity", "identity-db"),
             ("app1", "database"),

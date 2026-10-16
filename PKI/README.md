@@ -7,7 +7,7 @@ Component passwords, private keys and certificates live under
 `<state>/<component>/credentials/`, with the same subdirectories and filenames
 in dev and production. The shared CA stays in PKI/private. Platform owns the web TLS pair. Identity owns
 its signing pair and shared demo-user passwords. Each app has a separate client pair. Database
-passwords and session/API keys belong to deploy’s GENERATED_SECRETS mechanism,
+passwords and session/API keys belong to deploy’s source-level `generate` declarations,
 not this certificate script. See the PostgreSQL section in the root README for
 state preflight, persistent paths, backup/recovery and manual config additions.
 

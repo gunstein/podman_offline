@@ -88,9 +88,9 @@ class WrapperTests(unittest.TestCase):
                 folder = source / "components" / component
                 (folder / "manifests").mkdir(parents=True)
                 (folder / "config.defaults.yaml").write_text(
-                    "VOLUME_FILES: {platform-routes: [../routes]}\n"
+                    "VOLUME_FILES:\n  platform-routes:\n  - path: ../routes\n"
                     if component == "platform"
-                    else "VOLUME_FILES: {identity-clients: [../clients]}\n"
+                    else "VOLUME_FILES:\n  identity-clients:\n  - path: ../clients\n"
                     if component == "identity"
                     else "{}\n"
                 )

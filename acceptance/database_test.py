@@ -63,8 +63,9 @@ def volume_guard(base, secret, claim):
     """Exercise the lifecycle guard against this actual initialized test volume."""
     path = base / "guard/config.yaml"
     config = {
-        deployment_common.SECRET_FILES: {secret: ["lost/password"]},
-        deployment_common.GENERATED_SECRETS: ["lost/password"],
+        deployment_common.SECRET_FILES: {
+            secret: [{"path": "lost", "generate": ["password"]}]
+        },
     }
     try:
         deploy.database_preflight(config, path, base)
@@ -210,8 +211,9 @@ def run():
                     time.sleep(1)
                 retained = password_path.read_bytes()
                 config = {
-                    deployment_common.SECRET_FILES: {secret: ["password"]},
-                    deployment_common.GENERATED_SECRETS: ["password"],
+                    deployment_common.SECRET_FILES: {
+                        secret: [{"path": ".", "generate": ["password"]}]
+                    },
                 }
                 deploy.database_preflight(config, base / "config.yaml", base)
                 rendering.generate_secrets(config, base)

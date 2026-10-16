@@ -321,7 +321,7 @@ class RetryTests(ComponentFixture):
             (common.HOME / "installed" / component).unlink()
         platform_config = common.HOME / "platform/config.yaml"
         config = yaml.safe_load(platform_config.read_text())
-        config["VOLUME_FILES"] = {"platform-routes": ["../routes"]}
+        config["VOLUME_FILES"] = {"platform-routes": [{"path": "../routes"}]}
         platform_config.write_text(yaml.safe_dump(config))
         self.before = self.protected()
         self.select("identity")
