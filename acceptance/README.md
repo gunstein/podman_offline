@@ -1,11 +1,17 @@
 # App1 database init (0.4.8)
 
+The schema probe compatibility fix and current verification are recorded in
+[SCHEMA-PROBE-FIX.md](SCHEMA-PROBE-FIX.md). Historical failures and reports are
+preserved; use that report for the new focused and full-run evidence.
+
 App1 now uses an actual schema init container. The existing `database-runtime`
 action also runs its init command in a disposable pod and replays it after
 inserting a row. Fresh app1-first/app2-first and platform/help-only scenarios
-remain applicable. Local harness checks passed, but real init order, retained
-data and target policy remain unverified. See [init verification](APP1-INIT.md)
-for details; earlier evidence does not verify this change.
+remain applicable. A fresh app1-first run with the probe fix now passes real
+init/replay, retained data, the full lifecycle and target audit. App2-first and
+focused platform/help-only were not rerun for this fix. See
+[init verification](APP1-INIT.md) for the original implementation report and
+[probe verification](SCHEMA-PROBE-FIX.md) for current results and limits.
 
 ---
 

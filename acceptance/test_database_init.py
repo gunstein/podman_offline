@@ -94,9 +94,39 @@ class DatabaseInitHarnessTests(unittest.TestCase):
         self.assertEqual(init["image"], database_test.image("app1", "backend"))
         self.assertEqual(init["env"], original["spec"]["containers"][0]["env"])
         self.assertEqual(first["spec"]["volumes"], original["spec"]["volumes"])
-        self.assertIn("if False:", first["spec"]["containers"][0]["command"][-1])
-        self.assertIn("if True:", second["spec"]["containers"][0]["command"][-1])
-        self.assertIn("retained todo", second["spec"]["containers"][0]["command"][-1])
+        for document in manifests:
+            script = document["spec"]["containers"][0]["command"][-1]
+            self.assertNotIn("\n", script)
+            compile(script, "schema-probe", "exec")
+            self.assertIn("db.commit()", script)
+            self.assertIn("db.close()", script)
+        initial = first["spec"]["containers"][0]["command"][-1]
+        replay = second["spec"]["containers"][0]["command"][-1]
+        self.assertIn("assert rows == []", initial)
+        self.assertIn("INSERT INTO todos", initial)
+        self.assertIn("retained todo", replay)
+        self.assertNotIn("INSERT INTO todos", replay)
+
+    def test_kube_failure_identifies_fixture_without_private_diagnostics(self):
+        """Distinguish schema probes from Identity without printing Podman stderr."""
+        for action in ("play", "down"):
+            with (
+                self.subTest(action=action),
+                mock.patch.object(
+                    database_test.subprocess,
+                    "run",
+                    return_value=types.SimpleNamespace(
+                        returncode=125, stdout="PRIVATE stdout", stderr="PRIVATE stderr"
+                    ),
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError, "kube " + action + r" schema-init\.yaml"
+                ) as failure,
+            ):
+                database_test.podman(
+                    ["kube", action, str(self.base / "schema-init.yaml")]
+                )
+            self.assertNotIn("PRIVATE", str(failure.exception))
 
     def test_failed_probe_stops_before_replay_and_removes_disposable_pod(self):
         with (

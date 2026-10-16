@@ -26,9 +26,11 @@ def podman(arguments, expected=0):
         ["podman"] + arguments, capture_output=True, text=True, check=False, timeout=180
     )
     if result.returncode != expected:
-        interface = "Python" if "python" in arguments else "Identity/PostgreSQL"
+        operation = arguments[0]
+        if arguments[:2] in (["kube", "play"], ["kube", "down"]):
+            operation = " ".join(arguments[:2] + [Path(arguments[-1]).name])
         raise RuntimeError(
-            f"Database runtime check failed at {arguments[0]} ({interface}, expected {expected}, exit {result.returncode})"
+            f"Database runtime check failed at {operation} (expected {expected}, exit {result.returncode})"
         )
     return result
 
@@ -101,23 +103,31 @@ def init_schema_check(base, network, client):
     check["image"] = init["image"]
     manifest = base / "schema-init.yaml"
     for repeated in (False, True):
-        check["command"] = [
-            "python",
-            "-c",
-            """
-from database import connect
-from schema import verify_ready
-verify_ready()
-with connect() as db:
-    rows = db.execute("SELECT owner, title, done FROM todos ORDER BY id").fetchall()
-    if REPEATED:
-        assert rows == [{"owner": "init-check", "title": "retained todo", "done": False}]
-    else:
-        assert rows == []
-        db.execute("INSERT INTO todos(owner, title) VALUES ('init-check', 'retained todo')")
-print("Todo init and retained data verified")
-""".replace("REPEATED", repr(repeated)),
+        expected_rows = (
+            [{"owner": "init-check", "title": "retained todo", "done": False}]
+            if repeated
+            else []
+        )
+        # Podman 5.8.2 reserializes YAML before parsing it again. Multiline
+        # command scalars can fail that round trip; keep this fixed probe on one line.
+        statements = [
+            "from database import connect",
+            "from schema import verify_ready",
+            "verify_ready()",
+            "db = connect()",
+            'rows = db.execute("SELECT owner, title, done FROM todos ORDER BY id").fetchall()',
+            "assert rows == " + repr(expected_rows),
         ]
+        if not repeated:
+            statements.append(
+                "db.execute(\"INSERT INTO todos(owner, title) VALUES ('init-check', 'retained todo')\")"
+            )
+        statements += [
+            "db.commit()",
+            "db.close()",
+            'print("Todo init and retained data verified")',
+        ]
+        check["command"] = ["python", "-c", "; ".join(statements)]
         manifest.write_text(yaml.safe_dump(probe))
         manifest.chmod(0o600)
         try:
