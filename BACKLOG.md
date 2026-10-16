@@ -2086,6 +2086,52 @@ both the shipped demo and a renamed/minimal fixture. Otherwise give exact
 remaining lab scenarios. Do not reset other environments, claim stubbed tests
 prove Podman/systemd behavior, or count historical runs as current evidence.
 
+### Architecture boundary and complexity check
+
+Moving the component model from Python constants into declarations is the scoped
+architecture change in this task. Keep the current module structure as the
+starting point; a wider architectural rewrite is not required by these findings.
+Organize the flow around three explicit responsibilities:
+
+1. Read and validate one authoritative component model from YAML.
+2. Plan dependencies, registration changes and required service restarts using
+   that validated model, without performing those actions.
+3. Execute the plan through the existing lifecycle functions, preserving durable
+   pending work and retry guarantees when an action fails.
+
+Use small functions and explicit data within the existing modules where practical.
+These responsibilities do not require new layers, a plugin system, a class
+hierarchy, a generic operation engine or a transaction framework. Introduce a
+small helper module only when it gives a concrete readability benefit and explain
+that choice; do not reorganize the package merely to mirror these three steps.
+
+If implementation starts accumulating many mode flags, parallel representations
+of the same model, or special cases, pause implementation to reassess and simplify
+the design before continuing. Do not conceal growing complexity with additional
+abstractions. The understandability review must assess these warning signs and
+justify any remaining complexity before the task can be marked complete.
+
+### Mandatory understandability review
+
+Before marking this task complete, perform and report an explicit
+understandability review of the final diff, separate from automated checks.
+A moderately experienced Python developer must be able to follow the normal
+flow and failure/retry paths without reconstructing hidden conventions.
+
+- Trace one successful operation and one failure/retry from CLI entry to durable
+  state and service actions. Explain which function owns each step and why its
+  ordering is safe.
+- Identify the single source of truth for each decision. Avoid duplicate models,
+  hidden defaults, name-based special cases and unnecessary indirection.
+- Prefer small named functions, explicit data and ordinary control flow. Do not
+  introduce a plugin system, operation engine or class hierarchy for these fixes.
+- Check that validation, planning and side effects are visibly separated, with
+  clear state ownership and completion conditions. Comments should explain why
+  an ordering or constraint matters, rather than repeat the code.
+- Simplify confusing paths before delivery. Report remaining complexity and its
+  concrete justification, plus any simplifications made during this review.
+  Passing tests alone does not satisfy this completion requirement.
+
 ### 8. Documentation and delivery
 
 Document the final YAML schema, selection rules, dependency/version contracts,
@@ -2217,6 +2263,27 @@ credential bytes and assert those validation failures produce no new secrets,
 archives, output YAML, registration changes or host actions. Retain positive
 coverage for valid generation, file-content validation and byte-preserving
 restart/redeploy. Keep database-preflight before secret generation.
+
+### Mandatory understandability review
+
+Before marking this task complete, perform and report an explicit
+understandability review of the final diff, separate from automated checks.
+A moderately experienced Python developer must be able to follow the normal
+flow and failure/retry paths without reconstructing hidden conventions.
+
+- Trace one successful operation and one failure/retry from CLI entry to durable
+  state and service actions. Explain which function owns each step and why its
+  ordering is safe.
+- Identify the single source of truth for each decision. Avoid duplicate models,
+  hidden defaults, name-based special cases and unnecessary indirection.
+- Prefer small named functions, explicit data and ordinary control flow. Do not
+  introduce a plugin system, operation engine or class hierarchy for these fixes.
+- Check that validation, planning and side effects are visibly separated, with
+  clear state ownership and completion conditions. Comments should explain why
+  an ordering or constraint matters, rather than repeat the code.
+- Simplify confusing paths before delivery. Report remaining complexity and its
+  concrete justification, plus any simplifications made during this review.
+  Passing tests alone does not satisfy this completion requirement.
 
 ### Scope, verification and delivery
 
