@@ -1910,6 +1910,46 @@ Keep component IDs restricted to the existing safe naming rules. Explain that
 `my-identity` is valid and `my_identity` is not; do not silently rewrite names.
 Do not introduce a renamed default component list as a fallback.
 
+### Declarative addition and removal of services
+
+Adding a service must require only a new directory under `components/` containing
+its supported YAML manifests, defaults/metadata, and an update to `bundles.yaml`.
+Use existing version sources or declare version data in YAML; do not require a
+new Python constant, shell case, handwritten service inventory or new per-service
+version file. Existing images and externally supplied credentials may still need
+normal preparation. This requirement concerns service discovery and lifecycle,
+not automatic application image building or certificate issuance.
+
+Removing a service from the source product must require only removing its catalog
+entry, updating affected YAML dependencies/roles, and removing its component
+directory. Dev output, discovered images and new bundles must then exclude it,
+including after a previous prepare/build in the same working directory. Stale
+rendered artifacts or distributions must not make removed services part of the
+current generated product; clearly distinguish retained historical archives from
+current build outputs. An entry whose selected directory is missing is an error,
+not an implicit removal. A still-declared dependency on the removed service must
+fail clearly before side effects.
+
+Removing source declarations does not authorize uninstalling an already-installed
+production service or deleting data. Preserve installed dependency/registration
+metadata; removal on a target uses explicit uninstall with its existing data
+retention and dependency rules. Ensure that offline uninstall remains available
+from the service's previously built bundle even when its source directory/catalog
+entry no longer exists. Do not silently prune installed components absent from a
+new source catalog. Document how to stop removed dev services through the normal
+dev lifecycle without deleting their persistent data or unrelated containers.
+
+Add unit/product tests that add and then remove a custom service by changing only
+component files and `bundles.yaml`, with no edits to generic Python/shell code.
+Cover fresh and repeated prepare/build, stale-output exclusion, dangling dependency
+errors, unaffected siblings and preservation of installed production state.
+Extend runnable acceptance coverage to add/start/use the service, stop it through
+the normal dev lifecycle, remove its source definition and rebuild/restart the
+remaining dev product; verify it is absent from the new product and siblings
+still work. Also verify explicit scoped offline uninstall using its retained
+bundle after source removal, with ordinary uninstall preserving data. Report
+actual runtime execution separately from harness/unit results.
+
 ### 2. Support isolated production bundles and installed metadata
 
 Compile the required validated metadata into `bundle.yaml` (or a minimal bundled

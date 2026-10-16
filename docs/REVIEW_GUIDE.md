@@ -13,7 +13,7 @@ The known gaps below explicitly identify outstanding work.
 
 | Contract | Required behavior |
 | --- | --- |
-| Declarative components | Selected YAML declarations and component files define components, dependencies and roles; adding or renaming components needs no generic Python/shell edits. |
+| Declarative components | Selected YAML declarations and component files define components, dependencies and roles; adding, renaming or removing components requires only component files and catalog YAML, with no generic Python/shell edits. |
 | Independent images | Externally built images work without application source in `apps/`; demo builds and demo credential provisioning are explicit. |
 | Isolated offline bundles | An unpacked bundle works without the original checkout or sibling source/release directories; target installation does not fetch dependencies or images. |
 | Authoritative production config | Explicit `init-config` creates persistent config; subsequent production operations use it. Automatic init-config is not existing functionality. |
@@ -66,6 +66,7 @@ possible scenario.
 | --- | --- |
 | Add/rename a selected component | No Python component-list edit; validate safe IDs rather than silently rewriting them. |
 | Exclude a component | No implicit render/build/install or image validation of that directory. |
+| Remove a service definition | Remove its component directory/catalog entry and adjust YAML dependents; repeated builds exclude stale outputs. Installed production state remains until explicit uninstall. |
 | Invalid image in an unselected directory | Selected build is unaffected. |
 | Gateway/help only | No Identity or app-database requirement. |
 | Empty/missing apps directory with external images | No implicit demo build or provisioning. |
