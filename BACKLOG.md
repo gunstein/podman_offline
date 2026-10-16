@@ -1823,6 +1823,31 @@ may have been removed. Reverse dependencies, registration ownership and pending
 work must remain understandable from validated bundled/installed metadata.
 Replacing constants with a source-file lookup everywhere would not solve this.
 
+### Review findings explicitly included in item 20
+
+The subsequent Python review confirmed that this task must also cover:
+
+- Bundle validation/version sources must come from declarations, not
+  `common.COMPONENTS`, `DEPENDENCIES` or `VERSION_FILES`. The initial image
+  discovery/validation in `bundle.build()` must use the selected catalog too;
+  an unselected directory with an invalid image must not block a selected build.
+- Registration owners, owner import IDs, allowed client directories, restart
+  order and config inheritance must not depend on demo component names.
+- A component without a public endpoint must not require PUBLIC_ORIGIN or
+  HTTPS_PORT. Deriving PUBLIC_HOSTNAME must not depend on the name `platform`.
+- Document and test the OIDC contract explicitly: currently client ID equals
+  component ID, base_path equals `/` plus that ID, and scopes equal
+  `[openid, profile, component ID]`. Separate configurable application identity
+  from deployment identity where the existing application protocol supports it;
+  otherwise validate and document that protocol constraint explicitly. Never
+  silently overwrite a supplied descriptor with inferred demo values. Supporting
+  arbitrary new OIDC protocols is outside scope.
+
+Add targeted regression tests for these cases alongside the required renamed-app
+unit and acceptance scenarios below. Item 21 separately handles preflight/render
+ordering, resource-kind validation and registration removal. Item 7 owns broader
+PostgreSQL mount-layout support; do not expand either task into that work.
+
 ### Message to the implementing agent
 
 Make component selection and lifecycle behavior in `gunstein/podman_offline`
@@ -2080,3 +2105,139 @@ verified custom/demo scenarios, test results, runtime gaps and confirmation that
 no migration/fallback was added. Apply repository release version rules.
 Favor small explicit functions and one validated metadata model over a generic
 plugin framework or large object hierarchy.
+
+
+## 21. Fix manifest validation gaps and removal of obsolete registrations
+
+Status: planned. Four findings reproduced in isolated Python checks; no fix or
+real Podman/systemd verification performed. Prioritize the database preflight
+and resource-kind gaps because they affect lifecycle safety checks.
+
+### Message to the implementing agent
+
+Fix the following four concrete issues in `gunstein/podman_offline`. Read the
+current branch, AGENTS.md if present, and relevant product/harness tests first.
+Item 20 may have changed the component model before this task starts: use the
+actual declarations and lifecycle implementation, not a historical hardcoded
+graph. Keep this work separate from general component/schema refactoring.
+
+### 1. Validate the effective database manifest
+
+`deployment/deploy.py: database_preflight()` currently reads raw YAML. A PVC
+reference `claimName: "@@DB_VOLUME@@"` results in the literal command
+`podman volume exists @@DB_VOLUME@@`, rather than checking the configured volume.
+This was reproduced with a mocked subprocess; the actual Podman response to that
+invalid name has not been measured. Do not claim this reproduction proves real
+Podman would report the volume absent.
+
+Resolve supported whole-value placeholders using the authoritative effective
+config before database inspection. Apply the same resolved manifest values that
+will be rendered and installed. Do not call the side-effecting renderer just to
+obtain them. Validate resolved names, bindings and required values before host
+commands or generation. Missing/invalid placeholders must fail clearly.
+
+Test both literal and configured PVC names, Secret references and password-file
+paths supported by the existing layout. Assert the actual name passed to Podman.
+With a missing password and the resolved volume present, fail without creating a
+password or changing runtime state. Cover absent volume and inspection errors
+separately: only the documented absent-volume result allows generation. Preserve
+existing password bytes and normal config precedence. Broader PostgreSQL images,
+PGDATA layouts and mount support belong to item 7, not this fix.
+
+### 2. Make supported resource kinds consistent across the lifecycle
+
+Current database preflight and component resource-name checks recognize top-level
+Pod documents, while image discovery and some render checks traverse nested pod
+specs. A Deployment containing the same database spec therefore bypasses
+preflight; a Deployment named for another component also passes the current
+component-name check. Both behaviors were reproduced without running containers.
+Uninstall also extracts mounted ConfigMaps only from top-level Pods.
+
+Establish and document the resource kinds the tool actually supports. Either
+handle a kind consistently in preflight, rendering, component isolation, image
+collection and uninstall planning, or reject it clearly before side effects.
+Do not add broad Kubernetes support as part of this task. Prefer explicit
+rejection where support cannot be justified by existing product requirements and
+Podman behavior. Account for wrapper/list documents so they cannot bypass checks.
+Reuse a small explicit traversal/validation helper if useful; avoid a new generic
+resource framework. Check names after substitution and preserve scoped volume
+ownership checks.
+
+Test identical relevant container specs under each supported wrapper. For
+unsupported kinds assert an actionable error before generation, Podman calls,
+registration changes or service changes. Cover foreign resource names, database
+checks, init-container validation, image discovery and mounted ConfigMap cleanup
+as applicable. Preserve existing supported fixtures or explicitly update their
+contract; do not silently accept documents only part of the lifecycle understands.
+
+### 3. Remove registrations omitted by a new release
+
+`registration_stage()` copies installed routes/clients before applying incoming
+files. If an installed app's new release removes `route.conf`, the old route is
+still imported and no change is recorded. The old-route case was reproduced;
+client.yaml follows the same retention logic and needs its own regression test.
+
+For the component being installed/upgraded, treat the incoming release's declared
+registration set as authoritative. If its previous route or client is absent in
+the new release, stage removal, rebuild the public indexes/imports and restart
+only the affected registration owner. Preserve all sibling registrations.
+Absence for a component not selected by this operation must never mean removal.
+
+Extend the existing explicit registration change/pending mechanism to represent
+removals safely. Record required owner work durably before deletion can hide the
+change. After any failed import write or owner restart/check, retry in a new
+process must rebuild the required imports and finish owner work even though the
+old registration has already disappeared. Do not add a transaction framework,
+rollback, or untracked deletion shortcuts. Preserve private path/symlink checks.
+
+Test route-only removal, client-only removal, both removals and unchanged inputs;
+assert exact owner restarts, updated indexes, retained sibling entries and no
+sibling app restart. Inject failures after deletion and during archive writing
+and owner restart/check. Retry with the same persistent directory in a fresh
+process, and verify pending state is removed only after success. Test ordinary
+uninstall still works with registrations already removed by an earlier upgrade.
+
+### 4. Validate manifests before generating secrets
+
+`materialize_and_render()` currently calls generate_secrets before checking pod
+mounts and final resource links. A manifest referencing an undefined volume was
+rejected, but its declared generated password had already been created.
+
+Separate side-effect-free structural/config validation from materialization.
+Resolve placeholders and validate supported kinds, resource names, duplicate
+resources, volume mounts, offline image policies and declared Secret/PVC/ConfigMap
+links before generating files or writing import archives/output. Validate what
+can be determined from declarations first; checks requiring generated file bytes
+may follow generation. Do not promise transactionality for arbitrary filesystem
+failures or implement rollback that deletes existing credentials.
+
+Add tests for invalid mounts, missing references, duplicate resources, invalid
+policies and unresolved placeholders. Snapshot fresh state and existing config/
+credential bytes and assert those validation failures produce no new secrets,
+archives, output YAML, registration changes or host actions. Retain positive
+coverage for valid generation, file-content validation and byte-preserving
+restart/redeploy. Keep database-preflight before secret generation.
+
+### Scope, verification and delivery
+
+- Preserve Python 3.6 support for host tools, existing commands, authoritative
+  persistent config, credentials, checksum/offline guarantees, retry behavior,
+  SELinux/fapolicyd handling and component isolation.
+- No migration, legacy fallback, credential rotation or general architecture
+  refactor. Use fresh isolated fixtures; retain historical evidence unchanged.
+- Run product tests, acceptance-harness tests, ruff, format checks, pyright,
+  vermin, shellcheck and git diff --check using the repository setup.
+- Add a focused runnable acceptance regression for registration removal on
+  upgrade: verify the removed route/client is no longer active, while a sibling
+  remains usable. Reuse existing lab setup and avoid duplicating item 20's full
+  renamed-product suite. Keep failure injection tests as the primary coverage
+  for precise retry boundaries and preflight command selection.
+- Run relevant real Podman/systemd scenarios only in an available authorized
+  isolated environment; never reset unrelated installations. If unavailable,
+  implement/document the scenario and exact operator commands and report it as
+  unexecuted. Stubbed tests do not prove actual runtime behavior.
+
+Report each root cause, chosen resource-kind contract, changed files, regression
+coverage, actual checks/results and remaining runtime gaps. Explain how removal
+work survives retry and which validation necessarily requires generated bytes.
+Apply the repository's release/version rules when implementing the fixes.
