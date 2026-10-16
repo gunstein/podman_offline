@@ -1368,32 +1368,83 @@ LABELS
     start_date=$(LC_ALL=C date -d "@$run_started" +%x)
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     audit_events check
-    as_product python3 - <<'API_SECRET'
+    as_product python3 - <<'CREDENTIAL_FILES'
+import hashlib
+import json
 import subprocess
 from pathlib import Path
 
-SECRET_FILE = Path("/var/lib/myproduct/identity/credentials/app/ApiResources__0__ApiSecrets__0__Value")
+ROOT = Path.home()
+NAMES = ("session-key", "todo-client.key", "todo-client.crt", "ca.crt")
+# Fixed code only: no source bytes, credentials or configuration in argv/logs.
+PROBE = r"""
+import errno
+import hashlib
+import json
+import os
+import stat
+from pathlib import Path
+
+files = {}
+for path in sorted(Path("/certificates").iterdir()):
+    info = path.stat()
+    if not stat.S_ISREG(info.st_mode):
+        raise SystemExit(1)
+    files[path.name] = {
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid,
+    }
+    try:
+        descriptor = os.open(str(path), os.O_WRONLY)
+    except OSError as error:
+        if error.errno != errno.EROFS:
+            raise SystemExit(1)
+    else:
+        os.close(descriptor)
+        raise SystemExit(1)
+print(json.dumps(files, sort_keys=True))
+"""
 
 
 def main():
-    """Compare source bytes to the delivered secret without printing either value."""
-    expected = SECRET_FILE.read_bytes()
-    result = subprocess.run(
-        ["podman", "exec", "identity-server-app", "bash", "-c",
-         'printf "%s" "$ApiResources__0__ApiSecrets__0__Value"'],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
-    )
-    if result.returncode or len(expected) != 32 or result.stdout != expected:
-        raise RuntimeError("Generated API secret delivery did not match its source file")
-    print("PASS: generated API secret matches its source bytes; values are withheld")
+    """Check actual app credential bytes, mode, ownership and read-only/backend isolation."""
+    for component in ("app1", "app2"):
+        if not (ROOT / "installed" / component).is_file():
+            continue
+        expected = {}
+        for name in NAMES:
+            source = ROOT / component / "credentials/todo" / name
+            expected[name] = {
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "mode": 0o400, "uid": 0, "gid": 0,
+            }
+        result = subprocess.run(
+            ["podman", "exec", component + "-todo-backend", "python", "-c", PROBE],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=20,
+        )
+        if result.returncode or json.loads(result.stdout) != expected:
+            raise RuntimeError("Backend credential content, mode or ownership mismatch")
+        frontend = subprocess.run(
+            ["podman", "inspect", "--format", "{{json .Mounts}}", component + "-todo-frontend"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=10,
+        )
+        if frontend.returncode:
+            raise RuntimeError("Cannot inspect frontend credential isolation")
+        for mount in json.loads(frontend.stdout) or []:
+            destination = mount["Destination"].rstrip("/")
+            if destination == "/certificates" or destination.startswith("/certificates/") or destination == "/run/secrets" or destination.startswith("/run/secrets/"):
+                raise RuntimeError("Frontend has a credential mount")
+        if (ROOT / component / "files" / (component + "-signing.tar")).exists():
+            raise RuntimeError("Unexpected app credential import archive in fresh state")
+        print("PASS: " + component + " credentials match private read-only backend files; no frontend mount")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, subprocess.TimeoutExpired):
-        raise SystemExit("FAIL: generated API secret delivery check failed")
-API_SECRET
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired):
+        raise SystemExit("FAIL: app credential delivery check failed; details withheld")
+CREDENTIAL_FILES
     components=$(installed_components)
     for component in $components; do
         if [[ $component == app1 || $component == app2 ]]; then

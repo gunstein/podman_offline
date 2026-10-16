@@ -3,11 +3,8 @@ DB_PORT: '5432'
 DB_USER: identity
 DB_NAME: identity
 GENERATED_SECRETS:
-- credentials/app/ApiResources__0__ApiSecrets__0__Value
 - credentials/identity-db/password
 SECRET_FILES:
-  identity-api-secrets:
-  - credentials/app
   identity-signing:
   - credentials/identity
   identity-database-password:

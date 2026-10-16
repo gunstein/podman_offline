@@ -8,6 +8,5 @@ GENERATED_SECRETS:
 SECRET_FILES:
   app2-database-password:
   - credentials/database
-VOLUME_FILES:
   app2-signing:
   - credentials/todo

@@ -9,7 +9,8 @@ Implemented: test baseline (item 10, commit `511099e`) and rename/separate
 platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
 path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), and
 retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)),
-and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)).
+and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)),
+and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/refusal scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -301,7 +302,9 @@ Status: planned; separate from password rotation.
 
 ## 4. Migration from retained monolithic 0.1.x installations
 
-Status: requires investigation and an explicit migration plan.
+Status: superseded by the clarification in item 15: no existing installations
+require migration. The original proposal below is retained as history, not
+planned implementation work.
 
 - Inventory old services, config, credentials and database volumes before defining
   a migration to core/app1/app2/help.
@@ -893,7 +896,9 @@ Hold funksjonell oppdeling og senere modulrefaktorering adskilt. Foretrekk ekspl
 
 ## 11. Plan an explicit retained core-to-platform migration
 
-Status: deferred design/operational work; not part of the deploy refactor.
+Status: superseded by the clarification in item 15: no existing installations
+require migration. The original proposal below is retained as history, not
+planned implementation work.
 
 0.3.0 deliberately refuses retained or mixed core/platform state. Design and
 review a separate procedure before migrating an important 0.2.x installation.
@@ -1384,9 +1389,9 @@ Foretrekk små, tydelige funksjoner og eksplisitte steg. Målet er at en middels
 
 ## 14. Tighten app credential delivery and remove unused API secret
 
-Status: planned; bounded follow-up to the credential-flow review. No implementation
-or target-runtime verification has been performed for this item. The full agent
-message follows.
+Status: implemented in 0.4.4; local checks and real target verification are
+reported in [credential delivery](acceptance/CREDENTIAL-DELIVERY.md). Target
+verification remains pending. The original agent message follows.
 
 Rett credential-håndteringen i `gunstein/podman_offline` med en liten, målrettet endring.
 Behold dagens komponentarkitektur og offline installasjonsmodell.
@@ -1498,3 +1503,144 @@ hypotetisk C#/GraphQL-applikasjon som del av denne oppgaven.
 Rapporter valgt løsning, konkrete endringer, testresultater og hva som gjenstår i
 lab. Forklar hvilke sikkerhetsegenskaper som faktisk er forbedret, uten å påstå at
 et bytte fra PVC til Secret alene gir kryptering eller en ny isolasjonsgrense.
+
+## 15. Remove obsolete legacy layout refusal checks
+
+Status: planned, separate cleanup. No existing installations require migration.
+
+Melding til agenten:
+
+Fjern kontrollene som bare oppdager og avviser historisk core-layout eller
+kombinert platform/Identity-layout i `gunstein/podman_offline`.
+`core-identity-data` i `deployment/deploy.py` er ett konkret eksempel; dagens
+Identity-volum heter `identity-data`. Det gamle navnet brukes til avvisning,
+ikke som et aktivt databasevolum.
+
+- Kartlegg `reject_legacy_layout()`, `reject_combined_platform()`,
+  `legacy_volume_exists()` og tilsvarende kontroller i sertifikat-/dev-script,
+  tester og aktive acceptance-scenarioer. Ta utgangspunkt i siste repo-status.
+- Fjern avvisningskontrollene, tilhørende kall og feiltekster om separate
+  migreringsprosedyrer. Ikke bare erstatt gamle volumnavn med nye navn i disse
+  kontrollene; dagens volumer skal ikke avvises som historisk state.
+- Oppdater tester og aktiv operatørdokumentasjon slik at de beskriver dagens
+  støttede layout. Behold historiske rapporter, evidence og fixtures som
+  eksplisitt representerer gamle releaser; forklar gjenværende gamle navn.
+- Ikke innfør migrering, fallback, aliaser, kompatibilitetsgrener, automatisk
+  opprydding eller sletting/flytting av gamle filer eller volumer. Oppgavene 4
+  og 11 skal ikke implementeres; de er historiske forslag som er erstattet av
+  presiseringen om at ingen eksisterende installasjoner trenger migrering.
+- Behold normal oppgradering og retry i dagens komponentmodell: config,
+  credentials og data skal fortsatt bevares. Behold database-preflight,
+  avhengighets-/versjonskontroller, pending-state-validering, komponentisolasjon,
+  sikre filstier/rettigheter og bundle-beskyttelse.
+
+Kjør produkttester, acceptance-harness-tester og repoets relevante ruff-, format-,
+pyright-, vermin- og shellcheck-kontroller samt `git diff --check`. Behold Python
+3.6-kompatibilitet for host-verktøyene. Rapporter hva som er fjernet, hvilke
+historiske referanser som er beholdt, testresultater og eventuelle labhull.
+
+## 16. Combine secret generation and file delivery declarations
+
+Status: planned, separate config simplification. Coordinate with item 14 using
+the actual repository state; this task does not choose a new delivery mechanism.
+
+Melding til agenten:
+
+Forenkle config-modellen i `gunstein/podman_offline` slik at eventuell generering
+deklareres sammen med filene som leveres gjennom `SECRET_FILES` eller
+`VOLUME_FILES`. Fjern behovet for en separat `GENERATED_SECRETS`-liste og dobbelt
+vedlikehold av samme filsti. Målet er at en middels erfaren utvikler enkelt skal
+forstå både hvor en fil kommer fra og hvordan den leveres til containeren.
+
+Et mulig format, som et utgangspunkt for vurdering, er:
+
+```yaml
+SECRET_FILES:
+  app2-database-password:
+    directory: credentials/database
+    generate:
+    - password
+  identity-signing:
+    directory: credentials/identity
+```
+
+Her er `generate` relativt til den deklarerte katalogen og angir bare filer som
+skal opprettes hvis de mangler. Uten `generate` brukes eksisterende filer.
+Støtt samme prinsipp for `VOLUME_FILES`, siden genererte sesjonsnøkler i dagens
+modell leveres gjennom volumer. Undersøk om formatet bør bruke en liste med
+filkilder fremfor én `directory`, slik at nødvendig støtte for flere kildefiler
+og kataloger ikke forsvinner. Velg én enkel og konsekvent modell; ikke innfør et
+generelt generator-/pluginrammeverk eller to parallelle config-formater.
+
+- Les gjeldende defaults, config-validering, generering, rendering, database-
+  preflight, bundling, dev-/sertifikatscript og tester før formatet bestemmes.
+- Behold dagens genereringsregler og tidspunkt: bare eksplisitt deklarerte
+  manglende filer opprettes der dette er tillatt. Eksisterende gyldige filer
+  beholdes byte-for-byte; tomme/ugyldige filer gir feil. Manglende databasepassord
+  med eksisterende databasevolum skal fortsatt avvises før generering.
+- Sertifikater og private signeringsnøkler skal fortsatt forberedes separat.
+  Den nye deklarasjonen skal ikke gjøre deploy til en sertifikatutsteder.
+- Behold credential-stier, Secret-navn og keys, volum-/PVC-navn, container-mounts,
+  passordformat/-lengde, config-precedence og autoritativ persistent config.
+  Behold sikre filstier, symlink-kontroller og private fil-/katalogrettigheter.
+- Bundle-beskyttelsen må fortsatt følge deklarerte private filer, inkludert
+  symlink-aliaser, og ikke bare filtrere på katalog- eller filnavn. Credentials
+  og komplette connection strings skal ikke eksponeres i logger eller bundles.
+- Oppdater alle aktive configs, eksempler, hjelpere, tester og dokumentasjon til
+  den nye deklarasjonen. Behold historiske rapporter og eksplisitte historiske
+  release-fixtures. Ingen eksisterende installasjoner trenger config-migrering:
+  ikke lag migreringskode, fallback, aliaser eller støtte for gammelt format.
+
+Legg til målrettet dekning av genererte og eksternt leverte filer, begge
+leveringsmåter, ugyldige deklarasjoner/stier, config-initialisering, database-
+preflight, byte-bevaring ved restart/redeploy/retry og bundle-beskyttelse.
+Behold config, credentials og data ved normale oppgraderinger i den nye modellen.
+Ikke kombiner med passordrotasjon, endret komponentarkitektur eller bred
+modulrefaktorering.
+
+Kjør produkttester, acceptance-harness-tester og relevante ruff-, format-,
+pyright-, vermin- og shellcheck-kontroller samt `git diff --check`. Behold Python
+3.6-kompatibilitet for host-verktøyene. Rapporter valgt format, endrede filer,
+testresultater og hva som eventuelt gjenstår å verifisere i lab.
+
+## 17. Use an init container for database preparation in one demo app
+
+Status: planned. At least one actual demo app must use an init container;
+the standalone `examples/init-containers` example is not sufficient.
+
+Melding til agenten:
+
+La én av appene i `gunstein/podman_offline` bruke `initContainers` til reell
+databaseklargjøring før backend starter. Velg og begrunn en egnet app ut fra
+gjeldende kode og manifests, fortrinnsvis app1 eller app2. Dagens Todo-backend
+oppretter tabellen i oppstartskoden, mens Identity klargjør brukertabellen selv.
+Flytt et konkret, nødvendig klargjøringssteg til init-containeren; ikke legg til
+en symbolsk init-container som bare kjører `echo` eller en ventekommando.
+
+- Undersøk Podman/Quadlet-oppstarten og hvor PostgreSQL kjører før løsningen
+  velges. En init-container må ikke vente på en ordinær databasecontainer i
+  samme pod som først starter etter init-containeren. Dokumenter hvordan
+  databasen faktisk blir tilgjengelig før klargjøringssteget kjører.
+- Backend skal starte først etter vellykket init. Databaseventing skal være
+  tidsbegrenset, og init-feil skal gi en tydelig feil uten å eksponere passord
+  eller komplette connection strings. Bruk appens eksisterende credential-
+  mekanisme og samme databasepassord som databasen og backend.
+- Klargjøringen skal være idempotent: fersk installasjon oppretter nødvendig
+  skjema; restart, redeploy og retry bevarer eksisterende databaseinnhold og
+  credentials. Ikke innfør passordrotasjon, destruktive resets, migrering fra
+  historiske layouts eller et generelt database-migreringsrammeverk.
+- Behold den andre appens virkemåte. Appene deler backend-kilde/image i dagens
+  modell; unngå utilsiktet å kreve init-klargjøring også i appen som ikke endres.
+  Behold isolasjon fra platform, identity og sibling-appens data og tjenester.
+- Oppdater nødvendig appkode, manifests, dev-flyt, bundling, tester og README.
+  Offline-bundlen skal inneholde alle nødvendige images; ingen nedlasting av
+  kode eller pakker ved init. Følg repoets regler for nye image-/releaseversjoner.
+
+Legg til målrettede tester for oppstartsrekkefølge, init-feil, tidsavbrudd og
+gjentatt klargjøring uten datatap. Kjør produkttester, acceptance-harness-tester
+og relevante lint-, format-, type-, kompatibilitets- og shellkontroller samt
+`git diff --check`. Behold Python 3.6-kompatibilitet for host-verktøyene.
+Beskriv nødvendig labverifikasjon av faktisk Podman-oppførsel, inkludert fersk
+installasjon og restart med beholdte data. Ikke påstå at stubbede tester beviser
+reell init-container-rekkefølge. Rapporter valgt app, konkret flyt, endrede filer,
+testresultater og verifikasjonshull.

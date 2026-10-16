@@ -21,8 +21,6 @@ spec:
       timeoutSeconds: 5
       failureThreshold: 3
     envFrom:
-    - secretRef:
-        name: identity-api-secrets
     - configMapRef:
         name: identity-settings
     env:

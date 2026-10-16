@@ -120,8 +120,6 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
             for entry in users/alice-password users/bob-password; do
                 component_password "identity/credentials/$entry"
             done
-            mkdir -p identity/credentials/app
-            chmod 700 identity/credentials/app
             ;;
         app1|app2)
             issue_component todo-client "$component/credentials/todo" 'extendedKeyUsage=clientAuth'

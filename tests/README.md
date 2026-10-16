@@ -1,3 +1,14 @@
+# App credential delivery (0.4.4)
+
+Apps now deliver session/client credentials through backend-only read-only
+Secrets with requested file mode `0400`; the unused Identity API-secret is
+removed. Source files, generation and retry preservation remain unchanged.
+See [credential delivery verification](../acceptance/CREDENTIAL-DELIVERY.md)
+for local coverage and required fresh target checks. Earlier reports below are
+historical evidence, not verification of this change.
+
+---
+
 # Deployment package (0.4.3)
 
 Current local check entry points:

@@ -399,8 +399,8 @@ when initializing that file, not merged again during installation.
 
 All credentials shown have persistent source files, including passwords and
 session keys. A secret value is confidential information; a Kubernetes `Secret`
-is one delivery mechanism. In the current implementation, session keys use a PVC
-even though they are confidential. The diagrams describe that implementation.
+is one delivery mechanism. App session keys and private client keys are delivered
+through app-specific Secrets; public registration directories still use PVC imports.
 
 ```mermaid
 flowchart TD
@@ -428,10 +428,10 @@ flowchart TD
     Mounted as a password file in the containers
     deployment/render.py: secret_documents()`"]
 
-    PVC["`VOLUME_FILES creates an import archive and PVC
+    APPSECRET["`SECRET_FILES delivers private app files
     Session key travels with the app's client files
-    app1-signing or app2-signing volume
-    deployment/render.py: write_file_archives()`"]
+    Secret app1-signing or app2-signing
+    Read-only mount with file mode 0400`"]
 
     DATABASE["`Database and client use the same password file
     /run/secrets/database/password
@@ -452,7 +452,7 @@ flowchart TD
     GENERATE --> DBFILE
     GENERATE --> SESSIONFILE
     DBFILE --> SECRET --> DATABASE
-    SESSIONFILE --> PVC --> BACKEND
+    SESSIONFILE --> APPSECRET --> BACKEND
     BACKEND -->|Signed cookie in response| BROWSER
     BROWSER -->|Cookie on later requests| BACKEND
 ```
@@ -468,14 +468,20 @@ the key into memory at startup. Keeping the same key across restarts and upgrade
 allows existing cookies to remain verifiable. Changing it requires a deliberate
 session-invalidation or rotation policy.
 
-Session-key delivery currently has an important permission limitation:
-`deployment/render.py: normalize()` gives ordinary import-archive members mode
-`0644`, including the session key and private client key. The original files and
-the archive itself are private, and the volume is mounted read-only only in the
-backend, but the imported file modes are broader than necessary. Hardening this
-delivery is [backlog item 14](BACKLOG.md#14-tighten-app-credential-delivery-and-remove-unused-api-secret).
-Changing to a Secret alone would not establish encryption or memory-only storage
-in Podman; actual permissions and lifecycle behavior must also be verified.
+App session keys and private client keys are delivered through `SECRET_FILES` as
+`app1-signing` / `app2-signing`, mounted read-only only in the backend at
+`/certificates`. The Secret volume specifies `defaultMode: 256` (octal `0400`)
+and explicit file keys. The current backend image runs as container root; the
+owner-only files are intended for UID/GID 0 inside that rootless container. A
+future non-root image requires a matching ownership/delivery design and tests.
+No app signing-PVC or private credential import archive is generated. General
+public import archives retain their existing normalized modes.
+
+Persistent source files remain private and are not rotated at restart, upgrade
+or retry. Rendered YAML contains base64-encoded credentials and is written with
+mode `0600`; base64 is not encryption. A Secret does not promise encrypted or
+memory-only Podman storage. Actual file ownership, modes and mount isolation
+remain subject to [target verification](acceptance/CREDENTIAL-DELIVERY.md).
 
 ### Certificate and private-key flow
 
@@ -524,8 +530,8 @@ flowchart TD
     deployment/render.py: secret_documents()
     Identity config.defaults.yaml and manifests`"]
 
-    CLIENTPVC["`VOLUME_FILES delivers the app's client files
-    Import archive and app-specific signing-PVC
+    CLIENTSECRET["`SECRET_FILES delivers the app's client files
+    App-specific Secret, file mode 0400
     Mounted read-only at /certificates in backend
     App config.defaults.yaml and 60-todo.yaml`"]
 
@@ -553,15 +559,14 @@ flowchart TD
     ISSUE --> CLIENTFILES
     TLSFILES --> TLSSECRET --> HTTPS
     SIGNFILES --> SIGNSECRET --> TOKENS
-    CLIENTFILES --> CLIENTPVC --> AUTH
+    CLIENTFILES --> CLIENTSECRET --> AUTH
     CLIENTFILES -->|Public certificate only; never the private key| PUBLIC
     PUBLIC --> AUTH
 ```
 
-The diagrams omit demo-user password creation. They also omit
-`ApiResources__0__ApiSecrets__0__Value`: the current config generates it and
-delivers it through `identity-api-secrets`, but the current Identity application
-does not consume it. Its removal is included in backlog item 14.
+The diagrams omit demo-user password creation. The unused Identity API-secret
+generation and environment delivery have been removed. API scopes, client
+certificate authentication and Identity token signing are unchanged.
 
 The session-cookie example is specific to the Flask Todo backend. A different
 application must explicitly consume its credential files using its own framework;

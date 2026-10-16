@@ -32,7 +32,7 @@ performs database volume checks; lifecycle preflight does that first.
 | Component | Owns | Requires |
 | --- | --- | --- |
 | platform | HTTPS proxy, web TLS, public routes | none |
-| identity | IdentityServer/DB, users, signing/API material, Data Protection, public OIDC clients | platform |
+| identity | IdentityServer/DB, users, signing material, Data Protection, public OIDC clients | platform |
 | app1 / app2 | Own app, DB, private client/session credentials | platform + identity |
 | help | Static help and public route | platform |
 
@@ -103,3 +103,19 @@ No migration code, fallback root deploy.py or compatibility layer for existing
 installations is added. Historical pinned-release helpers and reports retain
 their original layouts. Fresh target verification of directory trust is still
 required; see [refactor verification](acceptance/DEPLOY-REFACTOR.md).
+
+## Private app file delivery (0.4.4)
+
+App `credentials/todo/` files, including the session key and private OIDC client
+key, use `SECRET_FILES` (`app1-signing` / `app2-signing`). The backend alone mounts
+the Secret read-only at `/certificates`, with explicit keys and file mode `0400`
+for the current container-root process. These files no longer use `VOLUME_FILES`
+or a signing-PVC import archive. Shared route/client imports keep their existing
+public archive normalization. Source files, credential generation, persistent
+config precedence and lifecycle retry state are unchanged.
+
+Identity no longer generates or delivers the unused API-secret environment
+value. Its API scopes, signing credentials, users and database are unchanged.
+There are no new images, automatic migration, credential cleanup or rotation.
+Real Podman permissions/isolation remain unverified; see
+[credential delivery verification](acceptance/CREDENTIAL-DELIVERY.md).

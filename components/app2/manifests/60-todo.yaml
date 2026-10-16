@@ -61,8 +61,18 @@ spec:
       failureThreshold: 3
   volumes:
   - name: certificates
-    persistentVolumeClaim:
-      claimName: app2-signing
+    secret:
+      secretName: app2-signing
+      defaultMode: 256
+      items:
+      - key: session-key
+        path: session-key
+      - key: todo-client.key
+        path: todo-client.key
+      - key: todo-client.crt
+        path: todo-client.crt
+      - key: ca.crt
+        path: ca.crt
   - name: password
     secret:
       secretName: app2-database-password

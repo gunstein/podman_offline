@@ -110,6 +110,7 @@ class CertificateTests(unittest.TestCase):
             ),
             "Adding app2 changed existing credentials",
         )
+        self.assertFalse((target / "identity/credentials/app").exists())
         before_repeat = after
         for component in ("platform", "identity", "app1", "app2"):
             result = self.run_script("--root", str(target), component, "example.test")
