@@ -1,3 +1,0 @@
-FROM docker.io/library/nginx:1.28-alpine
-COPY default.conf /etc/nginx/templates/default.conf.template
-COPY 15-resolver.envsh /docker-entrypoint.d/15-resolver.envsh

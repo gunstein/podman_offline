@@ -3,6 +3,7 @@
 import contextlib
 import hashlib
 import io
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -537,6 +538,49 @@ data: {image: ignored}
                 alias.unlink()
                 path.unlink()
         self.process.assert_not_called()
+
+    def test_actual_platform_bundle_ships_yaml_proxy_and_stock_image_with_checksums(
+        self,
+    ):
+        repo = Path(__file__).resolve().parent.parent
+        self.write("bundles.yaml", "platform: [platform]\n")
+        self.write("PLATFORM_VERSION", "1.2.4\n")
+        self.write("IDENTITY_VERSION", "1.2.3\n")
+        self.write(
+            "config/common.defaults.yaml",
+            (repo / "config/common.defaults.yaml").read_text(),
+        )
+        shutil.copytree(repo / "components/platform", self.root / "components/platform")
+        bundle.build()
+        image = "docker.io/library/nginx:1.28-alpine"
+        self.assertEqual(
+            self.process.call_args_list[0].args[0],
+            ["podman", "pull", "--policy=always", image],
+        )
+        self.assertEqual(self.process.call_args_list[1].args[0][-1], image)
+        path = bundle.DIST / "myproduct-platform-1.2.4-offline.tar.gz"
+        with tarfile.open(str(path)) as archive:
+            prefix = "myproduct-platform-1.2.4/"
+            images = archive.extractfile(prefix + "images/images.txt")
+            assert images is not None
+            with images:
+                self.assertEqual(images.read().decode().splitlines(), [image])
+            for filename in ("20-proxy-config.yaml", "80-proxy.yaml"):
+                self.assertIn(
+                    prefix + "components/platform/manifests/" + filename,
+                    archive.getnames(),
+                )
+            self.assertFalse(any("apps/proxy" in name for name in archive.getnames()))
+            checksums = archive.extractfile(prefix + "checksums.sha256")
+            assert checksums is not None
+            with checksums:
+                rows = checksums.read().decode().splitlines()
+            for row in rows:
+                digest, filename = row.split("  ", 1)
+                content = archive.extractfile(prefix + filename)
+                assert content is not None
+                with content:
+                    self.assertEqual(hashlib.sha256(content.read()).hexdigest(), digest)
 
     def test_component_bundles_include_only_selected_components_and_images(self):
         """Build three independent archives with matching platform versions and no local state."""

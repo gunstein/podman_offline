@@ -152,3 +152,20 @@ No config migration/fallback or eager credential creation is introduced.
 Persistent config precedence, mounts/names, images and the current component
 architecture remain unchanged. See
 [file-source verification](acceptance/FILE-SOURCES.md) for results and limits.
+
+## Standard nginx proxy (0.4.7)
+
+Platform now references the stock `docker.io/library/nginx:1.28-alpine` image.
+Its public ConfigMap template and the short shell startup command live entirely
+in platform manifests; apps/proxy/ is removed. The startup command uses the
+container's DNS and a two-variable envsubst whitelist before exec nginx. TLS,
+public route imports, dynamic upstreams and health/port settings are preserved.
+No deployment renderer, app build/pull helper or bundle builder code changed.
+The existing image discovery/pull/archive path handles nginx as a registry image.
+Explicit data deletion also removes mounted ConfigMap volumes declared by the
+selected component; environment-only ConfigMaps add no volume to that list.
+The validated names are saved in the existing uninstall pending record before
+any destructive steps, so retry still works after the rendered YAML is removed.
+Ordinary uninstall retains these volumes along with the component's other data.
+See [proxy verification](acceptance/NGINX-YAML.md) for scope, source review and
+checks; real nginx/Podman/SELinux behavior still requires the lab.

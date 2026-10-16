@@ -229,6 +229,32 @@ public product payloads. Declarations in common/component defaults and local/mat
 secrets from being copied into bundles, including through symlink aliases. Keep
 private files out of shipped directories and retain their declarations.
 
+## Proxy from YAML
+
+Platform uses `docker.io/library/nginx:1.28-alpine` directly, the same nginx
+series/base tag previously used for the custom proxy image. There is no
+`apps/proxy/` build recipe. The other application images still use the existing
+`dev/build-images.sh`; `dev/pull-images.sh` fetches standard nginx, and the bundle
+builder includes it in the platform offline archive. Production loads the
+archive and uses `imagePullPolicy: Never`.
+
+`components/platform/manifests/20-proxy-config.yaml` holds the public nginx
+template in ConfigMap `platform-proxy-config`. The pod mounts it read-only at
+`/etc/nginx/proxy-template`. Its startup command in `80-proxy.yaml` reads the
+first nameserver from the container's `/etc/resolv.conf`, substitutes only
+`HTTPS_PORT` and `DNS_SERVER` with envsubst, writes the runtime config to
+`/etc/nginx/conf.d/default.conf` and executes `nginx -g 'daemon off;'` as the
+main process. No host script or custom nginx image is needed.
+
+The existing TLS Secret and route PVC remain read-only at `/run/secrets/web`
+and `/routes`. The template includes `/routes/installed.conf`; app/Identity
+routes stay separate public registrations. Variable upstreams and runtime DNS
+allow platform/help without Identity or apps, and later app additions without
+hardcoded backend addresses. The renderer still replaces only whole `@@...@@`
+values; nginx variable substitution is explicitly limited at container startup.
+See [proxy verification](acceptance/NGINX-YAML.md) for local checks and pending
+real-container/lab verification.
+
 ## Config, secrets and persistence
 
 Component `credentials/` directories contain passwords, session keys, private
@@ -624,7 +650,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.6
+version=0.4.7
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)

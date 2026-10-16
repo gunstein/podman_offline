@@ -1,4 +1,0 @@
-#!/bin/sh
-# Resolve component pod names at request time using the container's DNS server.
-DNS_SERVER=$(awk '/^nameserver / { print $2; exit }' /etc/resolv.conf)
-export DNS_SERVER

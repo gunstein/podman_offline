@@ -12,7 +12,8 @@ retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY
 and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)),
 and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)),
 and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance/LEGACY-CHECK-CLEANUP.md)),
-and unified file-source declarations (item 16, 0.4.6; [verification](acceptance/FILE-SOURCES.md)).
+and unified file-source declarations (item 16, 0.4.6; [verification](acceptance/FILE-SOURCES.md)),
+and stock nginx with YAML proxy config (item 18, 0.4.7; [verification](acceptance/NGINX-YAML.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/lifecycle scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -1653,17 +1654,24 @@ installasjon og restart med beholdte data. Ikke påstå at stubbede tester bevis
 reell init-container-rekkefølge. Rapporter valgt app, konkret flyt, endrede filer,
 testresultater og verifikasjonshull.
 
-## 18. Extract app image building into Python and use stock nginx for proxy
+## 18. Move proxy configuration out of apps and use stock nginx from YAML
 
-Status: planned. Separate build/manifest cleanup; no implementation performed.
+Status: implemented in 0.4.7 with the revised scope: existing app image building
+is unchanged, standard nginx is configured through platform YAML. See
+[proxy verification](acceptance/NGINX-YAML.md) for checks and remaining lab work.
+The original revised agent message follows.
 
 Melding til agenten:
 
-Skill ut koden som bygger demoappene under `apps/` til en egen Python-fil i
-`gunstein/podman_offline`. Fjern samtidig behovet for å bygge et eget proxy-image:
-platform skal referere et versjonert standard nginx-image direkte, og alt som
-trengs for proxyens konfigurasjon/oppstart skal deklareres i manifest-YAML.
-Behold eksisterende komponentarkitektur, CLI og offline installasjonsmodell.
+Fjern den egendefinerte proxyen fra `apps/` i `gunstein/podman_offline`. Platform
+skal referere et versjonert standard nginx-image direkte, og alt som trengs for
+proxyens konfigurasjon/oppstart skal deklareres i manifest-YAML under platform.
+Det skal ikke lenger bygges et eget proxy-image.
+
+Image-byggingen for de øvrige appene skal være som i dag. Ikke flytt byggelogikk
+til Python og ikke refaktorer `dev/build-images.sh`, `dev/pull-images.sh` eller
+bundle-verktøyet som del av denne oppgaven. Behold eksisterende
+komponentarkitektur, CLI og offline installasjonsmodell.
 
 ### 1. Les eksisterende flyt
 
@@ -1674,23 +1682,16 @@ tester. Undersøk minst `dev/build-images.sh`, `dev/pull-images.sh`,
 platform-manifestene, ruteregistreringene og image-/registry-acceptance-hjelperne.
 Funksjonsnavn og filer kan ha endret seg; bruk faktisk gjeldende repo-status.
 
-### 2. Egen Python-fil for image-bygging
+### 2. Behold eksisterende image-bygging
 
-- Flytt image-utvalg, validering og byggekommandoer fra shell til en liten,
-  forståelig Python-fil, for eksempel `dev/build_images.py`. Behold
-  `./dev/build-images.sh` som en tynn wrapper som bruker `python3 -B`.
-- Bruk manifestenes faktiske, entydige image-referanser som kilde til hvilke
-  demo-images som skal bygges, og hvilke tags de får. Gjenbruk eksisterende
-  image-discovery/validering uten sirkulære imports eller duplisert image-liste.
-- Behold dagens skille: bygg lokale demoapp-images med passende Containerfile
-  og build context; registry-images hentes gjennom eksisterende pull-flyt.
-  Behold PostgreSQLs eksplisitte upstream-pull/lokale tag dersom dette fortsatt
-  er gjeldende modell. Ikke innfør skjult bygging som fallback ved pull-feil.
-- Stopp tydelig ved ukjent lokal build-oppskrift, ugyldig referanse eller feilet
-  Podman-kommando. Behold feilkoder og unngå shell-interpolering av argumenter.
-- Ingen bygging eller andre handlinger ved import. Wrapper og Python-entrypoint
-  skal finne repoet korrekt også fra en annen arbeidsmappe, uten bytecode-filer.
-  Bruk Python 3.6-kompatibel kode og eksisterende avhengigheter.
+- Behold `dev/build-images.sh` og dagens oppskrifter/build contexts/tags for
+  øvrige app-images. Ikke lag en ny Python-fil eller wrapper for image-bygging.
+- Behold manifestdrevet image-discovery, skille mellom lokale demo-builds og
+  registry-pull, PostgreSQLs gjeldende upstream-pull/lokale tag, feilkoder og
+  validering. Ikke legg til fallback-bygging ved pull-feil.
+- Det eneste tilsiktede utslaget i image-flyten er at proxyen blir et vanlig
+  registry-image: den hentes av eksisterende pull-flyt og bygges ikke lokalt.
+  Tilpass bare hjelpere som konkret avhenger av det gamle proxy-imaget.
 
 ### 3. Proxy uten eget image-bygg
 
@@ -1725,9 +1726,10 @@ isolasjon mellom bundles. Produksjon skal ikke hente images eller pakker fra net
 Oppdater dev-/acceptance-hjelpere som fortsatt forventer egen proxy-build eller
 filene under `apps/proxy`. Ikke endre historiske rapporter eller pinned fixtures.
 
-Legg til målrettede tester for Python-entrypoint/wrapper fra annen arbeidsmappe,
-korrekte manifest-tags/build contexts, deduplisering, build-/pull-feil og ingen
-build av nginx. Verifiser renderet proxy-YAML, runtime-templating/DNS, bevarte
+Behold testene for dagens image-bygging og pull-feil. Legg til målrettet dekning
+av at nginx ikke bygges, men oppdages og hentes gjennom eksisterende pull-flyt,
+og at øvrige app-builds bruker samme tags og contexts som før. Verifiser renderet
+proxy-YAML, runtime-templating/DNS, bevarte
 nginx-variabler, image-inkludering i offline-bundle og uendrede TLS-/rutemounts.
 Oppdater tester som tidligere leste `apps/proxy/default.conf`, uten å svekke
 kontrollene for separate komponenter og dynamiske ruteregistreringer.
@@ -1735,7 +1737,8 @@ kontrollene for separate komponenter og dynamiske ruteregistreringer.
 Kjør produkttester, acceptance-harness-tester, ruff, formatkontroll, pyright,
 vermin, shellcheck og `git diff --check` med repoets oppsett. Oppdater relevante
 releaseversjoner etter repoets regler, uten å endre uendrede app-images/tags.
-Dokumenter ny byggeflyt og hvordan proxyen konfigureres fra YAML. Beskriv nødvendig
+Dokumenter at app-byggingen er uendret, og hvordan standard nginx hentes og
+proxyen konfigureres fra YAML. Beskriv nødvendig
 labverifikasjon av HTTPS, innlogging, platform/help uten Identity, app-tillegg,
 DNS etter restart, helse og offline installasjon. Ikke reset labmiljøer uten
 autorisasjon og ikke påstå at stubbede tester beviser faktisk nginx/Podman-atferd.
@@ -1745,3 +1748,29 @@ passordrotasjon, ny komponentmodell eller bred deploy-refaktorering. Behold
 persistente config-/credential-bytes, databasedata, retry og SELinux-/fapolicyd-
 kontroller. Rapporter endrede filer, valgt YAML-/entrypoint-løsning, faktiske
 testresultater og verifikasjonshull.
+
+## 19. Remove branches whose changes are already in main
+
+Status: planned. Branch deletion has not been performed.
+
+Melding til agenten:
+
+Rydd opp i de to branchene `fix/atomic-install-records` og `improvements-0-2`
+i `gunstein/podman_offline`. Behold `main`.
+
+Ved kontroll 16. oktober 2026 var `improvements-0-2` inkludert i historikken til
+`main`. De tre commitene på `fix/atomic-install-records` var samlet i commit
+`c1e26e2369c94350aae36ead018fc5f82117ffc0` på `main`, med identisk innhold i de
+tre berørte filene. Den branchen trenger derfor ingen ekstra merge.
+
+Hent oppdatert remote-status før sletting og kontroller at ingen av branchene
+har fått nye endringer som mangler i `main`. For atomic-install-records må
+kontrollen ta høyde for at endringene er samlet i én commit; manglende felles
+commit-ID alene betyr ikke at innholdet mangler. Hvis nytt arbeid mangler i
+`main`, rapporter dette og behold den aktuelle branchen.
+
+Slett bare de to navngitte remote-branchene når innholdet er bekreftet ivaretatt.
+Rydd eventuelle tilsvarende lokale brancher og foreldede remote-referanser uten
+å miste lokale endringer. Ikke endre kildekode, releaseversjoner eller historikk
+på `main`, og ikke opprett en ny merge bare for å markere branchene som merget.
+Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.

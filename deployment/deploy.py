@@ -1063,6 +1063,27 @@ def uninstall(component=None, delete_data=False):
                 and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
             }
         )
+        config_maps = {
+            doc["metadata"]["name"]
+            for doc in documents
+            if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
+        }
+        for doc in documents:
+            if not isinstance(doc, dict) or doc.get("kind") != "Pod":
+                continue
+            for volume in doc.get("spec", {}).get("volumes", []):
+                if "configMap" not in volume:
+                    continue
+                source = volume["configMap"]
+                if (
+                    not isinstance(source, dict)
+                    or not isinstance(source.get("name"), str)
+                    or source["name"] not in config_maps
+                ):
+                    raise common.DeployError("Invalid mounted ConfigMap for uninstall")
+                if source["name"] not in volumes:
+                    volumes.append(source["name"])
+        volumes.sort()
         if any(
             not common.ID.fullmatch(name) or not name.startswith(component + "-")
             for name in volumes

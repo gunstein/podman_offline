@@ -1,3 +1,14 @@
+# Standard nginx from YAML (0.4.7)
+
+Platform uses stock nginx and a mounted public ConfigMap template. Existing
+fresh app1-first/app2-first and platform/help-only scenarios remain applicable.
+The local harness is verified, but real nginx/Podman/HTTPS/DNS and target policy
+checks still require the authorized lab. See [proxy verification](NGINX-YAML.md)
+for scope, local results and the remaining matrix. Older evidence below does
+not verify this release.
+
+---
+
 # File source declarations (0.4.6)
 
 Current SECRET_FILES/VOLUME_FILES IDs contain lists of `{path: ...}` sources

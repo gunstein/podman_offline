@@ -891,7 +891,7 @@ class RenderTests(DeployFixture):
         self.assertEqual(kinds.count("Pod"), 8)
         self.assertEqual(kinds.count("Secret"), 8)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 6)
-        self.assertEqual(kinds.count("ConfigMap"), 4)
+        self.assertEqual(kinds.count("ConfigMap"), 5)
         self.assertEqual(len(rendering.find_images(docs)), 6)
         rendering.check_links(docs, {})
         self.process.assert_not_called()

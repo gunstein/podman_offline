@@ -241,7 +241,10 @@ class IdentityTests(ComponentFixture):
         self.assertEqual(set(identity["VOLUME_FILES"]), {"identity-clients"})
         self.assertEqual(identity["DB_HOST"], "identity-postgres")
         self.assertEqual(identity["DB_USER"], "identity")
-        self.assertNotIn("/identity/", (repo / "apps/proxy/default.conf").read_text())
+        proxy = rendering.load_yaml_all(
+            repo / "components/platform/manifests/20-proxy-config.yaml"
+        )[0]
+        self.assertNotIn("/identity/", proxy["data"]["default.conf.template"])
         route = (repo / "components/identity/route.conf").read_text()
         self.assertIn("location /identity/", route)
         self.assertIn("set $identity_upstream identity-server:8080", route)

@@ -93,7 +93,7 @@ class PlatformSafetyTests(ComponentFixture):
             deploy.install()
         self.process.assert_not_called()
 
-    def test_platform_data_deletion_targets_only_its_renamed_volume(self):
+    def test_platform_data_deletion_targets_only_its_pvc_and_mounted_config_map(self):
         self.select("platform")
         self.write("PLATFORM_VERSION", "1.1.0\n")
         path = self.root / "components/platform/manifests/10-pod.yaml"
@@ -102,7 +102,8 @@ class PlatformSafetyTests(ComponentFixture):
             {
                 "name": "data",
                 "persistentVolumeClaim": {"claimName": "platform-routes"},
-            }
+            },
+            {"name": "template", "configMap": {"name": "platform-proxy-config"}},
         ]
         path.write_text(
             yaml.safe_dump_all(
@@ -110,6 +111,16 @@ class PlatformSafetyTests(ComponentFixture):
                     {
                         "kind": "PersistentVolumeClaim",
                         "metadata": {"name": "platform-routes"},
+                    },
+                    {
+                        "kind": "ConfigMap",
+                        "metadata": {"name": "platform-proxy-config"},
+                        "data": {"template": "public template"},
+                    },
+                    {
+                        "kind": "ConfigMap",
+                        "metadata": {"name": "platform-settings"},
+                        "data": {"PORT": "8443"},
                     },
                     pod,
                 ]
@@ -126,10 +137,34 @@ class PlatformSafetyTests(ComponentFixture):
             for call in self.process.call_args_list
             if call.args[0][:3] == ["podman", "volume", "rm"]
         ]
-        self.assertEqual(removals, [["podman", "volume", "rm", "platform-routes"]])
+        self.assertEqual(
+            removals,
+            [
+                ["podman", "volume", "rm", "platform-proxy-config"],
+                ["podman", "volume", "rm", "platform-routes"],
+            ],
+        )
         self.assertEqual((common.HOME / "app1/config.yaml").read_bytes(), sibling)
         self.assertFalse((common.HOME / "platform").exists())
         self.assertTrue((common.QUADLET_DIR / "myproduct.network").exists())
+
+    def test_invalid_mounted_config_map_refuses_before_uninstall_side_effects(self):
+        deploy.install()
+        output = deploy.component_paths("app1")[2]
+        documents = list(yaml.safe_load_all(output.read_text()))
+        pod = next(doc for doc in documents if doc.get("kind") == "Pod")
+        for source in (None, {"name": []}, {"name": "app2-private"}):
+            with self.subTest(source=source):
+                pod["spec"]["volumes"] = [{"name": "invalid", "configMap": source}]
+                output.write_text(yaml.safe_dump_all(documents))
+                before = self.snapshot()
+                self.process.reset_mock()
+                with self.assertRaisesRegex(
+                    common.DeployError, "Invalid mounted ConfigMap"
+                ):
+                    deploy.uninstall("app1", delete_data=True)
+                self.process.assert_not_called()
+                self.assertEqual(self.snapshot(), before)
 
     def test_invalid_component_arguments_refuse_before_any_operation(self):
         for arguments in (

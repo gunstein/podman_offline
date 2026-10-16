@@ -1,3 +1,13 @@
+# Standard nginx from YAML (0.4.7)
+
+Platform uses stock nginx and a mounted public ConfigMap template. New tests
+exercise real YAML rendering and shell/envsubst startup, unchanged app builds,
+registry pulls, offline archive checksums and scoped/retry-safe ConfigMap volume
+deletion. Podman/systemd transport and nginx itself are stubbed; see
+[proxy verification](../acceptance/NGINX-YAML.md) for results and target gaps.
+
+---
+
 # File source declarations (0.4.6)
 
 Current SECRET_FILES/VOLUME_FILES IDs contain lists of `{path: ...}` sources

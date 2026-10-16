@@ -120,6 +120,58 @@ class ImageHelperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(calls)
 
+    def test_actual_product_builds_unchanged_apps_and_pulls_stock_nginx(self):
+        """Exercise the existing helpers against the actual product manifest image set."""
+        shutil.copytree(ROOT / "components", self.root / "components")
+        recipes = (
+            ("help", "localhost/myproduct-help:0.2.0"),
+            ("identity", "localhost/myproduct-identity:0.2.1"),
+            ("todo-backend", "localhost/myproduct-todo-backend:0.2.1"),
+            ("todo-frontend", "localhost/myproduct-todo-frontend:0.2.0"),
+        )
+        for name, _ in recipes:
+            target = self.root / "apps" / name
+            target.mkdir(parents=True)
+            shutil.copy2(
+                ROOT / "apps" / name / "Containerfile", target / "Containerfile"
+            )
+        result, calls = self.helper("build-images.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [call for call in calls if call[0] == "build"],
+            [
+                [
+                    "build",
+                    "-t",
+                    image,
+                    "-f",
+                    "apps/" + name + "/Containerfile",
+                    "apps/" + name,
+                ]
+                for name, image in recipes
+            ],
+        )
+        self.assertEqual(
+            [call for call in calls if call[0] in ("pull", "tag")],
+            [
+                ["pull", "--policy=always", "docker.io/library/postgres:17.11"],
+                [
+                    "tag",
+                    "docker.io/library/postgres:17.11",
+                    "localhost/myproduct-postgres:17.11",
+                ],
+            ],
+        )
+        self.assertFalse(
+            any("proxy" in argument for call in calls for argument in call)
+        )
+        self.log.unlink()
+        result, calls = self.helper("pull-images.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            calls, [["pull", "--policy=always", "docker.io/library/nginx:1.28-alpine"]]
+        )
+
     def test_registry_only_manifests_never_build(self):
         """Skip demo builds and pull exact sorted registry names, including localhost:port."""
         images = ["registry.example.test/app:2", "localhost:5000/app:1"]

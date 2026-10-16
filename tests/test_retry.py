@@ -428,6 +428,53 @@ class RetryTests(ComponentFixture):
             },
         )
 
+    def test_mounted_config_map_deletion_survives_retry_after_yaml_is_removed(self):
+        manifest = self.root / "components/app1/manifests/10-pod.yaml"
+        documents = list(yaml.safe_load_all(manifest.read_text()))
+        pod = next(doc for doc in documents if doc.get("kind") == "Pod")
+        pod["spec"]["volumes"].append(
+            {"name": "public", "configMap": {"name": "app1-public-config"}}
+        )
+        documents.append(
+            {
+                "kind": "ConfigMap",
+                "metadata": {"name": "app1-public-config"},
+                "data": {"template": "public configuration"},
+            }
+        )
+        manifest.write_text(yaml.safe_dump_all(documents))
+        self.attempt()
+        volumes = ["app1-data", "app1-public-config", "app1-session", "app2-data"]
+        self.write("host-volumes.json", json.dumps(volumes))
+        self.attempt(
+            "uninstall",
+            expected=1,
+            delete_data=True,
+            failure=["podman", "volume", "rm", "app1-session"],
+        )
+        self.assertEqual(self.pending()["volumes"], volumes[:3])
+        self.assertFalse(deploy.component_paths("app1")[2].exists())
+        self.assertEqual(
+            json.loads((self.root / "host-volumes.json").read_text()), volumes[2:]
+        )
+        events = self.attempt("uninstall", delete_data=True)
+        self.assertEqual(
+            [event for event in events if event[:3] == ["podman", "volume", "rm"]],
+            [["podman", "volume", "rm", "app1-session"]],
+        )
+        self.assertEqual(
+            json.loads((self.root / "host-volumes.json").read_text()), volumes[3:]
+        )
+        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertEqual(
+            self.protected(),
+            {
+                name: value
+                for name, value in self.before.items()
+                if not name.startswith("app1/")
+            },
+        )
+
     def test_uninstall_retry_after_marker_and_data_are_already_gone(self):
         self.write("host-volumes.json", '["app1-data", "app1-session"]')
         self.attempt("uninstall", expected=1, delete_data=True, clear_failure=True)
