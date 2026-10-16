@@ -1,3 +1,14 @@
+# App1 database init (0.4.8)
+
+App1 now uses an actual schema init container. The existing `database-runtime`
+action also runs its init command in a disposable pod and replays it after
+inserting a row. Fresh app1-first/app2-first and platform/help-only scenarios
+remain applicable. Local harness checks passed, but real init order, retained
+data and target policy remain unverified. See [init verification](APP1-INIT.md)
+for details; earlier evidence does not verify this change.
+
+---
+
 # Standard nginx from YAML (0.4.7)
 
 Platform uses stock nginx and a mounted public ConfigMap template. Existing

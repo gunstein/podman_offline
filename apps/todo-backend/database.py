@@ -42,10 +42,10 @@ def parameters():
     }
 
 
-def connect():
+def connect(timeout=5):
     """Use libpq keyword parameters, avoiding connection-string interpolation."""
     return psycopg.Connection[DictRow].connect(
-        **parameters(), row_factory=dict_row, connect_timeout=5
+        **parameters(), row_factory=dict_row, connect_timeout=timeout
     )
 
 

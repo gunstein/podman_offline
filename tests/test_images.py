@@ -126,7 +126,7 @@ class ImageHelperTests(unittest.TestCase):
         recipes = (
             ("help", "localhost/myproduct-help:0.2.0"),
             ("identity", "localhost/myproduct-identity:0.2.1"),
-            ("todo-backend", "localhost/myproduct-todo-backend:0.2.1"),
+            ("todo-backend", "localhost/myproduct-todo-backend:0.2.2"),
             ("todo-frontend", "localhost/myproduct-todo-frontend:0.2.0"),
         )
         for name, _ in recipes:

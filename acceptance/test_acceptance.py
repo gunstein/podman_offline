@@ -1419,7 +1419,8 @@ class HealthTests(unittest.TestCase):
             names, init = self.namespace["expected_containers"](path)
         self.assertEqual(len(names), 11)
         self.assertIn("extra-app", names)
-        self.assertFalse(init)
+        self.assertEqual(init, {"app1-todo-prepare-database"})
+        self.assertTrue(names.isdisjoint(init))
 
 
 class LauncherDiagnosticsTests(unittest.TestCase):

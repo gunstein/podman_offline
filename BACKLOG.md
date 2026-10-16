@@ -13,7 +13,8 @@ and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REF
 and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)),
 and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance/LEGACY-CHECK-CLEANUP.md)),
 and unified file-source declarations (item 16, 0.4.6; [verification](acceptance/FILE-SOURCES.md)),
-and stock nginx with YAML proxy config (item 18, 0.4.7; [verification](acceptance/NGINX-YAML.md)).
+and stock nginx with YAML proxy config (item 18, 0.4.7; [verification](acceptance/NGINX-YAML.md)),
+and app1 database schema init (item 17, 0.4.8; [verification](acceptance/APP1-INIT.md)).
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/lifecycle scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -1614,8 +1615,10 @@ testresultater og hva som eventuelt gjenstår å verifisere i lab.
 
 ## 17. Use an init container for database preparation in one demo app
 
-Status: planned. At least one actual demo app must use an init container;
-the standalone `examples/init-containers` example is not sufficient.
+Status: implemented in 0.4.8. App1 uses a real schema-preparation init container;
+app2 retains backend initialization. Local checks and remaining real target
+verification are documented in [app1 init verification](acceptance/APP1-INIT.md).
+The original agent message follows.
 
 Melding til agenten:
 

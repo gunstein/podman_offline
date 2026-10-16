@@ -2,6 +2,7 @@
 """Disposable real PostgreSQL/runtime tests on the dev VM; never print credentials."""
 
 import base64
+import copy
 import os
 import subprocess
 import sys
@@ -79,6 +80,56 @@ def volume_guard(base, secret, claim):
     if (path.parent / "lost/password").exists():
         raise RuntimeError("Database volume guard changed private state")
     print("PASS: actual initialized volume refuses lost-password generation")
+
+
+def init_schema_check(base, network, client):
+    """Run the actual app1 init twice against the disposable, already started DB."""
+    probe = copy.deepcopy(client)
+    probe["metadata"]["name"] += "-schema"
+    probe["metadata"]["annotations"] = {
+        "io.podman.annotations.init.container.type": "always"
+    }
+    source = rendering.load_yaml_all(ROOT / "components/app1/manifests/60-todo.yaml")[
+        0
+    ]["spec"]["initContainers"][0]
+    init = copy.deepcopy(source)
+    init["env"] = copy.deepcopy(client["spec"]["containers"][0]["env"])
+    probe["spec"]["initContainers"] = [init]
+    check = probe["spec"]["containers"][0]
+    check.pop("args", None)
+    check["name"] = "check"
+    check["image"] = init["image"]
+    manifest = base / "schema-init.yaml"
+    for repeated in (False, True):
+        check["command"] = [
+            "python",
+            "-c",
+            """
+from database import connect
+from schema import verify_ready
+verify_ready()
+with connect() as db:
+    rows = db.execute("SELECT owner, title, done FROM todos ORDER BY id").fetchall()
+    if REPEATED:
+        assert rows == [{"owner": "init-check", "title": "retained todo", "done": False}]
+    else:
+        assert rows == []
+        db.execute("INSERT INTO todos(owner, title) VALUES ('init-check', 'retained todo')")
+print("Todo init and retained data verified")
+""".replace("REPEATED", repr(repeated)),
+        ]
+        manifest.write_text(yaml.safe_dump(probe))
+        manifest.chmod(0o600)
+        try:
+            podman(["kube", "play", "--network", network, str(manifest)])
+            name = probe["metadata"]["name"] + "-check"
+            if podman(["wait", name]).stdout.strip() != "0":
+                raise RuntimeError("Todo init ordering or retained-data check failed")
+        finally:
+            podman(["kube", "down", str(manifest)])
+    print(
+        "PASS: actual Todo init creates schema before client and retains rows on replay"
+    )
 
 
 def run():
@@ -280,6 +331,7 @@ def run():
                 ):
                     raise RuntimeError("Identity runtime evidence invalid")
                 podman(["kube", "down", str(client_manifest)])
+                init_schema_check(base, network, client)
                 client_dir = base / "client-input"
                 client_dir.mkdir(mode=0o700, exist_ok=True)
                 client_password = client_dir / "password"
@@ -407,7 +459,7 @@ def run():
                 )
         finally:
             # Only UUID-scoped disposable resources; fail if cleanup itself fails.
-            for name in (prefix + "-identity", host):
+            for name in (prefix + "-identity-schema", prefix + "-identity", host):
                 result = subprocess.run(
                     ["podman", "pod", "exists", name], capture_output=True, check=False
                 )

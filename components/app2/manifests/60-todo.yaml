@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: backend
-    image: localhost/myproduct-todo-backend:0.2.1
+    image: localhost/myproduct-todo-backend:0.2.2
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 90

@@ -1,3 +1,14 @@
+# App1 database init (0.4.8)
+
+App1 creates its Todo table in an init container using the existing database
+Secret; its backend verifies the schema and app2 retains backend creation.
+Tests cover real manifest order/credentials, bounded waiting and hard alarm,
+sanitized failures, backend dispatch, repeated SQL/data preservation through a
+documented SQLite adapter, and offline image inclusion. See
+[init verification](../acceptance/APP1-INIT.md) for results and runtime limits.
+
+---
+
 # Standard nginx from YAML (0.4.7)
 
 Platform uses stock nginx and a mounted public ConfigMap template. New tests

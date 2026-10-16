@@ -934,6 +934,37 @@ be recorded separately and old evidence is never changed.
 | Docs | Update overview, install/uninstall dependencies, tests/README and acceptance/README. |
 
 
+## App1 database init container
+
+App1's `app1-postgres` is a separate pod, declared in `40-postgres.yaml` before
+`app1-todo` in `60-todo.yaml`. Both dev's combined kube YAML and production's
+component YAML retain this order. PostgreSQL starts independently; the Todo
+pod's init container never waits for a regular container in its own pod.
+
+`prepare-database` runs `python /app/schema.py` from the same versioned backend
+image. It connects to the configured database using the same mounted
+`app1-database-password` Secret as PostgreSQL and the backend, then executes
+`CREATE TABLE IF NOT EXISTS todos`. It mounts no client signing/session files.
+Connection attempts have a two-second timeout, availability retries stop after
+60 seconds, SQL/lock waits are limited to five seconds, and the init process has
+a hard 75-second limit. Failures exit nonzero with a sanitized diagnostic.
+
+Podman must complete init successfully before starting the Todo backend/frontend.
+The pod annotation selects init type `always`, so a pod start reruns the
+idempotent preparation. App1's backend uses `TODO_SCHEMA_MODE=external`: it
+checks the required table and columns and refuses startup if they are missing;
+it does not create them as a substitute for init. Repeating init preserves
+existing rows, IDs, database volumes and credential bytes. After fixing a failed
+database/credential setup, retry the same dev or bundle install command.
+
+App2 still creates its own Todo table from backend startup. Both apps use
+`localhost/myproduct-todo-backend:0.2.2`; rebuild it on the build machine with
+`dev/build-images.sh`. Existing manifest discovery includes it once in each
+app's offline archive, covering both app1 init and backend. No packages or images
+are fetched on the target. Other images, component dependencies, data ownership
+and platform/Identity services are unchanged. See
+[init verification](acceptance/APP1-INIT.md) for local evidence and pending lab checks.
+
 ## PostgreSQL configuration and credentials
 
 Host, port, user and database name are ordinary component configuration. The

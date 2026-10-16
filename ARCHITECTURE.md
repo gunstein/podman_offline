@@ -169,3 +169,20 @@ any destructive steps, so retry still works after the rendered YAML is removed.
 Ordinary uninstall retains these volumes along with the component's other data.
 See [proxy verification](acceptance/NGINX-YAML.md) for scope, source review and
 checks; real nginx/Podman/SELinux behavior still requires the lab.
+
+## App1 schema initialization (0.4.8)
+
+App1 retains separate database and Todo pods. Sorted manifest order places the
+database first in dev and production. The Todo pod's `prepare-database` init
+container uses the shared backend image and database password Secret to create
+the Todo table idempotently. Podman init type `always` reruns preparation on pod
+start; failure prevents ordinary Todo containers from starting. Connection/SQL
+timeouts, an availability deadline and a hard process alarm bound the init step.
+
+The app1 backend checks the table under `TODO_SCHEMA_MODE=external`; app2 retains
+backend-driven creation using the same DDL. The shared image becomes 0.2.2 and
+app/help release VERSION becomes 0.4.8. Platform/Identity versions stay 0.4.7.
+No host lifecycle/render/build code, credentials, volumes or dependency rules
+change. The existing database-runtime lab action also exercises real init and
+replay with a retained row in its disposable database. See
+[init verification](acceptance/APP1-INIT.md) for local tests and runtime gaps.

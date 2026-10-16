@@ -582,6 +582,45 @@ data: {image: ignored}
                 with content:
                     self.assertEqual(hashlib.sha256(content.read()).hexdigest(), digest)
 
+    def test_actual_app1_bundle_includes_init_image_once_and_retains_init_command(self):
+        repo = Path(__file__).resolve().parent.parent
+        self.write("bundles.yaml", "app1: [app1]\n")
+        self.write("PLATFORM_VERSION", "1.2.3\n")
+        self.write("IDENTITY_VERSION", "1.2.3\n")
+        self.write(
+            "config/common.defaults.yaml",
+            (repo / "config/common.defaults.yaml").read_text(),
+        )
+        shutil.copytree(repo / "components/app1", self.root / "components/app1")
+        bundle.build()
+        image = "localhost/myproduct-todo-backend:0.2.2"
+        with tarfile.open(
+            str(bundle.DIST / "myproduct-app1-1.2.3-offline.tar.gz")
+        ) as archive:
+            prefix = "myproduct-app1-1.2.3/"
+            image_list = archive.extractfile(prefix + "images/images.txt")
+            assert image_list is not None
+            with image_list:
+                self.assertEqual(
+                    image_list.read().decode().splitlines().count(image), 1
+                )
+            manifest = archive.extractfile(
+                prefix + "components/app1/manifests/60-todo.yaml"
+            )
+            assert manifest is not None
+            with manifest:
+                pod = yaml.safe_load(manifest.read())
+            init = pod["spec"]["initContainers"][0]
+            self.assertEqual(init["image"], image)
+            self.assertEqual(init["command"], ["python", "/app/schema.py"])
+            self.assertEqual(init["imagePullPolicy"], "Never")
+        save = next(
+            call.args[0]
+            for call in self.process.call_args_list
+            if call.args[0][1] == "save"
+        )
+        self.assertEqual(save.count(image), 1)
+
     def test_component_bundles_include_only_selected_components_and_images(self):
         """Build three independent archives with matching platform versions and no local state."""
         self.write(

@@ -12,6 +12,7 @@ from authlib.integrations.flask_client import OAuth
 from authlib.oauth2.rfc7523 import PrivateKeyJWT
 from database import authentication_failed, connect, parameters
 from flask import Flask, abort, jsonify, redirect, request, session
+from schema import CREATE_TABLE, verify_ready
 
 ORIGIN = os.environ["PUBLIC_ORIGIN"].rstrip("/")
 ISSUER = ORIGIN + "/identity"
@@ -51,14 +52,7 @@ def initialize():
     for attempt in range(60):
         try:
             with connect() as db:
-                db.execute("""
-                    CREATE TABLE IF NOT EXISTS todos (
-                        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        owner text NOT NULL,
-                        title text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
-                        done boolean NOT NULL DEFAULT false
-                    )
-                """)
+                db.execute(CREATE_TABLE)
             return
         except psycopg.Error as error:
             if authentication_failed(error):
@@ -210,4 +204,7 @@ def delete_todo(todo_id):
     return "", 204
 
 
-initialize()
+if os.getenv("TODO_SCHEMA_MODE") == "external":
+    verify_ready()
+else:
+    initialize()
