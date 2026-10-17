@@ -70,12 +70,12 @@ def public_settings(config, path):
     return {key: config[key] for key in PUBLIC_KEYS}
 
 
-def check_public_settings(descriptor, config, path, home=None):
+def check_public_settings(descriptor, config, path):
     """A component declaring public_from must use that dependency's origin and port."""
     source = descriptor["public_from"]
     if source is None:
         return
-    source_path = component_paths(source, home)[0]
+    source_path = component_paths(source)[0]
     expected = public_settings(rendering.load_config(source_path), source_path)
     actual = public_settings(config, path)
     for key in PUBLIC_KEYS:

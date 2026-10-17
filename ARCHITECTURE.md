@@ -12,7 +12,8 @@ build entrypoint and also uses `-B`.
 | --- | --- |
 | `deployment/__main__.py` | Minimal CLI delegation |
 | `deployment/cli.py` | Arguments, exit codes and concise errors |
-| `deployment/common.py` | Release/service-user paths, fixed component contracts, shared constants and DeployError |
+| `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
+| `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order and role owners |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, registrations, retry state, Quadlet/systemd and component lifecycle |
 
@@ -27,45 +28,58 @@ and optionally writes import archives. Secret creation stays at the same
 validation boundary as before this refactor. General secret generation never
 performs database volume checks; lifecycle preflight does that first.
 
-## Fixed component graph
+## Declared component model (0.4.9)
 
-| Component | Owns | Requires |
-| --- | --- | --- |
-| platform | HTTPS proxy, web TLS, public routes | none |
-| identity | IdentityServer/DB, users, signing material, Data Protection, public OIDC clients | platform |
-| app1 / app2 | Own app, DB, private client/session credentials | platform + identity |
-| help | Static help and public route | platform |
+The component model is data. `bundles.yaml` (the catalog) declares each
+component's dependencies, version file, upgrade policy, `public_from` contract
+and route/client roles; [docs/COMPONENTS.md](docs/COMPONENTS.md) is the schema
+reference. `catalog.py` is the single reader and validator:
 
-`common.DEPENDENCIES` is the fixed graph; COMPONENTS is derived from its keys.
-`bundles.yaml` selects separate bundles; the builder validates selections and
-writes dependency ranges from the same graph. No generic plugin mechanism is
-introduced. PLATFORM_VERSION and IDENTITY_VERSION remain independent; VERSION
-versions app/help. Existing inclusive-min/exclusive-before checks and saved
-installed dependency metadata are unchanged.
+1. `load_catalog()` checks IDs, fields, dependencies, cycles and role owners.
+   `source_descriptors()` also checks directories, role files and confined
+   version files, and compiles one descriptor per component in dependency order.
+2. `bundle.py` writes that descriptor as the bundle's `bundle.yaml`;
+   `load_bundle_descriptor()` reads it on the target.
+3. `deploy.write_installed_metadata()` records it as `metadata/<id>.json`;
+   `load_installed_metadata()`, `installed_components()` and `dependents()` read
+   it back strictly. A completion marker without metadata is an error.
+
+Decisions read only these descriptors: `install_needed()` (upgrade policy),
+`check_dependencies_installed()` / `check_dependents()` (version ranges),
+`check_public_settings()` (`public_from`), `role_owners()` (who accepts routes
+and clients), `registration_stage()` (which registrations exist and which owner
+imports them) and `restart_order()` (reverse dependency order). No module names
+a demo component. The demo's certificate and user provisioning is the explicit
+`dev/demo-credentials.sh` / `scripts/generate-certificates.sh`.
 
 ## Lifecycle
 
-`install_components()` checks the host, pending conflicts, bundle/dependency
-contracts, versions, resource/config names, authoritative shared settings and DB
-state before staging registrations. Equal shared versions are excluded from
-rendering; the incoming bundle still has its images verified.
+`install_components()` validates before any write: the bundle descriptor, the
+installed metadata plus this descriptor as one set of known components
+(conflicting owners refused), pending conflicts, dependency and dependent
+ranges, resource/config names, the declared `public_from` settings and DB
+state. Then it stages registrations in a temporary directory. A `newer-only`
+component with an equal installed version is excluded from rendering; its
+images are still verified and its registrations still staged.
 
 `install_component_plan()` then reads as explicit steps:
 
 1. Check the existing shared network and materialize selected manifests.
 2. Load this bundle's archive and verify every required image.
-3. Record unfinished registration owners, then write public registrations.
-4. Write selected imports/YAML/Quadlets and changed shared-owner imports.
-5. Reload systemd, restart required services and check `is-active`.
-6. Acknowledge completed owners and write installed versions/dependency contracts.
+3. Write the installed metadata, so registrations name a known component.
+4. Record unfinished registration owners, then write public registrations.
+5. Write selected imports/YAML/Quadlets and changed owner imports.
+6. Reload systemd, restart the component and then changed owners
+   (`restart_order`), check `is-active` and acknowledge each owner.
+7. Write the installed version marker last as completion.
 
 The sequence describes the established behavior, including secret materialization
 before image loading and possible persistent file changes before a service
 failure. It is not rollback or permission to move safety checks earlier/later.
 Image failures leave deployed registrations/services untouched. Route changes
-restart platform, client metadata/certificate changes restart Identity; unchanged
-registrations with no pending work restart neither shared service. Sibling apps
-remain running.
+restart the route owner and client changes the client owner; unchanged
+registrations with no pending work restart no owner. Sibling apps remain
+running.
 
 Uninstall records its validated own volume inventory, deletion choice, stop
 checkpoint and unfinished owners before destructive work. It can resume after
@@ -81,7 +95,7 @@ from the component path; they are not migration or old-release adapters.
 ## Persistent state and trust
 
 Component config and `credentials/`, imported archives, registration directories,
-installed/dependency markers, retry metadata and Podman data belong to the service
+installed metadata and markers, retry metadata and Podman data belong to the service
 home. Shared CA/network ownership is unchanged. Release code, defaults, manifests
 and images are disposable; production never merges new defaults over existing
 config or credentials.

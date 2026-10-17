@@ -19,6 +19,8 @@ and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance
 and unified file-source declarations (item 16, 0.4.6; [verification](acceptance/FILE-SOURCES.md)),
 and stock nginx with YAML proxy config (item 18, 0.4.7; [verification](acceptance/NGINX-YAML.md)),
 and app1 database schema init (item 17, 0.4.8; [verification](acceptance/APP1-INIT.md)).
+Declarative components (item 20, 0.4.9; [verification](acceptance/DECLARATIVE-COMPONENTS.md))
+are implemented locally; real acceptance runs are pending.
 See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
 block the next implementation step. Run the historical upgrade at `511099e` and
 current platform/lifecycle scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
@@ -1790,7 +1792,11 @@ Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Analysis and agent instructions only; no implementation performed.
+Status: implemented in 0.4.9 on branch `feature/declarative-components`; local
+product and harness tests pass, real acceptance runs (demo and
+`--renamed-product`) are outstanding. See
+[verification](acceptance/DECLARATIVE-COMPONENTS.md) and
+[components](docs/COMPONENTS.md). The original task follows.
 This addresses custom installations failing when a component is renamed, for
 example from `identity` to `my-identity`. Component IDs currently reject `_`;
 retain the existing lowercase/digit/hyphen rule and explain it clearly.

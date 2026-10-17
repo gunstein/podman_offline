@@ -129,7 +129,7 @@ def load_catalog(root):
             check_id(dependency, f"{where}.requires")
             if dependency == name:
                 raise common.DeployError(f"{where}.requires must not name itself")
-        check_roles(name, catalog[name], where)
+        check_entry(name, catalog[name], where)
     for name, entry in catalog.items():
         for dependency in entry["requires"]:
             if dependency not in catalog:
@@ -142,8 +142,8 @@ def load_catalog(root):
     return catalog
 
 
-def check_roles(name, entry, where):
-    """Validate one component's roles; shared by catalog and descriptors."""
+def check_entry(name, entry, where):
+    """Validate the fields a catalog entry and a compiled descriptor share."""
     if entry["upgrade"] not in UPGRADES:
         raise common.DeployError(
             f"{where}.upgrade must be one of {', '.join(UPGRADES)}"
@@ -186,6 +186,8 @@ def check_owners(descriptors, where):
     for name, entry in descriptors.items():
         for role in ROLE_FILES:
             owner = entry[role]
+            # An owner outside this set is a missing dependency, reported by the
+            # catalog's requires check or by install's dependency check.
             if owner is None or owner not in descriptors:
                 continue
             if role not in descriptors[owner]["accepts"]:
@@ -330,7 +332,7 @@ def check_descriptor(data, where):
         if dependency == data["name"]:
             raise common.DeployError(f"{where}: requires must not name itself")
         check_range(requirement)
-    check_roles(data["name"], data, where)
+    check_entry(data["name"], data, where)
     return data
 
 
