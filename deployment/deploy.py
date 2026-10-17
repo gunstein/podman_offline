@@ -1042,7 +1042,7 @@ def install():
         install_components()
     elif (common.ROOT / "components").is_dir():
         raise common.DeployError(
-            "Run install from an unpacked platform/identity/app/help bundle, not the source checkout"
+            "Run install from an unpacked component bundle, not the source checkout"
         )
     else:
         install_standalone()
