@@ -142,6 +142,11 @@ from the component path; they are not migration or old-release adapters.
 
 ## Sequence diagrams
 
+The Mermaid source below is authoritative. For viewers without Mermaid, the
+rendered images are in `docs/diagrams/`; run `dev/render-diagrams.sh` after
+changing a diagram ([install](docs/diagrams/deploy-install.png),
+[build](docs/diagrams/build-bundle.png)).
+
 ### `./deploy install` from an unpacked bundle
 
 Validation happens before any write or host command; the database preflight
