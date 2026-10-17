@@ -314,7 +314,7 @@ def prepare_components():
             )
         shutil.rmtree(str(state / name), ignore_errors=True)
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
-        imports, updates = registration_stage(
+        imports, updates, _ = registration_stage(
             list(known), Path(directory), known, home=state
         )
         documents, archives = [], []
@@ -552,6 +552,11 @@ def registration_stage(components, directory, known, home=None):
     known maps component IDs to descriptors: installed metadata plus the incoming
     bundle in production, the source catalog in dev. Each existing registration
     must belong to a known component; the role owners come from accepts.
+
+    For the selected components the release files are authoritative: their
+    installed registrations are never copied, and a role the release no longer
+    declares is returned in removals. Absence for any other component never
+    means removal. Returns (imports, updates, removals).
     """
     home = home or common.HOME
     owners = catalog.role_owners(known, "registration owners")
@@ -575,14 +580,15 @@ def registration_stage(components, directory, known, home=None):
                     raise common.DeployError(
                         f"Unexpected public route registration: {path}"
                     )
-                shutil.copy2(path, directory / name / path.name)
+                if owner not in components:
+                    shutil.copy2(path, directory / name / path.name)
                 continue
             if not path.is_dir() or path.name not in known:
                 raise common.DeployError(
                     f"Unexpected public client registration: {path}"
                 )
-            if path.name in components and known[path.name]["clients"]:
-                continue  # Rebuild the incoming client even after a partial prior write.
+            if path.name in components:
+                continue  # The release decides, even after a partial prior write.
             target = directory / name / path.name
             target.mkdir()
             for filename in ("client.json", "client.crt"):
@@ -592,8 +598,16 @@ def registration_stage(components, directory, known, home=None):
                         f"Refuse symlinked public client file: {public}"
                     )
                 shutil.copy2(public, target / filename)
-    updates = {}
+    updates, removals = {}, set()
     for component in components:
+        for role, relative in (
+            ("routes", "routes/" + component + ".conf"),
+            ("clients", "clients/" + component),
+        ):
+            if known[component][role] is None and (
+                (home / relative).exists() or (home / relative).is_symlink()
+            ):
+                removals.add(relative)
         source = common.ROOT / "components" / component
         declared = {
             role: source / filename
@@ -648,7 +662,7 @@ def registration_stage(components, directory, known, home=None):
         imports[known[owners["routes"]]["accepts"]["routes"]] = [routes]
     if owners["clients"]:
         imports[known[owners["clients"]]["accepts"]["clients"]] = client_dirs + [index]
-    return imports, updates
+    return imports, updates, removals
 
 
 def registered_client_id(path):
@@ -718,17 +732,35 @@ def client_registration(component, path, config, config_path):
     }
 
 
-def write_registrations(updates, home=None):
-    """Write changed public registrations privately; unchanged files are kept."""
-    if any(((home or common.HOME) / relative).is_symlink() for relative in updates):
+def write_registrations(updates, home=None, removals=()):
+    """Write changed public registrations privately and delete removed ones.
+
+    Unchanged files are kept. Callers record owner work first (save_pending),
+    because a deleted registration no longer shows that its owner must restart.
+    """
+    home = home or common.HOME
+    if any(
+        (home / relative).is_symlink() for relative in list(updates) + list(removals)
+    ):
         raise common.DeployError("Refuse symlinked public registration output")
     for relative, data in updates.items():
-        target = (home or common.HOME) / relative
+        target = home / relative
         if target.is_file() and target.read_bytes() == data:
             continue
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.parent.chmod(0o700)
         rendering.write_private(target, data.decode("utf-8"))
+    for relative in sorted(removals):
+        target = home / relative
+        if target.is_dir():
+            for child in target.iterdir():
+                if child.is_symlink() or not child.is_file():
+                    raise common.DeployError(
+                        f"Refuse unexpected public registration file: {child}"
+                    )
+            shutil.rmtree(str(target))
+        elif target.exists():
+            target.unlink()
 
 
 def component_imports(component, imports, known):
@@ -864,9 +896,9 @@ def clear_pending():
     sync_pending_directory()
 
 
-def registration_changes(updates, owners, home=None):
+def registration_changes(updates, owners, home=None, removals=()):
     """Compare before writing so unfinished owners can be recorded first."""
-    changed = set()
+    changed = {owners[relative.split("/", 1)[0]] for relative in removals}
     for relative, data in updates.items():
         target = (home or common.HOME) / relative
         if target.is_symlink():
@@ -931,10 +963,10 @@ def load_and_verify_images(components, source_components, rendered):
             ) from None
 
 
-def apply_registration_updates(component, updates, owners):
-    """Record unfinished owners durably before writing their public registrations."""
+def apply_registration_updates(component, updates, removals, owners):
+    """Record unfinished owners durably before writing or deleting registrations."""
     pending = check_pending("install", component)
-    changed = registration_changes(updates, owners) | set(
+    changed = registration_changes(updates, owners, removals=removals) | set(
         pending["owners"] if pending else []
     )
     if changed:
@@ -944,7 +976,7 @@ def apply_registration_updates(component, updates, owners):
             "owners": sorted(changed),
         }
         save_pending(pending)
-    write_registrations(updates)
+    write_registrations(updates, removals=removals)
     return changed, pending
 
 
@@ -994,16 +1026,31 @@ def restart_component_services(components, changed, pending, known):
     """
     run("systemctl", "--user", "daemon-reload")
     for component in restart_order(known, set(components) | changed):
-        service = "myproduct-" + component + ".service"
-        run("systemctl", "--user", "restart", service)
-        run("systemctl", "--user", "is-active", "--quiet", service)
+        restart_service(component)
         if pending and component in pending["owners"]:
-            pending["owners"].remove(component)
-            if pending["owners"]:
-                save_pending(pending)
-            else:
-                clear_pending()
+            acknowledge_owner(pending, component, clear_when_done=True)
+            if not pending["owners"]:
                 pending = None
+
+
+def restart_service(component):
+    """Restart one component's unit and require it to be active."""
+    service = "myproduct-" + component + ".service"
+    run("systemctl", "--user", "restart", service)
+    run("systemctl", "--user", "is-active", "--quiet", service)
+
+
+def acknowledge_owner(state, owner, clear_when_done=False):
+    """Record that one owner's restart finished, so a retry skips only that owner.
+
+    An install record is finished once no owner is left; an uninstall record
+    still has its own final steps, so it is cleared by uninstall itself.
+    """
+    state["owners"].remove(owner)
+    if state["owners"] or not clear_when_done:
+        save_pending(state)
+    else:
+        clear_pending()
 
 
 def write_install_record(path, text):
@@ -1045,7 +1092,7 @@ def write_installed_marker(descriptor):
     )
 
 
-def install_component_plan(descriptor, checked, known, imports, updates):
+def install_component_plan(descriptor, checked, known, imports, updates, removals):
     """Apply a staged install in the established validation/write/restart order."""
     name = descriptor["name"]
     components = list(checked)
@@ -1054,7 +1101,7 @@ def install_component_plan(descriptor, checked, known, imports, updates):
     rendered = materialize_component_manifests(checked, imports, known)
     load_and_verify_images(components, [name], rendered)
     write_installed_metadata(descriptor)
-    changed, pending = apply_registration_updates(name, updates, owners)
+    changed, pending = apply_registration_updates(name, updates, removals, owners)
     write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
@@ -1113,8 +1160,8 @@ def install_components():
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
-        imports, updates = registration_stage([name], Path(directory), known)
-        install_component_plan(descriptor, checked, known, imports, updates)
+        imports, updates, removals = registration_stage([name], Path(directory), known)
+        install_component_plan(descriptor, checked, known, imports, updates, removals)
 
 
 def install():
@@ -1127,6 +1174,76 @@ def install():
         )
     else:
         install_standalone()
+
+
+def uninstall_plan(component, delete_data, installed):
+    """Validate installed state and return the uninstall record; changes nothing.
+
+    The volumes come from the installed YAML (Secrets, PVCs and mounted
+    ConfigMaps, all prefixed with the component ID); the owners are those
+    whose registration of this component must be rebuilt after removal.
+    """
+    _, _, output, _ = component_paths(component)
+    route = common.HOME / "routes" / (component + ".conf")
+    client = common.HOME / "clients" / component
+    documents = rendering.load_yaml_all(output)
+    rendering.check_component_names(documents, component, output)
+    volumes = sorted(
+        {
+            doc["metadata"]["name"]
+            for doc in documents
+            if isinstance(doc, dict)
+            and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
+        }
+    )
+    config_maps = {
+        doc["metadata"]["name"]
+        for doc in documents
+        if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
+    }
+    for _, spec in rendering.pod_specs(documents, output):
+        for volume in spec.get("volumes", []):
+            if "configMap" not in volume:
+                continue
+            source = volume["configMap"]
+            if (
+                not isinstance(source, dict)
+                or not isinstance(source.get("name"), str)
+                or source["name"] not in config_maps
+            ):
+                raise common.DeployError("Invalid mounted ConfigMap for uninstall")
+            if source["name"] not in volumes:
+                volumes.append(source["name"])
+    volumes.sort()
+    if any(
+        not common.ID.fullmatch(name) or not name.startswith(component + "-")
+        for name in volumes
+    ):
+        raise common.DeployError("Invalid component volume name for uninstall")
+    # Validate every public input before saving the plan or stopping/deleting anything.
+    with tempfile.TemporaryDirectory(
+        prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+    ) as directory:
+        registration_stage([], Path(directory), installed)
+    role_owners = catalog.role_owners(installed, "installed components")
+    owners = set()
+    if route.is_file():
+        owners.add(role_owners["routes"])
+    if client.exists():
+        owners.add(role_owners["clients"])
+    return {
+        "operation": "uninstall",
+        "component": component,
+        "delete_data": delete_data,
+        "volumes": volumes,
+        "stopped": False,
+        "owners": sorted(
+            owner
+            for owner in owners
+            if owner not in (None, component)
+            and catalog.installed_version(common.HOME, owner)
+        ),
+    }
 
 
 def uninstall(component=None, delete_data=False):
@@ -1160,64 +1277,7 @@ def uninstall(component=None, delete_data=False):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
             raise common.DeployError("Refuse symlinked uninstall state or output paths")
     if state is None:
-        documents = rendering.load_yaml_all(output)
-        rendering.check_component_names(documents, component, output)
-        volumes = sorted(
-            {
-                doc["metadata"]["name"]
-                for doc in documents
-                if isinstance(doc, dict)
-                and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
-            }
-        )
-        config_maps = {
-            doc["metadata"]["name"]
-            for doc in documents
-            if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
-        }
-        for _, spec in rendering.pod_specs(documents, output):
-            for volume in spec.get("volumes", []):
-                if "configMap" not in volume:
-                    continue
-                source = volume["configMap"]
-                if (
-                    not isinstance(source, dict)
-                    or not isinstance(source.get("name"), str)
-                    or source["name"] not in config_maps
-                ):
-                    raise common.DeployError("Invalid mounted ConfigMap for uninstall")
-                if source["name"] not in volumes:
-                    volumes.append(source["name"])
-        volumes.sort()
-        if any(
-            not common.ID.fullmatch(name) or not name.startswith(component + "-")
-            for name in volumes
-        ):
-            raise common.DeployError("Invalid component volume name for uninstall")
-        # Validate every public input before saving the plan or stopping/deleting anything.
-        with tempfile.TemporaryDirectory(
-            prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
-        ) as directory:
-            registration_stage([], Path(directory), installed)
-        role_owners = catalog.role_owners(installed, "installed components")
-        owners = set()
-        if route.is_file():
-            owners.add(role_owners["routes"])
-        if client.exists():
-            owners.add(role_owners["clients"])
-        state = {
-            "operation": "uninstall",
-            "component": component,
-            "delete_data": delete_data,
-            "volumes": volumes,
-            "stopped": False,
-            "owners": sorted(
-                owner
-                for owner in owners
-                if owner not in (None, component)
-                and catalog.installed_version(common.HOME, owner)
-            ),
-        }
+        state = uninstall_plan(component, delete_data, installed)
         save_pending(state)
     if not state["stopped"]:
         run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
@@ -1233,7 +1293,7 @@ def uninstall(component=None, delete_data=False):
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
-            imports, _ = registration_stage([], Path(directory), installed)
+            imports, _, _ = registration_stage([], Path(directory), installed)
             for owner in list(state["owners"]):
                 component_paths(owner)
                 if owner not in installed or not catalog.installed_version(
@@ -1247,11 +1307,8 @@ def uninstall(component=None, delete_data=False):
                     component_imports(owner, imports, installed) or {},
                     component_paths(owner)[1],
                 )
-                service = "myproduct-" + owner + ".service"
-                run("systemctl", "--user", "restart", service)
-                run("systemctl", "--user", "is-active", "--quiet", service)
-                state["owners"].remove(owner)
-                save_pending(state)
+                restart_service(owner)
+                acknowledge_owner(state, owner)
     if delete_data:
         for name in state["volumes"]:
             result = subprocess.run(  # noqa: UP022 - Python 3.6

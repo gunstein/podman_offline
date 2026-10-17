@@ -323,7 +323,7 @@ class ComponentTests(ComponentFixture):
         sibling = self.write("home/routes/app2.conf", "existing app2 route")
         client = self.write("home/clients/app2/client.json", '{"Id": "app2"}')
         self.write("home/clients/app2/client.crt", "existing public certificate")
-        imports, updates = deploy.registration_stage(["app1"], work, self.known())
+        imports, updates, _ = deploy.registration_stage(["app1"], work, self.known())
         self.assertFalse((common.HOME / "routes/app1.conf").exists())
         self.assertEqual(sibling.read_text(), "existing app2 route")
         self.assertEqual(client.read_text(), '{"Id": "app2"}')
@@ -578,7 +578,7 @@ class ComponentTests(ComponentFixture):
         self.assertIn("location /app1/", (work / "routes/installed.conf").read_text())
         empty = self.root / "empty-stage"
         empty.mkdir()
-        imports, _ = deploy.registration_stage([], empty, self.known())
+        imports, _, _ = deploy.registration_stage([], empty, self.known())
         self.assertEqual(json.loads((empty / "clients/installed.json").read_text()), [])
         self.assertEqual((empty / "routes/installed.conf").read_text(), "")
         self.assertEqual(

@@ -353,7 +353,9 @@ class ConfigTests(ComponentFixture):
             "CHOICE: developer\n",
         )
         # Other components generate once; app1 reuses its existing credential.
-        with mock.patch.object(deploy, "registration_stage", return_value=({}, {})):
+        with mock.patch.object(
+            deploy, "registration_stage", return_value=({}, {}, set())
+        ):
             deploy.prepare()
         self.assertEqual(rendering.load_config(output)["CHOICE"], "developer")
         before = private.read_bytes(), private.stat().st_mtime_ns
@@ -361,7 +363,9 @@ class ConfigTests(ComponentFixture):
             "config/dev.yaml",
             "CHOICE: changed\n",
         )
-        with mock.patch.object(deploy, "registration_stage", return_value=({}, {})):
+        with mock.patch.object(
+            deploy, "registration_stage", return_value=({}, {}, set())
+        ):
             deploy.prepare()
         self.assertEqual(rendering.load_config(output)["CHOICE"], "changed")
         self.assertEqual((private.read_bytes(), private.stat().st_mtime_ns), before)
