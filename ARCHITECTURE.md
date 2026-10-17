@@ -160,7 +160,7 @@ sequenceDiagram
     participant CLI as cli.main
     participant D as deploy.install_components
     participant C as catalog
-    participant R as render
+    participant R as render.py
     participant P as deploy.install_component_plan
     participant H as Podman / systemd
     participant S as Service home
@@ -207,7 +207,7 @@ sequenceDiagram
     actor Dev as Developer
     participant B as bundle.build
     participant C as catalog
-    participant R as render
+    participant R as render.py
     participant G as generated_secret_guard
     participant BR as bundle.build_release
     participant H as Podman

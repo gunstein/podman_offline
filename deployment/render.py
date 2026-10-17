@@ -1,4 +1,10 @@
-"""Config validation, secret materialization, manifests and import archives."""
+"""Render component declarations and config into what is installed.
+
+Rendering is the whole path from declarations to installable output: config
+validation, effective (validated) manifests, secret generation and file
+delivery, and finally the YAML and import archives (materialize). Validation is
+its first stage, so nothing is generated from declarations that do not check.
+"""
 
 import base64
 import os
