@@ -804,16 +804,35 @@ class ManifestValidationTests(DeployFixture):
                 self.assertFalse(common.BUILD.exists())
 
     def test_mounts_and_never_policy_accept_containers_and_init(self):
-        """Validate regular and init containers in Pod and nested Deployment specs."""
+        """Validate regular and init containers in Pod specs."""
         self.manifest([document("ConfigMap", "settings")], "90-settings.yaml")
         for group in ("containers", "initContainers"):
             with self.subTest(group=group):
-                pod = self.pod(group)
-                deployment = document(
-                    "Deployment", "app", spec={"template": {"spec": pod["spec"]}}
-                )
-                self.manifest([pod, deployment], "10-app.yaml")
+                self.manifest([self.pod(group)], "10-app.yaml")
                 rendering.materialize_and_render(write_archives=False)
+
+    def test_unsupported_kinds_fail_before_generation_or_output(self):
+        """The same valid pod spec in a Deployment or List is refused, not half-checked."""
+        self.config["SECRET_FILES"] = {
+            "db": [{"path": "secrets/db", "generate": ["password"]}]
+        }
+        self.write_config()
+        spec = self.pod("containers")["spec"]
+        for doc in (
+            document("Deployment", "app", spec={"template": {"spec": spec}}),
+            {"kind": "List", "items": [self.pod("containers")]},
+            {"spec": spec},
+            ["not", "a", "map"],
+        ):
+            with self.subTest(doc=doc):
+                self.manifest([doc], "10-app.yaml")
+                with self.assertRaisesRegex(
+                    common.DeployError, "10-app.yaml: unsupported resource kind"
+                ):
+                    rendering.materialize_and_render()
+                self.assertFalse((self.root / "secrets").exists())
+                self.assertFalse(common.BUILD.exists())
+        self.process.assert_not_called()
 
     def test_unknown_mounts_report_file_and_container(self):
         """Reject mounts absent from the pod volumes in both container groups."""
@@ -1348,13 +1367,16 @@ class ImageTests(unittest.TestCase):
         for group in ("containers", "initContainers"):
             for image in (None, "postgres:16", "@@IMAGE@@"):
                 with self.subTest(group=group, image=image):
-                    doc = {"spec": {group: [{"name": "backend", "image": image}]}}
+                    doc = {
+                        "kind": "Pod",
+                        "spec": {group: [{"name": "backend", "image": image}]},
+                    }
                     with self.assertRaises(common.DeployError) as error:
                         rendering.find_images([doc])
                     self.assertIn("'backend'", str(error.exception))
                     self.assertIn(group, str(error.exception))
 
-    def test_pods_deployments_duplicates_and_init_containers(self):
+    def test_pods_duplicates_and_init_containers(self):
         docs = [
             None,
             {
@@ -1365,17 +1387,13 @@ class ImageTests(unittest.TestCase):
                 },
             },
             {
-                "kind": "Deployment",
+                "kind": "Pod",
                 "spec": {
-                    "template": {
-                        "spec": {
-                            "containers": [
-                                {"image": "docker.io/library/postgres:16"},
-                                {"image": "localhost/app:1"},
-                            ],
-                            "initContainers": [{"image": "localhost/app:1"}],
-                        }
-                    }
+                    "containers": [
+                        {"image": "docker.io/library/postgres:16"},
+                        {"image": "localhost/app:1"},
+                    ],
+                    "initContainers": [{"image": "localhost/app:1"}],
                 },
             },
             {"kind": "ConfigMap", "data": {"image": "ignored"}},
@@ -1389,12 +1407,26 @@ class ImageTests(unittest.TestCase):
             ],
         )
 
+    def test_images_in_unsupported_kinds_are_refused_not_skipped(self):
+        for doc in (
+            {
+                "kind": "Deployment",
+                "spec": {"template": {"spec": {"containers": [{"image": "a"}]}}},
+            },
+            {"spec": {"containers": [{"image": "localhost/app:1"}]}},
+        ):
+            with (
+                self.subTest(doc=doc),
+                self.assertRaisesRegex(common.DeployError, "unsupported resource kind"),
+            ):
+                rendering.find_images([doc])
+
     def test_no_images(self):
         for docs in (
             [],
             [None],
-            [{"image": "localhost/ignored:1"}],
-            [{"spec": {"containers": []}}],
+            [{"kind": "ConfigMap", "data": {"image": "localhost/ignored:1"}}],
+            [{"kind": "Pod", "spec": {"containers": []}}],
         ):
             error = self.assertRaisesRegex(common.DeployError, "No images")
             with self.subTest(docs=docs), error:
@@ -1411,7 +1443,9 @@ class ImageTests(unittest.TestCase):
         ):
             expected = self.assertRaisesRegex(common.DeployError, error)
             with self.subTest(image=image), expected:
-                rendering.find_images([{"spec": {"containers": [{"image": image}]}}])
+                rendering.find_images(
+                    [{"kind": "Pod", "spec": {"containers": [{"image": image}]}}]
+                )
 
     def test_accepts_full_registry_names_and_ports(self):
         for image in (
@@ -1423,7 +1457,7 @@ class ImageTests(unittest.TestCase):
             with self.subTest(image=image):
                 self.assertEqual(
                     rendering.find_images(
-                        [{"spec": {"containers": [{"image": image}]}}]
+                        [{"kind": "Pod", "spec": {"containers": [{"image": image}]}}]
                     ),
                     [image],
                 )
@@ -1435,11 +1469,14 @@ class ImageTests(unittest.TestCase):
             {"image": 42},
             {"image": ""},
             {"image": []},
-            "invalid",
         ):
             error = self.assertRaisesRegex(common.DeployError, "image name as a string")
             with self.subTest(container=container), error:
-                rendering.find_images([{"spec": {"containers": [container]}}])
+                rendering.find_images(
+                    [{"kind": "Pod", "spec": {"containers": [container]}}]
+                )
+        with self.assertRaisesRegex(common.DeployError, "entries must be maps"):
+            rendering.find_images([{"kind": "Pod", "spec": {"containers": ["x"]}}])
 
 
 if __name__ == "__main__":

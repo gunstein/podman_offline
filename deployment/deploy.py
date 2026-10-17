@@ -90,10 +90,7 @@ def database_preflight(config, config_path, manifests):
     general secret generator. Existing volumes are conservatively retained.
     """
     for manifest in sorted(manifests.glob("*.yaml")):
-        for doc in rendering.load_yaml_all(manifest):
-            if not doc or doc.get("kind") != "Pod":
-                continue
-            spec = doc.get("spec", {})
+        for _, spec in rendering.pod_specs(rendering.load_yaml_all(manifest), manifest):
             volumes = {v["name"]: v for v in spec.get("volumes", [])}
             for container in spec.get("containers", []):
                 env = {e["name"]: e.get("value") for e in container.get("env", [])}
@@ -1099,10 +1096,8 @@ def uninstall(component=None, delete_data=False):
             for doc in documents
             if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
         }
-        for doc in documents:
-            if not isinstance(doc, dict) or doc.get("kind") != "Pod":
-                continue
-            for volume in doc.get("spec", {}).get("volumes", []):
+        for _, spec in rendering.pod_specs(documents, output):
+            for volume in spec.get("volumes", []):
                 if "configMap" not in volume:
                     continue
                 source = volume["configMap"]

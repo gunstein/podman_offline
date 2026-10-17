@@ -171,7 +171,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 ## Images from the manifests
 
 181 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
-The image tests cover Pod/Deployment, init containers, several files/documents,
+The image tests cover Pods, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
 Registry tests require sorted deduplicated pulls with policy=always before save,
@@ -239,7 +239,10 @@ importing the app, a database or the app's dependencies.
 
 Manifest validation tests cover defined and missing ConfigMaps in all three
 reference forms, pod-local mounts, and required Never pull policies on ordinary
-and init containers. Nested Deployment pod specs use the same validation.
+and init containers. Unsupported kinds (Deployment, List, no kind) are refused
+before generation, output or Podman calls, also at build and on install of a
+renamed release, where a Deployment cannot take another component's name or
+skip the database preflight.
 
 Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement

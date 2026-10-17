@@ -68,9 +68,11 @@ def manifest_images(manifests=None):
         ]
     else:
         paths = sorted((ROOT / "manifests").glob("*.yaml"))
-    for path in paths:
-        documents.extend(rendering.load_yaml_all(path))
     try:
+        for path in paths:
+            path_documents = rendering.load_yaml_all(path)
+            rendering.check_kinds(path_documents, path)
+            documents.extend(path_documents)
         return rendering.find_images(documents)
     except common.DeployError as error:
         raise BundleError(str(error)) from None
