@@ -2215,7 +2215,7 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevan
 contracts and mandatory understandability review alongside this task message.
 
 Status: implemented in 0.4.10 on `feature/manifest-validation`; local checks
-green, lab acceptance runs outstanding. See
+green, and all six lab scenarios were CLEAN PASS on `5ee9748`. See
 [verification](acceptance/MANIFEST-VALIDATION.md). Original findings: four,
 reproduced in isolated Python checks.
 

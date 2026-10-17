@@ -119,19 +119,41 @@ The harness now passes the documents that started the disposable database
 existing volume is refused without writes, an absent one fails the guard, and a
 retained password needs no volume check.
 
-## Real acceptance: outstanding
+## Real acceptance
 
-These have not been run in the lab. Run them from a clean committed checkout:
+The full matrix was run in the lab on `5ee9748` (2026-10-17), after the harness
+fix above. All six scenarios were CLEAN PASS:
+
+| Run | Scenario | Result | Duration |
+| --- | --- | --- | ---: |
+| `mv-app1-first` | `--first-app app1` | CLEAN PASS | 44 min |
+| `mv-app2-first` | `--first-app app2` | CLEAN PASS | 45 min |
+| `mv-help-only` | `--help-only` | CLEAN PASS | 21 min |
+| `mv-identity` | `--identity-only` | CLEAN PASS | 22 min |
+| `mv-platform-help` | `--platform-help-only` | CLEAN PASS | 12 min |
+| `mv-renamed` | `--renamed-product` | CLEAN PASS | 32 min |
+
+`mv-renamed` is the only scenario that exercises registration removal against
+real nginx, Identity and systemd. It built inventory 0.4.11 without route or
+client, installed it, and `10-registrations-removed` confirmed that
+`routes/inventory.conf` and `clients/inventory` were gone, orders' route and
+client remained, no pending record was left, `inventory-data` still existed
+and `/stock/` returned 404. The later inventory uninstall took 3 seconds
+because no owner had anything left to restart.
+
+Commands, from a clean committed checkout:
 
 ```sh
 python3 acceptance/acceptance.py --run mv-app1-first --first-app app1 run
 python3 acceptance/acceptance.py --run mv-app2-first --first-app app2 run
-python3 acceptance/acceptance.py --run mv-help --platform-help-only run
+python3 acceptance/acceptance.py --run mv-help-only --help-only run
+python3 acceptance/acceptance.py --run mv-identity --identity-only run
+python3 acceptance/acceptance.py --run mv-platform-help --platform-help-only run
 python3 acceptance/acceptance.py --run mv-renamed --renamed-product run
 ```
 
-The expected result is CLEAN PASS for all four. The renamed run is the only one
-that exercises registration removal against real nginx, Identity and systemd.
+The matrix took about three hours in total. Backlog item 30 tracks making
+it much faster.
 
 ## Understandability review
 
@@ -201,5 +223,4 @@ gateway import and restarts it. `acknowledge_owner` clears the record.
   the preflight cannot see. Broader layouts remain backlog item 7.
 - Python 3.6 and PyYAML 5.4.1 were checked only with `vermin`, not by running
   the suites.
-- Lab runs are outstanding (above). No real Podman, systemd, nginx, OIDC,
-  SELinux or fapolicyd behavior is proven by the tests here.
+- None from the lab: all six scenarios were CLEAN PASS (above).
