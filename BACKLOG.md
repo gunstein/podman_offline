@@ -2961,3 +2961,65 @@ upgrades can fail intermittently with 203/EXEC.
 
 Run product tests, acceptance-harness tests, ruff, format, pyright, vermin,
 shellcheck and `git diff --check`; report real acceptance runs separately.
+
+## 30. Make the acceptance runs much faster
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned. Raised by the operator on 2026-10-17: the item 21 matrix (six
+scenarios) took several hours, which is far too long.
+
+### Where the time goes
+
+Measured from the step tables of the item 20 runs on `8e62153`:
+
+| Run | Total | Health waits (85–115 s steps) | Bundle builds (~263 s each) | Everything else |
+| --- | ---: | ---: | ---: | ---: |
+| `decl-app1-first-3` | 44 min | 15 steps, 24 min | 2 builds, 9 min | 11 min, including the 200 s hang test |
+| `decl-renamed-4` | 27 min | 9 steps, 14 min | 2 builds, 9 min | 4 min |
+| `decl-help-2` | 12 min | 2 steps, 3 min | 1 build, 4 min | 4 min |
+
+1. **Health waits are more than half of every run.** Every container has
+   `initialDelaySeconds: 90` and `periodSeconds: 30`, so after any install,
+   start, restart, reboot or upgrade, `healthy` cannot pass in less than about
+   90 seconds, even when everything is up in five. The hang test (200 s) is
+   also derived from these numbers.
+2. **Bundle builds take about 4.5 minutes each.** `build-bundle.sh` builds all
+   five bundles, and `bundle.py` writes them with `tarfile` `w:gz`, which is
+   single-threaded gzip at level 9. The upgrade steps rebuild every bundle to
+   change one.
+3. **The six scenarios repeat the same work.** Each one resets both VMs and
+   rebuilds images, runs the unit suite and builds bundles from the same
+   revision.
+
+### Task
+
+Measure first, on the lab VMs, then change in this order. Stop once the full
+matrix is comfortably under an hour.
+
+1. **Health timing (product decision, largest gain).** Check on Podman 5.8.2
+   what `kube play` does with `startupProbe` and with a shorter
+   `initialDelaySeconds`: when the status becomes `healthy`, and how a hung
+   container is detected. Then propose one of these to the operator, with
+   measured times:
+   - a `startupProbe` with a short period and a generous total budget (slow
+     first starts such as Identity and PostgreSQL initialization keep their
+     time), plus a liveness probe without a long initial delay
+   - or a shorter `initialDelaySeconds` and period
+
+   This changes the documented product contract (README "Health checks and
+   acceptance", `tests/test_health.py`, the VM checklist and the hang-test
+   limit), so it needs the operator's approval before it changes.
+2. **Bundle builds.** Time `podman save` against compression separately. Then
+   consider a lower gzip level or a faster compressor available on the build
+   host, and building only the changed component in the upgrade steps. The
+   archive format and checksums must stay the same for the target.
+3. **Repeated work across scenarios.** Consider a matrix mode that builds
+   images, the unit suite and bundles once per revision and reuses them,
+   checked by hash, in each scenario. This conflicts with the current rule
+   that every clean run builds from source, so weigh it last and keep single
+   scenarios unchanged.
+4. Record before and after times per scenario in the acceptance README, and
+   keep every check that exists today. Speed must not come from dropping
+   evidence.
