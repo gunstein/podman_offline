@@ -282,6 +282,8 @@ class ScenarioTests(unittest.TestCase):
                     "myproduct-" + name + "-0.4.9-offline.tar.gz\n"
                     for name in RENAMED_ORDER
                 )
+            if action == "renamed-inventory-drop":
+                return "myproduct-inventory-0.4.10-offline.tar.gz\n"
             return ""
 
         self.harness.guest = mock.Mock(side_effect=guest)
@@ -297,10 +299,11 @@ class ScenarioTests(unittest.TestCase):
         self.harness.execute()
         self.assertTrue(self.harness.finished)
         installs = [bundle for _, action, bundle in self.calls if action == "install"]
-        self.assertEqual(installs, list(RENAMED_ORDER) + ["orders"])
+        self.assertEqual(installs, list(RENAMED_ORDER) + ["orders", "inventory"])
         self.assertEqual(
             [call.kwargs for call in self.harness.transfer.call_args_list],
-            [{"bundle": name, "tree": "renamed"} for name in RENAMED_ORDER],
+            [{"bundle": name, "tree": "renamed"} for name in RENAMED_ORDER]
+            + [{"version": "0.4.10", "bundle": "inventory", "tree": "renamed"}],
         )
         self.harness.credentials.assert_called_once_with("login-service")
         actions = [action for _, action, _ in self.calls]
@@ -309,7 +312,8 @@ class ScenarioTests(unittest.TestCase):
             ("renamed-dev-down", "renamed-bundle"),
             ("renamed-markers-create", "restart"),
             ("restart", "renamed-markers-check"),
-            ("renamed-uninstall", "renamed-survivor"),
+            ("renamed-inventory-drop", "renamed-registrations-removed"),
+            ("renamed-registrations-removed", "renamed-uninstall"),
         ):
             self.assertLess(actions.index(earlier), actions.index(later))
         self.assertIn(("PROD", "renamed-uninstall", "inventory"), self.calls)
@@ -325,6 +329,22 @@ class ScenarioTests(unittest.TestCase):
         for demo in ("check", "prod-e2e", "uninstall", "dev-up", "bundle"):
             self.assertNotIn(demo, actions)
         self.assertIn("10-survivor", self.steps())
+        self.assertIn("10-survivor-after-removal", self.steps())
+        self.assertEqual(self.harness.meta["inventory_without_registrations"], "0.4.10")
+
+    def test_inventory_without_registrations_must_be_newer(self):
+        def guest(role, action, *args, **kwargs):
+            self.calls.append((role, action, kwargs.get("bundle")))
+            if action in ("renamed-bundle-list", "renamed-inventory-drop"):
+                return "myproduct-inventory-0.4.9-offline.tar.gz\n"
+            return ""
+
+        self.harness.guest = mock.Mock(side_effect=guest)
+        with self.assertRaisesRegex(
+            RuntimeError, "STOP at 10-inventory-drop-registrations"
+        ):
+            self.harness.execute()
+        self.assertFalse(self.harness.report())
 
     def test_failure_stops_the_renamed_flow_and_is_not_clean(self):
         def guest(role, action, *args, **kwargs):

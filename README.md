@@ -74,7 +74,7 @@ in force. See [layout cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md).
 
 Every `bundle.yaml` is the compiled descriptor of its component and declares
 exact dependencies with inclusive `min` and exclusive `before` ranges, for
-example `{platform: {min: 0.4.9, before: 0.5.0}, identity: {min: 0.4.9, before:
+example `{platform: {min: 0.4.10, before: 0.5.0}, identity: {min: 0.4.10, before:
 0.5.0}}` for app1/app2. For 0.x, compatibility follows the minor series; for
 1.x and later, the declared major series. The installed descriptor is retained
 privately under `metadata/`, independently of old release directories. Incoming dependencies and every installed dependent's range must
@@ -415,7 +415,7 @@ flowchart TD
     RENDER["`Deploy reads and validates inputs
     Replaces placeholders with config values
     Creates declared missing secrets when permitted
-    deployment/render.py: materialize_and_render()`"]
+    deployment/render.py: effective_documents(), materialize()`"]
 
     SECRET["`SECRET_FILES
     Reads the selected files
@@ -538,7 +538,8 @@ flowchart TD
     BROWSER -->|Cookie on later requests| BACKEND
 ```
 
-`deployment/deploy.py: database_preflight()` runs before generation. A missing
+`deployment/deploy.py: database_preflight()` runs after manifest validation and
+before generation, on the effective manifest (placeholders replaced). A missing
 database password with an existing database volume stops installation; deploy
 does not invent a replacement password for retained database state.
 
@@ -668,7 +669,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.9
+version=0.4.10
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)

@@ -2214,9 +2214,10 @@ plugin framework or large object hierarchy.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; implementation plan below. Four findings reproduced in isolated Python checks; no fix or
-real Podman/systemd verification performed. Prioritize the database preflight
-and resource-kind gaps because they affect lifecycle safety checks.
+Status: implemented in 0.4.10 on `feature/manifest-validation`; local checks
+green, lab acceptance runs outstanding. See
+[verification](acceptance/MANIFEST-VALIDATION.md). Original findings: four,
+reproduced in isolated Python checks.
 
 ### Message to the implementing agent
 
@@ -2370,8 +2371,10 @@ undefined mount was rejected). It also found:
 
 ### Implementation plan (2026-10-17, revised after review)
 
-Status of the plan: agreed, not started. Start only when item 20's four
-acceptance runs are CLEAN PASS on merged `main`.
+Status of the plan: carried out in five commits. Deviation: imported
+registration volumes are validated by name from the descriptor's `accepts`,
+so staging stays where it was in install (after the preflight, before
+generation); dev validates every component before writing its configs.
 
 **Starting point.** Six places walk manifests with their own idea of resource
 kinds: `check_component_names`, `database_preflight` and uninstall look only at

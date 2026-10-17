@@ -1,3 +1,12 @@
+# Registration removal (0.4.10)
+
+`--renamed-product` now also builds a newer inventory release without route and
+client on DEV, installs it on PROD and checks that `/stock` returns 404, the
+inventory client is gone and orders still works, before the existing inventory
+uninstall. See [verification](MANIFEST-VALIDATION.md).
+
+---
+
 # Declarative components (0.4.9)
 
 `--renamed-product` generates gateway, login-service, orders, inventory and

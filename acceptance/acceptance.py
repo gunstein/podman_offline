@@ -912,6 +912,35 @@ class Run:
         self.step(
             "09-markers-redeploy", lambda: self.guest("DEV", "renamed-markers-check")
         )
+        # A newer inventory release without route and client removes both (item 21).
+        self.step(
+            "10-inventory-drop-registrations",
+            self.inventory_without_registrations,
+        )
+        self.step(
+            "10-transfer-inventory-without-registrations",
+            lambda: self.transfer(
+                version=self.meta["inventory_without_registrations"],
+                bundle="inventory",
+                tree="renamed",
+            ),
+        )
+        self.step(
+            "10-install-inventory-without-registrations",
+            lambda: self.guest("PROD", "install", bundle="inventory"),
+        )
+        self.step(
+            "10-healthy-without-registrations", lambda: self.guest("PROD", "health")
+        )
+        self.step(
+            "10-registrations-removed",
+            lambda: self.guest(
+                "PROD", "renamed-registrations-removed", bundle="inventory"
+            ),
+        )
+        self.step(
+            "10-survivor-after-removal", lambda: self.guest("DEV", "renamed-survivor")
+        )
         self.step(
             "10-uninstall-inventory",
             lambda: self.guest("PROD", "renamed-uninstall", bundle="inventory"),
@@ -925,6 +954,17 @@ class Run:
             "10-survivor-after-manual", lambda: self.guest("DEV", "renamed-survivor")
         )
         self.finished = True
+
+    def inventory_without_registrations(self):
+        """Build a newer inventory without route and client on DEV; record its version."""
+        versions = bundle_versions(self.guest("DEV", "renamed-inventory-drop"))
+        version = versions["inventory"]
+        if version == self.meta["bundles_built"]["inventory"]:
+            raise RuntimeError(
+                "The inventory release without registrations is not newer"
+            )
+        self.meta["inventory_without_registrations"] = version
+        self.write("inventory_without_registrations=" + version + "\n")
 
     def report(self):
         """Generate report and evidence; only a complete, error-free run gives CLEAN PASS."""

@@ -1,3 +1,19 @@
+# Manifest validation and registration removal (0.4.10)
+
+Backlog item 21. `test_validation_order.py` breaks one orders manifest five ways
+(undefined mount, missing reference, duplicate, online pull policy, unreplaced
+placeholder) and requires no secret, archive, YAML or host command on install,
+dev prepare and both standalone paths, plus a single render per install.
+`test_database_preflight.py` takes the volume, Secret and password path from
+config and asserts the configured name reaches Podman; absent, existing and
+failing checks; and refuses other `POSTGRES_PASSWORD*` forms (F2).
+`test_registration_removal.py` drops inventory's route, client or both, checks
+exact owner restarts and imported indexes, injects failures after the deletion
+and finishes them in a fresh process, and uninstalls afterwards. See
+[verification](../acceptance/MANIFEST-VALIDATION.md).
+
+---
+
 # Declarative components (0.4.9)
 
 Components come from `bundles.yaml`; see [components](../docs/COMPONENTS.md).
