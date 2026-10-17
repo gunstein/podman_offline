@@ -72,7 +72,7 @@ link errors now come before checks that need file bytes. Mocks of
 
 ## Acceptance harness
 
-`python3 -B -m unittest discover -s acceptance -p 'test_*.py'`: 176 tests, OK.
+`python3 -B -m unittest discover -s acceptance -p 'test_*.py'`: 179 tests, OK.
 
 The `--renamed-product` scenario now has these steps before its existing
 inventory uninstall:
@@ -105,6 +105,19 @@ The following came back clean:
 - `vermin -t=3.6-` (deployment and bundle.py)
 - `shellcheck` on all tracked scripts
 - `git diff --check`
+
+## Lab finding: stale preflight call in the database runtime check
+
+The first lab attempt, `mv-app1-first` on `596d1ac`, stopped at
+`03-database-runtime` with `TypeError: 'PosixPath' object is not iterable`.
+`acceptance/database_test.py` still passed a manifest folder to
+`deploy.database_preflight`, which now takes effective documents. This was a
+harness defect, not a product defect, and no local test exercised that call.
+The harness now passes the documents that started the disposable database
+(`database_documents()`), and `VolumeGuardTests` in
+`acceptance/test_database_init.py` runs the real preflight with them: an
+existing volume is refused without writes, an absent one fails the guard, and a
+retained password needs no volume check.
 
 ## Real acceptance: outstanding
 

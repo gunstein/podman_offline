@@ -62,8 +62,12 @@ print("Database connection verified")
 """
 
 
-def volume_guard(base, secret, claim):
-    """Exercise the lifecycle guard against this actual initialized test volume."""
+def volume_guard(base, secret, claim, documents):
+    """Exercise the lifecycle guard against this actual initialized test volume.
+
+    documents are the manifests that started the database; the preflight reads
+    the volume and Secret from them as it would from effective_documents().
+    """
     path = base / "guard/config.yaml"
     config = {
         deployment_common.SECRET_FILES: {
@@ -71,7 +75,7 @@ def volume_guard(base, secret, claim):
         },
     }
     try:
-        deploy.database_preflight(config, path, base)
+        deploy.database_preflight(config, path, documents)
     except deployment_common.DeployError as error:
         if "existing volume " + claim not in str(error) or "restore" not in str(error):
             raise RuntimeError("Unexpected database volume guard failure") from None
@@ -142,6 +146,84 @@ def init_schema_check(base, network, client):
     )
 
 
+def database_documents(secret, claim, host, password):
+    """The disposable PostgreSQL Secret, volume and Pod in the supported layout."""
+    return [
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": secret},
+            "data": {"password": base64.b64encode(password.encode()).decode()},
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {"name": claim},
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "1Gi"}},
+            },
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": host},
+            "spec": {
+                "containers": [
+                    {
+                        "name": "db",
+                        "image": image("app1", "db"),
+                        "imagePullPolicy": "Never",
+                        "env": [
+                            {
+                                "name": "POSTGRES_USER",
+                                "value": "configured-user",
+                            },
+                            {
+                                "name": "POSTGRES_DB",
+                                "value": "configured-database",
+                            },
+                            {"name": "PGPORT", "value": "5544"},
+                            {
+                                "name": "PGDATA",
+                                "value": "/var/lib/postgresql/data/pgdata",
+                            },
+                            {
+                                "name": "POSTGRES_PASSWORD_FILE",
+                                "value": "/run/secrets/database/password",
+                            },
+                        ],
+                        "volumeMounts": [
+                            {
+                                "name": "data",
+                                "mountPath": "/var/lib/postgresql/data",
+                            },
+                            {
+                                "name": "password",
+                                "mountPath": "/run/secrets/database",
+                                "readOnly": True,
+                            },
+                        ],
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "data",
+                        "persistentVolumeClaim": {"claimName": claim},
+                    },
+                    {
+                        "name": "password",
+                        "secret": {
+                            "secretName": secret,
+                            "items": [{"key": "password", "path": "password"}],
+                        },
+                    },
+                ],
+            },
+        },
+    ]
+
+
 def run():
     """Test quoting and LF semantics using kube Secrets, actual initdb and clients."""
     os.umask(0o077)
@@ -162,84 +244,7 @@ def run():
             for password in passwords:
                 password_path.write_bytes(password.encode("utf-8"))
                 password_path.chmod(0o600)
-                docs = [
-                    {
-                        "apiVersion": "v1",
-                        "kind": "Secret",
-                        "metadata": {"name": secret},
-                        "data": {
-                            "password": base64.b64encode(password.encode()).decode()
-                        },
-                    },
-                    {
-                        "apiVersion": "v1",
-                        "kind": "PersistentVolumeClaim",
-                        "metadata": {"name": claim},
-                        "spec": {
-                            "accessModes": ["ReadWriteOnce"],
-                            "resources": {"requests": {"storage": "1Gi"}},
-                        },
-                    },
-                    {
-                        "apiVersion": "v1",
-                        "kind": "Pod",
-                        "metadata": {"name": host},
-                        "spec": {
-                            "containers": [
-                                {
-                                    "name": "db",
-                                    "image": image("app1", "db"),
-                                    "imagePullPolicy": "Never",
-                                    "env": [
-                                        {
-                                            "name": "POSTGRES_USER",
-                                            "value": "configured-user",
-                                        },
-                                        {
-                                            "name": "POSTGRES_DB",
-                                            "value": "configured-database",
-                                        },
-                                        {"name": "PGPORT", "value": "5544"},
-                                        {
-                                            "name": "PGDATA",
-                                            "value": "/var/lib/postgresql/data/pgdata",
-                                        },
-                                        {
-                                            "name": "POSTGRES_PASSWORD_FILE",
-                                            "value": "/run/secrets/database/password",
-                                        },
-                                    ],
-                                    "volumeMounts": [
-                                        {
-                                            "name": "data",
-                                            "mountPath": "/var/lib/postgresql/data",
-                                        },
-                                        {
-                                            "name": "password",
-                                            "mountPath": "/run/secrets/database",
-                                            "readOnly": True,
-                                        },
-                                    ],
-                                }
-                            ],
-                            "volumes": [
-                                {
-                                    "name": "data",
-                                    "persistentVolumeClaim": {"claimName": claim},
-                                },
-                                {
-                                    "name": "password",
-                                    "secret": {
-                                        "secretName": secret,
-                                        "items": [
-                                            {"key": "password", "path": "password"}
-                                        ],
-                                    },
-                                },
-                            ],
-                        },
-                    },
-                ]
+                docs = database_documents(secret, claim, host, password)
                 manifest.write_text(yaml.safe_dump_all(docs))
                 manifest.chmod(0o600)
                 podman(["kube", "play", "--network", network, str(manifest)])
@@ -276,13 +281,13 @@ def run():
                         secret: [{"path": ".", "generate": ["password"]}]
                     },
                 }
-                deploy.database_preflight(config, base / "config.yaml", base)
+                deploy.database_preflight(config, base / "config.yaml", docs)
                 rendering.generate_secrets(config, base)
                 if password_path.read_bytes() != retained:
                     raise RuntimeError(
                         "Existing database password changed during generation transition"
                     )
-                volume_guard(base, secret, claim)
+                volume_guard(base, secret, claim, docs)
                 # Client gets the exact same Secret through Kubernetes mounting.
                 client_name = prefix + "-identity"
                 client = {
