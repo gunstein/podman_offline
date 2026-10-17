@@ -186,9 +186,11 @@ and reuses them on later runs; it is demo provisioning, not part of the generic
 dev lifecycle. `./deploy validate` checks every catalog component with its dev
 config (manifests, placeholders, links, images, PostgreSQL layout, declared file
 sources by existence and type, route and client registrations) and reports the
-first finding of each component. It writes nothing, generates no secret and
-runs no Podman or systemd command; `prepare` and `install` start with the same
-checks. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
+first finding of each component; a placeholder or YAML file that cannot be read
+while dev config is assembled stops the run, as it stops `prepare`. It writes
+nothing, generates no secret, reads no credential contents and runs no Podman
+or systemd command; `prepare` and `install` start with the same checks. In an
+unpacked bundle it runs as the service user and needs no runtime directory. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
 components in dependency order, followed by `podman kube play`. Run
 `dev/dev.sh down` before removing a component from the catalog: it stops what
 the last prepare rendered.

@@ -43,11 +43,15 @@ writes nothing else. Then:
 `deploy.check_manifests()` runs `deploy.validate_component()` (step 2 plus the
 PostgreSQL layout, from declarations only) and then the database preflight;
 install, dev `prepare` and both standalone paths use it before any generation.
-`./deploy validate` (`deploy.validate()`) runs `validate_component()`, the same
-staging and, in a bundle, `install_checks()`, plus image names and declared
-file sources by existence and type (`validate_sources()`), but no preflight:
-it writes nothing and runs no host command. It reports the first finding per
-component. Install also checks the image
+`./deploy validate` (`deployment/validation.py`) runs `validate_component()`,
+the same staging and, in a bundle, `install_checks()` and
+`install_preconditions()` (shared network, image archive, image names), but no
+volume query: it writes nothing and runs no host command. It reports the first
+finding per component. Its only earlier-than-lifecycle checks are declared file
+sources by existence and type and the database password declaration; each is
+commented with where install or prepare does the same. A new declaration check
+belongs in `validate_component()`, `install_checks()` or
+`install_preconditions()`, never inline in `install_component_plan()`. Install also checks the image
 archive and that every image is fully qualified before step 4. General secret
 generation never performs database volume checks.
 

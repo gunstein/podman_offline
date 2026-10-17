@@ -289,29 +289,16 @@ def validate_component(config, config_path, manifests, component=None, imported=
     """Validate one component's manifests from declarations; no writes or host commands.
 
     Kinds, names, placeholders, pull policy, mounts and links (effective
-    documents) and the PostgreSQL layout, including that a missing password is
-    one generate creates. Returns the effective documents. Every lifecycle
-    path and ./deploy validate start with this.
+    documents) and the supported PostgreSQL layout. Returns the effective
+    documents. Every lifecycle path and ./deploy validate start with this; a
+    new declaration check belongs here or in install_checks, so that the
+    command and the lifecycle cannot disagree.
     """
     documents = rendering.effective_documents(
         config, config_path, manifests, component, imported
     )
-    for _, password in database_bindings(config, config_path, documents):
-        if not (password.exists() or password.is_symlink()):
-            check_password_provided(config, config_path, password)
+    database_bindings(config, config_path, documents)
     return documents
-
-
-def validate_sources(config, config_path, documents, imported=()):
-    """The validate command's remaining checks; install and prepare run them later.
-
-    Fully qualified images (install: before materialize) and declared file
-    sources by existence and type (materialize's load_file_group). Reads no
-    file contents and writes nothing.
-    """
-    if any(True for _, spec in rendering.pod_specs(documents)):
-        rendering.find_images(documents)
-    rendering.check_file_sources(config, config_path, imported)
 
 
 def check_manifests(config, config_path, manifests, component=None, imported=()):
@@ -437,8 +424,8 @@ def run(*args):
     subprocess.run(list(map(str, args)), check=True)
 
 
-def production_environment():
-    """Validate the service user and set its runtime before rendering or commands."""
+def service_user():
+    """Refuse root and a HOME that is not the service user's; reads only."""
     if os.geteuid() == 0:
         raise common.DeployError("Run install as the service user, not as root")
 
@@ -449,6 +436,10 @@ def production_environment():
             "the user database. Run install with the service user's HOME"
         )
 
+
+def production_environment():
+    """Validate the service user and set its runtime before rendering or commands."""
+    service_user()
     runtime = Path(f"/run/user/{os.geteuid()}")
     configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if configured_runtime is not None and configured_runtime != str(runtime):
@@ -1169,15 +1160,32 @@ def write_installed_marker(descriptor):
     )
 
 
+def install_preconditions(name, checked):
+    """Install's checks after the manifests and before generation; read-only.
+
+    The shared network matches the bundle, the image archive exists and every
+    image install will verify is fully qualified: the rendered component's, or
+    the component's own manifests when it is not rendered. ./deploy validate
+    runs this too.
+    """
+    network, network_text = check_shared_network()
+    archive = image_archive()
+    documents = [doc for _, docs in checked.values() for doc in docs]
+    if name not in checked:
+        for path in sorted(
+            (common.ROOT / "components" / name / "manifests").glob("*.yaml")
+        ):
+            documents.extend(rendering.load_yaml_all(path))
+    rendering.find_images(documents)
+    return network, network_text, archive
+
+
 def install_component_plan(descriptor, checked, known, imports, updates, removals):
     """Apply a staged install in the established validation/write/restart order."""
     name = descriptor["name"]
     components = list(checked)
     owners = catalog.role_owners(known, "registration owners")
-    network, network_text = check_shared_network()
-    archive = image_archive()
-    if checked:  # Fully qualified image names, decided before generation.
-        rendering.find_images(doc for _, docs in checked.values() for doc in docs)
+    network, network_text, archive = install_preconditions(name, checked)
     rendered = materialize_component_manifests(checked, imports, known)
     load_and_verify_images(archive, components, [name], rendered)
     write_installed_metadata(descriptor)
@@ -1262,111 +1270,6 @@ def install_components():
                 ),
             )
         install_component_plan(descriptor, checked, known, imports, updates, removals)
-
-
-VALIDATION_ERRORS = (common.DeployError, OSError, yaml.YAMLError)
-
-
-def validate():
-    """Report every component's first finding without writing anything.
-
-    The source checkout validates every catalog component with its dev config,
-    an unpacked bundle its own component against the persistent config and the
-    installed set, and a standalone fixture its manifests against config.yaml.
-    Staging uses a temporary directory that is removed. No secret generation,
-    rendered output, archives, Podman, systemd or network.
-    """
-    if (common.ROOT / "bundle.yaml").exists():
-        names, findings = validate_bundle()
-    elif (common.ROOT / "components").is_dir():
-        names, findings = validate_catalog()
-    else:
-        names, findings = validate_standalone()
-    if findings:
-        raise common.DeployError(
-            f"{len(findings)} validation finding(s); nothing was written:\n"
-            + "\n".join(f"  {scope}: {message}" for scope, message in findings)
-        )
-    print(
-        "[OK] validated "
-        + ", ".join(names)
-        + "; nothing written, no Podman or systemd commands"
-    )
-
-
-def validate_catalog():
-    """Validate every catalog component with its dev config, as prepare would."""
-    state = common.BUILD / "dev"
-    known, settings = dev_settings()
-    findings = []
-    for component, component_settings in settings.items():
-        path = state / component / "config.yaml"
-        imported = known[component]["accepts"].values()
-        try:
-            config = rendering.effective_config(component_settings, path, component)
-            documents = validate_component(
-                config,
-                path,
-                common.ROOT / "components" / component / "manifests",
-                component,
-                imported,
-            )
-            validate_sources(config, path, documents, imported)
-        except VALIDATION_ERRORS as error:
-            findings.append((component, str(error)))
-    try:
-        with tempfile.TemporaryDirectory(prefix="myproduct-validate-") as directory:
-            registration_stage(
-                list(known), Path(directory), known, home=state, configs=settings
-            )
-    except VALIDATION_ERRORS as error:
-        findings.append(("registrations", str(error)))
-    return list(known), findings
-
-
-def validate_bundle():
-    """Validate this bundle's component as install would, without the host query."""
-    production_environment()
-    descriptor, known, config, config_path, render = install_checks()
-    name = descriptor["name"]
-    findings = []
-    try:
-        with tempfile.TemporaryDirectory(
-            prefix="myproduct-validate-", dir=os.environ["XDG_RUNTIME_DIR"]
-        ) as directory:
-            registration_stage([name], Path(directory), known)
-    except VALIDATION_ERRORS as error:
-        findings.append(("registrations", str(error)))
-    if render:
-        imported = descriptor["accepts"].values()
-        try:
-            image_archive()
-            effective = rendering.effective_config(config, config_path, name)
-            documents = validate_component(
-                effective,
-                config_path,
-                common.ROOT / "components" / name / "manifests",
-                name,
-                imported,
-            )
-            validate_sources(effective, config_path, documents, imported)
-        except VALIDATION_ERRORS as error:
-            findings.append((name, str(error)))
-    return [name], findings
-
-
-def validate_standalone():
-    """Validate the standalone fixture's manifests against config.yaml, as prepare."""
-    if not common.CONFIG.exists():
-        raise common.DeployError(f"Missing {common.CONFIG}")
-    findings = []
-    try:
-        config = rendering.load_config(common.CONFIG)
-        documents = validate_component(config, common.CONFIG, common.MANIFESTS)
-        validate_sources(config, common.CONFIG, documents)
-    except VALIDATION_ERRORS as error:
-        findings.append(("manifests", str(error)))
-    return ["manifests"], findings
 
 
 def install():

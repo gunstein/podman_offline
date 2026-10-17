@@ -10,6 +10,13 @@ client certificate), two components reported in one run, the same message as
 `prepare` for the same manifest, the bundle's dependency, config and image
 archive checks, and the CLI exit codes. `acceptance/test_validate_release.py`
 checks the lab helper that requires the command to pass before every install.
+After the independent review, every case compares bytes, type and mode of the
+whole fixture tree. `BundleAgreementTests` runs the same broken bundle state
+through `install()` and `validate()` (differing shared network, component
+without images, invalid generated Secret name, existing database volume with a
+missing password, where install keeps its restore message). Malformed manifest
+fields and invalid UTF-8 are findings, not tracebacks, and the bundle mode works
+without a runtime directory.
 
 ---
 

@@ -5,7 +5,7 @@ import sys
 
 import yaml
 
-from . import common, deploy
+from . import common, deploy, validation
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
         "install": deploy.install,
         "uninstall": deploy.uninstall,
         "init-config": deploy.init_config,
-        "validate": deploy.validate,
+        "validate": validation.validate,
     }
     args = sys.argv[1:]
     removing = bool(args and args[0] == "uninstall")

@@ -2585,8 +2585,8 @@ time.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented on `main` (plan below, approved 2026-10-17); lab runs
-pending. `./deploy validate` in the source checkout, an unpacked bundle and a
+Status: implemented on `main` (plan below, approved 2026-10-17), revised after
+an independent review of `4023c6d`; lab runs pending. `./deploy validate` in the source checkout, an unpacked bundle and a
 standalone fixture; the lab runs it on DEV before `dev up` (demo and renamed
 product) and on PROD before every install and upgrade. Item 21 already moved the checks ahead of secret generation;
 this item adds the explicit command and reuses that validation instead of a
@@ -2722,6 +2722,25 @@ and `validate` report the same message for the same broken manifest.
 **Lab.** No new acceptance step is needed for correctness, but a cheap one is
 useful: `03-validate` on DEV before `03-dev-up`, and `06-validate-<id>` on PROD
 before each install, both expecting exit 0 and no changes.
+
+### Review follow-up (2026-10-17)
+
+An independent review of `4023c6d` found the command free of side effects but
+claims 3 and 4 not fully true. Each finding was checked against the code and
+fixed:
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | `validate_component` decided about a missing password, so install reported "declare generate" before asking Podman, instead of "existing volume …; restore from backup". | `validate_component` checks only the layout; install's preflight is unchanged. The command names both remedies, since it cannot query the volume. |
+| 2 | Install checked the shared network, the image archive and image names in `install_component_plan`; validate missed the network, components without images and non-rendered (`newer-only`) releases. | `deploy.install_preconditions()` is shared by install and validate. |
+| 3 | `generate: ["bad name"]` or `["sub/key"]` under `SECRET_FILES` passed validate, and install generated the file before refusing it. | `generated_secret_paths` requires one valid Secret file name, before generation. |
+| 4 | Malformed fields (`volumeMounts: 5`, `env: 5`, `metadata: x`) and invalid UTF-8 escaped as tracebacks and stopped the run. | Typed field checks (`check_lists`, metadata) and UTF-8 errors are `DeployError`s. |
+| 5 | Validate required the runtime directory (linger). | `deploy.service_user()` (root and HOME only); staging uses the default temporary directory. |
+| 6 | "Reads no private contents" was too strong. | Docs: reads no credential contents; config, metadata, public registrations and certificates are read. |
+| 7, 8 | Tree snapshots compared names only; no test ran the same bundle state through install and validate. | Snapshots compare bytes, type and mode; `BundleAgreementTests`. |
+
+The command moved to `deployment/validation.py`; deploy.py keeps the shared
+checks. The suggested split of registration and pending code is item 32.
 
 ## 24. Optional disaster recovery (DR), adapted from podman_test
 
@@ -3197,3 +3216,21 @@ so the two components can declare the same Podman volume or Secret, and
    refuse the install of the second with the same message, before any write.
 3. Add catalog and install regressions. No lab run is needed beyond the usual
    matrix when this ships.
+
+## 32. Move registration and pending-record code out of deploy.py
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its
+mandatory understandability review.
+
+Status: planned. Suggested by the independent reviews of items 21 and 23.
+
+`deployment/deploy.py` holds about 1400 lines. The registration and pending
+code (about 400 lines: `registration_stage`, `client_registration`,
+`registered_client_id`, `write_registrations`, `registration_changes`,
+`component_imports` and `pending_path` through `acknowledge_owner`) is used by
+install and uninstall but does not depend on them. Move it to
+`deployment/registrations.py` with a one-way import from deploy.py, without
+changing behavior. Tests and `tests/retry_driver.py` patch these functions on
+the `deploy` module, so update those references in the same change. Run the
+full product and harness suites; no lab run is needed for a pure move, but the
+next scheduled matrix covers it.

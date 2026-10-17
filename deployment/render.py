@@ -32,15 +32,21 @@ class UniqueKeyLoader(yaml.SafeLoader):
 
 def load_yaml(path):
     """Read one YAML document safely and reject duplicate keys."""
-    with path.open(encoding="utf-8") as f:
-        # A SafeLoader subclass rejects duplicates without allowing object construction.
-        return yaml.load(f, Loader=UniqueKeyLoader)
+    try:
+        with path.open(encoding="utf-8") as f:
+            # A SafeLoader subclass rejects duplicates without allowing object construction.
+            return yaml.load(f, Loader=UniqueKeyLoader)
+    except UnicodeDecodeError:
+        raise common.DeployError(f"{path} is not valid UTF-8") from None
 
 
 def load_yaml_all(path):
     """Read all YAML documents safely and reject duplicate keys."""
-    with path.open(encoding="utf-8") as f:
-        return list(yaml.load_all(f, Loader=UniqueKeyLoader))
+    try:
+        with path.open(encoding="utf-8") as f:
+            return list(yaml.load_all(f, Loader=UniqueKeyLoader))
+    except UnicodeDecodeError:
+        raise common.DeployError(f"{path} is not valid UTF-8") from None
 
 
 def config_layer(path):
@@ -274,6 +280,15 @@ def generated_secret_paths(config, base_dir):
                         raise common.DeployError(
                             f"{group}.{name}: generated path resolves outside the config directory"
                         ) from None
+                    # A Secret holds files by name only; refuse before generating.
+                    if group == common.SECRET_FILES and (
+                        len(relative.parts) != 1
+                        or not common.SECRET_KEY.fullmatch(relative.name)
+                    ):
+                        raise common.DeployError(
+                            f"{group}.{name}: generated file {filename!r} must be one "
+                            "file name of letters, digits, . - and _"
+                        )
                     if path in seen:
                         raise common.DeployError(
                             f"{group}.{name}: duplicate generated file declaration"
@@ -597,6 +612,8 @@ def check_kinds(documents, source):
                 f"{source}: unsupported resource kind {kind!r}; "
                 "supported: " + ", ".join(SUPPORTED_KINDS)
             )
+        if not isinstance(doc.get("metadata", {}), dict):
+            raise common.DeployError(f"{source}: {kind} metadata must be a map")
 
 
 def pod_specs(documents, source="manifests"):
@@ -609,6 +626,7 @@ def pod_specs(documents, source="manifests"):
             spec = doc.get("spec", {})
             if not isinstance(spec, dict):
                 raise common.DeployError(f"{source}: Pod spec must be a map")
+            check_lists(spec, ("volumes",), f"{source}: Pod spec")
             specs.append((doc, spec))
     return specs
 
@@ -623,8 +641,21 @@ def containers(spec):
         for container in entries:
             if not isinstance(container, dict):
                 raise common.DeployError(f"{group} entries must be maps")
+            check_lists(
+                container,
+                ("env", "envFrom", "volumeMounts"),
+                f"container {container.get('name', '<unnamed>')!r} ({group})",
+            )
             found.append((group, container))
     return found
+
+
+def check_lists(item, keys, where):
+    """Fields every step iterates over must be lists of maps when present."""
+    for key in keys:
+        value = item.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+            raise common.DeployError(f"{where}: {key} must be a list of maps")
 
 
 def check_pod_specs(documents, source="manifests"):
