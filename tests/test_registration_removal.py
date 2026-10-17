@@ -55,10 +55,11 @@ class RegistrationRemovalTests(ProductFixture):
 
     def imported(self, owner, volume, member):
         """Read one file from the import archive an owner receives."""
-        with tarfile.open(
-            str(common.HOME / owner / "files" / (volume + ".tar"))
-        ) as tar:
-            return tar.extractfile(member).read().decode("utf-8")
+        path = common.HOME / owner / "files" / (volume + ".tar")
+        with tarfile.open(str(path)) as tar:
+            stream = tar.extractfile(member)
+            assert stream is not None, member
+            return stream.read().decode("utf-8")
 
     def client_index(self):
         return json.loads(
