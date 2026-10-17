@@ -2344,6 +2344,30 @@ flow and failure/retry paths without reconstructing hidden conventions.
   concrete justification, plus any simplifications made during this review.
   Passing tests alone does not satisfy this completion requirement.
 
+### 5. Review findings added after item 20 (2026-10-17)
+
+An independent review of item 20 at `c00865f` reproduced §1–§4 with renamed
+components (`orders-data` behind `@@DB_VOLUME@@`, a `Deployment` named
+`gateway-stolen` installed from the `orders` bundle, an `inventory` release
+without its route leaving `/stock` active, and a password generated before an
+undefined mount was rejected). It also found:
+
+- **F2:** `database_preflight` recognizes PostgreSQL only through
+  `POSTGRES_PASSWORD_FILE` in top-level Pod `containers`. A container using
+  `POSTGRES_PASSWORD` (for example through `secretKeyRef`) skips the check, so a
+  lost password with an existing volume generates a new one silently. Refuse,
+  before generation, every `POSTGRES_PASSWORD*` form other than the supported
+  layout, with the file and container named; broader layouts stay item 7.
+- **Root cause and suggested shape:** six places walk manifests with their own
+  idea of the resource kinds (placeholder collection, references, pod-spec
+  checks, image discovery, database preflight, the uninstall ConfigMap plan),
+  and `materialize_and_render` renders twice per install. One pure function
+  returning the effective, placeholder-replaced documents, plus one `pod_specs()`
+  helper with an explicit list of supported kinds, used by all of them before
+  `generate_secrets`, addresses §1, §2, §4 and F2 together. Extracting
+  `uninstall_plan()` and one shared restart-and-acknowledge helper would make
+  the lifecycle easier to follow. No wider architecture change is needed.
+
 ### Scope, verification and delivery
 
 - Preserve Python 3.6 support for host tools, existing commands, authoritative
@@ -2588,3 +2612,30 @@ scenarios (replication, fenced failover, promoted application access,
 backup/PITR restore and standby rebuild) and document them even if no lab is
 available; report unexecuted runtime scenarios as outstanding. Never count
 podman_test's acceptance results as evidence for this repository.
+
+## 25. Smaller follow-ups from the item 20 review
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
+
+Status: planned. Found by the independent review of item 20 at `c00865f`;
+none blocks the shipped demo. Handle each separately and keep them small.
+
+- **F7, unfinished first install:** when a first install fails after its
+  metadata is written but without pending owner work (for example at the
+  component's own restart), `metadata/<id>.json` exists without
+  `installed/<id>`. A retry of the same bundle completes it, but `uninstall`
+  refuses with "not installed". Either let uninstall clean up such an
+  unfinished install with its usual data rules, or document the retry as the
+  only recovery and say so in the error. Add a fresh-process regression.
+- **F8, application identity in three places:** `client.yaml` (`id`,
+  `base_path`), the app's `APP_ID`/`BASE_PATH` environment and the route's
+  `location` must agree, but nothing checks it; a mismatch shows up only as an
+  OIDC failure. The generic tool must not learn the demo's environment names.
+  Consider an optional check in the validation command of item 23 for products
+  that declare which variables carry these values.
+- **F10, demo provisioning in every bundle:** `bundle.py` copies the whole
+  `scripts/` directory, so `scripts/generate-certificates.sh` ships in every
+  product's bundles. Decide whether demo provisioning belongs in bundles at
+  all, for example by shipping only `prepare-host.sh` and moving the demo
+  script next to `dev/demo-credentials.sh`, and update the acceptance harness
+  that runs it on the target.

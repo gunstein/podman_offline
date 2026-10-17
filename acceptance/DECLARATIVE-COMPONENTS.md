@@ -24,7 +24,7 @@ installations of the earlier metadata layout (review guide, section 1).
 
 ## Product and unit tests
 
-`python3 -B -m unittest discover -s tests`: 272 tests, OK (1 skipped).
+`python3 -B -m unittest discover -s tests`: 275 tests, OK (1 skipped).
 New files:
 
 | File | Covers |
@@ -41,7 +41,7 @@ owner); it is now derived from declared dependencies.
 
 ## Acceptance harness
 
-`python3 -B -m unittest discover -s acceptance -p 'test_*.py'`: 173 tests, OK.
+`python3 -B -m unittest discover -s acceptance -p 'test_*.py'`: 174 tests, OK.
 `acceptance/test_renamed.py` checks the generator (only new IDs, unchanged
 images and generic files, client ID/base path, routes), runs the real `prepare`
 on the generated tree with moved demo credentials, checks that the target
@@ -81,6 +81,22 @@ The renamed run resets both VMs, then:
    uninstall manual from its retained bundle.
 
 Expected: CLEAN PASS for all four runs. Record the results here when run.
+
+## Review follow-up
+
+An independent review of `c00865f` found one regression from this change:
+pending owner work could only be finished by a release declaring the same
+roles (F6). Pending owners are now checked against the owners that installed
+components and the bundle serve, so a release that drops its route still
+completes the unfinished gateway work. Regressions:
+`test_pending_owner_work_finishes_with_a_release_that_drops_the_role`, and
+`test_lost_password_with_existing_renamed_volume_is_refused`, which checks the
+exact renamed volume name. The sibling reinstall in `test_product_changes.py`
+now uses the newly built bundle as its comment says.
+
+The review's other findings are tracked in the backlog: F1, F3, F4 and F5 are
+item 21, F2 and the suggested single effective-document pass were added to
+item 21, and F7, F8 and F10 are item 25.
 
 ## Remaining gaps
 

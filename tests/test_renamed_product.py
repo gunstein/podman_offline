@@ -169,35 +169,40 @@ class RenamedProductTests(ProductFixture):
             deploy.install()
         self.process.assert_not_called()
 
-    def test_owner_failure_retries_in_fresh_process_with_renamed_ids(self):
+    def attempt(self, release, **options):
+        """Run one install in a fresh interpreter against the same persistent home."""
+        parameters = dict(
+            root=str(release),
+            home=str(common.HOME),
+            source=str(SOURCE),
+            record=str(self.root / "attempt.json"),
+            action="install",
+            **options,
+        )
+        result = REAL_RUN(
+            [sys.executable, "-B", str(DRIVER)],
+            input=json.dumps(parameters),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            check=False,
+        )
+        events = json.loads((self.root / "attempt.json").read_text())["events"]
+        return result.returncode, events
+
+    def install_shared(self):
+        """Build, delete the source and install the gateway and login-service."""
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
         self.provide_credentials(RENAMED, common.HOME)
         for name in ("gateway", "login-service"):
             self.install(releases[name])
+        return releases
+
+    def test_owner_failure_retries_in_fresh_process_with_renamed_ids(self):
+        releases = self.install_shared()
         self.use_root(releases["orders"])
         deploy.init_config("orders")
-
-        def attempt(**options):
-            parameters = dict(
-                root=str(releases["orders"]),
-                home=str(common.HOME),
-                source=str(SOURCE),
-                record=str(self.root / "attempt.json"),
-                action="install",
-                **options,
-            )
-            result = REAL_RUN(
-                [sys.executable, "-B", str(DRIVER)],
-                input=json.dumps(parameters),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                check=False,
-            )
-            events = json.loads((self.root / "attempt.json").read_text())["events"]
-            return result.returncode, events
-
         failure = [
             "systemctl",
             "--user",
@@ -205,13 +210,13 @@ class RenamedProductTests(ProductFixture):
             "--quiet",
             "myproduct-login-service.service",
         ]
-        status, events = attempt(failure=failure)
+        status, events = self.attempt(releases["orders"], failure=failure)
         self.assertEqual(status, 1)
         pending = json.loads((common.HOME / "pending-operation.json").read_text())
         self.assertEqual(pending["component"], "orders")
         self.assertEqual(pending["owners"], ["gateway", "login-service"])
         self.assertFalse((common.HOME / "installed/orders").exists())
-        status, events = attempt()
+        status, events = self.attempt(releases["orders"])
         self.assertEqual(status, 0, events)
         restarted = [
             event[-1]
@@ -228,3 +233,47 @@ class RenamedProductTests(ProductFixture):
         )
         self.assertFalse((common.HOME / "pending-operation.json").exists())
         self.assertEqual((common.HOME / "installed/orders").read_text(), "1.0.0\n")
+
+    def test_pending_owner_work_finishes_with_a_release_that_drops_the_role(self):
+        """Unfinished gateway work is completed even if the next release has no route."""
+        releases = self.install_shared()
+        manual = releases["manual"]
+        self.use_root(manual)
+        deploy.init_config("manual")
+        failure = ["systemctl", "--user", "restart", "myproduct-gateway.service"]
+        status, _ = self.attempt(manual, failure=failure)
+        self.assertEqual(status, 1)
+        pending = json.loads((common.HOME / "pending-operation.json").read_text())
+        self.assertEqual(pending["owners"], ["gateway"])
+        # A newer manual release no longer declares a route.
+        descriptor = yaml.safe_load((manual / "bundle.yaml").read_text())
+        (manual / "bundle.yaml").write_text(
+            yaml.safe_dump(dict(descriptor, routes=None, version="1.0.1"))
+        )
+        (manual / "components/manual/route.conf").unlink()
+        status, events = self.attempt(manual)
+        self.assertEqual(status, 0, events)
+        self.assertIn(
+            ["systemctl", "--user", "restart", "myproduct-gateway.service"], events
+        )
+        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertEqual((common.HOME / "installed/manual").read_text(), "1.0.1\n")
+
+    def test_lost_password_with_existing_renamed_volume_is_refused(self):
+        """The renamed database volume is inspected by its name before any write."""
+        releases = self.install_shared()
+        self.use_root(releases["orders"])
+        deploy.init_config("orders")
+        self.volumes.add("orders-data")
+        before = self.files_under(common.HOME)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Missing database password file .*orders/credentials/database/password "
+            "with existing volume orders-data",
+        ):
+            deploy.install()
+        self.assertEqual(
+            self.commands(), [["podman", "volume", "exists", "orders-data"]]
+        )
+        self.assertEqual(self.files_under(common.HOME), before)

@@ -1007,11 +1007,16 @@ def install_components():
     known[name] = descriptor
     # An incoming descriptor must not take over a role another component serves.
     catalog.check_owners(known, "installed components and this bundle")
-    if pending and not set(pending["owners"]) <= {
-        descriptor["routes"],
-        descriptor["clients"],
-    }:
-        raise common.DeployError("Invalid pending-operation state; no changes made")
+    # Unfinished owner work stays valid even if this release drops the role,
+    # as long as the owner still serves that role among the known components.
+    owners = catalog.role_owners(known, "installed components and this bundle")
+    unknown = set(pending["owners"] if pending else []) - set(owners.values())
+    if unknown:
+        raise common.DeployError(
+            "Pending owner work for "
+            + ", ".join(sorted(unknown))
+            + ", which no installed component serves; no changes made"
+        )
     check_dependencies_installed(descriptor)
     check_dependents(descriptor, installed)
     components = [name] if install_needed(descriptor) else []

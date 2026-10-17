@@ -2,6 +2,8 @@
 
 import copy
 import shutil
+import tarfile
+import warnings
 
 import yaml
 from product_fixture import RENAMED, WORKER, ProductFixture, pod, route
@@ -172,10 +174,19 @@ class ServiceChangeTests(ProductFixture):
         orders = [name for name in current if name.startswith("myproduct-orders-")]
         self.assertEqual(len(orders), 1)
         # Reinstalling a sibling from the new build keeps the reports registration.
-        self.use_root(releases["orders"])
+        new_orders = self.root / "new-orders"
+        new_orders.mkdir()
+        path = self.source / "dist" / orders[0]
+        # Built by this test; keep the Python 3.6 extract API.
+        with tarfile.open(str(path)) as archive, warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            archive.extractall(str(new_orders))
+        (release,) = new_orders.iterdir()
+        self.use_root(release)
         self.process.reset_mock()
         deploy.install()
         self.assertEqual(self.restarts(), ["orders"])
+        self.assertTrue((common.HOME / "routes/reports.conf").is_file())
         # Explicit, scoped uninstall from the retained reports bundle.
         shutil.rmtree(self.source)
         self.use_root(releases["reports"])
