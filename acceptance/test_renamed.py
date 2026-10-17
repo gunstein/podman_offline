@@ -137,6 +137,24 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(defaults["DB_HOST"], "orders-postgres")
         self.assertIn("orders-database-password", defaults["SECRET_FILES"])
 
+    @unittest.skipUnless(shutil.which("git"), "Git is required")
+    def test_untracked_local_files_are_never_copied(self):
+        """Local dev config and credentials stay out of the generated tree."""
+        source = self.target.parent / "source"
+        (source / "config").mkdir(parents=True)
+        (source / "config/common.defaults.yaml").write_text("{}\n")
+        subprocess.run(["git", "init", "-q", str(source)], check=True)
+        subprocess.run(["git", "-C", str(source), "add", "-A"], check=True)
+        (source / "config/dev.yaml").write_text("SECRET_FILES: {platform-x: []}\n")
+        (source / "credentials").mkdir()
+        (source / "credentials/key").write_text("private")
+        target = self.target.parent / "copy"
+        renamed_product.copy_tracked_files(source, target)
+        self.assertEqual(
+            sorted(str(path.relative_to(target)) for path in target.rglob("*")),
+            ["config", "config/common.defaults.yaml"],
+        )
+
     def test_existing_target_is_never_overwritten(self):
         with self.assertRaisesRegex(SystemExit, "already exists"):
             renamed_product.generate(ROOT, self.target)

@@ -7,8 +7,8 @@ owner would edit:
     python3 acceptance/renamed_product.py generate SOURCE TARGET
     python3 acceptance/renamed_product.py credentials ROOT HOSTNAME [COMPONENT...]
 
-`generate` copies SOURCE without .git/build/dist and replaces components/ and
-bundles.yaml. `credentials` runs the demo provisioning script for the matching
+`generate` copies the files Git tracks in SOURCE (so no local dev config,
+credentials or build output) and replaces components/ and bundles.yaml. `credentials` runs the demo provisioning script for the matching
 demo component and moves the result to the renamed component's directory.
 
 Public URL paths are application settings, not component IDs: orders serves
@@ -34,7 +34,6 @@ NAMES = {
 }
 PATHS = {"/app1": "/orders", "/app2": "/stock"}
 CLIENT_IDS = {"app1": "orders-web", "app2": "inventory"}
-COPY_IGNORE = shutil.ignore_patterns(".git", "build", "dist", "__pycache__", "*.pyc")
 
 
 def rename(value):
@@ -145,11 +144,27 @@ def dump(path, data, multiple=False):
             yaml.safe_dump(data, stream, sort_keys=False)
 
 
+def copy_tracked_files(source, target):
+    """Copy only files Git tracks, never local config, credentials or build output."""
+    listing = subprocess.run(
+        ["git", "-C", str(source), "ls-files", "-z"],
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.decode("utf-8")
+    for relative in filter(None, listing.split("\0")):
+        origin = source / relative
+        if not origin.is_file():
+            continue  # Deleted in the working tree but not yet committed.
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(origin), str(destination))
+
+
 def generate(source, target):
     """Write the renamed checkout; the target must not exist yet."""
     if target.exists():
         raise SystemExit(f"FAIL: {target} already exists")
-    shutil.copytree(str(source), str(target), ignore=COPY_IGNORE)
+    copy_tracked_files(source, target)
     shutil.rmtree(str(target / "components"))
     with (source / "bundles.yaml").open(encoding="utf-8") as stream:
         catalog = yaml.safe_load(stream)
