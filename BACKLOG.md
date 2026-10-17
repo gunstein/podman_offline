@@ -2639,3 +2639,76 @@ none blocks the shipped demo. Handle each separately and keep them small.
   all, for example by shipping only `prepare-host.sh` and moving the demo
   script next to `dev/demo-credentials.sh`, and update the acceptance harness
   that runs it on the target.
+
+## 26. Make reserved configuration names and shared settings visible
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned. Start after item 21. Requested 2026-10-17.
+
+### Problem
+
+All configuration values are written the same way in the same YAML files, but
+some names have behavior built into the tools and others do not. Nothing in the
+configuration shows which is which:
+
+| Name | What the tools do with it |
+| --- | --- |
+| `PUBLIC_ORIGIN` | Validated as an HTTPS origin; copied from the `public_from` dependency at `init-config` and in dev; install refuses a mismatch; used for OIDC redirect URIs |
+| `HTTPS_PORT` | Validated as a port 1-65535; inherited and compared like `PUBLIC_ORIGIN` |
+| `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error |
+| `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values |
+| Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@`; each component keeps its own copy, nothing is inherited or compared, whatever its prefix |
+
+So `PUBLIC_MY_SETTING` in `config/common.defaults.yaml` looks like
+`PUBLIC_ORIGIN` but behaves differently: in production every component gets its
+own copy at `init-config`, and a later edit in one component is neither
+propagated nor detected. A product has no declarative way to share its own
+value the way the gateway shares `PUBLIC_ORIGIN`.
+
+Renaming the reserved names is not the goal: the tools must know what
+`PUBLIC_ORIGIN` means to validate it, derive the hostname and build redirect
+URIs, and a configurable name would only move the constant. The goal is that
+the difference is visible and that products can share their own values.
+
+### Message to the implementing agent
+
+1. **Document the reserved names in one place.** Add a "Reserved configuration
+   names" section to `docs/COMPONENTS.md` with the table above and the reason
+   each is reserved. Link it from README's configuration section. Keep
+   `deploy.PUBLIC_KEYS` and the documentation consistent, and say in a code
+   comment where the documentation lives.
+2. **Declare shared settings in the catalog.** Add one optional field on the
+   component that owns the values, for example:
+
+   ```yaml
+   gateway:
+     shares: [PUBLIC_MY_SETTING]
+   ```
+
+   A component with `public_from: gateway` then inherits and is compared on
+   `PUBLIC_ORIGIN`, `HTTPS_PORT` and every name in the owner's `shares`, at
+   `init-config`, in dev prepare and at install, exactly as `PUBLIC_ORIGIN` is
+   today. `PUBLIC_ORIGIN` and `HTTPS_PORT` are always shared and keep their
+   extra validation; listing them in `shares` is allowed but changes nothing.
+   Validate names with the existing placeholder name rule and refuse reserved
+   names that cannot be shared (`PUBLIC_HOSTNAME`, `SECRET_FILES`,
+   `VOLUME_FILES`).
+3. **Keep it offline and strict.** Compile `shares` into `bundle.yaml` and
+   installed metadata, so a dependent's install compares against the owner's
+   installed declaration without the source checkout. An owner upgrade that
+   removes a shared name still used by an installed dependent must fail
+   clearly before writes. Read installed metadata with the existing strictness;
+   no migration or fallback (no installations of the old schema exist).
+4. **Errors name the setting, both files and the declaring component**, never
+   the values.
+
+### Tests and delivery
+
+Test inheritance at `init-config` and in dev, refusal of a mismatch at install
+for a shared custom name, no comparison for unshared names, invalid and reserved
+names in `shares`, an owner upgrade dropping a used name, and the renamed
+product sharing a value from `gateway`. Run product tests, acceptance-harness
+tests, ruff, format, pyright, vermin, shellcheck and `git diff --check`. Update
+the review guide's contracts, `docs/COMPONENTS.md` and the release version.
