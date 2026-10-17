@@ -1,8 +1,9 @@
 # Manifest validation and registration removal: verification for 0.4.10
 
 This covers backlog item 21. The baseline is merged `main` at `38705e5` (item 20,
-0.4.9). Its four acceptance runs were reported green by the operator before
-this work started. Nothing below is a lab result for 0.4.10.
+0.4.9). Its four acceptance scenarios had a clean lab pass (recorded in
+[declarative components](DECLARATIVE-COMPONENTS.md#real-acceptance)). Nothing
+below is a lab result for 0.4.10.
 
 ## Root causes and fixes
 

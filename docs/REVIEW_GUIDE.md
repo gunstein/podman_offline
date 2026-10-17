@@ -36,7 +36,7 @@ this list; update entries with implementation/test evidence when resolved.
 
 | Gap | Owner |
 | --- | --- |
-| ~~Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance~~ | Resolved by backlog 20 in 0.4.9; [verification](../acceptance/DECLARATIVE-COMPONENTS.md), real runs outstanding |
+| ~~Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance~~ | Resolved by backlog 20 in 0.4.9; [verification](../acceptance/DECLARATIVE-COMPONENTS.md), lab runs clean |
 | ~~Mandatory public origin/port for every component; hostname derivation tied to `platform`~~ | Resolved by backlog 20 in 0.4.9 |
 | ~~Initial image validation includes unselected component directories; generic dev still has demo dependencies~~ | Resolved by backlog 20 in 0.4.9 |
 | ~~OIDC client ID/path/scopes coupled to component ID; contract needs explicit validation/documentation~~ | Resolved by backlog 20 in 0.4.9; contract in [components](COMPONENTS.md) |

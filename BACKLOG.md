@@ -1792,9 +1792,9 @@ Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented in 0.4.9 on branch `feature/declarative-components`; local
-product and harness tests pass, real acceptance runs (demo and
-`--renamed-product`) are outstanding. See
+Status: done in 0.4.9 (merged from `feature/declarative-components`); local
+product and harness tests pass, and the lab runs (demo and
+`--renamed-product`) were CLEAN PASS on `8e62153`. See
 [verification](acceptance/DECLARATIVE-COMPONENTS.md) and
 [components](docs/COMPONENTS.md). The original task follows.
 This addresses custom installations failing when a component is renamed, for
