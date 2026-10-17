@@ -158,10 +158,11 @@ They preserve YAML types; ConfigMap data is converted to text. Partial string
 interpolation and `envsubst` are not supported. Missing values identify their key
 and config file without exposing secret values.
 
-Standalone manifest fixtures in `examples/` and registry acceptance retain their
-explicit fixture `config.yaml` and persistent `~/config.yaml` paths. These are
-separate from the product’s component config model. Historical reports under `~/podman-offline-acceptance-runs/` may retain old
-config names; those evidence files are not rewritten.
+The examples in `examples/` and the registry acceptance test still use one
+explicit `config.yaml` (and `~/config.yaml` when installed). The product itself
+does not; it uses the component config model described above. Older acceptance
+reports under `~/podman-offline-acceptance-runs/` may still mention the old
+configuration names; those reports are kept unchanged.
 
 ## Run locally
 
