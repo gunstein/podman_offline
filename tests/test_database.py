@@ -40,7 +40,12 @@ class DatabaseTests(DeployFixture):
         self.process.return_value = subprocess.CompletedProcess([], 1)
 
     def preflight(self):
-        deploy.database_preflight(self.settings, self.path, self.manifests)
+        deploy.check_manifests(
+            rendering.effective_config(self.settings, self.path, "app1"),
+            self.path,
+            self.manifests,
+            "app1",
+        )
 
     def test_new_database_generates_once_with_private_modes(self):
         self.preflight()
@@ -60,10 +65,11 @@ class DatabaseTests(DeployFixture):
         for component in ("app1", "app2"):
             config = rendering.component_defaults(component)
             base = common.HOME / component
-            deploy.database_preflight(
-                config,
+            deploy.check_manifests(
+                rendering.effective_config(config, base / "config.yaml", component),
                 base / "config.yaml",
                 common.ROOT / "components" / component / "manifests",
+                component,
             )
             rendering.generate_secrets(config, base)
             passwords.append((base / "credentials/database/password").read_bytes())

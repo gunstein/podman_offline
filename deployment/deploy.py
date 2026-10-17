@@ -83,112 +83,159 @@ def check_public_settings(descriptor, config, path):
             raise common.DeployError(f"{key} in {path} must match {source_path}")
 
 
-def database_preflight(config, config_path, manifests):
-    """Guard PostgreSQL password creation using its manifest's actual named volume.
+POSTGRES_DATA = "/var/lib/postgresql/data"
 
-    This lifecycle check runs before rendering/generation, never inside the
-    general secret generator. Existing volumes are conservatively retained.
+
+def database_preflight(config, config_path, documents):
+    """Guard PostgreSQL password creation using the volume that will be installed.
+
+    documents is effective_documents() output: placeholders are replaced, so
+    Podman is asked about the configured volume name. Runs after validation and
+    before generation, never inside the generic secret generator. A missing
+    password with an existing volume is refused: the volume keeps the old one.
     """
-    for manifest in sorted(manifests.glob("*.yaml")):
-        for _, spec in rendering.pod_specs(rendering.load_yaml_all(manifest), manifest):
-            volumes = {v["name"]: v for v in spec.get("volumes", [])}
-            for container in spec.get("containers", []):
-                env = {e["name"]: e.get("value") for e in container.get("env", [])}
-                if "POSTGRES_PASSWORD_FILE" not in env:
-                    continue
-                reference = env["POSTGRES_PASSWORD_FILE"]
-                if not isinstance(reference, str) or not Path(reference).is_absolute():
-                    raise common.DeployError(
-                        f"Invalid POSTGRES_PASSWORD_FILE in {manifest}"
-                    )
-                password_file = Path(reference)
-                mounts = container.get("volumeMounts", [])
-                secret_mount = next(
-                    (m for m in mounts if m["mountPath"] == str(password_file.parent)),
-                    None,
+    for pod, spec in rendering.pod_specs(documents):
+        for group, container in rendering.containers(spec):
+            binding = postgres_binding(pod, spec, group, container)
+            if binding is None:
+                continue
+            claim, secret_name, key = binding
+            password = database_password_path(config, config_path, secret_name, key)
+            if password.exists() or password.is_symlink():
+                check_database_password(password)
+                continue
+            check_database_volume_absent(claim, password)
+            if password.resolve() not in rendering.generated_secret_paths(
+                config, config_path.parent
+            ):
+                raise common.DeployError(
+                    f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
                 )
-                data_mount = next(
-                    (m for m in mounts if m["mountPath"] == "/var/lib/postgresql/data"),
-                    None,
-                )
-                if not secret_mount or not data_mount:
-                    raise common.DeployError(
-                        f"Unsupported PostgreSQL password/data mounts in {manifest}"
-                    )
-                try:
-                    secret = volumes[secret_mount["name"]]["secret"]
-                    claim = volumes[data_mount["name"]]["persistentVolumeClaim"][
-                        "claimName"
-                    ]
-                    keys = [
-                        item["key"]
-                        for item in secret.get("items", [])
-                        if item["path"] == password_file.name
-                    ]
-                    if len(keys) != 1:
-                        raise KeyError("password key")
-                    key = keys[0]
-                except (KeyError, TypeError):
-                    raise common.DeployError(
-                        f"Unsupported PostgreSQL Secret/PVC binding in {manifest}"
-                    ) from None
-                entries = rendering.file_group_sources(config, common.SECRET_FILES).get(
-                    secret["secretName"], []
-                )
-                candidates = []
-                for entry in entries:
-                    source = rendering.resolve_path(entry["path"], config_path.parent)
-                    directory = "generate" in entry or source.is_dir()
-                    candidates.append(
-                        source if source.name == key and not directory else source / key
-                    )
-                if len(candidates) != 1:
-                    raise common.DeployError(
-                        f"{config_path}: {common.SECRET_FILES}.{secret['secretName']} must identify one password file"
-                    )
-                password = candidates[0]
-                if password.exists() or password.is_symlink():
-                    if not password.is_file():
-                        raise common.DeployError(
-                            f"Invalid database password file {password}; restore from backup"
-                        )
-                    try:
-                        content = password.read_bytes().decode("utf-8").rstrip("\n")
-                    except (OSError, UnicodeError):
-                        raise common.DeployError(
-                            f"Invalid database password file {password}; restore from backup"
-                        ) from None
-                    if not content or any(c in content for c in ("\x00", "\n", "\r")):
-                        raise common.DeployError(
-                            f"Empty or invalid database password file {password}; restore from backup"
-                        )
-                    continue
-                try:
-                    result = subprocess.run(  # noqa: UP022 - Python 3.6
-                        ["podman", "volume", "exists", claim],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=False,
-                    )
-                except OSError:
-                    raise common.DeployError(
-                        f"Cannot check database volume {claim}; no password generated"
-                    ) from None
-                if result.returncode == 0:
-                    raise common.DeployError(
-                        f"Missing database password file {password} with existing volume {claim}; "
-                        "restore the password from backup or use a separate recovery procedure; no password generated"
-                    )
-                if result.returncode != 1:
-                    raise common.DeployError(
-                        f"Cannot check database volume {claim}; no password generated"
-                    )
-                if password.resolve() not in rendering.generated_secret_paths(
-                    config, config_path.parent
-                ):
-                    raise common.DeployError(
-                        f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
-                    )
+
+
+def postgres_binding(pod, spec, group, container):
+    """Return (data claim, password Secret, Secret key) or None for a non-database container.
+
+    Only the POSTGRES_PASSWORD_FILE layout with a mounted Secret and a PVC at
+    the data directory is supported; any other POSTGRES_PASSWORD* form is
+    refused so a lost password can never be replaced silently (item 7).
+    """
+    where = f"container {container.get('name', '<unnamed>')!r} ({group}) of Pod {pod.get('metadata', {}).get('name')!r}"
+    env = [entry for entry in container.get("env", []) if isinstance(entry, dict)]
+    names = sorted(
+        entry["name"]
+        for entry in env
+        if isinstance(entry.get("name"), str)
+        and entry["name"].startswith("POSTGRES_PASSWORD")
+    )
+    if not names:
+        return None
+    if names != ["POSTGRES_PASSWORD_FILE"]:
+        raise common.DeployError(
+            f"Unsupported PostgreSQL password setting {', '.join(names)} in {where}; "
+            "use only POSTGRES_PASSWORD_FILE with a mounted Secret"
+        )
+    entry = next(entry for entry in env if entry["name"] == "POSTGRES_PASSWORD_FILE")
+    reference = entry.get("value")
+    if (
+        "valueFrom" in entry
+        or not isinstance(reference, str)
+        or not Path(reference).is_absolute()
+    ):
+        raise common.DeployError(f"Invalid POSTGRES_PASSWORD_FILE in {where}")
+    password_file = Path(reference)
+    mounts = {
+        mount.get("mountPath"): mount.get("name")
+        for mount in container.get("volumeMounts", [])
+        if isinstance(mount, dict)
+    }
+    secret_volume = mounts.get(str(password_file.parent))
+    data_volume = mounts.get(POSTGRES_DATA)
+    if not secret_volume or not data_volume:
+        raise common.DeployError(
+            f"Unsupported PostgreSQL password/data mounts in {where}"
+        )
+    volumes = {
+        volume.get("name"): volume
+        for volume in spec.get("volumes", [])
+        if isinstance(volume, dict)
+    }
+    try:
+        secret = volumes[secret_volume]["secret"]
+        claim = volumes[data_volume]["persistentVolumeClaim"]["claimName"]
+        keys = [
+            item["key"]
+            for item in secret.get("items", [])
+            if item["path"] == password_file.name
+        ]
+        if len(keys) != 1 or not isinstance(claim, str):
+            raise KeyError("password key")
+        return claim, secret["secretName"], keys[0]
+    except (KeyError, TypeError, AttributeError):
+        raise common.DeployError(
+            f"Unsupported PostgreSQL Secret/PVC binding in {where}"
+        ) from None
+
+
+def database_password_path(config, config_path, secret_name, key):
+    """Return the one config file that delivers the password key of the Secret."""
+    entries = rendering.file_group_sources(config, common.SECRET_FILES).get(
+        secret_name, []
+    )
+    candidates = []
+    for entry in entries:
+        source = rendering.resolve_path(entry["path"], config_path.parent)
+        directory = "generate" in entry or source.is_dir()
+        candidates.append(
+            source if source.name == key and not directory else source / key
+        )
+    if len(candidates) != 1:
+        raise common.DeployError(
+            f"{config_path}: {common.SECRET_FILES}.{secret_name} must identify one password file"
+        )
+    return candidates[0]
+
+
+def check_database_password(password):
+    """An existing password must be a nonempty single-line regular file."""
+    if not password.is_file():
+        raise common.DeployError(
+            f"Invalid database password file {password}; restore from backup"
+        )
+    try:
+        content = password.read_bytes().decode("utf-8").rstrip("\n")
+    except (OSError, UnicodeError):
+        raise common.DeployError(
+            f"Invalid database password file {password}; restore from backup"
+        ) from None
+    if not content or any(c in content for c in ("\x00", "\n", "\r")):
+        raise common.DeployError(
+            f"Empty or invalid database password file {password}; restore from backup"
+        )
+
+
+def check_database_volume_absent(claim, password):
+    """Only Podman's documented "absent" answer (exit 1) allows a new password."""
+    try:
+        result = subprocess.run(  # noqa: UP022 - Python 3.6
+            ["podman", "volume", "exists", claim],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError:
+        raise common.DeployError(
+            f"Cannot check database volume {claim}; no password generated"
+        ) from None
+    if result.returncode == 0:
+        raise common.DeployError(
+            f"Missing database password file {password} with existing volume {claim}; "
+            "restore the password from backup or use a separate recovery procedure; no password generated"
+        )
+    if result.returncode != 1:
+        raise common.DeployError(
+            f"Cannot check database volume {claim}; no password generated"
+        )
 
 
 def dev_settings():
@@ -225,7 +272,7 @@ def check_manifests(config, config_path, manifests, component=None, imported=())
     documents = rendering.effective_documents(
         config, config_path, manifests, component, imported
     )
-    database_preflight(config, config_path, manifests)
+    database_preflight(config, config_path, documents)
     return documents
 
 
