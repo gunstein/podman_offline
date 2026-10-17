@@ -2032,7 +2032,10 @@ audit|audit-check|launch-audit-check)
     if [[ $action == audit ]]; then audit_events collect; else audit_events check; fi
     if [[ $action == audit && $role == PROD ]]; then
         # Evidence for backlog 29: early evictions can trigger ld.so pattern denials.
-        sudo -n fapolicyd-cli --check-status | grep -E '^(q_size|Inter-thread max queue depth|Subject cache size|Subject slots in use|Subject evictions|Early subject cache evictions):' || true
+        # stdin is this script (bash -se), so keep the CLI away from it.
+        fapolicyd_status=$(sudo -n fapolicyd-cli --check-status </dev/null 2>&1) || true
+        grep -E '^(q_size|Inter-thread max queue depth|Subject cache size|Subject slots in use|Subject evictions|Early subject cache evictions):' <<< "$fapolicyd_status" \
+            || echo "FAPOLICYD_STATUS unavailable: ${fapolicyd_status:0:200}"
     fi
     test "$diagnostic_status" = 0
     ;;

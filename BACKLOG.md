@@ -2925,7 +2925,7 @@ standalone paragraph consistent.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: remedy implemented, lab confirmation pending. `acceptance/fapolicyd-reload-probe.sh` reproduces
+Status: done on `main` (0 early evictions in the lab with the documented cache size). `acceptance/fapolicyd-reload-probe.sh` reproduces
 the sequence on the PROD VM (trust add/delete, `fapolicyd-cli --update`, wait
 0–15 s, restart a user unit) and reports failed restarts per delay, the
 effective rules, `fapolicyd.conf`, fapolicyd's journal and every FANOTIFY/AVC
@@ -2954,9 +2954,14 @@ Remedy (on `main`): the README documents `subj_cache_size = 16381` as a host
 prerequisite (a cache size, not a rule change); `prepare-host.sh` warns when
 it is smaller but does not edit fapolicyd's configuration; the lab's
 prepare-host step applies the documented setting and restarts fapolicyd; and
-`11-prod-audit` records the cache and queue figures. Remaining: confirm in the
-next acceptance runs that early evictions stay at 0. No retry was added to
+`11-prod-audit` records the cache and queue figures. No retry was added to
 deploy: rerunning `./deploy install` already completes pending owner work.
+
+Confirmed in `fapo-app1-first` on `2589710` (CLEAN PASS, no FANOTIFY/AVC
+events): with `subj_cache_size = 16381` the report showed 0 early evictions
+(was 6), 19 % of slots in use (was 83 %), 444 evictions (was 3556) and a
+maximum queue depth of 5. The audit's figures were empty in that run because
+the CLI read the script's stdin; fixed by redirecting it from `/dev/null`.
 
 ### Observation
 
