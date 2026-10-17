@@ -2217,7 +2217,7 @@ plugin framework or large object hierarchy.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented in 0.4.10 on `feature/manifest-validation`; local checks
+Status: done in 0.4.10 (merged from `feature/manifest-validation`); local checks
 green, and all six lab scenarios were CLEAN PASS on `5ee9748`. The independent
 review's follow-up changed install order, database detection and image checks;
 app1-first, identity-only and renamed-product were CLEAN PASS on `a688c30`. See
@@ -2585,9 +2585,10 @@ time.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Requested 2026-10-17. Coordinate with item 21 §4, which moves
-the same checks ahead of secret generation inside install; this item adds the
-explicit command and reuses that validation instead of a second implementation.
+Status: plan written 2026-10-17 (below), awaiting the operator's review before
+implementation. Item 21 already moved the checks ahead of secret generation;
+this item adds the explicit command and reuses that validation instead of a
+second implementation.
 
 ### What exists today
 
@@ -2644,6 +2645,81 @@ failing validation creates no files and runs no commands. Validate the shipped
 demo and the renamed/minimal fixtures from item 20. Run product tests,
 acceptance-harness tests, ruff, format, pyright, vermin, shellcheck and
 `git diff --check`. Document the command in README and the review guide.
+
+### Plan (2026-10-17)
+
+**Command.** `./deploy validate`, the same wrapper as `prepare` and `install`.
+It decides the mode as those commands do:
+
+| Where | What is validated | Config |
+| --- | --- | --- |
+| Source checkout (`bundles.yaml`) | every catalog component | dev layers, as `prepare` (`deploy.dev_settings`) |
+| Unpacked component bundle (`bundle.yaml`) | the bundle's component and its registrations against the installed set | the persistent `config.yaml`, as `install` |
+| Standalone fixture | `manifests/` | the fixture's `config.yaml` |
+
+In the bundle mode it runs as the service user (it reads the service home),
+but it needs no runtime directory and changes nothing.
+
+**One pure function.** Split today's `deploy.check_manifests` into:
+
+- `validate_component(config, config_path, manifests, component, imported)`:
+  pure. It runs `effective_config` and `effective_documents` (kinds, names,
+  placeholders, pull policy, mounts, links, duplicates), `find_images` (fully
+  qualified literals), the static PostgreSQL layout check (`postgres_binding`
+  and `database_password_path`, which read no host state), and a new
+  `check_file_sources` that reports a declared `path` that is missing, or a
+  directory under `SECRET_FILES`, unless `generate` creates it. It only checks
+  existence and type, never contents.
+- `check_manifests`: `validate_component`, then `database_preflight`'s host
+  query (`podman volume exists`), unchanged for install and prepare.
+
+Registrations are validated by `registration_stage` in a temporary directory,
+as install and dev prepare already do (client descriptors, certificates, role
+files, owners). Install's descriptor checks (pending record, owners, ID
+prefixes, dependency ranges, `public_from`) are factored into one function that
+both `install_components` and `validate` call, so the two cannot disagree.
+
+**Reporting.** The existing checks stop at their first error. Rewriting every
+check to collect all errors would be a parallel implementation, so `validate`
+reports the first finding per component and continues with the next
+component; fixing and rerunning shows the next finding. Each line names the
+component and keeps today's messages (file, document, container, expected
+declaration). It never prints config values or secret contents. Exit 1 on any
+finding, otherwise exit 0 with a summary:
+`OK: validated platform, identity, app1, app2, help; nothing written, no host
+commands`.
+
+**No side effects.** No secret generation, no rendered YAML, no archives, no
+Podman, systemd or network calls, and nothing written outside a temporary
+directory that is removed. Tests assert an unchanged tree and no subprocess
+calls for every finding type.
+
+**Lifecycle uses the same code.** Dev `prepare` (`check_dev_components`),
+install and both standalone paths call `validate_component` through
+`check_manifests`. `build-bundle.sh` is unchanged: it validates the catalog,
+kinds and images, but not dev config, which is developer-local.
+
+**Out of scope.** Secret `items` keys checked against declared file names
+(keys are known only from file names or `generate`, and a wrong key already
+fails at materialize with the file name); F8 from item 25 (application
+identity across `client.yaml`, environment and route), which can be added later
+as an optional check; and a machine-readable output format.
+
+**Tests.** One test per finding type listed above plus: missing and wrongly
+typed source paths, an invalid `client.yaml`, an unknown dependency range in
+the bundle mode, prefix-ambiguous IDs, and a passing run of the shipped demo
+and the renamed product. Each failure test asserts exit 1, the component in
+the message, no files changed and no commands. A test asserts that `prepare`
+and `validate` report the same message for the same broken manifest.
+
+**Docs.** README (developer workflow: run `./deploy validate` before
+`dev/dev.sh up` and `build-bundle.sh`; operator workflow: before `install`),
+`docs/COMPONENTS.md` (adding and removing a component), ARCHITECTURE
+(validation order) and the review guide.
+
+**Lab.** No new acceptance step is needed for correctness, but a cheap one is
+useful: `03-validate` on DEV before `03-dev-up`, and `06-validate-<id>` on PROD
+before each install, both expecting exit 0 and no changes.
 
 ## 24. Optional disaster recovery (DR), adapted from podman_test
 
