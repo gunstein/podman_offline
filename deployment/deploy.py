@@ -197,13 +197,25 @@ def database_preflight(config, config_path, manifests):
 def dev_settings():
     """Compile the source catalog and merge dev config for each component.
 
-    Both are in dependency order; nothing is written here.
+    Both are in dependency order, so a public_from source is merged before the
+    components that take its PUBLIC_ORIGIN and HTTPS_PORT, as init-config does
+    in production. Nothing is written here.
     """
     known = catalog.source_descriptors(common.ROOT)
-    return known, {
-        component: rendering.component_defaults(component, dev=True)
-        for component in known
-    }
+    settings = {}
+    for component, descriptor in known.items():
+        source = descriptor["public_from"]
+        overrides = (
+            public_settings(
+                settings[source], common.BUILD / "dev" / source / "config.yaml"
+            )
+            if source
+            else None
+        )
+        settings[component] = rendering.component_defaults(
+            component, overrides=overrides, dev=True
+        )
+    return known, settings
 
 
 def dev_database_preflight(settings):
@@ -225,10 +237,6 @@ def prepare_components():
     for component, settings in settings_by_component.items():
         target = state / component / "config.yaml"
         rendering.write_private(target, yaml.safe_dump(settings, sort_keys=False))
-    for component, settings in settings_by_component.items():
-        check_public_settings(
-            known[component], settings, state / component / "config.yaml", state
-        )
     # Dev registrations come only from the current catalog. Removing older copies
     # keeps a service removed from bundles.yaml out of the proxy and Identity.
     for name in catalog.ROLE_FILES:

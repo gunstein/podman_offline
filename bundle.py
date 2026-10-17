@@ -246,12 +246,13 @@ def build_release(version, descriptor=None):
                 shutil.copytree(source, destination / entry, ignore=guard)
             else:
                 shutil.copy2(source, destination / entry)
-    if components:
+    if components and (ROOT / "config/common.defaults.yaml").exists():
         (target / "config").mkdir()
         guard(ROOT / "config", ["common.defaults.yaml"])
         shutil.copy2(
             ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
         )
+    if components:
         # The compiled descriptor lets the target work without bundles.yaml.
         (target / "bundle.yaml").write_text(
             yaml.safe_dump(descriptor, sort_keys=False), encoding="utf-8"
