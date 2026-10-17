@@ -79,9 +79,10 @@ a demo component. The demo's certificate and user provisioning is the explicit
 `install_components()` validates before any write: the bundle descriptor, the
 installed metadata plus this descriptor as one set of known components
 (conflicting owners refused), pending conflicts, dependency and dependent
-ranges, the declared `public_from` settings, the effective manifests and DB
-state (`check_manifests`). Then it stages registrations in a temporary
-directory. A `newer-only` component with an equal installed version is excluded
+ranges and the declared `public_from` settings. It then stages and validates
+registrations in a temporary directory (`registration_stage`), and only then
+checks the effective manifests and DB state (`check_manifests`), whose
+database preflight is the first host command. A `newer-only` component with an equal installed version is excluded
 from rendering; its images are still verified and its registrations still
 staged.
 
@@ -92,8 +93,9 @@ never means removal.
 
 `install_component_plan()` then reads as explicit steps:
 
-1. Check the existing shared network and materialize the validated manifests
-   once (`render.materialize`: generate missing secrets, render YAML).
+1. Check the existing shared network, the image archive and that every image
+   is fully qualified, then materialize the validated manifests once
+   (`render.materialize`: generate missing secrets, render YAML).
 2. Load this bundle's archive and verify every required image.
 3. Write the installed metadata, so registrations name a known component.
 4. Record unfinished registration owners, including owners of removed
