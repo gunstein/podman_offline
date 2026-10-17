@@ -52,6 +52,46 @@ class SmokeErrorTests(unittest.TestCase):
         exec(compile(isolated, str(SOURCE), "exec"), namespace)  # noqa: S102 - repository-owned functions
         return namespace
 
+    def test_help_pages_are_checked_unless_disabled(self):
+        """SMOKE_HELP=0 skips only the help pages; other checks still run."""
+        tree = ast.parse(SOURCE.read_text())
+        isolated = ast.parse("")
+        isolated.body = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        ]
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                response = mock.Mock(status_code=200, text="<title>Todo</title>")
+                response.json.return_value = {
+                    "issuer": "https://example.test/identity",
+                    "token_endpoint_auth_methods_supported": ["private_key_jwt"],
+                }
+
+                def fake_get(session, path, response=response):
+                    # Anonymous API access is refused; every other request succeeds.
+                    response.status_code = 401 if path == "/api/todos" else 200
+                    return response
+
+                namespace = {
+                    "CHECK_HELP": enabled,
+                    "ORIGIN": "https://example.test",
+                    "client": mock.Mock(),
+                    "get": fake_get,
+                    "check_help": mock.Mock(),
+                    "login": mock.Mock(side_effect=RequestError("stop after help")),
+                    "requests": types.SimpleNamespace(RequestException=RequestError),
+                    "time": mock.Mock(),
+                }
+                exec(compile(isolated, str(SOURCE), "exec"), namespace)  # noqa: S102 - repository-owned function
+                output = io.StringIO()
+                stop = self.assertRaisesRegex(RequestError, "stop after help")
+                with contextlib.redirect_stdout(output), stop:
+                    namespace["main"]()
+                self.assertEqual(namespace["check_help"].called, enabled)
+                self.assertEqual("SKIP: help pages" in output.getvalue(), not enabled)
+
     def test_callback_http_error_does_not_disclose_url_or_form(self):
         """Reject a failing OIDC callback without its code, state or form tokens."""
         namespace = self.namespace()

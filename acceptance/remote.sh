@@ -751,7 +751,8 @@ REMOVE_MANUAL
     http=$(curl --noproxy '*' --cacert build/dev/PKI/private/ca.crt --resolve myproduct-proxy:8443:127.0.0.1 \
         --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' https://myproduct-proxy:8443/help/)
     test "$http" = 404
-    SMOKE_PASSWORD_DIR="$renamed/build/dev/login-service/credentials/users" APP_BASE_PATH=/orders \
+    # manual served the help pages, so they are expected to be gone now.
+    SMOKE_HELP=0 SMOKE_PASSWORD_DIR="$renamed/build/dev/login-service/credentials/users" APP_BASE_PATH=/orders \
         "$src/.venv-smoke/bin/python" dev/smoke-test.py
     ./dev/dev.sh down
     ./build-bundle.sh

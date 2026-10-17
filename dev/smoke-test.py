@@ -18,6 +18,8 @@ ORIGIN = os.getenv("PUBLIC_ORIGIN", "https://myproduct-proxy:8443").rstrip("/")
 HOSTNAME = urlparse(ORIGIN).hostname
 CONNECT_IP = os.getenv("CONNECT_IP", "127.0.0.1")
 BASE_PATH = os.getenv("APP_BASE_PATH", "/app1").rstrip("/")
+# SMOKE_HELP=0 skips the help pages, for a product without the help component.
+CHECK_HELP = os.getenv("SMOKE_HELP", "1") != "0"
 original_getaddrinfo = socket.getaddrinfo
 
 
@@ -184,7 +186,10 @@ def main():
     assert get(anonymous, "/app.js").status_code == 200
     print("PASS: verified HTTPS, proxy routes, discovery and anonymous rejection")
 
-    check_help(anonymous)
+    if CHECK_HELP:
+        check_help(anonymous)
+    else:
+        print("SKIP: help pages (SMOKE_HELP=0)")
 
     alice, bob = login("alice"), login("bob")
     print("PASS: alice and bob signed in through Duende, PKCE and private_key_jwt")
