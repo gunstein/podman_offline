@@ -2929,8 +2929,21 @@ Status: step 1 in progress. `acceptance/fapolicyd-reload-probe.sh` reproduces
 the sequence on the PROD VM (trust add/delete, `fapolicyd-cli --update`, wait
 0–15 s, restart a user unit) and reports failed restarts per delay, the
 effective rules, `fapolicyd.conf`, fapolicyd's journal and every FANOTIFY/AVC
-denial; results are pending. Found in the item 20 acceptance run
-`decl-app1-first-2` (revision `8e62153`, 2026-10-17).
+denial. Found in the item 20 acceptance run `decl-app1-first-2` (revision
+`8e62153`, 2026-10-17).
+
+First probe result (PROD after `speed-app1-first`, 10 rounds): 0 of 50
+restarts failed at 0, 2, 5, 10 or 15 s after an update, and there were no
+FANOTIFY/AVC events. A reload takes about one second with the trust database
+at 2 % capacity. fapolicyd 1.4.5; the effective rule 5 is
+`deny_audit perm=any pattern=ld_so : all`, so the original denial was the
+ld.so pattern detector, not a missing trust entry: the subject (systemd's
+freshly forked child) was judged to start through the dynamic loader. That
+points to fapolicyd losing track of the new process (for example subject
+cache evictions or a full event queue under load, as during `podman load`
+right before the restart) rather than to the reload itself. Next: read
+fapolicyd's state report (early subject cache evictions, queue depth) after a
+full acceptance run, and only then choose a remedy.
 
 ### Observation
 
