@@ -2992,8 +2992,11 @@ app1-first 25 min (was 44), identity-only 14 min (was 22), renamed 20 min
 instead of 9 (measured locally on 3 GB of binaries: 150 s instead of 484 s,
 archives 0.6 % larger), and `./build-bundle.sh <component>` builds only the
 named bundles; the app1 upgrade and the inventory release without registrations
-now build only that bundle. Confirm the build times in the next lab run, then
-weigh steps 3–4.
+now build only that bundle. Measured in `speed-app1-first` on `bbce76d`
+(CLEAN PASS): `04-bundle` 107 s (was 263), `10-build-upgrade` 32 s (was 269),
+`10-identity-build` 43 s (was 94); transfer 52 s (was 47). app1-first now takes
+about 17 min (44 min before step 1, 25 min after it). Steps 3–4 are optional;
+weigh them against the rule that each clean run builds from source.
 Raised by the operator on 2026-10-17: the item 21 matrix (six scenarios) took
 several hours, which is far too long.
 
