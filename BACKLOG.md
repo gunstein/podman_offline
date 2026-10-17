@@ -2888,3 +2888,61 @@ it alone what the function is for, its inputs (persistent config, `files/`,
 `images/images.tar`), what it does not do (no catalog, metadata, registrations
 or markers) and its failure cases. No behaviour change. Keep README's
 standalone paragraph consistent.
+
+## 29. fapolicyd denies systemd's Podman launch just after a trust update
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; analyse before changing anything. Found in the item 20
+acceptance run `decl-app1-first-2` (revision `8e62153`, 2026-10-17).
+
+### Observation
+
+Step `10-identity-install` (Identity 0.4.9 → 0.4.10) failed at
+`systemctl --user restart myproduct-identity.service`. The release had been
+added to the trust file, `fapolicyd-cli --update` had run and `wait_trust`
+had confirmed every package file in the live database; validation,
+`podman load` and the image checks had passed. About ten seconds after the
+update, systemd's child for the unit was denied:
+
+```text
+syscall=execve exit=EPERM comm=(podman) exe=/usr/lib/systemd/systemd
+FANOTIFY resp=deny fan_info=5 subj_trust=unknown obj_trust=yes
+Failed at step EXEC spawning /usr/bin/podman: Operation not permitted (203/EXEC)
+```
+
+`/usr/bin/podman` is trusted (`obj_trust=yes`); the subject, a freshly forked
+systemd process of the `myproduct` user manager, was not (`subj_trust=unknown`).
+It was the only denial in the run. The same step passed in `decl-app2-first-2`
+on the same revision, as did every other install, stop/start/restart, crash,
+hang, reboot and upgrade restart in both runs. Earlier launcher denials
+(`exe=systemd`, `comm=(podman)`, run-18) led to the `09-launch-audit-*` steps;
+their cause was not established.
+
+### Why it matters
+
+The documented operator procedure does the same thing: add the release's trust,
+`fapolicyd-cli --update`, then `./deploy install`, which restarts services. If
+the denial is a window after a trust database reload, real installs and
+upgrades can fail intermittently with 203/EXEC.
+
+### Task
+
+1. Reproduce: repeat trust add/update followed immediately by a user-unit
+   restart on the lab PROD VM, and record how often and for how long after the
+   update the denial occurs. Inspect the effective rule 5 (`fapolicyd-cli
+   --list`), fapolicyd's version and its subject-trust handling for processes
+   forked by `systemd --user` during a database reload.
+2. Decide from evidence, not by weakening policy: candidates are waiting for a
+   reliable "reload finished" condition before the restart, ordering the trust
+   update earlier in the operator procedure, or one bounded, logged retry of a
+   restart that fails with 203/EXEC and a matching denial. Never add trust
+   rules, disable fapolicyd, or retry other failures.
+3. If deploy code changes, keep the pending-owner semantics: a restart that
+   still fails leaves the pending record for a later retry.
+4. Add a focused acceptance check that installs right after a trust update and
+   requires no FANOTIFY/AVC events; rerun `decl-app1-first`.
+
+Run product tests, acceptance-harness tests, ruff, format, pyright, vermin,
+shellcheck and `git diff --check`; report real acceptance runs separately.
