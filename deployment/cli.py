@@ -15,6 +15,7 @@ def main():
         "install": deploy.install,
         "uninstall": deploy.uninstall,
         "init-config": deploy.init_config,
+        "validate": deploy.validate,
     }
     args = sys.argv[1:]
     removing = bool(args and args[0] == "uninstall")
@@ -42,7 +43,7 @@ def main():
         )
     ):
         print(
-            "Usage: ./deploy prepare|install|uninstall [<component>] [--delete-data] | init-config <component>"
+            "Usage: ./deploy validate|prepare|install|uninstall [<component>] [--delete-data] | init-config <component>"
         )
         return 2
 

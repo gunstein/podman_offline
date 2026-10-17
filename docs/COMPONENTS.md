@@ -10,8 +10,8 @@ component names. The five shipped components (`platform`, `identity`, `app1`,
 
 | Where | File | Written by | Read by |
 | --- | --- | --- | --- |
-| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
-| Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `install`, `uninstall` |
+| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy validate`, `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
+| Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `validate`, `install`, `uninstall` |
 | Target host | `/var/lib/myproduct/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
 
 `deployment/catalog.py` validates all three with the same rules. The compiled
@@ -162,8 +162,12 @@ Generic tools never create certificates or demo users. For the shipped demo:
 
 ```sh
 ./dev/build-images.sh && ./dev/pull-images.sh
-dev/demo-credentials.sh && dev/dev.sh up
+dev/demo-credentials.sh && ./deploy validate && dev/dev.sh up
 ```
+
+After adding or changing a component, run `./deploy validate` first: it
+reports the first finding of every component (file, document or container and
+the declaration it expected) without writing anything or calling Podman.
 
 `dev/demo-credentials.sh` runs `scripts/generate-certificates.sh` for the five
 demo components. Another product prepares its own credentials in
@@ -221,7 +225,7 @@ A worker without a gateway needs only the manifest and `worker: {}`.
 2. Remove its catalog entry and `components/<id>/`, and remove it from every
    other entry's `requires`, `routes` or `clients`. A remaining reference fails
    before any write and names the declaration.
-3. `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
+3. `./deploy validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
    `build/install.yaml`, the dev route/client imports and
    `dist/current-bundles.txt`. Older archives stay in `dist/` for hosts that
    still run the service; `current-bundles.txt` names only the current product.

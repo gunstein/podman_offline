@@ -1,3 +1,18 @@
+# Validate command (backlog 23)
+
+`test_validate.py` runs `./deploy validate` on the renamed product in the source
+checkout, in an unpacked bundle and on a standalone fixture. Every case asserts
+that no file under the fixture changes and that no Podman or systemd command
+runs. It covers each finding type (the five broken orders manifests, a
+placeholder only in an init container, an unused id, a missing or directory
+Secret source, an undefined ConfigMap, an invalid `client.yaml` and a missing
+client certificate), two components reported in one run, the same message as
+`prepare` for the same manifest, the bundle's dependency, config and image
+archive checks, and the CLI exit codes. `acceptance/test_validate_release.py`
+checks the lab helper that requires the command to pass before every install.
+
+---
+
 # Manifest validation and registration removal (0.4.10)
 
 Backlog item 21. `test_validation_order.py` breaks one orders manifest five ways

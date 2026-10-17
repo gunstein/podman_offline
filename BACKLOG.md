@@ -2585,8 +2585,10 @@ time.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: plan written 2026-10-17 (below), awaiting the operator's review before
-implementation. Item 21 already moved the checks ahead of secret generation;
+Status: implemented on `main` (plan below, approved 2026-10-17); lab runs
+pending. `./deploy validate` in the source checkout, an unpacked bundle and a
+standalone fixture; the lab runs it on DEV before `dev up` (demo and renamed
+product) and on PROD before every install and upgrade. Item 21 already moved the checks ahead of secret generation;
 this item adds the explicit command and reuses that validation instead of a
 second implementation.
 

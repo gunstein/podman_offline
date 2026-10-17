@@ -172,6 +172,7 @@ configuration names; those reports are kept unchanged.
 cp config/dev.yaml.example config/dev.yaml   # optional local overrides
 chmod 600 config/dev.yaml
 ./dev/demo-credentials.sh                    # demo only: CA, certificates, users
+./deploy validate                            # every component, no writes or Podman
 ./dev/dev.sh up
 python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
@@ -182,7 +183,12 @@ APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
 
 `dev/demo-credentials.sh` creates missing demo credentials under `build/dev/`
 and reuses them on later runs; it is demo provisioning, not part of the generic
-dev lifecycle. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
+dev lifecycle. `./deploy validate` checks every catalog component with its dev
+config (manifests, placeholders, links, images, PostgreSQL layout, declared file
+sources by existence and type, route and client registrations) and reports the
+first finding of each component. It writes nothing, generates no secret and
+runs no Podman or systemd command; `prepare` and `install` start with the same
+checks. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
 components in dependency order, followed by `podman kube play`. Run
 `dev/dev.sh down` before removing a component from the catalog: it stops what
 the last prepare rendered.
@@ -802,6 +808,8 @@ sudoedit "/var/lib/myproduct/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
 as_product bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$bundle" myproduct-proxy
 sudoedit "/var/lib/myproduct/$bundle/config.yaml"
+# Checks the bundle against config and installed components; changes nothing.
+sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
 sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 sudo systemctl --user -M myproduct@ status "myproduct-$bundle.service"
 ```

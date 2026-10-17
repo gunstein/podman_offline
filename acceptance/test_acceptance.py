@@ -848,6 +848,8 @@ timeout() { shift; "$@"; }
 sha256sum() { :; }
 # Simulate the health check after install.
 healthy() { echo health >> "$calls"; return "$health_status"; }
+# ./deploy validate is checked separately; it changes no trust state.
+validate_release() { :; }
 """
         prefix = (
             "set -eu\nbase="

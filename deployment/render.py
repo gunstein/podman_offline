@@ -394,6 +394,30 @@ def load_file_group(config, group, base_dir=None):
     return groups
 
 
+def check_file_sources(config, path, imported=()):
+    """Check that declared file sources exist with the right type; read no contents.
+
+    A source with generate may still be missing: generation creates it. Imported
+    registration volumes replace a same-named VOLUME_FILES entry and are skipped.
+    Only names and types are inspected, so this is safe for private files.
+    """
+    imported = set(imported)
+    for group in (common.SECRET_FILES, common.VOLUME_FILES):
+        present = {}
+        for group_id, entries in file_group_sources(config, group).items():
+            if group == common.VOLUME_FILES and group_id in imported:
+                continue
+            kept = [
+                entry
+                for entry in entries
+                if "generate" not in entry
+                or resolve_path(entry["path"], path.parent).exists()
+            ]
+            if kept:
+                present[group_id] = kept
+        load_file_group({group: present}, group, path.parent)
+
+
 def secret_documents(secrets):
     """Build base64-encoded Secrets within Podman's size limit."""
     docs = []

@@ -94,6 +94,20 @@ def database_preflight(config, config_path, documents):
     before generation, never inside the generic secret generator. A missing
     password with an existing volume is refused: the volume keeps the old one.
     """
+    for claim, password in database_bindings(config, config_path, documents):
+        if password.exists() or password.is_symlink():
+            check_database_password(password)
+            continue
+        check_database_volume_absent(claim, password)
+        check_password_provided(config, config_path, password)
+
+
+def database_bindings(config, config_path, documents):
+    """Return (data claim, password file) for every database container; no host query.
+
+    Unsupported PostgreSQL layouts are refused here, from declarations only.
+    """
+    bindings = []
     for pod, spec in rendering.pod_specs(documents):
         for group, container in rendering.containers(spec):
             binding = postgres_binding(pod, spec, group, container)
@@ -101,16 +115,18 @@ def database_preflight(config, config_path, documents):
                 continue
             claim, secret_name, key = binding
             password = database_password_path(config, config_path, secret_name, key)
-            if password.exists() or password.is_symlink():
-                check_database_password(password)
-                continue
-            check_database_volume_absent(claim, password)
-            if password.resolve() not in rendering.generated_secret_paths(
-                config, config_path.parent
-            ):
-                raise common.DeployError(
-                    f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
-                )
+            bindings.append((claim, password))
+    return bindings
+
+
+def check_password_provided(config, config_path, password):
+    """A missing database password must be one that generate creates."""
+    if password.resolve() not in rendering.generated_secret_paths(
+        config, config_path.parent
+    ):
+        raise common.DeployError(
+            f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
+        )
 
 
 def postgres_binding(pod, spec, group, container):
@@ -269,16 +285,43 @@ def dev_settings():
     return known, settings
 
 
+def validate_component(config, config_path, manifests, component=None, imported=()):
+    """Validate one component's manifests from declarations; no writes or host commands.
+
+    Kinds, names, placeholders, pull policy, mounts and links (effective
+    documents) and the PostgreSQL layout, including that a missing password is
+    one generate creates. Returns the effective documents. Every lifecycle
+    path and ./deploy validate start with this.
+    """
+    documents = rendering.effective_documents(
+        config, config_path, manifests, component, imported
+    )
+    for _, password in database_bindings(config, config_path, documents):
+        if not (password.exists() or password.is_symlink()):
+            check_password_provided(config, config_path, password)
+    return documents
+
+
+def validate_sources(config, config_path, documents, imported=()):
+    """The validate command's remaining checks; install and prepare run them later.
+
+    Fully qualified images (install: before materialize) and declared file
+    sources by existence and type (materialize's load_file_group). Reads no
+    file contents and writes nothing.
+    """
+    if any(True for _, spec in rendering.pod_specs(documents)):
+        rendering.find_images(documents)
+    rendering.check_file_sources(config, config_path, imported)
+
+
 def check_manifests(config, config_path, manifests, component=None, imported=()):
-    """Validate the effective manifests, then check database volumes; no writes.
+    """Validate the component, then check database volumes; no writes.
 
     Every path (install, prepare, standalone) runs this before generating any
     secret: declarations are validated first, so a broken manifest never
     reaches a host command, and the preflight is the first host command.
     """
-    documents = rendering.effective_documents(
-        config, config_path, manifests, component, imported
-    )
+    documents = validate_component(config, config_path, manifests, component, imported)
     database_preflight(config, config_path, documents)
     return documents
 
@@ -735,7 +778,12 @@ def client_registration(component, path, config, config_path):
             "base_path (/path), scopes [openid, profile, <id>] and a relative certificate"
         )
     certificate = rendering.resolve_path(metadata["certificate"], config_path.parent)
-    certificate_bytes = certificate.read_bytes()
+    try:
+        certificate_bytes = certificate.read_bytes()
+    except OSError:
+        raise common.DeployError(
+            f"Missing public client certificate {certificate} (certificate in {path})"
+        ) from None
     try:
         ssl.PEM_cert_to_DER_cert(certificate_bytes.decode("ascii"))
     except (ValueError, UnicodeError):
@@ -1141,14 +1189,15 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     run("podman", "ps", "--all", "--pod")
 
 
-def install_components():
-    """Validate the bundle, installed state and config before writing anything.
+def install_checks():
+    """Decide everything install needs before staging; no writes, no host commands.
 
-    Order: descriptors and dependencies, then config, then staging in a
-    temporary directory, then manifests and database preflight, then
-    install_component_plan.
+    The bundle descriptor, the installed set with this descriptor (ID prefixes,
+    role owners, pending owner work), dependency and dependent ranges, and the
+    persistent config with its public_from settings. Returns (descriptor,
+    known, config, config_path, render); render is False when only
+    registrations and owners are refreshed. ./deploy validate runs this too.
     """
-    production_environment()
     descriptor = bundle_descriptor()
     name = descriptor["name"]
     pending = check_pending("install", name)
@@ -1171,14 +1220,28 @@ def install_components():
     check_dependencies_installed(descriptor)
     check_dependents(descriptor, installed)
     config_path = component_paths(name)[0]
+    if not config_path.is_file():
+        raise common.DeployError(
+            f"Missing {config_path}; run ./deploy init-config {name} first"
+        )
     config = rendering.load_config(config_path)
-    # Rendered only when the version changes; otherwise only registrations
-    # and owners are refreshed.
     render = install_needed(descriptor)
     rendering.validate_component_config(
         config, name, config_path, check_placeholders=render
     )
     check_public_settings(descriptor, config, config_path)
+    return descriptor, known, config, config_path, render
+
+
+def install_components():
+    """Validate the bundle, installed state and config before writing anything.
+
+    Order: install_checks, then staging in a temporary directory, then
+    manifests and database preflight, then install_component_plan.
+    """
+    production_environment()
+    descriptor, known, config, config_path, render = install_checks()
+    name = descriptor["name"]
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
@@ -1199,6 +1262,111 @@ def install_components():
                 ),
             )
         install_component_plan(descriptor, checked, known, imports, updates, removals)
+
+
+VALIDATION_ERRORS = (common.DeployError, OSError, yaml.YAMLError)
+
+
+def validate():
+    """Report every component's first finding without writing anything.
+
+    The source checkout validates every catalog component with its dev config,
+    an unpacked bundle its own component against the persistent config and the
+    installed set, and a standalone fixture its manifests against config.yaml.
+    Staging uses a temporary directory that is removed. No secret generation,
+    rendered output, archives, Podman, systemd or network.
+    """
+    if (common.ROOT / "bundle.yaml").exists():
+        names, findings = validate_bundle()
+    elif (common.ROOT / "components").is_dir():
+        names, findings = validate_catalog()
+    else:
+        names, findings = validate_standalone()
+    if findings:
+        raise common.DeployError(
+            f"{len(findings)} validation finding(s); nothing was written:\n"
+            + "\n".join(f"  {scope}: {message}" for scope, message in findings)
+        )
+    print(
+        "[OK] validated "
+        + ", ".join(names)
+        + "; nothing written, no Podman or systemd commands"
+    )
+
+
+def validate_catalog():
+    """Validate every catalog component with its dev config, as prepare would."""
+    state = common.BUILD / "dev"
+    known, settings = dev_settings()
+    findings = []
+    for component, component_settings in settings.items():
+        path = state / component / "config.yaml"
+        imported = known[component]["accepts"].values()
+        try:
+            config = rendering.effective_config(component_settings, path, component)
+            documents = validate_component(
+                config,
+                path,
+                common.ROOT / "components" / component / "manifests",
+                component,
+                imported,
+            )
+            validate_sources(config, path, documents, imported)
+        except VALIDATION_ERRORS as error:
+            findings.append((component, str(error)))
+    try:
+        with tempfile.TemporaryDirectory(prefix="myproduct-validate-") as directory:
+            registration_stage(
+                list(known), Path(directory), known, home=state, configs=settings
+            )
+    except VALIDATION_ERRORS as error:
+        findings.append(("registrations", str(error)))
+    return list(known), findings
+
+
+def validate_bundle():
+    """Validate this bundle's component as install would, without the host query."""
+    production_environment()
+    descriptor, known, config, config_path, render = install_checks()
+    name = descriptor["name"]
+    findings = []
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="myproduct-validate-", dir=os.environ["XDG_RUNTIME_DIR"]
+        ) as directory:
+            registration_stage([name], Path(directory), known)
+    except VALIDATION_ERRORS as error:
+        findings.append(("registrations", str(error)))
+    if render:
+        imported = descriptor["accepts"].values()
+        try:
+            image_archive()
+            effective = rendering.effective_config(config, config_path, name)
+            documents = validate_component(
+                effective,
+                config_path,
+                common.ROOT / "components" / name / "manifests",
+                name,
+                imported,
+            )
+            validate_sources(effective, config_path, documents, imported)
+        except VALIDATION_ERRORS as error:
+            findings.append((name, str(error)))
+    return [name], findings
+
+
+def validate_standalone():
+    """Validate the standalone fixture's manifests against config.yaml, as prepare."""
+    if not common.CONFIG.exists():
+        raise common.DeployError(f"Missing {common.CONFIG}")
+    findings = []
+    try:
+        config = rendering.load_config(common.CONFIG)
+        documents = validate_component(config, common.CONFIG, common.MANIFESTS)
+        validate_sources(config, common.CONFIG, documents)
+    except VALIDATION_ERRORS as error:
+        findings.append(("manifests", str(error)))
+    return ["manifests"], findings
 
 
 def install():

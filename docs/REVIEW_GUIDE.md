@@ -22,6 +22,7 @@ The known gaps below explicitly identify outstanding work.
 | Retry | Durable pending work survives a new process and is acknowledged only after required work succeeds. |
 | Isolation | Operate on the selected component's resources/state; preserve sibling data and registrations and avoid sibling app restarts. |
 | Compatibility | Preserve host Python 3.6, checksums, offline delivery, version/dependency rules, SELinux and fapolicyd behavior. |
+| Validation | `./deploy validate` and the lifecycle share one validation (`validate_component`, staging, `install_checks`); the command writes nothing and runs no host command. A new check belongs there, not in a second implementation. |
 
 For items 20 and 21 there are no existing installations requiring migration to a
 new schema. Do not add migration code, aliases or old-layout fallback. This does

@@ -40,8 +40,14 @@ writes nothing else. Then:
    groups (checks that need file bytes run here) and returns the YAML and
    import volumes.
 
-`deploy.check_manifests()` runs steps 2 and 3; install, dev `prepare` and both
-standalone paths use it before any generation. Install also checks the image
+`deploy.check_manifests()` runs `deploy.validate_component()` (step 2 plus the
+PostgreSQL layout, from declarations only) and then the database preflight;
+install, dev `prepare` and both standalone paths use it before any generation.
+`./deploy validate` (`deploy.validate()`) runs `validate_component()`, the same
+staging and, in a bundle, `install_checks()`, plus image names and declared
+file sources by existence and type (`validate_sources()`), but no preflight:
+it writes nothing and runs no host command. It reports the first finding per
+component. Install also checks the image
 archive and that every image is fully qualified before step 4. General secret
 generation never performs database volume checks.
 

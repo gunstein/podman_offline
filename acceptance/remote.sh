@@ -88,6 +88,13 @@ prepare_release() {
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deployment/"
 }
+# ./deploy validate must pass for this release before it is installed (backlog 23).
+validate_release() {
+    local output
+    output=$(sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy validate' bash "$product")
+    printf '%s\n' "$output"
+    [[ $output == *"[OK] validated $bundle;"* ]] || { echo "FAIL: validate did not pass for $bundle" >&2; return 1; }
+}
 # Create only missing component configs and credentials; upgrades reuse them.
 install_configuration() {
     local component components existing
@@ -665,6 +672,10 @@ dev-up)
     chmod 600 config/dev.yaml
     # The shipped demo provisions its credentials explicitly before generic dev up.
     ./dev/demo-credentials.sh
+    # Every catalog component validates with its dev config before dev up (backlog 23).
+    output=$(./deploy validate)
+    printf '%s\n' "$output"
+    [[ $output == *"[OK] validated platform, identity, app1, app2, help;"* ]]
     ./dev/dev.sh up
     ;;
 venv)
@@ -706,6 +717,9 @@ print(urlsplit(settings["gateway"]["PUBLIC_ORIGIN"]).hostname)
 RENAMED_HOST
 )
     python3 acceptance/renamed_product.py credentials build/dev "$host"
+    output=$(./deploy validate)
+    printf '%s\n' "$output"
+    [[ $output == *"[OK] validated gateway, login-service, orders, inventory, manual;"* ]]
     ./dev/dev.sh up
     pods=$(podman pod ps --format '{{.Name}}' | sort | tr '\n' ' ')
     test "$pods" = 'gateway-proxy inventory-postgres inventory-todo login-service-postgres login-service-server manual-web orders-postgres orders-todo '
@@ -970,6 +984,7 @@ HELP_BUILD
     ;;
 help-upgrade|platform-upgrade|identity-upgrade)
     prepare_release
+    validate_release
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     healthy
     wait_trust "$product/deployment/"
@@ -1188,6 +1203,7 @@ HELP_ALONE
 upgrade)
     prepare_release
     old_release="$state/releases/myproduct-$bundle-$old_version"
+    validate_release
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     healthy
     sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "myproduct-$bundle"
@@ -1256,6 +1272,7 @@ registry-offline)
 install)
     prepare_release
     install_configuration
+    validate_release
     date +%s > "$base/install-start-$bundle"
     sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     as_product podman ps --all
