@@ -2718,8 +2718,8 @@ the review guide's contracts, `docs/COMPONENTS.md` and the release version.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; own pull request. Requested in the item 20 review (PR #1) on
-2026-10-17. Start after item 20 is merged and its acceptance runs are green.
+Status: planned. Requested in the item 20 review (PR #1) on 2026-10-17. Start
+after item 20 is merged and its acceptance runs are green.
 
 ### Problem
 
@@ -2750,3 +2750,26 @@ in `scripts/prepare-host.sh` (the `myproduct` service user and
 
 Run product tests, acceptance-harness tests, ruff, format, pyright, vermin,
 shellcheck and `git diff --check`; report real acceptance runs separately.
+
+## 28. Clarify the `install_standalone` docstring
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
+
+Status: planned. Requested in the item 20 review (PR #1) on 2026-10-17. Small,
+documentation only; can be done any time after item 20 is merged.
+
+### Problem
+
+`deployment/deploy.py` `install_standalone()` says only "Install a standalone
+rootless manifest fixture using the persistent config." It does not say when
+it is used instead of the component install, that it reads the optional
+`~/.config/.../config.yaml`, runs the database preflight only when that file
+exists, renders without writing archives and loads `images/images.tar`.
+
+### Task
+
+Rewrite the docstring so a developer with some Python experience can tell from
+it alone what the function is for, its inputs (persistent config, `files/`,
+`images/images.tar`), what it does not do (no catalog, metadata, registrations
+or markers) and its failure cases. No behaviour change. Keep README's
+standalone paragraph consistent.
