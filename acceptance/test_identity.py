@@ -197,6 +197,8 @@ class IdentityEvidenceTests(unittest.TestCase):
                 "deployment/__main__.py": "# fixture\n",
                 "README.md": "fixture\n",
                 "config/common.defaults.yaml": "HTTPS_PORT: 8443\n",
+                "bundles.yaml": "components:\n  platform:\n    version_file: PLATFORM_VERSION\n  identity:\n    requires: [platform]\n    version_file: IDENTITY_VERSION\n    upgrade: newer-only\n",
+                "components/platform/manifests/10-proxy.yaml": "kind: Pod\n",
                 "components/identity/config.defaults.yaml": "{}\n",
                 "components/identity/manifests/50-identity.yaml": "kind: Pod\nspec:\n  containers:\n  - name: app\n    image: localhost/myproduct-identity:0.2.1\n    imagePullPolicy: Never\n",
                 "apps/identity/Program.cs": 'app.MapGet("/health", () => Results.Ok(new { status = "ok" }));\n',

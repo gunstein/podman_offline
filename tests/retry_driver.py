@@ -98,7 +98,7 @@ def main():
         if parameters["action"] == "install":
             state["install"]()
         elif parameters["action"] == "init-config":
-            state["init_config"](state["bundle_components"]()[0])
+            state["init_config"](state["bundle_descriptor"]()["name"])
         else:
             state["uninstall"](delete_data=parameters.get("delete_data", False))
     except (common.DeployError, OSError, subprocess.CalledProcessError) as error:

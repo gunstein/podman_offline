@@ -49,7 +49,7 @@ class PlatformSafetyTests(ComponentFixture):
                     "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\n",
                 )
                 self.select(name)
-                self.assertEqual(deploy.bundle_components(), [name])
+                self.assertEqual(deploy.bundle_descriptor()["name"], name)
                 marker = common.HOME / "installed/platform"
                 if marker.exists():
                     marker.unlink()
@@ -61,41 +61,45 @@ class PlatformSafetyTests(ComponentFixture):
                     deploy.install()
                 self.process.assert_not_called()
                 self.assertEqual(self.snapshot(), before)
-        self.write("bundle.yaml", "name: app1\ncomponents: [platform, app1]\n")
-        with self.assertRaisesRegex(common.DeployError, "platform must be separate"):
-            deploy.bundle_components()
+        # One component per bundle: a descriptor has no component list to extend.
+        descriptor = yaml.safe_load((self.root / "bundle.yaml").read_text())
+        descriptor["components"] = ["platform", "app1"]
+        self.write("bundle.yaml", yaml.safe_dump(descriptor))
+        with self.assertRaisesRegex(common.DeployError, "expected exactly the fields"):
+            deploy.bundle_descriptor()
 
     def test_installed_dependency_ranges_survive_removed_release_and_reject_incompatible_platform(
         self,
     ):
         deploy.install()
-        requirement = common.HOME / "dependencies/app1.json"
+        requirement = common.HOME / "metadata/app1.json"
         self.assertEqual(
-            json.loads(requirement.read_text()),
+            json.loads(requirement.read_text())["requires"],
             {
                 "platform": {"min": "1.0.0", "before": "2.0.0"},
                 "identity": {"min": "1.0.0", "before": "2.0.0"},
             },
         )
-        self.select("platform")
         self.write("PLATFORM_VERSION", "2.0.0\n")
+        self.select("platform")
         before = self.snapshot()
         self.process.reset_mock()
-        with self.assertRaisesRegex(common.DeployError, "dependency for identity"):
+        with self.assertRaisesRegex(common.DeployError, "dependency for app1"):
             deploy.install()
         self.process.assert_not_called()
         self.assertEqual(self.snapshot(), before)
         requirement.unlink()
         self.write("PLATFORM_VERSION", "1.1.0\n")
+        self.select("platform")
         with self.assertRaisesRegex(
-            common.DeployError, "installed platform requirement"
+            common.DeployError, "Missing installed metadata.*app1"
         ):
             deploy.install()
         self.process.assert_not_called()
 
     def test_platform_data_deletion_targets_only_its_pvc_and_mounted_config_map(self):
-        self.select("platform")
         self.write("PLATFORM_VERSION", "1.1.0\n")
+        self.select("platform")
         path = self.root / "components/platform/manifests/10-pod.yaml"
         pod = yaml.safe_load(path.read_text())
         pod["spec"]["volumes"] = [
@@ -108,10 +112,7 @@ class PlatformSafetyTests(ComponentFixture):
         path.write_text(
             yaml.safe_dump_all(
                 [
-                    {
-                        "kind": "PersistentVolumeClaim",
-                        "metadata": {"name": "platform-routes"},
-                    },
+                    # platform-routes is the declared registration import volume.
                     {
                         "kind": "ConfigMap",
                         "metadata": {"name": "platform-proxy-config"},
@@ -167,15 +168,21 @@ class PlatformSafetyTests(ComponentFixture):
                 self.assertEqual(self.snapshot(), before)
 
     def test_invalid_component_arguments_refuse_before_any_operation(self):
-        for arguments in (
-            ["init-config", "unknown"],
-            ["uninstall", "unknown", "--delete-data"],
+        """Malformed IDs are usage errors; another bundle's component is refused."""
+        for arguments, status in (
+            (["init-config", "unknown"], 1),
+            (["uninstall", "unknown", "--delete-data"], 1),
+            (["init-config", "my_identity"], 2),
+            (["uninstall", "app1", "app2"], 2),
+            (["uninstall", "--delete-data", "--delete-data"], 2),
         ):
             command_line = mock.patch.object(cli.sys, "argv", ["deploy"] + arguments)
             with self.subTest(arguments=arguments), command_line:
                 before = self.snapshot()
                 self.process.reset_mock()
-                self.assertEqual(cli.main(), 2)
+                self.assertEqual(cli.main(), status)
                 self.process.assert_not_called()
                 self.assertEqual(self.snapshot(), before)
         self.assertIn("Usage:", self.stdout.getvalue())
+        self.assertIn("not included in this bundle", self.stderr.getvalue())
+        self.assertIn("can only uninstall its own component", self.stderr.getvalue())

@@ -625,6 +625,8 @@ dev-up)
     cd "$src"
     cp config/dev.yaml.example config/dev.yaml
     chmod 600 config/dev.yaml
+    # The shipped demo provisions its credentials explicitly before generic dev up.
+    ./dev/demo-credentials.sh
     ./dev/dev.sh up
     ;;
 venv)
@@ -712,6 +714,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 import bundle
+from deployment import catalog
 
 version = os.environ["HELP_RELEASE_VERSION"]
 source = Path.cwd()
@@ -751,7 +754,9 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
     bundle.ROOT = release
     bundle.STAGE = source / "build/help-upgrade"
     bundle.DIST = source / "dist"
-    bundle.build_release(version, kind, [kind])
+    # Compile the release's own catalog entry, exactly as build-bundle.sh would.
+    descriptor = catalog.source_descriptors(release)[kind]
+    bundle.build_release(descriptor["version"], descriptor)
 
 HELP_BUILD
     (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
@@ -892,7 +897,7 @@ def main():
             json.dump(current, stream)
     elif action == "platform-after":
         before = json.loads(path.read_text())
-        expected = (Path(release) / "PLATFORM_VERSION").read_text().strip()
+        expected = (Path(release) / "VERSION").read_text().strip()
         if current["version"] != expected or current["version"] == before["version"]:
             raise SystemExit("FAIL: platform version was not upgraded")
         for name, old in before["containers"].items():

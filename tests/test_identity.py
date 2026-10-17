@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import yaml
+from catalog_fixture import DEMO
 from test_components import ComponentFixture
 
 from deployment import common, deploy
@@ -122,8 +123,8 @@ class IdentityTests(ComponentFixture):
         self,
     ):
         deploy.install()
-        self.select("identity")
         self.write("IDENTITY_VERSION", "2.0.0\n")
+        self.select("identity")
         before = self.snapshot()
         self.process.reset_mock()
         with self.assertRaisesRegex(common.DeployError, "dependency for app1"):
@@ -131,6 +132,7 @@ class IdentityTests(ComponentFixture):
         self.process.assert_not_called()
         self.assertEqual(self.snapshot(), before)
         self.write("IDENTITY_VERSION", "1.1.0\n")
+        self.select("identity")
         deploy.install()
         self.assertEqual(self.restarts(), ["myproduct-identity.service"])
         after = self.snapshot()
@@ -143,6 +145,7 @@ class IdentityTests(ComponentFixture):
         deploy.install()
         self.assertEqual(self.restarts(), [])
         self.write("IDENTITY_VERSION", "1.0.0\n")
+        self.select("identity")
         self.process.reset_mock()
         with self.assertRaisesRegex(common.DeployError, "Identity downgrade refused"):
             deploy.install()
@@ -176,7 +179,7 @@ class IdentityTests(ComponentFixture):
         self.assertFalse((common.HOME / "clients/app1").exists())
         self.assertFalse((common.HOME / "routes/app1.conf").exists())
         self.assertIn("identity", (common.HOME / "routes/identity.conf").read_text())
-        self.write("home/installed/help", "1.2.3\n")
+        self.mark_installed("help", "1.2.3")
         self.select("identity")
         before = (common.HOME / "identity/config.yaml").read_bytes()
         self.process.reset_mock()
@@ -237,8 +240,11 @@ class IdentityTests(ComponentFixture):
         )
         self.assertFalse(any(name.startswith("DB_") for name in platform))
         self.assertNotIn("GENERATED_SECRETS", platform)
-        self.assertEqual(set(platform["VOLUME_FILES"]), {"platform-routes"})
-        self.assertEqual(set(identity["VOLUME_FILES"]), {"identity-clients"})
+        # The catalog, not the config, names each owner's registration volume.
+        self.assertNotIn("VOLUME_FILES", platform)
+        self.assertNotIn("VOLUME_FILES", identity)
+        self.assertEqual(DEMO["platform"]["accepts"], {"routes": "platform-routes"})
+        self.assertEqual(DEMO["identity"]["accepts"], {"clients": "identity-clients"})
         self.assertEqual(identity["DB_HOST"], "identity-postgres")
         self.assertEqual(identity["DB_USER"], "identity")
         proxy = rendering.load_yaml_all(

@@ -11,20 +11,20 @@ from pathlib import Path
 
 import yaml
 
-from . import common
+from . import catalog, common
 from . import render as rendering
 
 
 def init_config(component):
     """Exclusively materialize one bundled config; never create private input files."""
     production_environment()
-    if component not in bundle_components():
+    descriptor = bundle_descriptor()
+    if component != descriptor["name"]:
         raise common.DeployError(
             f"Component {component} is not included in this bundle"
         )
     check_pending("init-config", component)
-    if component != "platform":
-        component_dependencies(component)
+    check_dependencies_installed(descriptor)
     target = common.HOME / component / "config.yaml"
     for path in [target] + list(target.parents):
         if path.is_symlink():
@@ -35,24 +35,15 @@ def init_config(component):
         )
         return
     overrides = {}
-    platform_path = component_paths("platform")[0]
-    if (
-        component != "platform"
-        and (common.HOME / "installed/platform").exists()
-        and not platform_path.exists()
-    ):
-        raise common.DeployError(
-            f"Missing {platform_path}; restore installed platform config before initializing {component}"
-        )
-    if component != "platform" and platform_path.exists():
-        platform = rendering.load_config(platform_path)
-        rendering.validate_component_config(
-            platform,
-            "platform",
-            platform_path,
-            check_placeholders=not (common.HOME / "installed/platform").is_file(),
-        )
-        overrides = {key: platform[key] for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")}
+    source = descriptor["public_from"]
+    if source is not None:
+        # The dependency is installed (checked above), so its config must exist.
+        source_path = component_paths(source)[0]
+        if not source_path.exists():
+            raise common.DeployError(
+                f"Missing {source_path}; restore installed {source} config before initializing {component}"
+            )
+        overrides = public_settings(rendering.load_config(source_path), source_path)
     config = rendering.component_defaults(component, overrides=overrides)
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
@@ -63,6 +54,33 @@ def init_config(component):
     print(
         f"[OK] Initialized {target}; edit config and prepare credentials before install"
     )
+
+
+PUBLIC_KEYS = ("PUBLIC_ORIGIN", "HTTPS_PORT")
+
+
+def public_settings(config, path):
+    """Return the validated shared public origin and port of one config."""
+    for key in PUBLIC_KEYS:
+        if key not in config:
+            raise common.DeployError(
+                f"Missing {key} in {path}; add it explicitly before installation"
+            )
+    rendering.public_origin(config["PUBLIC_ORIGIN"], path)
+    return {key: config[key] for key in PUBLIC_KEYS}
+
+
+def check_public_settings(descriptor, config, path, home=None):
+    """A component declaring public_from must use that dependency's origin and port."""
+    source = descriptor["public_from"]
+    if source is None:
+        return
+    source_path = component_paths(source, home)[0]
+    expected = public_settings(rendering.load_config(source_path), source_path)
+    actual = public_settings(config, path)
+    for key in PUBLIC_KEYS:
+        if actual[key] != expected[key]:
+            raise common.DeployError(f"{key} in {path} must match {source_path}")
 
 
 def database_preflight(config, config_path, manifests):
@@ -176,38 +194,61 @@ def database_preflight(config, config_path, manifests):
                     )
 
 
-def prepare_components():
-    """Render all source components with private dev state and shared imported registrations."""
-    state = common.BUILD / "dev"
-    settings_by_component = {
+def dev_settings():
+    """Compile the source catalog and merge dev config for each component.
+
+    Both are in dependency order; nothing is written here.
+    """
+    known = catalog.source_descriptors(common.ROOT)
+    return known, {
         component: rendering.component_defaults(component, dev=True)
-        for component in common.COMPONENTS
+        for component in known
     }
-    for component, settings in settings_by_component.items():
+
+
+def dev_database_preflight(settings):
+    """Check the dev database volumes of every catalog component before any writes."""
+    for component, config in settings.items():
         database_preflight(
-            settings,
-            state / component / "config.yaml",
+            config,
+            common.BUILD / "dev" / component / "config.yaml",
             common.ROOT / "components" / component / "manifests",
         )
+
+
+def prepare_components():
+    """Render the catalog components with private dev state and their registrations."""
+    state = common.BUILD / "dev"
+    known, settings_by_component = dev_settings()
+    dev_database_preflight(settings_by_component)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for component in common.COMPONENTS:
+    for component, settings in settings_by_component.items():
         target = state / component / "config.yaml"
-        settings = settings_by_component[component]
         rendering.write_private(target, yaml.safe_dump(settings, sort_keys=False))
+    for component, settings in settings_by_component.items():
+        check_public_settings(
+            known[component], settings, state / component / "config.yaml", state
+        )
+    # Dev registrations come only from the current catalog. Removing older copies
+    # keeps a service removed from bundles.yaml out of the proxy and Identity.
+    for name in catalog.ROLE_FILES:
+        if (state / name).is_symlink():
+            raise common.DeployError(
+                f"Refuse symlinked dev registrations: {state / name}"
+            )
+        shutil.rmtree(str(state / name), ignore_errors=True)
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
         imports, updates = registration_stage(
-            ["identity", "app1", "app2", "help"], Path(directory), home=state
+            list(known), Path(directory), known, home=state
         )
         documents = []
-        for component in common.COMPONENTS:
+        for component in known:
             text = rendering.materialize_and_render(
                 state / component / "files",
                 config_path=state / component / "config.yaml",
                 manifests=common.ROOT / "components" / component / "manifests",
                 component=component,
-                extra_volumes=component_imports(
-                    component, imports, settings_by_component[component]
-                ),
+                extra_volumes=component_imports(component, imports, known),
             )
             documents.extend(yaml.safe_load_all(text))
         rendering.check_links(documents, {})
@@ -322,136 +363,72 @@ def install_standalone():
     )
 
 
-def bundle_components():
-    """Accept only one component per offline bundle, with explicit dependencies."""
-    descriptor = rendering.load_yaml(common.ROOT / "bundle.yaml")
-    if not isinstance(descriptor, dict) or set(descriptor) != {
-        "name",
-        "components",
-        "requires",
-    }:
-        raise common.DeployError(
-            "Invalid bundle.yaml; use a separate platform/identity/app/help bundle"
-        )
-    name = descriptor["name"]
-    if name not in common.COMPONENTS or descriptor["components"] != [name]:
-        raise common.DeployError(
-            "Invalid bundle component selection; platform must be separate"
-        )
-    requires = descriptor["requires"]
-    if not isinstance(requires, dict) or set(requires) != set(
-        common.DEPENDENCIES[name]
-    ):
-        raise common.DeployError("Invalid bundle dependencies")
-    for requirement in requires.values():
-        validate_platform_requirement(requirement)
-    return [name]
+def bundle_descriptor():
+    """Read this unpacked bundle's own validated component descriptor."""
+    return catalog.load_bundle_descriptor(common.ROOT)
 
 
-def platform_requirement(version):
-    """Declare a compatible major series, or minor series while platform is 0.x."""
-    major, minor, _ = version_number(version)
-    upper = f"{major + 1}.0.0" if major else f"0.{minor + 1}.0"
-    return {"min": version, "before": upper}
-
-
-def validate_platform_requirement(requirement):
-    """Require an explicit nonempty inclusive-minimum/exclusive-upper range."""
-    if not isinstance(requirement, dict) or set(requirement) != {"min", "before"}:
-        raise common.DeployError("Invalid platform version requirement")
-    if not all(isinstance(value, str) for value in requirement.values()):
-        raise common.DeployError("Invalid platform version requirement")
-    if version_number(requirement["min"]) >= version_number(requirement["before"]):
-        raise common.DeployError("Empty platform version requirement")
-
-
-def component_dependencies(component):
-    """Validate fixed component dependencies and installed dependents before writes."""
-    check_pending("install", component)
-    requires = rendering.load_yaml(common.ROOT / "bundle.yaml")["requires"]
-    for dependency, requirement in requires.items():
-        marker = common.HOME / "installed" / dependency
-        if not marker.is_file():
+def check_dependencies_installed(descriptor):
+    """Every declared dependency must be installed in a compatible version."""
+    for dependency, requirement in descriptor["requires"].items():
+        version = catalog.installed_version(common.HOME, dependency)
+        if version is None:
             raise common.DeployError(
                 "Install the separate "
                 + dependency
                 + " bundle before installing "
-                + component
+                + descriptor["name"]
             )
+        check_version_requirement(dependency, version, requirement, descriptor["name"])
+
+
+def check_dependents(descriptor, installed):
+    """Installed dependents keep their recorded requirement on this component."""
+    component = descriptor["name"]
+    for name in catalog.dependents(installed, common.HOME, component):
         check_version_requirement(
-            dependency, marker.read_text().strip(), requirement, component
+            component,
+            descriptor["version"],
+            installed[name]["requires"][component],
+            name,
         )
-    requested = (
-        (common.ROOT / common.VERSION_FILES.get(component, "VERSION"))
-        .read_text()
-        .strip()
-    )
-    for name in common.COMPONENTS:
-        if (
-            name == component
-            or component not in common.DEPENDENCIES[name]
-            or not (common.HOME / "installed" / name).is_file()
-        ):
-            continue
-        path = common.HOME / "dependencies" / (name + ".json")
-        try:
-            installed = json.loads(path.read_text())
-            if not isinstance(installed, dict) or set(installed) != set(
-                common.DEPENDENCIES[name]
-            ):
-                raise ValueError("dependency keys")
-            for requirement in installed.values():
-                validate_platform_requirement(requirement)
-        except (OSError, ValueError, KeyError, TypeError, common.DeployError):
-            raise common.DeployError(
-                "Missing or invalid installed " + component + " requirement for " + name
-            ) from None
-        check_version_requirement(component, requested, installed[component], name)
 
 
 def check_version_requirement(component, version, requirement, dependent):
     """Use the existing inclusive-minimum/exclusive-upper numeric contract."""
-    validate_platform_requirement(requirement)
+    catalog.check_range(requirement)
     if (
-        not version_number(requirement["min"])
-        <= version_number(version)
-        < version_number(requirement["before"])
+        not catalog.version_number(requirement["min"])
+        <= catalog.version_number(version)
+        < catalog.version_number(requirement["before"])
     ):
         raise common.DeployError(
             component.title() + " version does not satisfy dependency for " + dependent
         )
 
 
-def version_number(value):
-    """Parse a three-part numeric version for deterministic platform comparisons."""
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
-        raise common.DeployError(
-            "Versions must contain three numeric parts: major.minor.patch"
-        )
-    return tuple(int(part) for part in value.split("."))
+def install_needed(descriptor):
+    """Decide whether this install renders and restarts the component.
 
-
-def platform_upgrade_needed(version):
-    """Retain the existing platform comparison entry point."""
-    return shared_upgrade_needed("platform", version)
-
-
-def shared_upgrade_needed(component, version):
-    """Install missing/newer shared components; retain equals and refuse downgrades."""
-    requested = version_number(version)
-    marker = common.HOME / "installed" / component
-    if not marker.is_file():
+    upgrade: always reinstalls every time. upgrade: newer-only installs a missing
+    or newer version, keeps an equal one and refuses a downgrade.
+    """
+    if descriptor["upgrade"] == "always":
         return True
-    installed = version_number(marker.read_text().strip())
-    if requested < installed:
+    component = descriptor["name"]
+    installed = catalog.installed_version(common.HOME, component)
+    if installed is None:
+        return True
+    requested = catalog.version_number(descriptor["version"])
+    if requested < catalog.version_number(installed):
         raise common.DeployError(
             component.title()
             + " downgrade refused: requested "
-            + version
+            + descriptor["version"]
             + ", installed "
-            + marker.read_text().strip()
+            + installed
         )
-    return requested > installed
+    return requested > catalog.version_number(installed)
 
 
 def component_paths(component, home=None):
@@ -463,8 +440,8 @@ def component_paths(component, home=None):
         state / "files",
         state / "config.yaml",
         base / "installed" / component,
-        base / "dependencies",
-        base / "dependencies" / (component + ".json"),
+        base / "metadata",
+        catalog.metadata_path(base, component),
     ]
     paths.extend((state / "files").glob("*.tar"))
     if home is None:
@@ -486,10 +463,16 @@ def component_paths(component, home=None):
     )
 
 
-def registration_stage(components, directory, home=None):
-    """Stage existing and proposed public routes and clients without changing live state."""
+def registration_stage(components, directory, known, home=None):
+    """Stage existing and proposed public routes and clients without changing live state.
+
+    known maps component IDs to descriptors: installed metadata plus the incoming
+    bundle in production, the source catalog in dev. Each existing registration
+    must belong to a known component; the role owners come from accepts.
+    """
     home = home or common.HOME
-    for name in ("routes", "clients"):
+    owners = catalog.role_owners(known, "registration owners")
+    for name in catalog.ROLE_FILES:
         source = home / name
         if source.is_symlink():
             raise common.DeployError(
@@ -504,85 +487,51 @@ def registration_stage(components, directory, home=None):
                     f"Refuse symlinked public registration: {path}"
                 )
             if name == "routes":
-                if path.suffix == ".conf":
-                    shutil.copy2(path, directory / name / path.name)
-            elif path.is_dir() and path.name in ("app1", "app2"):
-                if (
-                    path.name in components
-                    and (
-                        common.ROOT / "components" / path.name / "client.yaml"
-                    ).is_file()
-                ):
-                    continue  # Rebuild the incoming client even after a partial prior write.
-                target = directory / name / path.name
-                target.mkdir()
-                for filename in ("client.json", "client.crt"):
-                    public = path / filename
-                    if public.is_symlink():
-                        raise common.DeployError(
-                            f"Refuse symlinked public client file: {public}"
-                        )
-                    shutil.copy2(public, target / filename)
-            else:
+                owner = path.name[: -len(".conf")] if path.suffix == ".conf" else ""
+                if not path.is_file() or owner not in known:
+                    raise common.DeployError(
+                        f"Unexpected public route registration: {path}"
+                    )
+                shutil.copy2(path, directory / name / path.name)
+                continue
+            if not path.is_dir() or path.name not in known:
                 raise common.DeployError(
                     f"Unexpected public client registration: {path}"
                 )
+            if path.name in components and known[path.name]["clients"]:
+                continue  # Rebuild the incoming client even after a partial prior write.
+            target = directory / name / path.name
+            target.mkdir()
+            for filename in ("client.json", "client.crt"):
+                public = path / filename
+                if public.is_symlink():
+                    raise common.DeployError(
+                        f"Refuse symlinked public client file: {public}"
+                    )
+                shutil.copy2(public, target / filename)
     updates = {}
     for component in components:
         source = common.ROOT / "components" / component
-        route = source / "route.conf"
-        client = source / "client.yaml"
-        if not route.is_file() and not client.is_file():
-            continue
-        config = rendering.load_config(component_paths(component, home)[0])
-        platform = rendering.load_config(component_paths("platform", home)[0])
-        if any(
-            config.get(key) != platform.get(key)
-            for key in ("PUBLIC_ORIGIN", "HTTPS_PORT")
-        ):
-            raise common.DeployError(
-                f"{component} PUBLIC_ORIGIN and HTTPS_PORT must match the persistent platform config"
-            )
-        if route.is_file():
-            updates["routes/" + component + ".conf"] = route.read_bytes()
-        if client.is_file():
-            metadata = rendering.load_yaml(client)
-            if (
-                not isinstance(metadata, dict)
-                or set(metadata) != {"id", "base_path", "scopes", "certificate"}
-                or metadata["id"] != component
-                or metadata["base_path"] != "/" + component
-                or metadata["scopes"] != ["openid", "profile", component]
-                or not isinstance(metadata["certificate"], str)
-                or Path(metadata["certificate"]).is_absolute()
-                or ".." in Path(metadata["certificate"]).parts
-            ):
-                raise common.DeployError(f"Invalid public client descriptor: {client}")
-            certificate = rendering.resolve_path(
-                metadata["certificate"], component_paths(component, home)[0].parent
-            )
-            certificate_bytes = certificate.read_bytes()
-            try:
-                ssl.PEM_cert_to_DER_cert(certificate_bytes.decode("ascii"))
-            except (ValueError, UnicodeError):
+        declared = {
+            role: source / filename
+            for role, filename in catalog.ROLE_FILES.items()
+            if known[component][role] is not None
+        }
+        for role, filename in catalog.ROLE_FILES.items():
+            if (role in declared) != (source / filename).is_file():
                 raise common.DeployError(
-                    f"Expected a public PEM certificate in {certificate}"
-                ) from None
-            rendering.public_origin(
-                config.get("PUBLIC_ORIGIN"), component_paths(component, home)[0]
+                    f"{source / filename} must exist exactly when {component} declares {role}"
+                )
+        if not declared:
+            continue
+        config_path = component_paths(component, home)[0]
+        config = rendering.load_config(config_path)
+        if "routes" in declared:
+            updates["routes/" + component + ".conf"] = declared["routes"].read_bytes()
+        if "clients" in declared:
+            updates.update(
+                client_registration(component, declared["clients"], config, config_path)
             )
-            origin = config["PUBLIC_ORIGIN"].rstrip("/")
-            prefix = "clients/" + component + "/"
-            updates[prefix + "client.crt"] = certificate_bytes
-            updates[prefix + "client.json"] = json.dumps(
-                {
-                    "Id": component,
-                    "RedirectUris": [origin + metadata["base_path"] + "/auth/callback"],
-                    "Scopes": metadata["scopes"],
-                    "Certificate": "client.crt",
-                },
-                sort_keys=True,
-            ).encode("utf-8")
     for relative, data in updates.items():
         target = directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -599,19 +548,95 @@ def registration_stage(components, directory, home=None):
     client_dirs = sorted(
         path for path in (directory / "clients").iterdir() if path.is_dir()
     )
+    client_ids = [registered_client_id(path / "client.json") for path in client_dirs]
+    duplicates = sorted({value for value in client_ids if client_ids.count(value) > 1})
+    if duplicates:
+        raise common.DeployError(
+            "OIDC client IDs must be unique across components: " + ", ".join(duplicates)
+        )
     index = directory / "clients/installed.json"
     index.write_text(
         json.dumps([path.name + "/client.json" for path in client_dirs]),
         encoding="utf-8",
     )
     # Imports overwrite files without deleting old entries; only these current indexes are read.
-    imports = {"platform-routes": [routes], "identity-clients": client_dirs + [index]}
+    imports = {}
+    if owners["routes"]:
+        imports[known[owners["routes"]]["accepts"]["routes"]] = [routes]
+    if owners["clients"]:
+        imports[known[owners["clients"]]["accepts"]["clients"]] = client_dirs + [index]
     return imports, updates
 
 
+def registered_client_id(path):
+    """Read the OIDC client ID of one staged public registration."""
+    try:
+        client_id = json.loads(path.read_text(encoding="utf-8")).get("Id")
+    except (OSError, ValueError, AttributeError):
+        client_id = None
+    if not isinstance(client_id, str) or not client_id:
+        raise common.DeployError(
+            f"Invalid public client registration: {path.parent.name}"
+        )
+    return client_id
+
+
+CLIENT_PATH = re.compile(r"^(/[a-z0-9][a-z0-9-]*)+$")
+
+
+def client_registration(component, path, config, config_path):
+    """Build one public OIDC client registration from client.yaml.
+
+    Protocol of the existing apps and Identity: the app requests its client ID
+    as a scope, so scopes are exactly [openid, profile, <id>], and the redirect
+    URI is PUBLIC_ORIGIN + base_path + /auth/callback. The client ID and
+    base_path must match the app's APP_ID and BASE_PATH settings; they may
+    differ from the component ID. Only public certificates are accepted.
+    """
+    metadata = rendering.load_yaml(path)
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata) != {"id", "base_path", "scopes", "certificate"}
+        or not isinstance(metadata["id"], str)
+        or not common.ID.fullmatch(metadata["id"])
+        or not isinstance(metadata["base_path"], str)
+        or not CLIENT_PATH.fullmatch(metadata["base_path"])
+        or metadata["scopes"] != ["openid", "profile", metadata["id"]]
+        or not isinstance(metadata["certificate"], str)
+        or Path(metadata["certificate"]).is_absolute()
+        or ".." in Path(metadata["certificate"]).parts
+    ):
+        raise common.DeployError(
+            f"Invalid public client descriptor: {path}; expected id, "
+            "base_path (/path), scopes [openid, profile, <id>] and a relative certificate"
+        )
+    certificate = rendering.resolve_path(metadata["certificate"], config_path.parent)
+    certificate_bytes = certificate.read_bytes()
+    try:
+        ssl.PEM_cert_to_DER_cert(certificate_bytes.decode("ascii"))
+    except (ValueError, UnicodeError):
+        raise common.DeployError(
+            f"Expected a public PEM certificate in {certificate}"
+        ) from None
+    rendering.public_origin(config.get("PUBLIC_ORIGIN"), config_path)
+    origin = config["PUBLIC_ORIGIN"].rstrip("/")
+    prefix = "clients/" + component + "/"
+    return {
+        prefix + "client.crt": certificate_bytes,
+        prefix + "client.json": json.dumps(
+            {
+                "Id": metadata["id"],
+                "RedirectUris": [origin + metadata["base_path"] + "/auth/callback"],
+                "Scopes": metadata["scopes"],
+                "Certificate": "client.crt",
+            },
+            sort_keys=True,
+        ).encode("utf-8"),
+    }
+
+
 def write_registrations(updates, home=None):
-    """Write changed public registrations privately and report which registration owners must restart."""
-    changed = set()
+    """Write changed public registrations privately; unchanged files are kept."""
     if any(((home or common.HOME) / relative).is_symlink() for relative in updates):
         raise common.DeployError("Refuse symlinked public registration output")
     for relative, data in updates.items():
@@ -621,21 +646,15 @@ def write_registrations(updates, home=None):
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.parent.chmod(0o700)
         rendering.write_private(target, data.decode("utf-8"))
-        changed.add("platform" if relative.startswith("routes/") else "identity")
-    return changed
 
 
-def component_imports(component, imports, config=None):
-    """Route and client archives have separate owners; never cross their PVC namespaces."""
+def component_imports(component, imports, known):
+    """Return the registration archives this component accepts, if any."""
     selected = {
-        key: value for key, value in imports.items() if key.startswith(component + "-")
+        volume: imports[volume]
+        for volume in known[component]["accepts"].values()
+        if volume in imports
     }
-    if config is not None:
-        selected = {
-            key: value
-            for key, value in selected.items()
-            if key in config.get(common.VOLUME_FILES, {})
-        }
     return selected or None
 
 
@@ -668,16 +687,19 @@ def load_pending():
         if (
             set(state) != keys
             or not isinstance(component, str)
-            or component not in common.COMPONENTS
+            or not common.ID.fullmatch(component)
         ):
             raise ValueError("component/fields")
         owners = state["owners"]
-        allowed = set(common.DEPENDENCIES[component])
+        # Owners are checked against the descriptors when the operation resumes.
         if (
             not isinstance(owners, list)
-            or any(not isinstance(owner, str) for owner in owners)
+            or any(
+                not isinstance(owner, str) or not common.ID.fullmatch(owner)
+                for owner in owners
+            )
             or len(set(owners)) != len(owners)
-            or not set(owners) <= allowed
+            or component in owners
         ):
             raise ValueError("owners")
         if operation == "uninstall":
@@ -759,7 +781,7 @@ def clear_pending():
     sync_pending_directory()
 
 
-def registration_changes(updates, home=None):
+def registration_changes(updates, owners, home=None):
     """Compare before writing so unfinished owners can be recorded first."""
     changed = set()
     for relative, data in updates.items():
@@ -767,7 +789,7 @@ def registration_changes(updates, home=None):
         if target.is_symlink():
             raise common.DeployError("Refuse symlinked public registration output")
         if not target.is_file() or target.read_bytes() != data:
-            changed.add("platform" if relative.startswith("routes/") else "identity")
+            changed.add(owners[relative.split("/", 1)[0]])
     return changed
 
 
@@ -784,19 +806,18 @@ def check_shared_network():
     return network, network_text
 
 
-def materialize_component_manifests(components, imports):
+def materialize_component_manifests(components, imports, known):
     """Validate and render selected components; missing secrets may be created here."""
     rendered = {}
     for component in components:
         config, files, _, _ = component_paths(component)
-        extra = component_imports(component, imports, rendering.load_config(config))
         rendered[component] = rendering.materialize_and_render(
             files,
             write_archives=False,
             config_path=config,
             manifests=common.ROOT / "components" / component / "manifests",
             component=component,
-            extra_volumes=extra,
+            extra_volumes=component_imports(component, imports, known),
         )
     return rendered
 
@@ -823,10 +844,12 @@ def load_and_verify_images(components, source_components, rendered):
             ) from None
 
 
-def apply_registration_updates(component, updates):
+def apply_registration_updates(component, updates, owners):
     """Record unfinished owners durably before writing their public registrations."""
     pending = check_pending("install", component)
-    changed = registration_changes(updates) | set(pending["owners"] if pending else [])
+    changed = registration_changes(updates, owners) | set(
+        pending["owners"] if pending else []
+    )
     if changed:
         pending = {
             "operation": "install",
@@ -839,7 +862,7 @@ def apply_registration_updates(component, updates):
 
 
 def write_component_units_and_imports(
-    components, imports, rendered, network, network_text
+    components, imports, rendered, network, network_text, known
 ):
     """Write selected imports/YAML/Quadlets, retaining the existing shared network."""
     common.QUADLET_DIR.mkdir(parents=True, exist_ok=True)
@@ -848,13 +871,12 @@ def write_component_units_and_imports(
         network.chmod(0o644)
     for component in components:
         config, files, output, quadlet = component_paths(component)
-        extra = component_imports(component, imports, rendering.load_config(config))
         rendering.materialize_and_render(
             files,
             config_path=config,
             manifests=common.ROOT / "components" / component / "manifests",
             component=component,
-            extra_volumes=extra,
+            extra_volumes=component_imports(component, imports, known),
         )
         rendering.write_private(output, rendered[component])
         quadlet.write_text(
@@ -866,27 +888,33 @@ def write_component_units_and_imports(
         quadlet.chmod(0o644)
 
 
-def write_changed_owner_imports(components, changed, imports):
-    """Rebuild imports for shared owners outside the selected component."""
-    for owner in ("identity", "platform"):
-        if owner in changed and owner not in components:
+def write_changed_owner_imports(components, changed, imports, known):
+    """Rebuild imports for registration owners outside the selected component."""
+    for owner in sorted(changed):
+        if owner not in components:
             rendering.write_file_archives(
-                component_imports(owner, imports) or {}, component_paths(owner)[1]
+                component_imports(owner, imports, known) or {},
+                component_paths(owner)[1],
             )
 
 
-def restart_component_services(components, changed, pending):
-    """Restart only required services and acknowledge each completed pending owner."""
+def restart_order(known, names):
+    """Dependents first: an owner restarts after the components it serves.
+
+    The gateway thus publishes a new route only once the service behind it and
+    its client registration are back.
+    """
+    return list(reversed(catalog.dependency_order(known, names)))
+
+
+def restart_component_services(components, changed, pending, known):
+    """Restart the selected component and changed owners in restart_order.
+
+    Each owner is acknowledged in the pending record only after its restart
+    and active check succeed, so a retry repeats exactly the unfinished owners.
+    """
     run("systemctl", "--user", "daemon-reload")
-    services = [
-        component for component in components if component not in common.VERSION_FILES
-    ]
-    services.extend(
-        owner
-        for owner in ("identity", "platform")
-        if owner in components or owner in changed
-    )
-    for component in services:
+    for component in restart_order(known, set(components) | changed):
         service = "myproduct-" + component + ".service"
         run("systemctl", "--user", "restart", service)
         run("systemctl", "--user", "is-active", "--quiet", service)
@@ -919,91 +947,85 @@ def write_install_record(path, text):
             os.unlink(temporary)
 
 
-def write_installed_markers(components):
-    """Persist contracts first; publish the version last as completion confirmation."""
-    for component in components:
-        version = (
-            (common.ROOT / common.VERSION_FILES.get(component, "VERSION"))
-            .read_text()
-            .strip()
-        )
-        write_install_record(
-            common.HOME / "dependencies" / (component + ".json"),
-            json.dumps(
-                rendering.load_yaml(common.ROOT / "bundle.yaml")["requires"],
-                sort_keys=True,
-            ),
-        )
-        write_install_record(common.HOME / "installed" / component, version + "\n")
+def write_installed_metadata(descriptor):
+    """Record public metadata before registrations name this component.
 
-
-def install_component_plan(components, source_components, imports, updates):
-    """Apply a staged install in the established validation/write/restart order."""
-    network, network_text = check_shared_network()
-    rendered = materialize_component_manifests(components, imports)
-    load_and_verify_images(components, source_components, rendered)
-    changed, pending = apply_registration_updates(source_components[0], updates)
-    write_component_units_and_imports(
-        components, imports, rendered, network, network_text
+    Registration staging accepts only known components, and a retry or another
+    bundle may need this descriptor before the completion marker exists.
+    """
+    write_install_record(
+        catalog.metadata_path(common.HOME, descriptor["name"]),
+        json.dumps(descriptor, sort_keys=True) + "\n",
     )
-    write_changed_owner_imports(components, changed, imports)
-    restart_component_services(components, changed, pending)
-    write_installed_markers(components)
+
+
+def write_installed_marker(descriptor):
+    """Publish the version last; it confirms the install completed."""
+    write_install_record(
+        common.HOME / "installed" / descriptor["name"], descriptor["version"] + "\n"
+    )
+
+
+def install_component_plan(descriptor, components, known, imports, updates):
+    """Apply a staged install in the established validation/write/restart order."""
+    name = descriptor["name"]
+    owners = catalog.role_owners(known, "registration owners")
+    network, network_text = check_shared_network()
+    rendered = materialize_component_manifests(components, imports, known)
+    load_and_verify_images(components, [name], rendered)
+    write_installed_metadata(descriptor)
+    changed, pending = apply_registration_updates(name, updates, owners)
+    write_component_units_and_imports(
+        components, imports, rendered, network, network_text, known
+    )
+    write_changed_owner_imports(components, changed, imports, known)
+    restart_component_services(components, changed, pending, known)
+    write_installed_marker(descriptor)
     run("podman", "ps", "--all", "--pod")
 
 
 def install_components():
-    """Validate the selected components and images before writing scoped services."""
+    """Validate the bundle, installed state and config before writing anything.
+
+    Order: descriptors and dependencies, then config and database preflight,
+    then staging in a temporary directory, then install_component_plan.
+    """
     production_environment()
-    components = bundle_components()
-    component_dependencies(components[0])
-    version_number((common.ROOT / "VERSION").read_text().strip())
-    source_components = list(components)
-    for component in tuple(components):
-        if component in common.VERSION_FILES and not shared_upgrade_needed(
-            component,
-            (common.ROOT / common.VERSION_FILES[component]).read_text().strip(),
-        ):
-            components.remove(component)
-    for component in source_components:
-        for path in sorted(
-            (common.ROOT / "components" / component / "manifests").glob("*.yaml")
-        ):
-            rendering.check_component_names(
-                rendering.load_yaml_all(path), component, path
-            )
-        config_path = component_paths(component)[0]
-        rendering.validate_component_config(
-            rendering.load_config(config_path),
-            component,
-            config_path,
-            check_placeholders=component in components,
-        )
-    platform_path = component_paths("platform")[0]
-    platform = rendering.load_config(platform_path)
+    descriptor = bundle_descriptor()
+    name = descriptor["name"]
+    pending = check_pending("install", name)
+    installed = catalog.load_installed_metadata(common.HOME)
+    known = dict(installed)
+    known[name] = descriptor
+    # An incoming descriptor must not take over a role another component serves.
+    catalog.check_owners(known, "installed components and this bundle")
+    if pending and not set(pending["owners"]) <= {
+        descriptor["routes"],
+        descriptor["clients"],
+    }:
+        raise common.DeployError("Invalid pending-operation state; no changes made")
+    check_dependencies_installed(descriptor)
+    check_dependents(descriptor, installed)
+    components = [name] if install_needed(descriptor) else []
+    for path in sorted(
+        (common.ROOT / "components" / name / "manifests").glob("*.yaml")
+    ):
+        rendering.check_component_names(rendering.load_yaml_all(path), name, path)
+    config_path = component_paths(name)[0]
+    config = rendering.load_config(config_path)
     rendering.validate_component_config(
-        platform, "platform", platform_path, check_placeholders="platform" in components
+        config, name, config_path, check_placeholders=bool(components)
     )
-    for component in source_components:
-        if component == "platform":
-            continue
-        path = component_paths(component)[0]
-        config = rendering.load_config(path)
-        for key in ("PUBLIC_ORIGIN", "HTTPS_PORT"):
-            if config[key] != platform[key]:
-                raise common.DeployError(f"{key} in {path} must match {platform_path}")
+    check_public_settings(descriptor, config, config_path)
     for component in components:
-        config_path = component_paths(component)[0]
         database_preflight(
-            rendering.load_config(config_path),
-            config_path,
-            common.ROOT / "components" / component / "manifests",
+            config, config_path, common.ROOT / "components" / component / "manifests"
         )
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
-        imports, updates = registration_stage(source_components, Path(directory))
-        install_component_plan(components, source_components, imports, updates)
+        imports, updates = registration_stage([name], Path(directory), known)
+        install_component_plan(descriptor, components, known, imports, updates)
 
 
 def install():
@@ -1021,7 +1043,7 @@ def install():
 def uninstall(component=None, delete_data=False):
     """Resume one scoped uninstall from validated metadata, even after removing its YAML."""
     production_environment()
-    own = bundle_components()[0]
+    own = bundle_descriptor()["name"]
     component = component or own
     if component != own:
         raise common.DeployError("This bundle can only uninstall its own component")
@@ -1029,12 +1051,8 @@ def uninstall(component=None, delete_data=False):
     marker = common.HOME / "installed" / component
     if state is None and not marker.is_file():
         raise common.DeployError(f"Component {component} is not installed")
-    dependents = [
-        name
-        for name in common.COMPONENTS
-        if component in common.DEPENDENCIES[name]
-        and (common.HOME / "installed" / name).is_file()
-    ]
+    installed = catalog.load_installed_metadata(common.HOME)
+    dependents = catalog.dependents(installed, common.HOME, component)
     if dependents:
         raise common.DeployError(
             component.title() + " is still required by: " + ", ".join(dependents)
@@ -1048,7 +1066,7 @@ def uninstall(component=None, delete_data=False):
         route,
         client,
         marker,
-        common.HOME / "dependencies" / (component + ".json"),
+        catalog.metadata_path(common.HOME, component),
     ):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
             raise common.DeployError("Refuse symlinked uninstall state or output paths")
@@ -1093,12 +1111,13 @@ def uninstall(component=None, delete_data=False):
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
-            registration_stage([], Path(directory))
+            registration_stage([], Path(directory), installed)
+        role_owners = catalog.role_owners(installed, "installed components")
         owners = set()
         if route.is_file():
-            owners.add("platform")
+            owners.add(role_owners["routes"])
         if client.exists():
-            owners.add("identity")
+            owners.add(role_owners["clients"])
         state = {
             "operation": "uninstall",
             "component": component,
@@ -1108,7 +1127,8 @@ def uninstall(component=None, delete_data=False):
             "owners": sorted(
                 owner
                 for owner in owners
-                if owner != component and (common.HOME / "installed" / owner).is_file()
+                if owner not in (None, component)
+                and catalog.installed_version(common.HOME, owner)
             ),
         }
         save_pending(state)
@@ -1126,17 +1146,19 @@ def uninstall(component=None, delete_data=False):
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
-            imports, _ = registration_stage([], Path(directory))
-            for owner in ("identity", "platform"):
-                if owner not in state["owners"]:
-                    continue
+            imports, _ = registration_stage([], Path(directory), installed)
+            for owner in list(state["owners"]):
                 component_paths(owner)
-                if not (common.HOME / "installed" / owner).is_file():
+                if owner not in installed or not catalog.installed_version(
+                    common.HOME, owner
+                ):
                     raise common.DeployError(
                         "Pending registration owner is not installed: " + owner
                     )
+            for owner in restart_order(installed, state["owners"]):
                 rendering.write_file_archives(
-                    component_imports(owner, imports) or {}, component_paths(owner)[1]
+                    component_imports(owner, imports, installed) or {},
+                    component_paths(owner)[1],
                 )
                 service = "myproduct-" + owner + ".service"
                 run("systemctl", "--user", "restart", service)
@@ -1157,7 +1179,8 @@ def uninstall(component=None, delete_data=False):
                 raise common.DeployError(f"Cannot check volume {name} before deletion")
         if (common.HOME / component).exists():
             shutil.rmtree(common.HOME / component)
-    for path in (marker, common.HOME / "dependencies" / (component + ".json")):
+    # Marker first: metadata without a marker is an unfinished install, never the reverse.
+    for path in (marker, catalog.metadata_path(common.HOME, component)):
         if path.exists():
             path.unlink()
     clear_pending()

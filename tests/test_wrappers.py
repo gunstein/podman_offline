@@ -82,18 +82,33 @@ class WrapperTests(unittest.TestCase):
                 "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
             )
             (source / "bundles.yaml").write_text(
-                "platform: [platform]\nidentity: [identity]\napp1: [app1]\n"
+                yaml.safe_dump(
+                    {
+                        "components": {
+                            "platform": {
+                                "version_file": "PLATFORM_VERSION",
+                                "upgrade": "newer-only",
+                                "accepts": {"routes": "platform-routes"},
+                            },
+                            "identity": {
+                                "requires": ["platform"],
+                                "version_file": "IDENTITY_VERSION",
+                                "upgrade": "newer-only",
+                                "public_from": "platform",
+                                "accepts": {"clients": "identity-clients"},
+                            },
+                            "app1": {
+                                "requires": ["platform", "identity"],
+                                "public_from": "platform",
+                            },
+                        }
+                    }
+                )
             )
             for component in ("platform", "identity", "app1", "app2", "help"):
                 folder = source / "components" / component
                 (folder / "manifests").mkdir(parents=True)
-                (folder / "config.defaults.yaml").write_text(
-                    "VOLUME_FILES:\n  platform-routes:\n  - path: ../routes\n"
-                    if component == "platform"
-                    else "VOLUME_FILES:\n  identity-clients:\n  - path: ../clients\n"
-                    if component == "identity"
-                    else "{}\n"
-                )
+                (folder / "config.defaults.yaml").write_text("{}\n")
                 (folder / "manifests/10-pod.yaml").write_text(
                     yaml.safe_dump(
                         {

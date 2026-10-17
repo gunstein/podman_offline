@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from catalog_fixture import DEMO_COMPONENTS
 from test_components import ComponentFixture
 
 from deployment import common, deploy
@@ -85,7 +86,7 @@ class ConfigTests(ComponentFixture):
             "config/common.defaults.yaml",
             (repo / "config/common.defaults.yaml").read_bytes(),
         )
-        for component in common.COMPONENTS:
+        for component in DEMO_COMPONENTS:
             source = repo / "components" / component / "config.defaults.yaml"
             self.write(
                 "components/" + component + "/config.defaults.yaml", source.read_bytes()
@@ -150,7 +151,7 @@ class ConfigTests(ComponentFixture):
             self.select("platform")
             deploy.init_config("platform")
         target.unlink()
-        target.parent.rmdir()
+        shutil.rmtree(target.parent)  # Also holds platform's registration imports.
         target.parent.symlink_to(self.root, target_is_directory=True)
         with self.assertRaisesRegex(common.DeployError, "symlinked"):
             self.select("platform")
@@ -289,7 +290,7 @@ class ConfigTests(ComponentFixture):
 
     def test_help_init_inherits_shared_values_without_bundled_platform(self):
         """A help-only bundle uses existing platform settings without shipping/installing platform."""
-        self.write("bundle.yaml", "name: help\ncomponents: [help]\n")
+        self.select("help")
         self.component_manifest("help")
         self.write("components/help/config.defaults.yaml", "{}\n")
         self.write(
@@ -315,10 +316,14 @@ class ConfigTests(ComponentFixture):
     def test_dev_output_is_never_a_config_layer(self):
         """Re-render defaults/overrides while keeping private credentials and data."""
         (self.root / "bundle.yaml").unlink()
+        self.write(
+            "bundles.yaml",
+            yaml.safe_dump({"components": {name: {} for name in DEMO_COMPONENTS}}),
+        )
         for name in ("app2", "help"):
             self.component_manifest(name)
             self.write("components/" + name + "/config.defaults.yaml", "{}\n")
-        for component in common.COMPONENTS:
+        for component in DEMO_COMPONENTS:
             self.write(
                 "components/" + component + "/config.defaults.yaml",
                 yaml.safe_dump(
@@ -336,6 +341,7 @@ class ConfigTests(ComponentFixture):
             pod["spec"]["containers"][0]["envFrom"] = [
                 {"secretRef": {"name": component + "-generated"}}
             ]
+            pod["spec"].pop("volumes", None)  # This catalog declares no registrations.
             manifest.write_text(yaml.safe_dump(pod))
         output = self.write("build/dev/app1/config.yaml", "invalid: [\n")
         private = self.write(

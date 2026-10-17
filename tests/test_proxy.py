@@ -44,7 +44,11 @@ class ProxyTests(unittest.TestCase):
         path = base / "config.yaml"
         path.write_text(yaml.safe_dump(config))
         rendered = rendering.materialize_and_render(
-            base / "files", config_path=path, manifests=MANIFESTS, component="platform"
+            base / "files",
+            config_path=path,
+            manifests=MANIFESTS,
+            component="platform",
+            extra_volumes={"platform-routes": [routes / "installed.conf"]},
         )
         docs = list(yaml.safe_load_all(rendered))
         pod = next(doc for doc in docs if doc["kind"] == "Pod")

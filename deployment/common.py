@@ -1,4 +1,7 @@
-"""Shared release paths, fixed component contracts and errors; no lifecycle actions."""
+"""Shared release paths, name rules and errors; no lifecycle actions.
+
+The component model is declared in YAML and read by catalog.py.
+"""
 
 import os
 import pwd
@@ -32,17 +35,6 @@ MAX_SECRET_SIZE = 500000
 
 PH = re.compile(r"^@@([A-Z0-9_]+)@@$")
 MAX_PORT = 65535
-
-
-DEPENDENCIES = {
-    "platform": (),
-    "identity": ("platform",),
-    "app1": ("platform", "identity"),
-    "app2": ("platform", "identity"),
-    "help": ("platform",),
-}
-COMPONENTS = tuple(DEPENDENCIES)
-VERSION_FILES = {"platform": "PLATFORM_VERSION", "identity": "IDENTITY_VERSION"}
 
 
 class DeployError(Exception):

@@ -123,6 +123,8 @@ class ImageHelperTests(unittest.TestCase):
     def test_actual_product_builds_unchanged_apps_and_pulls_stock_nginx(self):
         """Exercise the existing helpers against the actual product manifest image set."""
         shutil.copytree(ROOT / "components", self.root / "components")
+        for name in ("bundles.yaml", "VERSION", "PLATFORM_VERSION", "IDENTITY_VERSION"):
+            shutil.copy2(ROOT / name, self.root / name)
         recipes = (
             ("help", "localhost/myproduct-help:0.2.0"),
             ("identity", "localhost/myproduct-identity:0.2.1"),

@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from catalog_fixture import DEMO, DEMO_COMPONENTS
 
 import bundle
 
@@ -543,7 +544,11 @@ data: {image: ignored}
         self,
     ):
         repo = Path(__file__).resolve().parent.parent
-        self.write("bundles.yaml", "platform: [platform]\n")
+        self.write(
+            "bundles.yaml",
+            "components:\n  platform:\n    version_file: PLATFORM_VERSION\n"
+            "    upgrade: newer-only\n    accepts: {routes: platform-routes}\n",
+        )
         self.write("PLATFORM_VERSION", "1.2.4\n")
         self.write("IDENTITY_VERSION", "1.2.3\n")
         self.write(
@@ -584,14 +589,15 @@ data: {image: ignored}
 
     def test_actual_app1_bundle_includes_init_image_once_and_retains_init_command(self):
         repo = Path(__file__).resolve().parent.parent
-        self.write("bundles.yaml", "app1: [app1]\n")
-        self.write("PLATFORM_VERSION", "1.2.3\n")
-        self.write("IDENTITY_VERSION", "1.2.3\n")
+        # Only the app1 manifests matter here, so the catalog has no registrations.
+        self.write("bundles.yaml", "components:\n  app1: {}\n")
         self.write(
             "config/common.defaults.yaml",
             (repo / "config/common.defaults.yaml").read_text(),
         )
         shutil.copytree(repo / "components/app1", self.root / "components/app1")
+        for name in ("route.conf", "client.yaml"):
+            (self.root / "components/app1" / name).unlink()
         bundle.build()
         image = "localhost/myproduct-todo-backend:0.2.2"
         with tarfile.open(
@@ -623,10 +629,14 @@ data: {image: ignored}
 
     def test_component_bundles_include_only_selected_components_and_images(self):
         """Build three independent archives with matching platform versions and no local state."""
-        self.write(
-            "bundles.yaml",
-            "platform: [platform]\nidentity: [identity]\napp1: [app1]\napp2: [app2]\nhelp: [help]\n",
-        )
+        # The demo graph without registrations: these fixtures have no route/client files.
+        catalog = {
+            name: {
+                key: DEMO[name][key] for key in ("requires", "version_file", "upgrade")
+            }
+            for name in DEMO_COMPONENTS
+        }
+        self.write("bundles.yaml", yaml.safe_dump({"components": catalog}))
         self.write("PLATFORM_VERSION", "1.0.0\n")
         self.write("IDENTITY_VERSION", "1.1.0\n")
         self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")
@@ -709,7 +719,9 @@ data: {image: ignored}
                     self.assertIn(
                         "components/" + component + "/config.defaults.yaml", members
                     )
-                self.assertIn("PLATFORM_VERSION", members)
+                # The version is compiled into bundle.yaml; no version files ship.
+                self.assertNotIn("PLATFORM_VERSION", members)
+                self.assertNotIn("IDENTITY_VERSION", members)
                 version_file = archive.extractfile(prefix + "VERSION")
                 assert version_file is not None
                 self.assertEqual(
@@ -719,7 +731,11 @@ data: {image: ignored}
                 descriptor_file = archive.extractfile(prefix + "bundle.yaml")
                 assert descriptor_file is not None
                 descriptor = yaml.safe_load(descriptor_file.read())
-                self.assertEqual(descriptor["components"], [name])
+                self.assertEqual(descriptor["name"], name)
+                self.assertEqual(
+                    descriptor["version"],
+                    {"platform": "1.0.0", "identity": "1.1.0"}.get(name, "1.2.3"),
+                )
                 self.assertEqual(
                     descriptor["requires"],
                     {
@@ -727,7 +743,7 @@ data: {image: ignored}
                             "min": "1.1.0" if dependency == "identity" else "1.0.0",
                             "before": "2.0.0",
                         }
-                        for dependency in bundle.common.DEPENDENCIES[name]
+                        for dependency in DEMO[name]["requires"]
                     },
                 )
                 checksum = archive.extractfile(prefix + "checksums.sha256")
@@ -747,6 +763,17 @@ data: {image: ignored}
                         and member.name != prefix + "checksums.sha256"
                     },
                 )
+
+        self.assertEqual(
+            (bundle.DIST / "current-bundles.txt").read_text().splitlines(),
+            [
+                "myproduct-platform-1.0.0-offline.tar.gz",
+                "myproduct-identity-1.1.0-offline.tar.gz",
+                "myproduct-app1-1.2.3-offline.tar.gz",
+                "myproduct-app2-1.2.3-offline.tar.gz",
+                "myproduct-help-1.2.3-offline.tar.gz",
+            ],
+        )
 
     def test_sha256_reads_more_than_one_chunk(self):
         path = self.root / "large.bin"
