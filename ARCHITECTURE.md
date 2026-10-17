@@ -162,19 +162,20 @@ sequenceDiagram
 
     Op->>CLI: ./deploy install
     CLI->>D: install()
+    Note over D: install_checks (no writes, no host commands)
     D->>C: load_bundle_descriptor (bundle.yaml)
     D->>S: check_pending (pending-operation.json)
-    D->>C: load_installed_metadata, check_owners
+    D->>C: load_installed_metadata, check_id_prefixes, check_owners
     D->>C: installed_version / dependents
     Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
     D->>R: load_config, validate_component_config
     D->>D: check_public_settings (public_from)
     D->>D: registration_stage (temp dir): imports, updates, removals
     D->>R: effective_config, effective_documents
-    Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links; no writes
+    Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links - no writes
     D->>H: database_preflight: podman volume exists (configured name)
     D->>P: install_component_plan
-    P->>S: check_shared_network, image archive, find_images
+    P->>S: install_preconditions: shared network, image archive, find_images
     P->>R: materialize: generate missing secrets, read files, render YAML
     P->>H: podman load + podman image exists
     P->>S: write metadata/ID.json
