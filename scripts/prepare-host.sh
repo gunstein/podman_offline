@@ -14,6 +14,16 @@ for command in python3 useradd usermod semanage restorecon loginctl firewall-cmd
 done
 [[ $(getenforce) == Enforcing ]] || die "SELinux must be Enforcing"
 firewall-cmd --state || die "firewalld must be running"
+# fapolicyd: a small subject cache evicts processes while they start, and its
+# ld.so pattern rule can then deny systemd's launch of Podman (203/EXEC). The
+# setting belongs to the host's security baseline, so only warn (README).
+fapolicyd_conf=/etc/fapolicyd/fapolicyd.conf
+if [[ -r $fapolicyd_conf ]]; then
+    subj_cache=$(sed -n 's/^[[:space:]]*subj_cache_size[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$fapolicyd_conf" | tail -n 1)
+    if [[ -z $subj_cache || $subj_cache -lt 16381 ]]; then
+        echo "WARNING: fapolicyd subj_cache_size is ${subj_cache:-unset}; set it to 16381 in $fapolicyd_conf and restart fapolicyd before installing (see README)" >&2
+    fi
+fi
 service_home=/var/lib/myproduct
 if ! getent passwd myproduct >/dev/null; then
     useradd --system --create-home --home-dir "$service_home" --shell /sbin/nologin myproduct

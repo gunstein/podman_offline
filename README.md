@@ -914,6 +914,17 @@ it can delete database volumes. At final host removal, remove all release trust,
 `semanage fcontext -d /var/lib/myproduct/.local/share/containers`, and optionally
 `userdel -r myproduct`. These are destructive operator choices, not bundle install steps.
 
+fapolicyd's subject cache must be large enough that processes are not evicted
+while they start: an early eviction can make rule `deny_audit perm=any
+pattern=ld_so : all` deny systemd's launch of Podman (`203/EXEC`,
+`subj_trust=unknown`). Set `subj_cache_size = 16381` in
+`/etc/fapolicyd/fapolicyd.conf` and `systemctl restart fapolicyd` before
+installing; `prepare-host.sh` warns when it is smaller. This tunes the cache
+only and does not change any rule. With 4099 the lab showed six early
+evictions per acceptance run (`fapolicyd-cli --check-status`). If a restart
+still fails this way, rerunning `./deploy install` completes the pending
+owner work.
+
 Rootless is the only production mode. On the OL9.8 lab, rootful crun fails with
 fapolicyd rule 5 while loading libraries after its detached-mount clone; see
 [Red Hat's symptom](https://access.redhat.com/solutions/7072618).

@@ -2925,7 +2925,7 @@ standalone paragraph consistent.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: step 1 in progress. `acceptance/fapolicyd-reload-probe.sh` reproduces
+Status: remedy implemented, lab confirmation pending. `acceptance/fapolicyd-reload-probe.sh` reproduces
 the sequence on the PROD VM (trust add/delete, `fapolicyd-cli --update`, wait
 0–15 s, restart a user unit) and reports failed restarts per delay, the
 effective rules, `fapolicyd.conf`, fapolicyd's journal and every FANOTIFY/AVC
@@ -2941,9 +2941,22 @@ ld.so pattern detector, not a missing trust entry: the subject (systemd's
 freshly forked child) was judged to start through the dynamic loader. That
 points to fapolicyd losing track of the new process (for example subject
 cache evictions or a full event queue under load, as during `podman load`
-right before the restart) rather than to the reload itself. Next: read
-fapolicyd's state report (early subject cache evictions, queue depth) after a
-full acceptance run, and only then choose a remedy.
+right before the restart) rather than to the reload itself.
+
+State report on the same VM (`fapolicyd-cli --check-status`, since the run's
+reboot, no denials): subject cache 4099 slots, 83 % in use, 3556 evictions and
+**6 early subject cache evictions**; maximum queue depth 6 of 800. Early
+evictions of starting processes are what can make the ld.so pattern rule
+misfire, so the cache is too small for this host, and the queue is not the
+cause.
+
+Remedy (on `main`): the README documents `subj_cache_size = 16381` as a host
+prerequisite (a cache size, not a rule change); `prepare-host.sh` warns when
+it is smaller but does not edit fapolicyd's configuration; the lab's
+prepare-host step applies the documented setting and restarts fapolicyd; and
+`11-prod-audit` records the cache and queue figures. Remaining: confirm in the
+next acceptance runs that early evictions stay at 0. No retry was added to
+deploy: rerunning `./deploy install` already completes pending owner work.
 
 ### Observation
 

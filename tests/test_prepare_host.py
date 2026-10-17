@@ -1,6 +1,7 @@
 """Test host validation and idempotent labels using shell stubs, without root."""
 
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -122,3 +123,45 @@ class HostPortTests(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, valid, result.stdout)
                 if not valid:
                     self.assertIn("ERROR:", result.stdout)
+
+
+class HostFapolicydTests(unittest.TestCase):
+    """Only a warning: fapolicyd's settings belong to the host's baseline."""
+
+    def run_check(self, content):
+        script = (
+            Path(__file__).resolve().parent.parent / "scripts/prepare-host.sh"
+        ).read_text()
+        block = script[script.index("# fapolicyd:") : script.index("service_home=")]
+        with tempfile.TemporaryDirectory() as directory:
+            conf = Path(directory) / "fapolicyd.conf"
+            if content is not None:
+                conf.write_text(content)
+            block = block.replace("/etc/fapolicyd/fapolicyd.conf", str(conf))
+            return subprocess.run(
+                ["bash", "-eu", "-c", block],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,  # noqa: UP021 - Python 3.6
+            )
+
+    def test_small_or_missing_subject_cache_warns_without_failing(self):
+        for content, shown in (
+            ("permissive = 0\nsubj_cache_size = 4099\n", "4099"),
+            ("permissive = 0\n", "unset"),
+            ("subj_cache_size = 16381\nsubj_cache_size = 8191\n", "8191"),
+        ):
+            with self.subTest(content=content):
+                result = self.run_check(content)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn(
+                    "WARNING: fapolicyd subj_cache_size is " + shown, result.stdout
+                )
+
+    def test_large_cache_or_no_fapolicyd_is_silent(self):
+        for content in ("subj_cache_size = 16381\n", " subj_cache_size=32749 \n", None):
+            with self.subTest(content=content):
+                result = self.run_check(content)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(result.stdout, "")

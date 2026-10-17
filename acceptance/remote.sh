@@ -1147,6 +1147,13 @@ prepare-host)
     sha256sum -c "$archive.sha256"
     stage=$(mktemp -d /tmp/myproduct-host.XXXXXXXX)
     tar xzf "$archive" -C "$stage"
+    # The documented host baseline (README, fapolicyd): a subject cache large
+    # enough that starting processes are not evicted (backlog 29).
+    sudo -n sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf
+    sudo -n grep -qx 'subj_cache_size = 16381' /etc/fapolicyd/fapolicyd.conf \
+        || echo 'subj_cache_size = 16381' | sudo -n tee -a /etc/fapolicyd/fapolicyd.conf >/dev/null
+    sudo -n systemctl restart fapolicyd
+    sudo -n systemctl is-active fapolicyd
     sudo -n bash "$stage/myproduct-$bundle-$version/scripts/prepare-host.sh" --port "$port"
     rm -rf -- "$stage"
     as_product mkdir -p "$state/releases"
@@ -2023,6 +2030,10 @@ audit|audit-check|launch-audit-check)
     printf 'FANOTIFY/AVC evidence since %s %s (VM local time)\n' "$start_date" "$start_time"
     sudo -n systemctl is-active auditd
     if [[ $action == audit ]]; then audit_events collect; else audit_events check; fi
+    if [[ $action == audit && $role == PROD ]]; then
+        # Evidence for backlog 29: early evictions can trigger ld.so pattern denials.
+        sudo -n fapolicyd-cli --check-status | grep -E '^(q_size|Inter-thread max queue depth|Subject cache size|Subject slots in use|Subject evictions|Early subject cache evictions):' || true
+    fi
     test "$diagnostic_status" = 0
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
