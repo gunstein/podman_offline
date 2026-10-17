@@ -722,6 +722,8 @@ renamed-dev-down)
     output=$(podman pod ps -q)
     test -z "$output"
     ;;
+bundle-list) cat "$src/dist/current-bundles.txt";;
+renamed-bundle-list) cat "$renamed/dist/current-bundles.txt";;
 renamed-bundle)
     cd "$renamed"
     ./build-bundle.sh

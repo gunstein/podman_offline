@@ -897,6 +897,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.persistent_before = self.state_fixture()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture()))
         self.harness.transfer = mock.Mock()
+        self.harness.record_bundles = mock.Mock()
         self.harness.credentials = mock.Mock()
         self.harness.upgrade()
         self.harness.credentials.assert_not_called()
@@ -923,6 +924,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.persistent_before = self.state_fixture()
         self.harness.guest = mock.Mock(return_value=json.dumps(self.state_fixture("b")))
         self.harness.transfer = mock.Mock()
+        self.harness.record_bundles = mock.Mock()
         with self.assertRaisesRegex(RuntimeError, "10-persistent-after"):
             self.harness.upgrade()
         self.assertNotIn(
@@ -936,6 +938,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.meta["platform_version"] = "0.1.0"
         self.harness.meta["identity_version"] = "0.1.0"
         self.harness.transfer = mock.Mock()
+        self.harness.record_bundles = mock.Mock()
         self.harness.guest = mock.Mock(
             side_effect=["baseline", "built", RuntimeError("install failed")]
         )
@@ -953,6 +956,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
         self.harness.reset = mock.Mock()
         self.harness.source = mock.Mock()
         self.harness.transfer = mock.Mock()
+        self.harness.record_bundles = mock.Mock()
         self.harness.registry_transfer = mock.Mock()
         self.harness.credentials = mock.Mock()
         self.harness.reboot = mock.Mock()
@@ -1094,6 +1098,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
             "reset",
             "source",
             "transfer",
+            "record_bundles",
             "registry_transfer",
             "credentials",
             "reboot",

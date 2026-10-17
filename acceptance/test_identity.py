@@ -34,6 +34,7 @@ class IdentityHarnessTests(unittest.TestCase):
             "reset",
             "source",
             "transfer",
+            "record_bundles",
             "credentials",
             "registry_transfer",
             "reboot",

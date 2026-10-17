@@ -22,6 +22,8 @@ from deployment import catalog
 
 ROOT = Path(__file__).resolve().parent.parent
 REMOTE = Path(__file__).with_name("remote.sh").read_text()
+# The generated product's dependency order; the harness reads it from the build.
+RENAMED_ORDER = ("gateway", "login-service", "orders", "inventory", "manual")
 OLD_PREFIX = re.compile(r"^(platform|identity|app1|app2|help)(-|$)")
 
 
@@ -74,7 +76,7 @@ class GeneratorTests(unittest.TestCase):
             list(descriptors),
             ["gateway", "login-service", "orders", "inventory", "manual"],
         )
-        self.assertEqual(tuple(descriptors), runner.RENAMED_ORDER)
+        self.assertEqual(tuple(descriptors), RENAMED_ORDER)
         self.assertEqual(descriptors["orders"]["clients"], "login-service")
         self.assertEqual(
             descriptors["gateway"]["accepts"], {"routes": "gateway-routes"}
@@ -275,6 +277,12 @@ class ScenarioTests(unittest.TestCase):
 
         def guest(role, action, *args, **kwargs):
             self.calls.append((role, action, kwargs.get("bundle")))
+            if action == "renamed-bundle-list":
+                return "".join(
+                    "myproduct-" + name + "-0.4.9-offline.tar.gz\n"
+                    for name in RENAMED_ORDER
+                )
+            return ""
 
         self.harness.guest = mock.Mock(side_effect=guest)
         self.harness.transfer = mock.Mock()
@@ -289,10 +297,10 @@ class ScenarioTests(unittest.TestCase):
         self.harness.execute()
         self.assertTrue(self.harness.finished)
         installs = [bundle for _, action, bundle in self.calls if action == "install"]
-        self.assertEqual(installs, list(runner.RENAMED_ORDER) + ["orders"])
+        self.assertEqual(installs, list(RENAMED_ORDER) + ["orders"])
         self.assertEqual(
             [call.kwargs for call in self.harness.transfer.call_args_list],
-            [{"bundle": name, "tree": "renamed"} for name in runner.RENAMED_ORDER],
+            [{"bundle": name, "tree": "renamed"} for name in RENAMED_ORDER],
         )
         self.harness.credentials.assert_called_once_with("login-service")
         actions = [action for _, action, _ in self.calls]
@@ -331,6 +339,20 @@ class ScenarioTests(unittest.TestCase):
         self.harness.transfer.assert_not_called()
         self.assertFalse(self.harness.report())
 
+    def test_bundle_versions_come_from_the_build_listing_in_order(self):
+        listing = (
+            "+ podman save ...\n"
+            "myproduct-gateway-0.4.9-offline.tar.gz\n"
+            "myproduct-login-service-0.4.8-offline.tar.gz\n"
+            "myproduct-orders-1.2.3-offline.tar.gz\n"
+        )
+        self.assertEqual(
+            list(runner.bundle_versions(listing).items()),
+            [("gateway", "0.4.9"), ("login-service", "0.4.8"), ("orders", "1.2.3")],
+        )
+        with self.assertRaisesRegex(RuntimeError, "No bundles listed"):
+            runner.bundle_versions("build failed\n")
+
     def test_transfer_reads_the_renamed_tree_and_version_keys(self):
         harness = runner.Run("transfer", "not-used")
         harness.meta.update(
@@ -342,6 +364,9 @@ class ScenarioTests(unittest.TestCase):
         harness.guest = mock.Mock()
         archive = harness.folder / "myproduct-gateway-0.4.7-offline.tar.gz"
         archive.write_bytes(b"archive")
+        harness.meta["bundles_built"] = runner.bundle_versions(
+            "build noise\nmyproduct-gateway-0.4.7-offline.tar.gz\n"
+        )
         harness.transfer(bundle="gateway", tree="renamed")
         sources = [call.args[0][-2] for call in harness.command.call_args_list]
         self.assertTrue(

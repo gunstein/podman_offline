@@ -48,6 +48,7 @@ class ComponentHarnessTests(unittest.TestCase):
             "reset",
             "source",
             "transfer",
+            "record_bundles",
             "registry_transfer",
             "credentials",
             "reboot",

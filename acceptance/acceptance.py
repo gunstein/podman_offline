@@ -20,15 +20,24 @@ from pve import Proxmox, env_file
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = Path.home() / "podman-offline-acceptance-runs"
-# Release version keys in the run metadata per bundle; others use VERSION.
-VERSION_KEYS = {
-    "platform": "platform_version",
-    "identity": "identity_version",
-    "gateway": "platform_version",
-    "login-service": "identity_version",
-}
-# Dependency order of the renamed product from acceptance/renamed_product.py.
-RENAMED_ORDER = ("gateway", "login-service", "orders", "inventory", "manual")
+# One line of dist/current-bundles.txt, which bundle.py writes in dependency order.
+BUNDLE_ARCHIVE = re.compile(
+    r"myproduct-([a-z0-9]+(?:-[a-z0-9]+)*)-([0-9]+\.[0-9]+\.[0-9]+)-offline\.tar\.gz"
+)
+
+
+def bundle_versions(listing):
+    """Map each component to its built version, in the order bundle.py listed them."""
+    versions = {}
+    for line in listing.splitlines():
+        match = BUNDLE_ARCHIVE.fullmatch(line.strip())
+        if match:
+            versions[match.group(1)] = match.group(2)
+    if not versions:
+        raise RuntimeError("No bundles listed in dist/current-bundles.txt")
+    return versions
+
+
 SSH = [
     "ssh",
     "-o",
@@ -345,7 +354,7 @@ class Run:
     def transfer(self, version=None, bundle="app1", tree="src"):
         """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
-        version = version or self.meta[VERSION_KEYS.get(bundle, "version")]
+        version = version or self.meta["bundles_built"][bundle]
         archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
@@ -374,6 +383,11 @@ class Run:
         self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
         self.guest("PROD", "unpack", version, bundle=bundle)
+
+    def record_bundles(self, action):
+        """Read the components and versions the last build produced on DEV."""
+        self.meta["bundles_built"] = bundle_versions(self.guest("DEV", action))
+        self.write("bundles_built=" + json.dumps(self.meta["bundles_built"]) + "\n")
 
     def transfer_bundles(self):
         """Transfer only the bundles selected for this fresh-install scenario."""
@@ -767,6 +781,7 @@ class Run:
         for action in actions:
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
+        self.step("04-bundle-list", lambda: self.record_bundles("bundle-list"))
         self.step("05-transfer", self.transfer_bundles)
         self.step("05-registry-transfer", self.registry_transfer)
         self.step(
@@ -854,12 +869,18 @@ class Run:
         for action in ("renamed-dev-up", "venv", "renamed-dev-e2e", "renamed-dev-down"):
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-renamed-bundle", lambda: self.guest("DEV", "renamed-bundle"))
+        # Recorded before manual leaves the source: prod installs every built bundle.
+        self.step(
+            "04-renamed-bundle-list",
+            lambda: self.record_bundles("renamed-bundle-list"),
+        )
         # Remove manual from the source product; prod still installs its retained bundle.
         self.step(
             "04-renamed-remove-manual",
             lambda: self.guest("DEV", "renamed-remove-manual"),
         )
-        for name in RENAMED_ORDER:
+        order = list(self.meta["bundles_built"])
+        for name in order:
             self.step(
                 "05-transfer-" + name,
                 lambda n=name: self.transfer(bundle=n, tree="renamed"),
@@ -869,7 +890,7 @@ class Run:
             lambda: self.guest("PROD", "prepare-host", bundle="gateway"),
         )
         # The target never has the source checkout or the renamed tree.
-        for name in RENAMED_ORDER:
+        for name in order:
             self.step(
                 "06-install-" + name,
                 lambda n=name: self.guest("PROD", "install", bundle=n),
