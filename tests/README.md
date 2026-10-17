@@ -1,3 +1,15 @@
+# Declarative components (0.4.9)
+
+Components come from `bundles.yaml`; see [components](../docs/COMPONENTS.md).
+`test_catalog.py` covers catalog/descriptor/installed-metadata validation,
+`test_renamed_product.py` a fully renamed product offline without its source,
+and `test_product_changes.py` a minimal worker plus adding/removing a service
+by YAML only. `catalog_fixture.py` compiles demo descriptors from the real
+catalog; `product_fixture.py` writes other products. See
+[verification](../acceptance/DECLARATIVE-COMPONENTS.md) for results and gaps.
+
+---
+
 # App1 database init (0.4.8)
 
 App1 creates its Todo table in an init container using the existing database

@@ -1,3 +1,14 @@
+# Declarative components (0.4.9)
+
+`--renamed-product` generates gateway, login-service, orders, inventory and
+manual from the demo with `acceptance/renamed_product.py` (YAML and runtime
+settings only) and runs dev, bundling, source removal of manual, offline
+install, login/CRUD, restart, redeploy and scoped uninstall. The demo's dev
+start now calls `dev/demo-credentials.sh` before `dev/dev.sh up`. Not yet run
+in the lab; see [verification](DECLARATIVE-COMPONENTS.md) for the commands.
+
+---
+
 # App1 database init (0.4.8)
 
 The schema probe compatibility fix and current verification are recorded in

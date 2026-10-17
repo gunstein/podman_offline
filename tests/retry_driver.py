@@ -16,11 +16,13 @@ def main():
     common = importlib.import_module("deployment.common")
     rendering = importlib.import_module("deployment.render")
     state = vars(lifecycle)
+    # An unpacked release may live outside the persistent home it installs into.
+    home = Path(parameters.get("home", str(root / "home")))
     vars(common).update(
         ROOT=root,
-        HOME=root / "home",
+        HOME=home,
         BUILD=root / "build",
-        QUADLET_DIR=root / "home/.config/containers/systemd",
+        QUADLET_DIR=home / ".config/containers/systemd",
         QUADLET_TEMPLATE=root / "quadlet/myproduct.kube",
     )
     state.update(production_environment=lambda: None)
@@ -68,7 +70,7 @@ def main():
     private = rendering.write_private
 
     def write_private(path, text):
-        if str(path.relative_to(root / "home")) == parameters.get("write_failure"):
+        if str(path.relative_to(home)) == parameters.get("write_failure"):
             raise OSError("Injected registration failure")
         return private(path, text)
 
@@ -76,7 +78,7 @@ def main():
     replace = os.replace
 
     def replace_record(source, destination):
-        relative = str(Path(destination).relative_to(root / "home"))
+        relative = str(Path(destination).relative_to(home))
         if relative == parameters.get("record_failure"):
             raise OSError("Injected install record failure")
         if relative == parameters.get("record_interrupt"):
@@ -98,7 +100,7 @@ def main():
         if parameters["action"] == "install":
             state["install"]()
         elif parameters["action"] == "init-config":
-            state["init_config"](state["bundle_components"]()[0])
+            state["init_config"](state["bundle_descriptor"]()["name"])
         else:
             state["uninstall"](delete_data=parameters.get("delete_data", False))
     except (common.DeployError, OSError, subprocess.CalledProcessError) as error:

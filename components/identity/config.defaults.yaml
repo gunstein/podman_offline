@@ -11,6 +11,3 @@ SECRET_FILES:
     - password
   identity-demo-users:
   - path: credentials/users
-VOLUME_FILES:
-  identity-clients:
-  - path: ../clients

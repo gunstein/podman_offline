@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the demo CA, certificates and passwords without replacing existing keys.
+# Demo provisioning: generate the demo CA, certificates and passwords without replacing existing keys.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 umask 077

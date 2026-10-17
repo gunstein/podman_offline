@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from catalog_fixture import DEMO, DEMO_COMPONENTS
 
 from deployment import cli, common, deploy
 from deployment import render as rendering
@@ -234,10 +235,10 @@ class ConfigTests(DeployFixture):
                 self.write_config()
                 with self.assertRaisesRegex(common.DeployError, "HTTPS_PORT"):
                     rendering.load_config(common.CONFIG)
+        # Only components using it need HTTPS_PORT; their placeholders require it.
         self.config.pop("HTTPS_PORT")
         self.write_config()
-        with self.assertRaisesRegex(common.DeployError, "1-65535"):
-            rendering.load_config(common.CONFIG)
+        self.assertNotIn("HTTPS_PORT", rendering.load_config(common.CONFIG))
 
     def test_duplicate_key_reports_second_line(self):
         self.write(
@@ -864,7 +865,7 @@ class RenderTests(DeployFixture):
         """Render the demo manifests with merged defaults and local dummy files."""
         repo = Path(__file__).resolve().parent.parent
         docs = []
-        for component in common.COMPONENTS:
+        for component in DEMO_COMPONENTS:
             config = rendering.merge_config(
                 repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",
@@ -879,12 +880,18 @@ class RenderTests(DeployFixture):
             path = self.write(
                 "state/" + component + "/config.yaml", yaml.safe_dump(config)
             )
+            # Registration owners always receive their declared import volume.
+            imports = {
+                volume: [self.write("state/imports/" + volume, "dummy")]
+                for volume in DEMO[component]["accepts"].values()
+            }
             text = rendering.materialize_and_render(
                 base / "files",
                 write_archives=False,
                 config_path=path,
                 manifests=repo / "components" / component / "manifests",
                 component=component,
+                extra_volumes=imports or None,
             )
             docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]

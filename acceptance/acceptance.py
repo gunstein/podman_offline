@@ -20,6 +20,24 @@ from pve import Proxmox, env_file
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = Path.home() / "podman-offline-acceptance-runs"
+# One line of dist/current-bundles.txt, which bundle.py writes in dependency order.
+BUNDLE_ARCHIVE = re.compile(
+    r"myproduct-([a-z0-9]+(?:-[a-z0-9]+)*)-([0-9]+\.[0-9]+\.[0-9]+)-offline\.tar\.gz"
+)
+
+
+def bundle_versions(listing):
+    """Map each component to its built version, in the order bundle.py listed them."""
+    versions = {}
+    for line in listing.splitlines():
+        match = BUNDLE_ARCHIVE.fullmatch(line.strip())
+        if match:
+            versions[match.group(1)] = match.group(2)
+    if not versions:
+        raise RuntimeError("No bundles listed in dist/current-bundles.txt")
+    return versions
+
+
 SSH = [
     "ssh",
     "-o",
@@ -83,6 +101,7 @@ class Run:
         self.help_only = False
         self.identity_only = False
         self.platform_help_only = False
+        self.renamed_product = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -332,17 +351,10 @@ class Run:
         self.command(SCP + [source, self.host("DEV") + ":" + base + "/source.bundle"])
         self.guest("DEV", "clone")
 
-    def transfer(self, version=None, bundle="app1"):
+    def transfer(self, version=None, bundle="app1", tree="src"):
         """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
-        version = (
-            version
-            or self.meta[
-                {"platform": "platform_version", "identity": "identity_version"}.get(
-                    bundle, "version"
-                )
-            ]
-        )
+        version = version or self.meta["bundles_built"][bundle]
         archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
@@ -350,7 +362,14 @@ class Run:
             self.command(
                 SCP
                 + [
-                    self.host("DEV") + ":" + base + "/src/dist/" + archive + suffix,
+                    self.host("DEV")
+                    + ":"
+                    + base
+                    + "/"
+                    + tree
+                    + "/dist/"
+                    + archive
+                    + suffix,
                     local,
                 ]
             )
@@ -364,6 +383,11 @@ class Run:
         self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
         self.guest("PROD", "unpack", version, bundle=bundle)
+
+    def record_bundles(self, action):
+        """Read the components and versions the last build produced on DEV."""
+        self.meta["bundles_built"] = bundle_versions(self.guest("DEV", action))
+        self.write("bundles_built=" + json.dumps(self.meta["bundles_built"]) + "\n")
 
     def transfer_bundles(self):
         """Transfer only the bundles selected for this fresh-install scenario."""
@@ -727,6 +751,9 @@ class Run:
             self.step("01-reset-" + role.lower(), lambda r=role: self.reset(r))
         self.step("02-isolate-prod", lambda: self.guest("PROD", "isolate"))
         self.step("03-source", self.source)
+        if self.renamed_product:
+            self.execute_renamed()
+            return
         actions = [
             "unit",
             "build-images",
@@ -754,6 +781,7 @@ class Run:
         for action in actions:
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
+        self.step("04-bundle-list", lambda: self.record_bundles("bundle-list"))
         self.step("05-transfer", self.transfer_bundles)
         self.step("05-registry-transfer", self.registry_transfer)
         self.step(
@@ -832,6 +860,70 @@ class Run:
         self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
         self.step("10-e2e-uninstall", lambda: self.guest("DEV", "survivor-e2e"))
         self.step("10-markers-uninstall", lambda: self.guest("DEV", "survivor-markers"))
+        self.finished = True
+
+    def execute_renamed(self):
+        """Run the renamed product from generated declarations through dev and offline prod."""
+        for action in ("build-images", "pull-images", "renamed-generate"):
+            self.step("03-" + action, lambda a=action: self.guest("DEV", a))
+        for action in ("renamed-dev-up", "venv", "renamed-dev-e2e", "renamed-dev-down"):
+            self.step("03-" + action, lambda a=action: self.guest("DEV", a))
+        self.step("04-renamed-bundle", lambda: self.guest("DEV", "renamed-bundle"))
+        # Recorded before manual leaves the source: prod installs every built bundle.
+        self.step(
+            "04-renamed-bundle-list",
+            lambda: self.record_bundles("renamed-bundle-list"),
+        )
+        # Remove manual from the source product; prod still installs its retained bundle.
+        self.step(
+            "04-renamed-remove-manual",
+            lambda: self.guest("DEV", "renamed-remove-manual"),
+        )
+        order = list(self.meta["bundles_built"])
+        for name in order:
+            self.step(
+                "05-transfer-" + name,
+                lambda n=name: self.transfer(bundle=n, tree="renamed"),
+            )
+        self.step(
+            "06-prepare-host",
+            lambda: self.guest("PROD", "prepare-host", bundle="gateway"),
+        )
+        # The target never has the source checkout or the renamed tree.
+        for name in order:
+            self.step(
+                "06-install-" + name,
+                lambda n=name: self.guest("PROD", "install", bundle=n),
+            )
+            self.step("06-healthy-" + name, lambda: self.guest("PROD", "health"))
+        self.step("07-init-check", lambda: self.guest("PROD", "renamed-init-check"))
+        self.step("08-credentials", lambda: self.credentials("login-service"))
+        self.step("08-e2e", lambda: self.guest("DEV", "renamed-e2e"))
+        self.step("08-markers", lambda: self.guest("DEV", "renamed-markers-create"))
+        self.step("09-restart", lambda: self.guest("PROD", "restart"))
+        self.step(
+            "09-markers-restart", lambda: self.guest("DEV", "renamed-markers-check")
+        )
+        self.step(
+            "09-redeploy-orders",
+            lambda: self.guest("PROD", "install", bundle="orders"),
+        )
+        self.step("09-healthy-redeploy", lambda: self.guest("PROD", "health"))
+        self.step(
+            "09-markers-redeploy", lambda: self.guest("DEV", "renamed-markers-check")
+        )
+        self.step(
+            "10-uninstall-inventory",
+            lambda: self.guest("PROD", "renamed-uninstall", bundle="inventory"),
+        )
+        self.step("10-survivor", lambda: self.guest("DEV", "renamed-survivor"))
+        self.step(
+            "10-uninstall-manual-from-retained-bundle",
+            lambda: self.guest("PROD", "renamed-uninstall", bundle="manual"),
+        )
+        self.step(
+            "10-survivor-after-manual", lambda: self.guest("DEV", "renamed-survivor")
+        )
         self.finished = True
 
     def report(self):
@@ -917,6 +1009,11 @@ def main():
         action="store_true",
         help="Verify platform/help without Identity or apps",
     )
+    parser.add_argument(
+        "--renamed-product",
+        action="store_true",
+        help="Generate the renamed product from the demo and run its dev and offline lifecycle",
+    )
     parser.add_argument("action", choices=["run"])
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
@@ -927,6 +1024,7 @@ def main():
                 args.help_only,
                 args.identity_only,
                 args.platform_help_only,
+                args.renamed_product,
             )
         )
         > 1
@@ -937,6 +1035,7 @@ def main():
     run.help_only = args.help_only
     run.identity_only = args.identity_only
     run.platform_help_only = args.platform_help_only
+    run.renamed_product = args.renamed_product
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

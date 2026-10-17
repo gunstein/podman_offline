@@ -1,0 +1,219 @@
+# Components and the catalog
+
+A product is a set of components. Each component is one directory under
+`components/` and one entry in `bundles.yaml`, and it becomes one offline
+bundle. The deploy tools read these declarations; they contain no list of
+component names. The five shipped components (`platform`, `identity`, `app1`,
+`app2`, `help`) are one demo product, not a built-in model.
+
+## Three representations of one model
+
+| Where | File | Written by | Read by |
+| --- | --- | --- | --- |
+| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
+| Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `install`, `uninstall` |
+| Target host | `/var/lib/myproduct/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
+
+`deployment/catalog.py` validates all three with the same rules. The compiled
+descriptor adds what the target cannot look up: the component's version and the
+version ranges of its dependencies. Installed metadata lets a target find the
+dependents and registration owners of a component without the source checkout,
+and without the release directories of other components.
+
+## The catalog: `bundles.yaml`
+
+```yaml
+components:
+  <id>:
+    requires: [<id>, ...]        # installed first; default []
+    version_file: VERSION        # release file with major.minor.patch; default VERSION
+    upgrade: always              # or newer-only; default always
+    public_from: <id>            # take PUBLIC_ORIGIN and HTTPS_PORT from this dependency
+    routes: <id>                 # register route.conf with this dependency
+    clients: <id>                # register client.yaml with this dependency
+    accepts:                     # roles this component serves
+      routes: <id>-<volume>      # volume that receives all routes
+      clients: <id>-<volume>     # volume that receives all OIDC clients
+```
+
+Every field is optional; `<id>: {}` is a complete entry. Unknown fields,
+duplicate keys and invalid values are refused before any file, secret, image or
+service is touched. Errors name `bundles.yaml`, the component and the field.
+
+### Component IDs
+
+IDs use lowercase letters, digits and inner hyphens: `my-identity` is valid,
+`my_identity` and `MyIdentity` are not. An ID becomes the prefix of every Pod,
+Secret, PVC and ConfigMap the component owns, its systemd unit
+(`myproduct-<id>.service`) and directory names, so names are checked, never
+rewritten. `installed`, `metadata`, `routes`, `clients` and `files` are
+reserved for shared state on the target.
+
+Component IDs, image names, resource names, public URL paths and OIDC client
+IDs are separate things. Only resource names carry the component ID; for
+example the renamed acceptance product serves component `inventory` at `/stock`
+with client ID `inventory` and component `orders` with client ID `orders-web`.
+
+### Selection
+
+The catalog is the product. Only listed components are prepared, started in
+dev, scanned for images, built, bundled and guarded. A directory under
+`components/` without a catalog entry is ignored, even if it is invalid. A
+listed component whose directory is missing is an error, not a silent removal.
+
+### Dependencies and order
+
+`requires` names components in the same catalog; unknown names, a component
+naming itself and cycles are refused. Components are processed in dependency
+order: dependencies first, otherwise in catalog order. Manifests inside a
+component keep their file order.
+
+Each bundle records a version range for every dependency, computed from that
+dependency's version when the bundle is built: the same minor series while the
+version is 0.x (`0.4.2` gives `{min: 0.4.2, before: 0.5.0}`), otherwise the same
+major series. Install refuses a missing or incompatible dependency, and an
+upgrade that would break the recorded range of an installed dependent.
+Uninstall refuses while an installed component still requires it.
+
+### Versions and upgrades
+
+`version_file` names a file in the source checkout, confined to it. Several
+components may share one file; the demo apps share `VERSION`.
+
+- `upgrade: always` renders and restarts the component on every install.
+- `upgrade: newer-only` installs a missing or newer version, keeps an equal
+  installed version unchanged (its route/client imports may still be rebuilt)
+  and refuses a downgrade. The demo uses it for `platform` and `identity`.
+
+### Public settings
+
+`public_from: <id>` declares that the component uses the same `PUBLIC_ORIGIN`
+and `HTTPS_PORT` as that dependency. `init-config` copies these two values from
+the dependency's persistent config, dev prepare copies them from the
+dependency's dev config, and install refuses a mismatch. A component without
+`public_from` needs neither value unless its manifests use them.
+`PUBLIC_HOSTNAME` is always derived from `PUBLIC_ORIGIN` and must not be set.
+
+### Registrations: routes and OIDC clients
+
+A component that serves a role declares `accepts`. At most one component may
+accept each role. A component that uses a role names that owner in `routes` or
+`clients`, lists it in `requires`, and ships the matching file:
+
+| Role | File in the component | Owner's import |
+| --- | --- | --- |
+| `routes` | `route.conf`, an nginx location block | `installed.conf`, every route concatenated |
+| `clients` | `client.yaml` | one directory per component plus `installed.json` |
+
+The file must exist exactly when the role is declared. The owner's manifests
+mount the declared volume; its archive is rebuilt from the current
+registrations on every change, so removed registrations do not stay active.
+
+`client.yaml` follows the protocol of the existing apps and Identity:
+
+```yaml
+id: orders-web                 # the app's APP_ID; any valid ID, unique across clients
+base_path: /orders             # the app's BASE_PATH; redirect URI is origin + base_path + /auth/callback
+scopes: [openid, profile, orders-web]   # the app requests its client ID as a scope
+certificate: credentials/client/client.crt   # public certificate, relative to the config folder
+```
+
+A component with `clients` must also declare `public_from`, because the
+redirect URI needs the public origin. Only public certificates are accepted.
+
+Restarts follow the changes: no change restarts no owner, a route change the
+route owner, a client change the client owner. The selected component restarts
+first and owners after it, so a gateway publishes a route only once the service
+behind it is back. Unrelated components never restart.
+
+## Installed state
+
+```text
+/var/lib/myproduct/
+├── <id>/config.yaml        authoritative config (init-config, then you)
+├── metadata/<id>.json      compiled descriptor, written before registrations
+├── installed/<id>          version, written last: the install is complete
+├── routes/<id>.conf        registered routes
+├── clients/<id>/           registered public client files
+└── pending-operation.json  unfinished owner work for a retry
+```
+
+`installed/<id>` without `metadata/<id>.json` is an error. Metadata without the
+marker is an unfinished install that a retry completes. Removing a component
+from a new source catalog never changes installed state; only an explicit
+uninstall from that component's bundle does.
+
+## Demo provisioning
+
+Generic tools never create certificates or demo users. For the shipped demo:
+
+```sh
+./dev/build-images.sh && ./dev/pull-images.sh
+dev/demo-credentials.sh && dev/dev.sh up
+```
+
+`dev/demo-credentials.sh` runs `scripts/generate-certificates.sh` for the five
+demo components. Another product prepares its own credentials in
+`build/dev/<id>/` (dev) or `/var/lib/myproduct/<id>/` (production) before
+prepare or install.
+
+## Example: add a service with an external image
+
+Add `components/reports/manifests/10-reports.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: reports-web
+spec:
+  containers:
+  - name: web
+    image: registry.example.com/team/reports:1.4.0
+    imagePullPolicy: Never
+```
+
+Add `components/reports/route.conf`:
+
+```nginx
+location /reports/ {
+    set $reports_upstream reports-web:8080;
+    proxy_pass http://$reports_upstream;
+}
+```
+
+Add the entry to `bundles.yaml`:
+
+```yaml
+  reports:
+    requires: [platform]
+    public_from: platform
+    routes: platform
+```
+
+No Python or shell file changes. `./deploy prepare` and `dev/dev.sh up` start
+it; `./build-bundle.sh` pulls the image, saves it in
+`dist/myproduct-reports-<version>-offline.tar.gz` and lists it in
+`dist/current-bundles.txt`. On the target: `./deploy init-config reports`,
+prepare any credentials, then `./deploy install` from that bundle. Installing
+it restarts `reports` and `platform`.
+
+A worker without a gateway needs only the manifest and `worker: {}`.
+
+## Example: remove a service
+
+1. Stop the dev product while the service is still rendered: `dev/dev.sh down`.
+   This stops only what the last prepare rendered and keeps volumes.
+2. Remove its catalog entry and `components/<id>/`, and remove it from every
+   other entry's `requires`, `routes` or `clients`. A remaining reference fails
+   before any write and names the declaration.
+3. `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
+   `build/install.yaml`, the dev route/client imports and
+   `dist/current-bundles.txt`. Older archives stay in `dist/` for hosts that
+   still run the service; `current-bundles.txt` names only the current product.
+4. On a target, keep the service's earlier bundle and run `./deploy uninstall`
+   from it (`--delete-data` also deletes its volumes and private state). Other
+   components and their registrations stay.
+
+Dev data volumes of a removed service are not deleted; remove them with
+`podman volume rm <id>-...` when they are no longer needed.

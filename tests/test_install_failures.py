@@ -29,12 +29,13 @@ class InstallFailureTests(ComponentFixture):
             pod["spec"]["containers"][0]["envFrom"] = [
                 {"secretRef": {"name": component + "-private"}}
             ]
-            pod["spec"]["volumes"] = [
+            # Keep the owner's registration import volume next to the payload.
+            pod["spec"].setdefault("volumes", []).append(
                 {
                     "name": "payload",
                     "persistentVolumeClaim": {"claimName": component + "-payload"},
                 }
-            ]
+            )
             manifest.write_text(yaml.safe_dump(pod))
             self.write("home/" + component + "/payload", "old import")
             self.write(
@@ -52,13 +53,13 @@ class InstallFailureTests(ComponentFixture):
             ".config/containers/systemd/myproduct-app2.kube",
         ):
             self.write("home/" + name, "sibling fixture")
-        self.write(
-            "home/dependencies/app2.json",
-            '{"platform": {"min": "1.0.0", "before": "2.0.0"}, "identity": {"min": "1.0.0", "before": "2.0.0"}}',
-        )
+        # Staging reads each registered client's ID; installed app2 needs metadata.
+        self.write("home/clients/app2/client.json", '{"Id": "app2"}')
+        self.mark_installed("app2", "1.2.3")
         deploy.install()
         self.write("VERSION", "1.2.4\n")
         self.write("PLATFORM_VERSION", "1.1.0\n")
+        self.select("app1")
         manifest = common.ROOT / "components/app1/manifests/10-pod.yaml"
         pod = yaml.safe_load(manifest.read_text())
         pod["metadata"]["name"] = "app1-new-worker"

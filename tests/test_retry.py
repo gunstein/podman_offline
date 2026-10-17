@@ -52,7 +52,7 @@ class RetryTests(ComponentFixture):
         self.sequence = 0
         self.pids = []
         self.attempt()
-        self.write("home/installed/app2", "1.2.3\n")
+        self.mark_installed("app2", "1.2.3")
         self.write("home/app2/config.yaml", "retained sibling config\n")
         self.write("home/app2/credentials/key", b"retained sibling key", 0o600)
         self.before = self.protected()
@@ -316,64 +316,64 @@ class RetryTests(ComponentFixture):
         self.assert_imports(True)
 
     def test_identity_install_records_resume_before_publishing_completion(self):
+        """Metadata is written before registrations and services; the marker last."""
         # Start without installed dependents, as on a first Identity installation.
         for component in ("app1", "app2"):
             (common.HOME / "installed" / component).unlink()
-        platform_config = common.HOME / "platform/config.yaml"
-        config = yaml.safe_load(platform_config.read_text())
-        config["VOLUME_FILES"] = {"platform-routes": [{"path": "../routes"}]}
-        platform_config.write_text(yaml.safe_dump(config))
         self.before = self.protected()
-        self.select("identity")
         marker = common.HOME / "installed/identity"
-        metadata = common.HOME / "dependencies/identity.json"
-        requirements = yaml.safe_load((self.root / "bundle.yaml").read_text())[
-            "requires"
-        ]
+        metadata = common.HOME / "metadata/identity.json"
         for first_install in (True, False):
-            for target in ("dependencies/identity.json", "installed/identity"):
+            for target in ("metadata/identity.json", "installed/identity"):
                 for interrupted in (False, True):
                     with self.subTest(
                         first_install=first_install,
                         target=target,
                         interrupted=interrupted,
                     ):
-                        self.write("IDENTITY_VERSION", "1.2.0\n")
                         if first_install:
                             marker.unlink()
                             metadata.unlink()
                             previous = None
                         else:
-                            self.write("home/installed/identity", "1.1.0\n")
-                            self.write("home/dependencies/identity.json", "{}")
-                            previous = b"1.1.0\n"
+                            self.mark_installed("identity", "1.1.0")
+                            previous = metadata.read_bytes(), marker.read_bytes()
+                        self.write("IDENTITY_VERSION", "1.2.0\n")
+                        descriptor = self.select("identity")
                         option = "record_interrupt" if interrupted else "record_failure"
                         events = self.attempt(
                             expected=99 if interrupted else 1, **{option: target}
                         )
-                        self.assertIn(service("identity", "is-active"), events)
-                        self.assertEqual(
-                            marker.read_bytes() if marker.exists() else None, previous
+                        current = (
+                            (metadata.read_bytes(), marker.read_bytes())
+                            if marker.exists()
+                            else None
                         )
-                        if target == "installed/identity":
-                            self.assertEqual(
-                                json.loads(metadata.read_text()), requirements
-                            )
+                        if target == "metadata/identity.json":
+                            # Nothing was registered or restarted with old metadata.
+                            self.assertNotIn(service("identity"), events)
+                            self.assertEqual(current, previous)
+                            if first_install:
+                                self.assertFalse(metadata.exists())
                         else:
+                            self.assertIn(service("identity", "is-active"), events)
                             self.assertEqual(
-                                metadata.read_bytes() if metadata.exists() else None,
-                                None if first_install else b"{}",
+                                json.loads(metadata.read_text()), descriptor
+                            )
+                            self.assertEqual(
+                                marker.read_bytes() if marker.exists() else None,
+                                previous[1] if previous else None,
                             )
                         events = self.attempt()
                         self.assertIn(service("identity"), events)
                         self.assertEqual(marker.read_bytes(), b"1.2.0\n")
-                        self.assertEqual(json.loads(metadata.read_text()), requirements)
+                        self.assertEqual(json.loads(metadata.read_text()), descriptor)
                         for path in (marker, metadata):
                             self.assertEqual(self.mode(path), 0o600)
                         self.assertEqual(self.protected(), self.before)
         # A later platform upgrade can read the completed Identity contract.
-        self.select("platform")
         self.write("PLATFORM_VERSION", "1.2.0\n")
+        self.select("platform")
         self.attempt()
 
     def test_uninstall_owner_failure_resumes_without_yaml_and_preserves_data(self):

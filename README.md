@@ -14,6 +14,13 @@ including when called from outside the release. It creates no Python bytecode.
 
 ## Components and bundles
 
+Components are declared, not built into the tools: `bundles.yaml` lists the
+product's components, their dependencies, version sources and roles, and
+`components/<id>/` holds each one's manifests, defaults and registrations.
+Adding, renaming or removing a component changes only those files. See
+[components and the catalog](docs/COMPONENTS.md) for the schema, the installed
+metadata and complete add/remove examples. The shipped demo product is:
+
 | Bundle | Components | Dependencies | Public paths |
 | --- | --- | --- | --- |
 | `myproduct-platform-<v>-offline.tar.gz` | platform | none | HTTPS proxy and routing |
@@ -30,11 +37,12 @@ share Identity users but have separate clients, database volumes and cookies.
 With all components installed there are 8 pods and 10 app containers. The root
 path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 
-`components/<name>/` holds manifests, defaults and public route/client
-registrations. `bundles.yaml` defines five separate bundles. `VERSION` versions
-app/help releases; `PLATFORM_VERSION` and `IDENTITY_VERSION` independently version
-the two shared components. All Pod, Secret, PVC and ConfigMap names must start
-with their component prefix; the renderer rejects other names before writes.
+In `bundles.yaml`, platform accepts routes and Identity accepts OIDC clients;
+the apps and help register with them. `VERSION` versions app/help releases;
+`PLATFORM_VERSION` and `IDENTITY_VERSION` independently version the two shared
+components, which use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
+names must start with their component prefix; the renderer rejects other names
+before writes.
 
 Each component has its own `myproduct-<component>` Quadlet service. The identical
 `myproduct.network` is shared and never removed by component uninstall. Install
@@ -44,14 +52,14 @@ Only a component's own bundle upgrades it. Equal shared versions retain installe
 files, newer versions upgrade and downgrades refuse. New required settings are
 checked when that component is rendered. Apps retry their databases for 60 seconds.
 
-| Registration change | Shared service restarted |
+| Registration change | Owner restarted (demo) |
 | --- | --- |
-| Public route only | platform |
-| OIDC metadata/public certificate only | identity |
-| Both | identity and platform |
+| Public route only | route owner (platform) |
+| OIDC metadata/public certificate only | client owner (identity) |
+| Both | both owners, client owner first |
 | Neither | neither |
 
-The selected app itself restarts on install. Public indexes control active
+The selected app itself restarts on install, before the owners. Public indexes control active
 registrations even when old files remain in imported volumes. An app's private
 client key never goes to Identity. Issuer, public paths, client IDs, scopes and
 cookies retain their existing values.
@@ -64,12 +72,12 @@ Normal upgrades in the current model retain config, credentials and data;
 current dependency/version checks, database preflight and retry validation remain
 in force. See [layout cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md).
 
-Every `bundle.yaml` declares exact dependencies with inclusive `min` and exclusive
-`before` ranges, for example `{platform: {min: 0.4.0, before: 0.5.0}, identity:
-{min: 0.4.0, before: 0.5.0}}` for app1/app2. For 0.x, compatibility follows the
-minor series; for 1.x and later, the declared major series. Installed requirements
-are retained privately under `dependencies/`, independently of old release
-directories. Incoming dependencies and every installed dependent's range must
+Every `bundle.yaml` is the compiled descriptor of its component and declares
+exact dependencies with inclusive `min` and exclusive `before` ranges, for
+example `{platform: {min: 0.4.9, before: 0.5.0}, identity: {min: 0.4.9, before:
+0.5.0}}` for app1/app2. For 0.x, compatibility follows the minor series; for
+1.x and later, the declared major series. The installed descriptor is retained
+privately under `metadata/`, independently of old release directories. Incoming dependencies and every installed dependent's range must
 allow a shared upgrade. Missing, malformed or incompatible metadata refuses
 before mutation. See [Identity verification](acceptance/IDENTITY-SPLIT.md) for
 coverage, local evidence and pending lab commands.
@@ -112,9 +120,10 @@ its credentials and install it. For app1/app2, next initialize and install Ident
 from its own bundle before either app. For a platform/help-only setup, install
 help after platform; Identity and the apps are not required. Prepare each
 component’s certificates/credentials with the certificate script, edit
-component-specific settings, then install. When a platform config already
-exists, Identity/app/help initialization explicitly uses only its actual `PUBLIC_ORIGIN`
-and `HTTPS_PORT` as final overrides. Other platform settings are never copied.
+component-specific settings, then install. A component declaring
+`public_from: platform` (Identity, the apps and help) initializes with only the
+installed platform config's actual `PUBLIC_ORIGIN` and `HTTPS_PORT` as final
+overrides; dev prepare inherits them the same way. Other platform settings are never copied.
 An invalid platform config or missing shared setting fails instead of falling back
 to release defaults. If platform is installed but its config file is missing, restore
 that authoritative file from a private backup before initializing a new component. A help bundle cannot install platform or run without installed
@@ -149,10 +158,11 @@ They preserve YAML types; ConfigMap data is converted to text. Partial string
 interpolation and `envsubst` are not supported. Missing values identify their key
 and config file without exposing secret values.
 
-Standalone manifest fixtures in `examples/` and registry acceptance retain their
-explicit fixture `config.yaml` and persistent `~/config.yaml` paths. These are
-separate from the product’s component config model. Historical reports under `~/podman-offline-acceptance-runs/` may retain old
-config names; those evidence files are not rewritten.
+The examples in `examples/` and the registry acceptance test still use one
+explicit `config.yaml` (and `~/config.yaml` when installed). The product itself
+does not; it uses the component config model described above. Older acceptance
+reports under `~/podman-offline-acceptance-runs/` may still mention the old
+configuration names; those reports are kept unchanged.
 
 ## Run locally
 
@@ -161,6 +171,7 @@ config names; those evidence files are not rewritten.
 ./dev/pull-images.sh
 cp config/dev.yaml.example config/dev.yaml   # optional local overrides
 chmod 600 config/dev.yaml
+./dev/demo-credentials.sh                    # demo only: CA, certificates, users
 ./dev/dev.sh up
 python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
@@ -169,8 +180,12 @@ APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
 ./dev/dev.sh down
 ```
 
-The dev helper creates missing demo credentials under `build/dev/`, reuses them
-on subsequent starts, and runs `./deploy prepare` followed by `podman kube play`.
+`dev/demo-credentials.sh` creates missing demo credentials under `build/dev/`
+and reuses them on later runs; it is demo provisioning, not part of the generic
+dev lifecycle. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
+components in dependency order, followed by `podman kube play`. Run
+`dev/dev.sh down` before removing a component from the catalog: it stops what
+the last prepare rendered.
 Run `./deploy prepare` from the source checkout; product bundles reject dev
 prepare and use persistent config through install. Standalone fixtures retain
 their explicit prepare flow. Component prepare merges common defaults, component
@@ -218,10 +233,13 @@ unreleased version; published release tags must remain immutable.
 (cd dist && sha256sum -c ./*.sha256)
 ```
 
-One invocation creates all five bundles. Each contains
-`config/common.defaults.yaml`, its components’ `config.defaults.yaml`, only its
-components,
-`deploy`/`deployment/`, scripts, Quadlet templates, version metadata and its own
+One invocation creates one bundle per catalog component and lists them in
+`dist/current-bundles.txt`; older archives in `dist/` are retained, for example
+for uninstalling a removed component. Only catalog components are scanned for
+images. Each bundle contains `config/common.defaults.yaml` (when present), its
+component's `config.defaults.yaml`, only its component,
+`deploy`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
+an informational `VERSION` and its own
 `images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
 Checksums cover all shipped files. Apps/dev/tests/examples/acceptance and local
 config, passwords and keys are not shipped. Optional component `files/` is for
@@ -343,8 +361,8 @@ There is no migration, fallback or automatic rewrite of persistent config.
 ├── PKI/private/                           0700; shared demo CA
 ├── routes/<component>.conf                public route registrations
 ├── clients/<component>/                   public OIDC metadata/certificate
-├── installed/<component>                  installed version, 0600
-├── dependencies/<component>.json          installed version requirements, 0600
+├── metadata/<component>.json              installed descriptor (dependencies, roles), 0600
+├── installed/<component>                  installed version, written last, 0600
 ├── .config/containers/systemd/             scoped .kube/.yaml + shared .network
 ├── .local/share/containers/storage/        images, DB data and secret volumes
 └── releases/myproduct-<bundle>-<version>/   code/manifests/images, disposable
@@ -650,7 +668,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.7
+version=0.4.9
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -870,6 +888,10 @@ as_product bash "$release/deploy" uninstall
 as_product bash "$release/deploy" uninstall --delete-data
 ```
 
+`uninstall [<component>] [--delete-data]` accepts only the bundle's own
+component. The bundle of a component removed from the source catalog still
+uninstalls it; keep that earlier bundle until the component is removed.
+
 Choose one of those commands. Default uninstall retains data/config/credentials
 for reinstall. It removes only the own service, version marker, route and public
 client; only the changed registration owners reload their imports. Network and sibling data/units
@@ -921,17 +943,20 @@ be recorded separately and old evidence is never changed.
 
 ## Adding an app
 
+Follow the add/remove examples in [components and the catalog](docs/COMPONENTS.md):
+a component directory plus a `bundles.yaml` entry, with no Python or shell
+changes. For a new demo-style app also consider:
+
 | Need | Files and changes |
 | --- | --- |
-| Component/bundle | Add component manifests/config, bundle selection and validated names/services/state paths. Extend the fixed demo component IDs and dependencies deliberately. |
-| Image | Add apps/<app>/Containerfile for a local myproduct image, or publish a full registry tag; image lists come from manifests. |
-| Config | Update common/component defaults for future initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
+| Image | A full registry tag in the manifest, or `apps/<app>/Containerfile` for a local `localhost/myproduct-<app>` demo image. |
+| Config | `components/<id>/config.defaults.yaml` for initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
-| Proxy/OIDC | Own route.conf/client.yaml and public certificate; routes go to platform imports, public client metadata to Identity imports, through current indexes. |
-| Tests | Update real resource counts in tests/test_deploy.py and app-specific assertions; probe tests discover every manifest. |
+| Proxy/OIDC | `route.conf` with `routes: platform`; `client.yaml` with `clients: identity` and `public_from: platform`. |
+| Credentials | Prepare them yourself, or extend the demo provisioning script deliberately. |
 | E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
-| Docs | Update overview, install/uninstall dependencies, tests/README and acceptance/README. |
+| Docs | Update overview, tests/README and acceptance/README. |
 
 
 ## App1 database init container

@@ -36,10 +36,10 @@ this list; update entries with implementation/test evidence when resolved.
 
 | Gap | Owner |
 | --- | --- |
-| Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance | Backlog 20 |
-| Mandatory public origin/port for every component; hostname derivation tied to `platform` | Backlog 20 |
-| Initial image validation includes unselected component directories; generic dev still has demo dependencies | Backlog 20 |
-| OIDC client ID/path/scopes coupled to component ID; contract needs explicit validation/documentation | Backlog 20 |
+| ~~Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance~~ | Resolved by backlog 20 in 0.4.9; [verification](../acceptance/DECLARATIVE-COMPONENTS.md), real runs outstanding |
+| ~~Mandatory public origin/port for every component; hostname derivation tied to `platform`~~ | Resolved by backlog 20 in 0.4.9 |
+| ~~Initial image validation includes unselected component directories; generic dev still has demo dependencies~~ | Resolved by backlog 20 in 0.4.9 |
+| ~~OIDC client ID/path/scopes coupled to component ID; contract needs explicit validation/documentation~~ | Resolved by backlog 20 in 0.4.9; contract in [components](COMPONENTS.md) |
 | Database preflight uses raw placeholders rather than effective manifest values | Backlog 21 |
 | Resource kinds receive inconsistent lifecycle checks: Deployment can bypass Pod checks | Backlog 21 |
 | Removing route/client declarations from a release does not remove prior registrations | Backlog 21 |

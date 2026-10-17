@@ -1,5 +1,42 @@
-platform: [platform]
-identity: [identity]
-app1: [app1]
-app2: [app2]
-help: [help]
+# Source catalog: the components of this product. Each entry is one component
+# with its files in components/<id>/ and one offline bundle. Components that
+# are not listed here are not rendered, built, bundled or started.
+#
+# Fields (all optional):
+#   requires:     component IDs that must be installed first
+#   version_file: release file holding the version (default VERSION)
+#   upgrade:      always (default) reinstalls on every install;
+#                 newer-only keeps an equal installed version and refuses downgrades
+#   public_from:  dependency whose PUBLIC_ORIGIN and HTTPS_PORT this component must match
+#   routes:       dependency that serves this component's route.conf
+#   clients:      dependency that registers this component's client.yaml
+#   accepts:      roles this component serves, mapped to the volume ID that
+#                 receives the registrations: {routes: <id>, clients: <id>}
+components:
+  platform:
+    version_file: PLATFORM_VERSION
+    upgrade: newer-only
+    accepts:
+      routes: platform-routes
+  identity:
+    requires: [platform]
+    version_file: IDENTITY_VERSION
+    upgrade: newer-only
+    public_from: platform
+    routes: platform
+    accepts:
+      clients: identity-clients
+  app1:
+    requires: [platform, identity]
+    public_from: platform
+    routes: platform
+    clients: identity
+  app2:
+    requires: [platform, identity]
+    public_from: platform
+    routes: platform
+    clients: identity
+  help:
+    requires: [platform]
+    public_from: platform
+    routes: platform

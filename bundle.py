@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from deployment import common, deploy
+from deployment import catalog, common
 from deployment import render as rendering
 
 ROOT = Path(__file__).resolve().parent
@@ -46,14 +46,27 @@ def owner_root(info):
 
 
 def manifest_images(manifests=None):
-    """Find images in the selected manifests or all source components."""
+    """Find images in the given manifests, or in every catalog component.
+
+    Without bundles.yaml the standalone manifests/ fixture is used. Directories
+    under components/ that the catalog does not list are never read.
+    """
     documents = []
-    paths = (
-        sorted(manifests.glob("*.yaml"))
-        if manifests
-        else sorted((ROOT / "components").glob("*/manifests/*.yaml"))
-    )
-    if manifests is None and not paths:
+    if manifests:
+        paths = sorted(manifests.glob("*.yaml"))
+    elif (ROOT / "bundles.yaml").exists():
+        try:
+            names = catalog.source_descriptors(ROOT)
+        except common.DeployError as error:
+            raise BundleError(str(error)) from None
+        paths = [
+            path
+            for name in names
+            for path in sorted(
+                (ROOT / "components" / name / "manifests").glob("*.yaml")
+            )
+        ]
+    else:
         paths = sorted((ROOT / "manifests").glob("*.yaml"))
     for path in paths:
         documents.extend(rendering.load_yaml_all(path))
@@ -153,16 +166,27 @@ def generated_secret_guard(config_dirs=None):
     return guard
 
 
-def build_release(version, bundle_name=None, components=None):
-    """Package one selected bundle or a standalone manifest fixture."""
-    if components and bundle_name not in common.DEPENDENCIES:
-        raise common.DeployError("Component bundles require a known bundle name")
+def guarded_directories():
+    """Directories whose private files must never enter any archive.
+
+    A product guards every catalog component, not only the bundled one; a
+    standalone fixture guards any component directory that happens to exist.
+    """
+    if (ROOT / "bundles.yaml").exists():
+        names = list(catalog.load_catalog(ROOT))
+        return [ROOT] + [ROOT / "components" / name for name in names]
+    return [ROOT] + sorted((ROOT / "components").glob("*"))
+
+
+def build_release(version, descriptor=None):
+    """Package one compiled component descriptor or a standalone manifest fixture."""
+    components = [str(descriptor["name"])] if descriptor else []
     name = (
-        f"myproduct-{bundle_name}-{version}" if bundle_name else f"myproduct-{version}"
+        f"myproduct-{components[0]}-{version}" if components else f"myproduct-{version}"
     )
     target = STAGE / name
 
-    directories = [ROOT / "components" / component for component in (components or [])]
+    directories = [ROOT / "components" / component for component in components]
     images = (
         sorted(
             {
@@ -174,7 +198,7 @@ def build_release(version, bundle_name=None, components=None):
         if directories
         else manifest_images()
     )
-    guard = generated_secret_guard([ROOT] + sorted((ROOT / "components").glob("*")))
+    guard = generated_secret_guard(guarded_directories())
     guard(
         ROOT,
         [
@@ -192,24 +216,18 @@ def build_release(version, bundle_name=None, components=None):
 
     target.mkdir(parents=True)
 
-    for filename in [
-        "deploy",
-        "VERSION",
-        "README.md",
-    ] + (
-        ["config.defaults.yaml"]
-        if not components
-        else ["PLATFORM_VERSION", "IDENTITY_VERSION"]
+    for filename in ["deploy", "README.md"] + (
+        ["VERSION", "config.defaults.yaml"] if not components else []
     ):
         shutil.copy2(ROOT / filename, target / filename)
 
     shutil.copytree(ROOT / "deployment", target / "deployment", ignore=guard)
 
-    if bundle_name in common.VERSION_FILES:
-        # This archive is versioned independently of app/help releases.
+    if components:
+        # Informational copy of the descriptor's version for operators.
         (target / "VERSION").write_text(version + "\n", encoding="utf-8")
 
-    for component, directory in zip(components or [], directories):
+    for component, directory in zip(components, directories):
         (target / "components").mkdir(exist_ok=True)
         destination = target / "components" / component
         destination.mkdir()
@@ -228,28 +246,16 @@ def build_release(version, bundle_name=None, components=None):
                 shutil.copytree(source, destination / entry, ignore=guard)
             else:
                 shutil.copy2(source, destination / entry)
-    if components:
+    if components and (ROOT / "config/common.defaults.yaml").exists():
         (target / "config").mkdir()
         guard(ROOT / "config", ["common.defaults.yaml"])
         shutil.copy2(
             ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
         )
+    if components:
+        # The compiled descriptor lets the target work without bundles.yaml.
         (target / "bundle.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "name": bundle_name,
-                    "components": components,
-                    "requires": {
-                        dependency: deploy.platform_requirement(
-                            (ROOT / common.VERSION_FILES[dependency])
-                            .read_text()
-                            .strip()
-                        )
-                        for dependency in common.DEPENDENCIES[str(bundle_name)]
-                    },
-                }
-            ),
-            encoding="utf-8",
+            yaml.safe_dump(descriptor, sort_keys=False), encoding="utf-8"
         )
     for dirname in (
         ["scripts", "quadlet"] if components else ["manifests", "scripts", "quadlet"]
@@ -297,32 +303,33 @@ def build_release(version, bundle_name=None, components=None):
     )
 
     print(f"[OK] {archive}")
+    return archive
 
 
 def build():
-    """Build every defined component bundle, or one standalone manifest fixture."""
-    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    definitions = (
-        rendering.load_yaml(ROOT / "bundles.yaml")
-        if (ROOT / "bundles.yaml").exists()
-        else {None: None}
-    )
-    if not isinstance(definitions, dict) or not definitions:
-        raise BundleError("bundles.yaml must define at least one bundle")
-    for name, components in definitions.items():
-        if name is not None and (name not in common.COMPONENTS or components != [name]):
-            raise BundleError("Invalid bundle component definition")
+    """Build one bundle per catalog component, or one standalone manifest fixture."""
+    if not (ROOT / "bundles.yaml").exists():
+        manifest_images()
+        guard = generated_secret_guard(guarded_directories())
+        guard(ROOT, ["files", "manifests", "scripts", "quadlet"])
+        shutil.rmtree(STAGE, ignore_errors=True)
+        build_release((ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        return
+    # Validate the whole catalog and its selected images before any output.
+    descriptors = catalog.source_descriptors(ROOT)
     manifest_images()
-    guard = generated_secret_guard([ROOT] + sorted((ROOT / "components").glob("*")))
+    guard = generated_secret_guard(guarded_directories())
     guard(ROOT, ["files", "manifests", "scripts", "quadlet"])
     shutil.rmtree(STAGE, ignore_errors=True)
-    for name, components in definitions.items():
-        selected_version = (
-            (ROOT / common.VERSION_FILES[name]).read_text().strip()
-            if name in common.VERSION_FILES
-            else version
-        )
-        build_release(selected_version, name, components)
+    current = [
+        build_release(descriptor["version"], descriptor)
+        for descriptor in descriptors.values()
+    ]
+    # dist/ also keeps earlier archives, for example of a removed component that
+    # is still installed somewhere; this list names only the current product.
+    (DIST / "current-bundles.txt").write_text(
+        "".join(path.name + "\n" for path in current), encoding="utf-8"
+    )
 
 
 def main():
@@ -332,6 +339,7 @@ def main():
     except (
         OSError,
         BundleError,
+        common.DeployError,
         yaml.YAMLError,
         subprocess.CalledProcessError,
     ) as error:

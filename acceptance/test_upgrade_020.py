@@ -33,6 +33,7 @@ class HistoricalHarnessTests(unittest.TestCase):
             "reset",
             "source",
             "transfer",
+            "record_bundles",
             "credentials",
             "guest",
         ):

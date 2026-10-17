@@ -81,7 +81,11 @@ def validate_config(config, path):
             )
 
     port = config.get("HTTPS_PORT")
-    if not isinstance(port, int) or not 1 <= port <= common.MAX_PORT:
+    if "HTTPS_PORT" in config and (
+        isinstance(port, bool)
+        or not isinstance(port, int)
+        or not 1 <= port <= common.MAX_PORT
+    ):
         raise common.DeployError(
             f"HTTPS_PORT in {path} must be an integer 1-{common.MAX_PORT} without quotes"
         )
@@ -115,18 +119,23 @@ def merge_config(*paths, overrides=None):
     for path in paths:
         config.update(config_layer(path))
     config.update(overrides or {})
-    return validate_config(config, paths[-1])
+    return validate_config(config, paths[-1] if paths else "config")
 
 
 def component_defaults(component, overrides=None, dev=False):
-    """Build complete config from common, component and explicit local overrides."""
+    """Build complete config from common, component and explicit local overrides.
+
+    Each layer file is optional; a component without settings needs none.
+    """
     paths = [
-        common.ROOT / "config/common.defaults.yaml",
-        common.ROOT / "components" / component / "config.defaults.yaml",
+        path
+        for path in (
+            common.ROOT / "config/common.defaults.yaml",
+            common.ROOT / "components" / component / "config.defaults.yaml",
+        )
+        + ((common.ROOT / "config/dev.yaml",) if dev else ())
+        if path.exists() or path.is_symlink()
     ]
-    local = common.ROOT / "config/dev.yaml"
-    if dev and (local.exists() or local.is_symlink()):
-        paths.append(local)
     config = merge_config(*paths, overrides=overrides)
     materialized = (
         (common.BUILD / "dev" if dev else common.HOME) / component / "config.yaml"
@@ -136,8 +145,12 @@ def component_defaults(component, overrides=None, dev=False):
 
 
 def validate_component_config(config, component, path, check_placeholders=True):
-    """Require shared values and every whole-value manifest placeholder before writes."""
-    required = {"PUBLIC_ORIGIN", "HTTPS_PORT"}
+    """Require every whole-value manifest placeholder before writes.
+
+    Shared public settings are required by the component's declared contract
+    (deploy.check_public_settings), not here.
+    """
+    required = set()
 
     def collect(value):
         if isinstance(value, dict):
@@ -156,15 +169,21 @@ def validate_component_config(config, component, path, check_placeholders=True):
             (common.ROOT / "components" / component / "manifests").glob("*.yaml")
         ):
             collect(load_yaml_all(manifest))
-    # PUBLIC_HOSTNAME is derived from the validated origin for platform rendering.
-    if component == "platform":
+    # PUBLIC_HOSTNAME is always derived from PUBLIC_ORIGIN, so it cannot disagree.
+    if "PUBLIC_HOSTNAME" in config:
+        raise common.DeployError(
+            f"PUBLIC_HOSTNAME in {path} is derived from PUBLIC_ORIGIN; remove it"
+        )
+    if "PUBLIC_HOSTNAME" in required:
         required.discard("PUBLIC_HOSTNAME")
+        required.add("PUBLIC_ORIGIN")
     for key in sorted(required):
         if key not in config:
             raise common.DeployError(
                 f"Missing {key} in {path}; add it explicitly before installation"
             )
-    public_origin(config["PUBLIC_ORIGIN"], path)
+    if "PUBLIC_ORIGIN" in config:
+        public_origin(config["PUBLIC_ORIGIN"], path)
     check_component_config_names(config, component, path)
     generated_secret_paths(config, path.parent)
 
@@ -624,12 +643,12 @@ def materialize_and_render(
         for path in sorted(manifests.glob("*.yaml")):
             check_component_names(load_yaml_all(path), component, path)
         check_component_config_names(config, component, config_path)
-    if component == "platform" and "PUBLIC_ORIGIN" in config:
-        config["PUBLIC_HOSTNAME"] = public_origin(
-            config["PUBLIC_ORIGIN"], config_path
-        ).hostname
     if component:
         validate_component_config(config, component, config_path)
+        if "PUBLIC_ORIGIN" in config:
+            config["PUBLIC_HOSTNAME"] = public_origin(
+                config["PUBLIC_ORIGIN"], config_path
+            ).hostname
     generate_secrets(config, config_path.parent)
     secrets = load_file_group(config, common.SECRET_FILES, config_path.parent)
     volume_config = dict(config)

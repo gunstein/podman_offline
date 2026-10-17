@@ -48,6 +48,7 @@ class ComponentHarnessTests(unittest.TestCase):
             "reset",
             "source",
             "transfer",
+            "record_bundles",
             "registry_transfer",
             "credentials",
             "reboot",
@@ -186,7 +187,8 @@ class ComponentHarnessTests(unittest.TestCase):
         self.assertEqual(actions[-1], "help-siblings-after")
         self.harness.persistent_state.assert_called_once_with("after")
         build = base.shell_code(REMOTE, action="help-upgrade-bundle")
-        self.assertIn("bundle.build_release(version, kind, [kind])", build)
+        self.assertIn("catalog.source_descriptors(release)[kind]", build)
+        self.assertIn('bundle.build_release(descriptor["version"], descriptor)', build)
         self.assertIn('"localhost/myproduct-help:" + version', build)
         self.assertIn('"<p>help-release-" + version', build)
         self.assertNotIn("./build-bundle.sh", build)
@@ -457,7 +459,7 @@ class ComponentObservationTests(unittest.TestCase):
             root = Path(directory)
             snapshot = root / "platform.json"
             snapshot.write_text(json.dumps(before))
-            (root / "PLATFORM_VERSION").write_text("0.2.1\n")
+            (root / "VERSION").write_text("0.2.1\n")  # The bundle's version copy.
             current: dict = dict(before, version="0.2.1")
             code["observe"] = lambda: current
             with (

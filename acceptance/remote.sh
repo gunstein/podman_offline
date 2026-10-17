@@ -13,10 +13,13 @@ run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
 bundle=${12:-app1}
-[[ $bundle == platform || $bundle == identity || $bundle == app1 || $bundle == app2 || $bundle == help ]] || exit 2
+# Any component ID; the bundle's own descriptor decides what it may do.
+[[ $bundle =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || exit 2
 state=/var/lib/myproduct
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
+# The renamed product generated from $src by acceptance/renamed_product.py.
+renamed="$base/renamed"
 version=$requested_version
 if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
 product="$state/releases/myproduct-$bundle-${version:-RELEASE}"
@@ -39,14 +42,19 @@ import re
 
 
 def main():
-    """Return installed component names after strict name and version validation."""
+    """Return installed component names after strict name, version and metadata validation."""
     names = []
-    for path in sorted((pathlib.Path.home() / "installed").glob("*")):
-        if path.name not in ("platform", "identity", "app1", "app2", "help") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip()):
+    home = pathlib.Path.home()
+    for path in sorted((home / "installed").glob("*")):
+        if (
+            not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", path.name)
+            or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", path.read_text().strip())
+            or not (home / "metadata" / (path.name + ".json")).is_file()
+        ):
             raise SystemExit("FAIL: invalid installed component marker")
         names.append(path.name)
-    if not names or "platform" not in names:
-        raise SystemExit("FAIL: no installed platform")
+    if not names:
+        raise SystemExit("FAIL: no installed component")
     print("\n".join(names))
 
 
@@ -88,29 +96,59 @@ install_configuration() {
         existing=0
         if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
         as_product bash "$product/deploy" init-config "$component"
-        if [[ $existing == 0 && $component == platform ]]; then
-        as_product python3 - "$state/platform/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
+        # The component that accepts routes is the gateway; edit its new config first.
+        if [[ $existing == 0 ]] && as_product python3 -c 'import sys, yaml; sys.exit("routes" not in yaml.safe_load(open(sys.argv[1]))["accepts"])' "$product/bundle.yaml"; then
+        as_product python3 - "$state/$component/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
 import pathlib
 import sys
 import yaml
 
 
 def main():
-    """Edit newly initialized platform explicitly before initializing dependents."""
+    """Edit the newly initialized gateway explicitly before initializing dependents."""
     path = pathlib.Path(sys.argv[1])
     with path.open() as stream:
         config = yaml.safe_load(stream)
     config.update(IP_ADDRESS=sys.argv[2], PUBLIC_ORIGIN="https://{}:{}".format(sys.argv[3], sys.argv[4]), HTTPS_PORT=int(sys.argv[4]))
     with path.open("w") as stream:
         yaml.safe_dump(config, stream)
-    print("PASS: initial platform settings edited: " + str(path))
+    print("PASS: initial gateway settings edited: " + str(path))
 
 
 main()
 CONFIG
         fi
-        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
+        demo_credentials "$component"
     done
+}
+# Demo provisioning on the target. The renamed product reuses the demo script
+# under the demo name, then moves the result; mirrors renamed_product.NAMES.
+demo_credentials() {
+    local component=$1 demo
+    case "$component" in
+        gateway) demo=platform;;
+        login-service) demo=identity;;
+        orders) demo=app1;;
+        inventory) demo=app2;;
+        manual) demo=help;;
+        *) demo=$component;;
+    esac
+    if [[ $demo == "$component" ]]; then
+        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
+        return
+    fi
+    if sudo -n test -e "$state/$demo/credentials"; then
+        echo "FAIL: unexpected demo credential directory for $component" >&2; return 1
+    fi
+    # Move existing credentials back so the script preserves them byte-for-byte.
+    if sudo -n test -e "$state/$component/credentials"; then
+        as_product mkdir -m 700 -p "$state/$demo"
+        as_product mv "$state/$component/credentials" "$state/$demo/credentials"
+    fi
+    as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$demo" "$prod_host"
+    as_product mkdir -m 700 -p "$state/$component"
+    as_product mv "$state/$demo/credentials" "$state/$component/credentials"
+    as_product rmdir "$state/$demo"
 }
 # Collect audit with separate streams and accept only the documented empty result.
 audit_events() {
@@ -625,6 +663,8 @@ dev-up)
     cd "$src"
     cp config/dev.yaml.example config/dev.yaml
     chmod 600 config/dev.yaml
+    # The shipped demo provisions its credentials explicitly before generic dev up.
+    ./dev/demo-credentials.sh
     ./dev/dev.sh up
     ;;
 venv)
@@ -644,6 +684,135 @@ examples-setup)
     ;;
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
+renamed-generate)
+    # Only YAML, descriptors and runtime settings change; deploy code stays as checked out.
+    python3 "$src/acceptance/renamed_product.py" generate "$src" "$renamed"
+    for path in deployment bundle.py dev scripts quadlet deploy build-bundle.sh; do
+        diff -r -x __pycache__ "$src/$path" "$renamed/$path"
+    done
+    echo 'PASS: generic deploy, bundle, dev and script files are identical to the source'
+    ;;
+renamed-dev-up)
+    cd "$renamed"
+    cp config/dev.yaml.example config/dev.yaml
+    chmod 600 config/dev.yaml
+    host=$(python3 -B - <<'RENAMED_HOST'
+from urllib.parse import urlsplit
+from deployment import deploy
+
+_, settings = deploy.dev_settings()
+deploy.dev_database_preflight(settings)
+print(urlsplit(settings["gateway"]["PUBLIC_ORIGIN"]).hostname)
+RENAMED_HOST
+)
+    python3 acceptance/renamed_product.py credentials build/dev "$host"
+    ./dev/dev.sh up
+    pods=$(podman pod ps --format '{{.Name}}' | sort | tr '\n' ' ')
+    test "$pods" = 'gateway-proxy inventory-postgres inventory-todo login-service-postgres login-service-server manual-web orders-postgres orders-todo '
+    echo "PASS: renamed dev pods $pods"
+    ;;
+renamed-dev-e2e)
+    cd "$renamed"
+    export SMOKE_PASSWORD_DIR="$renamed/build/dev/login-service/credentials/users"
+    for path in /orders /stock; do APP_BASE_PATH=$path "$src/.venv-smoke/bin/python" dev/smoke-test.py; done
+    ;;
+renamed-dev-down)
+    cd "$renamed"
+    ./dev/dev.sh down
+    output=$(podman pod ps -q)
+    test -z "$output"
+    ;;
+bundle-list) cat "$src/dist/current-bundles.txt";;
+renamed-bundle-list) cat "$renamed/dist/current-bundles.txt";;
+renamed-bundle)
+    cd "$renamed"
+    ./build-bundle.sh
+    while IFS= read -r name; do
+        [[ $name =~ ^myproduct-(gateway|login-service|orders|inventory|manual)-[0-9]+\.[0-9]+\.[0-9]+-offline\.tar\.gz$ ]]
+        (cd dist && sha256sum -c "$name.sha256")
+    done < dist/current-bundles.txt
+    test "$(wc -l < dist/current-bundles.txt)" = 5
+    cat dist/current-bundles.txt
+    ;;
+renamed-remove-manual)
+    # Documented removal: dev down first (done), then drop the catalog entry and directory.
+    cd "$renamed"
+    python3 - <<'REMOVE_MANUAL'
+import yaml
+
+with open("bundles.yaml") as stream:
+    catalog = yaml.safe_load(stream)
+del catalog["components"]["manual"]
+with open("bundles.yaml", "w") as stream:
+    yaml.safe_dump(catalog, stream, sort_keys=False)
+REMOVE_MANUAL
+    rm -r components/manual
+    ./dev/dev.sh up
+    pods=$(podman pod ps --format '{{.Name}}' | sort | tr '\n' ' ')
+    test "$pods" = 'gateway-proxy inventory-postgres inventory-todo login-service-postgres login-service-server orders-postgres orders-todo '
+    http=$(curl --noproxy '*' --cacert build/dev/PKI/private/ca.crt --resolve myproduct-proxy:8443:127.0.0.1 \
+        --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' https://myproduct-proxy:8443/help/)
+    test "$http" = 404
+    # manual served the help pages, so they are expected to be gone now.
+    SMOKE_HELP=0 SMOKE_PASSWORD_DIR="$renamed/build/dev/login-service/credentials/users" APP_BASE_PATH=/orders \
+        "$src/.venv-smoke/bin/python" dev/smoke-test.py
+    ./dev/dev.sh down
+    ./build-bundle.sh
+    test "$(wc -l < dist/current-bundles.txt)" = 4
+    if grep -q manual dist/current-bundles.txt; then echo 'FAIL: manual still in the product' >&2; exit 1; fi
+    ls dist/myproduct-manual-*-offline.tar.gz
+    echo 'PASS: manual removed from dev and new bundles; its earlier archive is retained'
+    ;;
+renamed-init-check)
+    # orders keeps the demo's schema init container; it must have finished successfully.
+    status=$(as_product podman ps --all --filter name=orders-todo-prepare-database --format '{{.Status}}')
+    [[ $status == Exited\ \(0\)* ]]
+    as_product podman volume exists orders-data
+    as_product podman volume exists inventory-data
+    sudo -n test ! -e "$state/platform"
+    sudo -n test ! -e "$state/app1"
+    echo 'PASS: orders init container exited 0; renamed volumes exist; no demo component state'
+    ;;
+renamed-e2e|renamed-markers-create|renamed-markers-check|renamed-survivor)
+    cd "$src"
+    export PUBLIC_ORIGIN="https://$prod_host:$port" CONNECT_IP="$prod_ip"
+    export SMOKE_CA_FILE="$private/ca.crt" SMOKE_PASSWORD_DIR="$private"
+    paths="/orders /stock"
+    if [[ $action == renamed-survivor ]]; then paths=/orders; fi
+    for path in $paths; do
+        export APP_BASE_PATH=$path
+        if [[ $action == renamed-e2e ]]; then
+            .venv-smoke/bin/python dev/smoke-test.py
+        else
+            operation=${action#renamed-markers-}
+            if [[ $action == renamed-survivor ]]; then operation=check; fi
+            .venv-smoke/bin/python acceptance/markers.py "$operation" "$base/markers-renamed${path//\//-}.json" "$run"
+        fi
+    done
+    ;;
+renamed-uninstall)
+    case "$bundle" in
+        inventory) path=/stock volume=inventory-data;;
+        manual) path=/help volume=;;
+        *) echo "Unsupported renamed uninstall: $bundle" >&2; exit 2;;
+    esac
+    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --update
+    sudo -n test ! -e "$state/installed/$bundle"
+    sudo -n test ! -e "$state/metadata/$bundle.json"
+    sudo -n test ! -e "$state/routes/$bundle.conf"
+    sudo -n test ! -e "$state/clients/$bundle"
+    sudo -n test -f "$state/$bundle/config.yaml"
+    sudo -n test -d "$state/clients/orders"
+    if [[ -n $volume ]]; then as_product podman volume exists "$volume"; fi
+    healthy
+    http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+        --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port$path/")
+    test "$http" = 404
+    echo "PASS: $bundle removed, route inactive, data retained; orders and its client remain"
+    ;;
 bundle)
     cd "$src"
     output=$(git status --porcelain)
@@ -712,6 +881,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 import bundle
+from deployment import catalog
 
 version = os.environ["HELP_RELEASE_VERSION"]
 source = Path.cwd()
@@ -751,7 +921,9 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
     bundle.ROOT = release
     bundle.STAGE = source / "build/help-upgrade"
     bundle.DIST = source / "dist"
-    bundle.build_release(version, kind, [kind])
+    # Compile the release's own catalog entry, exactly as build-bundle.sh would.
+    descriptor = catalog.source_descriptors(release)[kind]
+    bundle.build_release(descriptor["version"], descriptor)
 
 HELP_BUILD
     (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
@@ -892,7 +1064,7 @@ def main():
             json.dump(current, stream)
     elif action == "platform-after":
         before = json.loads(path.read_text())
-        expected = (Path(release) / "PLATFORM_VERSION").read_text().strip()
+        expected = (Path(release) / "VERSION").read_text().strip()
         if current["version"] != expected or current["version"] == before["version"]:
             raise SystemExit("FAIL: platform version was not upgraded")
         for name, old in before["containers"].items():

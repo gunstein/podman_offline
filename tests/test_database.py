@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from catalog_fixture import DEMO_COMPONENTS, mark_installed, write_descriptor
 from test_deploy import DeployFixture
 
 from deployment import common, deploy
@@ -25,6 +26,8 @@ class DatabaseTests(DeployFixture):
     def setUp(self):
         super().setUp()
         shutil.copytree(REPO / "components", self.root / "components")
+        for name in ("bundles.yaml", "VERSION", "PLATFORM_VERSION", "IDENTITY_VERSION"):
+            shutil.copy2(REPO / name, self.root / name)
         shutil.copytree(
             REPO / "config",
             self.root / "config",
@@ -103,15 +106,19 @@ class DatabaseTests(DeployFixture):
         )
         self.assertEqual(self.password.read_bytes(), password)
 
+    def install_dependencies(self):
+        """Record installed platform/Identity 0.4.0 that the app1 bundle accepts."""
+        for name in ("platform", "identity"):
+            mark_installed(self.root, common.HOME, name, "0.4.0", self.range)
+
+    @property
+    def range(self):
+        return {"min": "0.4.0", "before": "0.5.0"}
+
     def test_production_volume_guard_precedes_images_and_persistent_changes(self):
-        self.write(
-            "bundle.yaml",
-            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.4.0, before: 0.5.0}, identity: {min: 0.4.0, before: 0.5.0}}\n",
-        )
         self.write("VERSION", "0.2.1\n")
-        self.write("PLATFORM_VERSION", "0.2.1\n")
-        self.write("home/installed/platform", "0.4.0\n")
-        self.write("home/installed/identity", "0.4.0\n")
+        write_descriptor(self.root, "app1", self.range)
+        self.install_dependencies()
         self.write(
             "home/platform/config.yaml",
             yaml.safe_dump(rendering.component_defaults("platform")),
@@ -129,14 +136,8 @@ class DatabaseTests(DeployFixture):
 
     def test_legacy_config_missing_db_additions_stops_before_commands_or_writes(self):
         """Each README-required DB key is mandatory even when new defaults supply it."""
-        self.write(
-            "bundle.yaml",
-            "name: app1\ncomponents: [app1]\nrequires: {platform: {min: 0.4.0, before: 0.5.0}, identity: {min: 0.4.0, before: 0.5.0}}\n",
-        )
         self.write("VERSION", "0.2.1\n")
-        self.write("PLATFORM_VERSION", "0.2.1\n")
-        self.write("home/installed/platform", "0.4.0\n")
-        self.write("home/installed/identity", "0.4.0\n")
+        self.install_dependencies()
         self.write("IDENTITY_VERSION", "0.4.1\n")
         self.write(
             "home/platform/config.yaml",
@@ -157,19 +158,7 @@ class DatabaseTests(DeployFixture):
                     before = {
                         p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()
                     }
-                    self.write(
-                        "bundle.yaml",
-                        yaml.safe_dump(
-                            {
-                                "name": component,
-                                "components": [component],
-                                "requires": {
-                                    dependency: {"min": "0.4.0", "before": "0.5.0"}
-                                    for dependency in common.DEPENDENCIES[component]
-                                },
-                            }
-                        ),
-                    )
+                    write_descriptor(self.root, component, self.range)
                     self.process.reset_mock()
                     with self.assertRaisesRegex(common.DeployError, "Missing " + key):
                         deploy.install_components()
@@ -307,7 +296,7 @@ class DatabaseTests(DeployFixture):
 
     def test_shared_dev_port_override_does_not_require_a_database_in_help(self):
         self.write("config/dev.yaml", 'DB_PORT: "5544"\n')
-        for component in common.COMPONENTS:
+        for component in DEMO_COMPONENTS:
             self.assertEqual(
                 rendering.component_defaults(component, dev=True)["DB_PORT"], "5544"
             )
