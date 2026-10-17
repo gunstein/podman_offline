@@ -2483,3 +2483,102 @@ failing validation creates no files and runs no commands. Validate the shipped
 demo and the renamed/minimal fixtures from item 20. Run product tests,
 acceptance-harness tests, ruff, format, pyright, vermin, shellcheck and
 `git diff --check`. Document the command in README and the review guide.
+
+## 24. Optional disaster recovery (DR), adapted from podman_test
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; large. Requested 2026-10-17. Requires a separate analysis and
+an agreed plan before any implementation. Builds on item 20 (declarative
+components) and should start after it has been merged; coordinate with items 2
+(password rotation), 3 (backup and credential recovery, which this item may
+absorb), 7 (PostgreSQL layouts) and 21.
+
+### Source of the existing implementation
+
+`gunstein/podman_test`, branch `feature/platform` (checked 2026-10-17 at
+`5171197`), has a working DR design with a clean acceptance record:
+
+- `deploy/dr/app_ops`: `python3 -m app_ops`, one command per DR operation, run
+  from a controller over plain SSH (`BatchMode=yes`, pinned host keys,
+  `sudo -n`), driven by a small YAML inventory of `primary`/`standby` hosts.
+- `deploy/dr/app_dr_host`: building blocks staged on each host: streaming
+  replication and its TLS, secret export/import between hosts, standby reseed,
+  promoted application deploy and pair checks.
+- `deploy/dr/scripts/app_dr.py` (fencing-gated promotion) and `app_backup.py`
+  (physical base backup, WAL archive and point-in-time restore into disposable
+  containers), plus systemd timers for a scheduled DR check and nightly backup.
+- Commands such as `preflight-standby`, `bootstrap-standby`,
+  `replication-status`, `failover --confirm-primary-fenced ...
+  --confirm-promotion ...`, `deploy-promoted-application`, `configure-backup`
+  and `rebuild-standby --confirm-fenced ... --confirm-reseed ...`.
+- Boundaries: DR imports the single-host installer, never the reverse
+  (`tests/test_dr_boundary.py`); every operation acts on one complete group of
+  replicated databases and refuses a partial group; destructive steps need
+  explicit confirmations; runbooks in `docs/runbooks/`.
+
+### Differences to resolve in podman_offline
+
+- Components and databases are declared per product (item 20), not a fixed
+  todo/notes/keycloak group. The replicated set must come from declarations,
+  for example an optional per-component DR declaration, and be recorded in
+  installed metadata so the target knows it without the source checkout.
+- Each component is a separate offline bundle with its own version and
+  dependency checks; podman_test promotes one product bundle.
+- Credentials here are files delivered as kube Secret YAML from component
+  config directories, not `podman secret` objects; secret transfer to a
+  standby must keep the credential-retention and logging contracts.
+- Host constraints: Python 3.6 with PyYAML, no Jinja2, rootless user systemd,
+  SELinux, fapolicyd trust per bundle, strictly offline targets.
+- Existing safety guards must stay intact: database preflight, retry/pending
+  state, scoped uninstall and `--delete-data`.
+
+### DR must be optional
+
+A single-host installation without DR must keep working exactly as today,
+with no new requirement, service, timer, port or package. DR is enabled
+explicitly, for example as a separate operations bundle and explicit
+commands. Component bundles must not depend on DR code, and the deploy
+package must never import DR code (add a boundary test). Disabling DR or
+never enabling it must not leave replication slots, archive volumes or
+timers behind.
+
+### Phase 1: analysis and plan (deliver before implementing)
+
+1. Read podman_test `feature/platform`: `deploy/dr/`, the installer's
+   `backup.py`, `docs/runbooks/`, `docs/manual-recipes/03-DR-TWO-VM.md`,
+   `04-BACKUP-PITR.md` and the acceptance record. List what can be reused
+   unchanged, what must be adapted and what does not apply.
+2. Propose a scope for the first delivery, for example: replication of
+   declared PostgreSQL components to one standby, fencing-gated promotion,
+   backup/PITR, and standby rebuild, with the rest deferred.
+3. Propose the declaration schema, installed metadata, the operations
+   package layout, the inventory format and the command list.
+4. Describe the failure and retry model of every destructive step, and how
+   each of the guide's contracts is preserved.
+5. Plan the tests: unit tests with stubbed transport, harness tests, and the
+   real two-VM acceptance scenarios with exact commands.
+6. Get the user's approval of the plan before phase 2.
+
+### Phase 2: implementation
+
+- Develop on a separate branch, for example `feature/dr`, branched from
+  `main` after item 20 has been merged.
+- Deliver in reviewable steps that each keep the tests green: declarations
+  and metadata, then replication, then promotion and fencing, then
+  backup/PITR, then standby rebuild.
+- Use a pull request to `main`. Open it as a draft early so the plan, the
+  phased commits and the CI results are reviewed in one place; mark it ready
+  only when the agreed scope, the tests and the real two-VM acceptance are
+  complete. A pull request fits here because the change is large, touches
+  safety-critical paths and needs review before it reaches `main`.
+
+### Verification and delivery
+
+Run product tests, acceptance-harness tests, ruff, format, pyright, vermin,
+shellcheck and `git diff --check`. Add runnable real two-VM acceptance
+scenarios (replication, fenced failover, promoted application access,
+backup/PITR restore and standby rebuild) and document them even if no lab is
+available; report unexecuted runtime scenarios as outstanding. Never count
+podman_test's acceptance results as evidence for this repository.
