@@ -259,7 +259,7 @@ test renders the real product manifests with merged defaults and dummy files,
 without Podman, and checks resources and image names.
 
 `test_health.py` requires one exec liveness probe in every real app manifest,
-with initialDelay 90, period 30, timeout 5 and failureThreshold 3. Init containers
+with initialDelay 10, period 10, timeout 5 and failureThreshold 6. Init containers
 have no probe. The backend's /livez and its authentication guard are tested in isolation, without
 importing the app, a database or the app's dependencies.
 

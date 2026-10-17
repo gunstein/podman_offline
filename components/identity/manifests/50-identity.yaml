@@ -9,7 +9,7 @@ spec:
     image: localhost/myproduct-identity:0.2.1
     imagePullPolicy: Never
     livenessProbe:
-      initialDelaySeconds: 90
+      initialDelaySeconds: 10
       exec:
         command:
         - bash
@@ -17,9 +17,9 @@ spec:
         - 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /identity/health HTTP/1.0\r\nHost:
           localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r -t 2 status <&3;
           [[ $status == "HTTP/1.1 200 "* || $status == "HTTP/1.0 200 "* ]]'
-      periodSeconds: 30
+      periodSeconds: 10
       timeoutSeconds: 5
-      failureThreshold: 3
+      failureThreshold: 6
     envFrom:
     - configMapRef:
         name: identity-settings

@@ -130,9 +130,9 @@ are in the [acceptance test](../acceptance/README.md).
 
 Health checks: list all containers with `as_product podman ps`, and read each status
 with `as_product podman inspect --format '{{.State.Health.Status}}' <container>`.
-All app containers must be running and healthy. The 90-second initialDelay covers
-startup; starting is expected for up to 90 seconds after each start, until the next
-check succeeds. When needed, run `as_product podman healthcheck run <container>`.
+All app containers must be running and healthy. The 10-second initialDelay and
+10-second period make a container healthy about 10 seconds after a start; six
+failures allow about 70 seconds of startup before a restart. When needed, run `as_product podman healthcheck run <container>`.
 
 The acceptance step `09-hang` freezes the backend's host processes with SIGSTOP, after
 reading the PIDs with `podman top app1-todo-backend hpid`. It requires unhealthy,
@@ -141,8 +141,8 @@ without StoppedByUser. Afterwards all manifest-defined containers,
 HTTPS and markers are checked. Do not use podman pause/stop/kill or a manual SIGCONT;
 on failure the test stops and only read-only diagnosis is done.
 
-The hang-test limit is 300 seconds: 3 × (30 s interval + 5 s timeout) + 10 s stop + 90 s start period + 30 s
-for the first healthy check is about 235 s; 300 s leaves a scheduling margin.
+The hang-test limit is 300 seconds: 6 × (10 s interval + 5 s timeout) + 10 s stop + 10 s initial delay
++ 10 s for the first healthy check is about 120 s; 300 s leaves a wide scheduling margin.
 The temporary stop flag on the original non-running unhealthy process is allowed;
 `StoppedByUser` must be false after restart.
 

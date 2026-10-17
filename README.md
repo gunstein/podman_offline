@@ -921,9 +921,12 @@ launchers still need clean audit evidence; no security rules are weakened.
 
 ## Health checks and acceptance
 
-Every ordinary container has one exec liveness probe: initial delay 90 seconds,
-period 30, timeout 5, three failures. Status is starting during the start period
-after each restart. PostgreSQL uses pg_isready, identity checks its local /health
+Every ordinary container has one exec liveness probe: initial delay 10 seconds,
+period 10, timeout 5, six failures (0.4.10; previously 90/30/5/3). A container
+is usually healthy about 10 seconds after a start, still has about 70 seconds
+to finish starting before it is restarted, and a hung container is restarted
+after about 90 seconds. Status is starting until the first check succeeds after
+each restart. PostgreSQL uses pg_isready, identity checks its local /health
 via Bash /dev/tcp, backend uses Python against local /livez, frontend/help use
 local wget and proxy uses wget against its own HTTPS /livez. No probe depends on
 another pod. Backend /api/health checks the database only for e2e/control.

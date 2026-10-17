@@ -2972,8 +2972,13 @@ shellcheck and `git diff --check`; report real acceptance runs separately.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Raised by the operator on 2026-10-17: the item 21 matrix (six
-scenarios) took several hours, which is far too long.
+Status: step 1 done in 0.4.10, on the operator's decision (2026-10-17): every
+liveness probe now uses initialDelaySeconds 10, periodSeconds 10, timeoutSeconds
+5 and failureThreshold 6 (was 90/30/5/3), without a startupProbe. Expected: each
+health wait drops from about 92 s to about 10–20 s, and the hang test from
+about 200 s to about 120 s. Confirm with the next lab run, then do steps 2–4.
+Raised by the operator on 2026-10-17: the item 21 matrix (six scenarios) took
+several hours, which is far too long.
 
 ### Where the time goes
 
