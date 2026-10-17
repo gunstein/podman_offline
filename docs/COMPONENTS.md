@@ -126,6 +126,16 @@ route owner, a client change the client owner. The selected component restarts
 first and owners after it, so a gateway publishes a route only once the service
 behind it is back. Unrelated components never restart.
 
+## Manifest resource kinds
+
+A component's `manifests/*.yaml` may contain only `Pod`, `ConfigMap`,
+`PersistentVolumeClaim` and `Secret` documents (empty documents are ignored).
+Every other kind, such as `Deployment` or `List`, and a document without a
+`kind` is refused by `./build-bundle.sh`, `prepare` and `install` before any
+Podman call or write. The lifecycle checks (resource names, pull policy, mounts,
+images, database preflight, uninstall cleanup) read Pods only, so another kind
+would pass some checks and skip others.
+
 ## Installed state
 
 ```text

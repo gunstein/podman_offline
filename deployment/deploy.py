@@ -83,115 +83,166 @@ def check_public_settings(descriptor, config, path):
             raise common.DeployError(f"{key} in {path} must match {source_path}")
 
 
-def database_preflight(config, config_path, manifests):
-    """Guard PostgreSQL password creation using its manifest's actual named volume.
+POSTGRES_DATA = "/var/lib/postgresql/data"
 
-    This lifecycle check runs before rendering/generation, never inside the
-    general secret generator. Existing volumes are conservatively retained.
+
+def database_preflight(config, config_path, documents):
+    """Guard PostgreSQL password creation using the volume that will be installed.
+
+    documents is effective_documents() output: placeholders are replaced, so
+    Podman is asked about the configured volume name. Runs after validation and
+    before generation, never inside the generic secret generator. A missing
+    password with an existing volume is refused: the volume keeps the old one.
     """
-    for manifest in sorted(manifests.glob("*.yaml")):
-        for doc in rendering.load_yaml_all(manifest):
-            if not doc or doc.get("kind") != "Pod":
+    for pod, spec in rendering.pod_specs(documents):
+        for group, container in rendering.containers(spec):
+            binding = postgres_binding(pod, spec, group, container)
+            if binding is None:
                 continue
-            spec = doc.get("spec", {})
-            volumes = {v["name"]: v for v in spec.get("volumes", [])}
-            for container in spec.get("containers", []):
-                env = {e["name"]: e.get("value") for e in container.get("env", [])}
-                if "POSTGRES_PASSWORD_FILE" not in env:
-                    continue
-                reference = env["POSTGRES_PASSWORD_FILE"]
-                if not isinstance(reference, str) or not Path(reference).is_absolute():
-                    raise common.DeployError(
-                        f"Invalid POSTGRES_PASSWORD_FILE in {manifest}"
-                    )
-                password_file = Path(reference)
-                mounts = container.get("volumeMounts", [])
-                secret_mount = next(
-                    (m for m in mounts if m["mountPath"] == str(password_file.parent)),
-                    None,
+            claim, secret_name, key = binding
+            password = database_password_path(config, config_path, secret_name, key)
+            if password.exists() or password.is_symlink():
+                check_database_password(password)
+                continue
+            check_database_volume_absent(claim, password)
+            if password.resolve() not in rendering.generated_secret_paths(
+                config, config_path.parent
+            ):
+                raise common.DeployError(
+                    f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
                 )
-                data_mount = next(
-                    (m for m in mounts if m["mountPath"] == "/var/lib/postgresql/data"),
-                    None,
-                )
-                if not secret_mount or not data_mount:
-                    raise common.DeployError(
-                        f"Unsupported PostgreSQL password/data mounts in {manifest}"
-                    )
-                try:
-                    secret = volumes[secret_mount["name"]]["secret"]
-                    claim = volumes[data_mount["name"]]["persistentVolumeClaim"][
-                        "claimName"
-                    ]
-                    keys = [
-                        item["key"]
-                        for item in secret.get("items", [])
-                        if item["path"] == password_file.name
-                    ]
-                    if len(keys) != 1:
-                        raise KeyError("password key")
-                    key = keys[0]
-                except (KeyError, TypeError):
-                    raise common.DeployError(
-                        f"Unsupported PostgreSQL Secret/PVC binding in {manifest}"
-                    ) from None
-                entries = rendering.file_group_sources(config, common.SECRET_FILES).get(
-                    secret["secretName"], []
-                )
-                candidates = []
-                for entry in entries:
-                    source = rendering.resolve_path(entry["path"], config_path.parent)
-                    directory = "generate" in entry or source.is_dir()
-                    candidates.append(
-                        source if source.name == key and not directory else source / key
-                    )
-                if len(candidates) != 1:
-                    raise common.DeployError(
-                        f"{config_path}: {common.SECRET_FILES}.{secret['secretName']} must identify one password file"
-                    )
-                password = candidates[0]
-                if password.exists() or password.is_symlink():
-                    if not password.is_file():
-                        raise common.DeployError(
-                            f"Invalid database password file {password}; restore from backup"
-                        )
-                    try:
-                        content = password.read_bytes().decode("utf-8").rstrip("\n")
-                    except (OSError, UnicodeError):
-                        raise common.DeployError(
-                            f"Invalid database password file {password}; restore from backup"
-                        ) from None
-                    if not content or any(c in content for c in ("\x00", "\n", "\r")):
-                        raise common.DeployError(
-                            f"Empty or invalid database password file {password}; restore from backup"
-                        )
-                    continue
-                try:
-                    result = subprocess.run(  # noqa: UP022 - Python 3.6
-                        ["podman", "volume", "exists", claim],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=False,
-                    )
-                except OSError:
-                    raise common.DeployError(
-                        f"Cannot check database volume {claim}; no password generated"
-                    ) from None
-                if result.returncode == 0:
-                    raise common.DeployError(
-                        f"Missing database password file {password} with existing volume {claim}; "
-                        "restore the password from backup or use a separate recovery procedure; no password generated"
-                    )
-                if result.returncode != 1:
-                    raise common.DeployError(
-                        f"Cannot check database volume {claim}; no password generated"
-                    )
-                if password.resolve() not in rendering.generated_secret_paths(
-                    config, config_path.parent
-                ):
-                    raise common.DeployError(
-                        f"Missing database password file {password}; declare generate on its {common.SECRET_FILES} source in {config_path}"
-                    )
+
+
+def postgres_binding(pod, spec, group, container):
+    """Return (data claim, password Secret, Secret key) or None for a non-database container.
+
+    A container is a database container when it sets any POSTGRES_PASSWORD*
+    variable or mounts the PostgreSQL data directory. Only the
+    POSTGRES_PASSWORD_FILE layout with a mounted Secret and a PVC at the data
+    directory is supported; anything else (another password form, envFrom, no
+    password setting) is refused so a lost password can never be replaced
+    silently (item 7).
+    """
+    where = f"container {container.get('name', '<unnamed>')!r} ({group}) of Pod {pod.get('metadata', {}).get('name')!r}"
+    env = [entry for entry in container.get("env", []) if isinstance(entry, dict)]
+    names = sorted(
+        entry["name"]
+        for entry in env
+        if isinstance(entry.get("name"), str)
+        and entry["name"].startswith("POSTGRES_PASSWORD")
+    )
+    data_mounted = any(
+        isinstance(mount, dict) and mount.get("mountPath") == POSTGRES_DATA
+        for mount in container.get("volumeMounts", [])
+    )
+    if not names and not data_mounted:
+        return None
+    if names != ["POSTGRES_PASSWORD_FILE"]:
+        raise common.DeployError(
+            f"Unsupported PostgreSQL password setting {', '.join(names) or '(none)'} "
+            f"in {where}; use only POSTGRES_PASSWORD_FILE with a mounted Secret"
+        )
+    entry = next(entry for entry in env if entry["name"] == "POSTGRES_PASSWORD_FILE")
+    reference = entry.get("value")
+    if (
+        "valueFrom" in entry
+        or not isinstance(reference, str)
+        or not Path(reference).is_absolute()
+    ):
+        raise common.DeployError(f"Invalid POSTGRES_PASSWORD_FILE in {where}")
+    password_file = Path(reference)
+    mounts = {
+        mount.get("mountPath"): mount.get("name")
+        for mount in container.get("volumeMounts", [])
+        if isinstance(mount, dict)
+    }
+    secret_volume = mounts.get(str(password_file.parent))
+    data_volume = mounts.get(POSTGRES_DATA)
+    if not secret_volume or not data_volume:
+        raise common.DeployError(
+            f"Unsupported PostgreSQL password/data mounts in {where}"
+        )
+    volumes = {
+        volume.get("name"): volume
+        for volume in spec.get("volumes", [])
+        if isinstance(volume, dict)
+    }
+    try:
+        secret = volumes[secret_volume]["secret"]
+        claim = volumes[data_volume]["persistentVolumeClaim"]["claimName"]
+        keys = [
+            item["key"]
+            for item in secret.get("items", [])
+            if item["path"] == password_file.name
+        ]
+        if len(keys) != 1 or not isinstance(claim, str):
+            raise KeyError("password key")
+        return claim, secret["secretName"], keys[0]
+    except (KeyError, TypeError, AttributeError):
+        raise common.DeployError(
+            f"Unsupported PostgreSQL Secret/PVC binding in {where}"
+        ) from None
+
+
+def database_password_path(config, config_path, secret_name, key):
+    """Return the one config file that delivers the password key of the Secret."""
+    entries = rendering.file_group_sources(config, common.SECRET_FILES).get(
+        secret_name, []
+    )
+    candidates = []
+    for entry in entries:
+        source = rendering.resolve_path(entry["path"], config_path.parent)
+        directory = "generate" in entry or source.is_dir()
+        candidates.append(
+            source if source.name == key and not directory else source / key
+        )
+    if len(candidates) != 1:
+        raise common.DeployError(
+            f"{config_path}: {common.SECRET_FILES}.{secret_name} must identify one password file"
+        )
+    return candidates[0]
+
+
+def check_database_password(password):
+    """An existing password must be a nonempty single-line regular file."""
+    if not password.is_file():
+        raise common.DeployError(
+            f"Invalid database password file {password}; restore from backup"
+        )
+    try:
+        content = password.read_bytes().decode("utf-8").rstrip("\n")
+    except (OSError, UnicodeError):
+        raise common.DeployError(
+            f"Invalid database password file {password}; restore from backup"
+        ) from None
+    if not content or any(c in content for c in ("\x00", "\n", "\r")):
+        raise common.DeployError(
+            f"Empty or invalid database password file {password}; restore from backup"
+        )
+
+
+def check_database_volume_absent(claim, password):
+    """Only Podman's documented "absent" answer (exit 1) allows a new password."""
+    try:
+        result = subprocess.run(  # noqa: UP022 - Python 3.6
+            ["podman", "volume", "exists", claim],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError:
+        raise common.DeployError(
+            f"Cannot check database volume {claim}; no password generated"
+        ) from None
+    if result.returncode == 0:
+        raise common.DeployError(
+            f"Missing database password file {password} with existing volume {claim}; "
+            "restore the password from backup or use a separate recovery procedure; no password generated"
+        )
+    if result.returncode != 1:
+        raise common.DeployError(
+            f"Cannot check database volume {claim}; no password generated"
+        )
 
 
 def dev_settings():
@@ -218,48 +269,91 @@ def dev_settings():
     return known, settings
 
 
-def dev_database_preflight(settings):
-    """Check the dev database volumes of every catalog component before any writes."""
-    for component, config in settings.items():
-        database_preflight(
+def check_manifests(config, config_path, manifests, component=None, imported=()):
+    """Validate the effective manifests, then check database volumes; no writes.
+
+    Every path (install, prepare, standalone) runs this before generating any
+    secret: declarations are validated first, so a broken manifest never
+    reaches a host command, and the preflight is the first host command.
+    """
+    documents = rendering.effective_documents(
+        config, config_path, manifests, component, imported
+    )
+    database_preflight(config, config_path, documents)
+    return documents
+
+
+def image_archive():
+    """Return the bundle's image archive; checked before any secret is generated."""
+    archive = common.ROOT / "images/images.tar"
+    if not archive.is_file():
+        raise common.DeployError(f"Missing image archive {archive}")
+    return archive
+
+
+def check_dev_components(known, settings):
+    """Validate and check every catalog component before any dev write.
+
+    Returns component -> (effective config, effective documents) for rendering.
+    """
+    checked = {}
+    for component, component_settings in settings.items():
+        path = common.BUILD / "dev" / component / "config.yaml"
+        config = rendering.effective_config(component_settings, path, component)
+        documents = check_manifests(
             config,
-            common.BUILD / "dev" / component / "config.yaml",
+            path,
             common.ROOT / "components" / component / "manifests",
+            component,
+            known[component]["accepts"].values(),
         )
+        checked[component] = config, documents
+    return checked
 
 
 def prepare_components():
     """Render the catalog components with private dev state and their registrations."""
     state = common.BUILD / "dev"
     known, settings_by_component = dev_settings()
-    dev_database_preflight(settings_by_component)
-    state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for component, settings in settings_by_component.items():
-        target = state / component / "config.yaml"
-        rendering.write_private(target, yaml.safe_dump(settings, sort_keys=False))
-    # Dev registrations come only from the current catalog. Removing older copies
-    # keeps a service removed from bundles.yaml out of the proxy and Identity.
+    checked = check_dev_components(known, settings_by_component)
     for name in catalog.ROLE_FILES:
         if (state / name).is_symlink():
             raise common.DeployError(
                 f"Refuse symlinked dev registrations: {state / name}"
             )
-        shutil.rmtree(str(state / name), ignore_errors=True)
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
-        imports, updates = registration_stage(
-            list(known), Path(directory), known, home=state
+        # Validate every registration before the first dev write.
+        imports, updates, _ = registration_stage(
+            list(known),
+            Path(directory),
+            known,
+            home=state,
+            configs=settings_by_component,
         )
-        documents = []
-        for component in known:
-            text = rendering.materialize_and_render(
-                state / component / "files",
-                config_path=state / component / "config.yaml",
-                manifests=common.ROOT / "components" / component / "manifests",
-                component=component,
-                extra_volumes=component_imports(component, imports, known),
+        state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for component, settings in settings_by_component.items():
+            target = state / component / "config.yaml"
+            rendering.write_private(target, yaml.safe_dump(settings, sort_keys=False))
+        # Dev registrations come only from the current catalog. Removing older
+        # copies keeps a service removed from bundles.yaml out of the proxy and
+        # Identity.
+        for name in catalog.ROLE_FILES:
+            shutil.rmtree(str(state / name), ignore_errors=True)
+        documents, archives = [], []
+        for component, (config, component_documents) in checked.items():
+            files = state / component / "files"
+            text, volumes = rendering.materialize(
+                config,
+                state / component / "config.yaml",
+                component_documents,
+                files,
+                component_imports(component, imports, known),
             )
             documents.extend(yaml.safe_load_all(text))
+            archives.append((volumes, files))
         rendering.check_links(documents, {})
+        for volumes, files in archives:
+            rendering.write_file_archives(volumes, files)
         write_registrations(updates, home=state)
         rendering.write_private(
             common.BUILD / "install.yaml",
@@ -283,11 +377,14 @@ def prepare():
 def prepare_standalone():
     """Render the explicit root-config fixture used by standalone examples/tests."""
     output = common.BUILD / "install.yaml"
-    if common.CONFIG.is_file():
-        database_preflight(
-            rendering.load_config(common.CONFIG), common.CONFIG, common.MANIFESTS
-        )
-    rendering.write_private(output, rendering.materialize_and_render())
+    if not common.CONFIG.exists():
+        raise common.DeployError(f"Missing {common.CONFIG}")
+    config = rendering.load_config(common.CONFIG)
+    documents = check_manifests(config, common.CONFIG, common.MANIFESTS)
+    files = common.BUILD / "files"
+    text, volumes = rendering.materialize(config, common.CONFIG, documents, files)
+    rendering.write_file_archives(volumes, files)
+    rendering.write_private(output, text)
     print(f"[OK] {output}")
 
 
@@ -328,16 +425,15 @@ def install_standalone():
     """Install a standalone rootless manifest fixture using the persistent config."""
     production_environment()
     config_path = common.HOME / "config.yaml"
-    if config_path.is_file():
-        database_preflight(
-            rendering.load_config(config_path), config_path, common.MANIFESTS
-        )
-    text = rendering.materialize_and_render(
-        common.FILES_DIR, write_archives=False, config_path=config_path
+    if not config_path.exists():
+        raise common.DeployError(f"Missing {config_path}")
+    config = rendering.load_config(config_path)
+    documents = check_manifests(config, config_path, common.MANIFESTS)
+    archive = image_archive()
+    rendering.find_images(documents)
+    text, volumes = rendering.materialize(
+        config, config_path, documents, common.FILES_DIR
     )
-    archive = common.ROOT / "images" / "images.tar"
-    if not archive.is_file():
-        raise common.DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     for image in rendering.find_images(yaml.safe_load_all(text)):
         try:
@@ -349,7 +445,7 @@ def install_standalone():
             ) from None
 
     # Old YAML must not import new files after a failed image check.
-    rendering.materialize_and_render(common.FILES_DIR, config_path=config_path)
+    rendering.write_file_archives(volumes, common.FILES_DIR)
 
     common.QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     rendering.write_private(common.QUADLET_YAML, text)
@@ -471,12 +567,20 @@ def component_paths(component, home=None):
     )
 
 
-def registration_stage(components, directory, known, home=None):
+def registration_stage(components, directory, known, home=None, configs=None):
     """Stage existing and proposed public routes and clients without changing live state.
 
     known maps component IDs to descriptors: installed metadata plus the incoming
     bundle in production, the source catalog in dev. Each existing registration
     must belong to a known component; the role owners come from accepts.
+
+    For the selected components the release files are authoritative: their
+    installed registrations are never copied, and a role the release no longer
+    declares is returned in removals. Absence for any other component never
+    means removal. Returns (imports, updates, removals).
+
+    configs (dev) maps each component to its config before it is written; dev
+    registrations then come only from the catalog, so existing ones are ignored.
     """
     home = home or common.HOME
     owners = catalog.role_owners(known, "registration owners")
@@ -487,7 +591,7 @@ def registration_stage(components, directory, known, home=None):
                 f"Refuse symlinked shared registration directory: {source}"
             )
         (directory / name).mkdir()
-        if not source.exists():
+        if configs is not None or not source.exists():
             continue
         for path in sorted(source.iterdir()):
             if path.is_symlink():
@@ -500,14 +604,15 @@ def registration_stage(components, directory, known, home=None):
                     raise common.DeployError(
                         f"Unexpected public route registration: {path}"
                     )
-                shutil.copy2(path, directory / name / path.name)
+                if owner not in components:
+                    shutil.copy2(path, directory / name / path.name)
                 continue
             if not path.is_dir() or path.name not in known:
                 raise common.DeployError(
                     f"Unexpected public client registration: {path}"
                 )
-            if path.name in components and known[path.name]["clients"]:
-                continue  # Rebuild the incoming client even after a partial prior write.
+            if path.name in components:
+                continue  # The release decides, even after a partial prior write.
             target = directory / name / path.name
             target.mkdir()
             for filename in ("client.json", "client.crt"):
@@ -517,8 +622,16 @@ def registration_stage(components, directory, known, home=None):
                         f"Refuse symlinked public client file: {public}"
                     )
                 shutil.copy2(public, target / filename)
-    updates = {}
+    updates, removals = {}, set()
     for component in components:
+        for role, relative in (
+            ("routes", "routes/" + component + ".conf"),
+            ("clients", "clients/" + component),
+        ):
+            if known[component][role] is None and (
+                (home / relative).exists() or (home / relative).is_symlink()
+            ):
+                removals.add(relative)
         source = common.ROOT / "components" / component
         declared = {
             role: source / filename
@@ -533,7 +646,10 @@ def registration_stage(components, directory, known, home=None):
         if not declared:
             continue
         config_path = component_paths(component, home)[0]
-        config = rendering.load_config(config_path)
+        if configs is None:
+            config = rendering.load_config(config_path)
+        else:
+            config = configs[component]
         if "routes" in declared:
             updates["routes/" + component + ".conf"] = declared["routes"].read_bytes()
         if "clients" in declared:
@@ -573,7 +689,7 @@ def registration_stage(components, directory, known, home=None):
         imports[known[owners["routes"]]["accepts"]["routes"]] = [routes]
     if owners["clients"]:
         imports[known[owners["clients"]]["accepts"]["clients"]] = client_dirs + [index]
-    return imports, updates
+    return imports, updates, removals
 
 
 def registered_client_id(path):
@@ -643,17 +759,35 @@ def client_registration(component, path, config, config_path):
     }
 
 
-def write_registrations(updates, home=None):
-    """Write changed public registrations privately; unchanged files are kept."""
-    if any(((home or common.HOME) / relative).is_symlink() for relative in updates):
+def write_registrations(updates, home=None, removals=()):
+    """Write changed public registrations privately and delete removed ones.
+
+    Unchanged files are kept. Callers record owner work first (save_pending),
+    because a deleted registration no longer shows that its owner must restart.
+    """
+    home = home or common.HOME
+    if any(
+        (home / relative).is_symlink() for relative in list(updates) + list(removals)
+    ):
         raise common.DeployError("Refuse symlinked public registration output")
     for relative, data in updates.items():
-        target = (home or common.HOME) / relative
+        target = home / relative
         if target.is_file() and target.read_bytes() == data:
             continue
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.parent.chmod(0o700)
         rendering.write_private(target, data.decode("utf-8"))
+    for relative in sorted(removals):
+        target = home / relative
+        if target.is_dir():
+            for child in target.iterdir():
+                if child.is_symlink() or not child.is_file():
+                    raise common.DeployError(
+                        f"Refuse unexpected public registration file: {child}"
+                    )
+            shutil.rmtree(str(target))
+        elif target.exists():
+            target.unlink()
 
 
 def component_imports(component, imports, known):
@@ -789,16 +923,21 @@ def clear_pending():
     sync_pending_directory()
 
 
-def registration_changes(updates, owners, home=None):
-    """Compare before writing so unfinished owners can be recorded first."""
-    changed = set()
+def registration_changes(updates, owners, home=None, removals=()):
+    """Compare before writing so unfinished owners can be recorded first.
+
+    Returns the owners that must rebuild their imports and restart. A removed
+    registration whose role no known component accepts has no owner to
+    restart; recording None would make the pending record unreadable.
+    """
+    changed = {owners[relative.split("/", 1)[0]] for relative in removals}
     for relative, data in updates.items():
         target = (home or common.HOME) / relative
         if target.is_symlink():
             raise common.DeployError("Refuse symlinked public registration output")
         if not target.is_file() or target.read_bytes() != data:
             changed.add(owners[relative.split("/", 1)[0]])
-    return changed
+    return changed - {None}
 
 
 def check_shared_network():
@@ -814,29 +953,30 @@ def check_shared_network():
     return network, network_text
 
 
-def materialize_component_manifests(components, imports, known):
-    """Validate and render selected components; missing secrets may be created here."""
+def materialize_component_manifests(checked, imports, known):
+    """Render the validated components; missing secrets may be created here.
+
+    Returns component -> (install YAML, import volumes); nothing else is written.
+    """
     rendered = {}
-    for component in components:
-        config, files, _, _ = component_paths(component)
-        rendered[component] = rendering.materialize_and_render(
+    for component, (config, documents) in checked.items():
+        config_path, files, _, _ = component_paths(component)
+        rendered[component] = rendering.materialize(
+            config,
+            config_path,
+            documents,
             files,
-            write_archives=False,
-            config_path=config,
-            manifests=common.ROOT / "components" / component / "manifests",
-            component=component,
-            extra_volumes=component_imports(component, imports, known),
+            component_imports(component, imports, known),
         )
     return rendered
 
 
-def load_and_verify_images(components, source_components, rendered):
+def load_and_verify_images(archive, components, source_components, rendered):
     """Load this bundle and verify every required image before persistent service changes."""
-    archive = common.ROOT / "images/images.tar"
-    if not archive.is_file():
-        raise common.DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
-    documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
+    documents = [
+        doc for text, _ in rendered.values() for doc in yaml.safe_load_all(text)
+    ]
     for component in source_components:
         if component not in components:
             for path in sorted(
@@ -852,10 +992,10 @@ def load_and_verify_images(components, source_components, rendered):
             ) from None
 
 
-def apply_registration_updates(component, updates, owners):
-    """Record unfinished owners durably before writing their public registrations."""
+def apply_registration_updates(component, updates, removals, owners):
+    """Record unfinished owners durably before writing or deleting registrations."""
     pending = check_pending("install", component)
-    changed = registration_changes(updates, owners) | set(
+    changed = registration_changes(updates, owners, removals=removals) | set(
         pending["owners"] if pending else []
     )
     if changed:
@@ -865,28 +1005,20 @@ def apply_registration_updates(component, updates, owners):
             "owners": sorted(changed),
         }
         save_pending(pending)
-    write_registrations(updates)
+    write_registrations(updates, removals=removals)
     return changed, pending
 
 
-def write_component_units_and_imports(
-    components, imports, rendered, network, network_text, known
-):
+def write_component_units_and_imports(rendered, network, network_text):
     """Write selected imports/YAML/Quadlets, retaining the existing shared network."""
     common.QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     if not network.exists():
         network.write_text(network_text, encoding="utf-8")
         network.chmod(0o644)
-    for component in components:
-        config, files, output, quadlet = component_paths(component)
-        rendering.materialize_and_render(
-            files,
-            config_path=config,
-            manifests=common.ROOT / "components" / component / "manifests",
-            component=component,
-            extra_volumes=component_imports(component, imports, known),
-        )
-        rendering.write_private(output, rendered[component])
+    for component, (text, volumes) in rendered.items():
+        _, files, output, quadlet = component_paths(component)
+        rendering.write_file_archives(volumes, files)
+        rendering.write_private(output, text)
         quadlet.write_text(
             common.QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
                 "Yaml=myproduct.yaml", "Yaml=" + output.name
@@ -923,16 +1055,31 @@ def restart_component_services(components, changed, pending, known):
     """
     run("systemctl", "--user", "daemon-reload")
     for component in restart_order(known, set(components) | changed):
-        service = "myproduct-" + component + ".service"
-        run("systemctl", "--user", "restart", service)
-        run("systemctl", "--user", "is-active", "--quiet", service)
+        restart_service(component)
         if pending and component in pending["owners"]:
-            pending["owners"].remove(component)
-            if pending["owners"]:
-                save_pending(pending)
-            else:
-                clear_pending()
+            acknowledge_owner(pending, component, clear_when_done=True)
+            if not pending["owners"]:
                 pending = None
+
+
+def restart_service(component):
+    """Restart one component's unit and require it to be active."""
+    service = "myproduct-" + component + ".service"
+    run("systemctl", "--user", "restart", service)
+    run("systemctl", "--user", "is-active", "--quiet", service)
+
+
+def acknowledge_owner(state, owner, clear_when_done=False):
+    """Record that one owner's restart finished, so a retry skips only that owner.
+
+    An install record is finished once no owner is left; an uninstall record
+    still has its own final steps, so it is cleared by uninstall itself.
+    """
+    state["owners"].remove(owner)
+    if state["owners"] or not clear_when_done:
+        save_pending(state)
+    else:
+        clear_pending()
 
 
 def write_install_record(path, text):
@@ -974,18 +1121,20 @@ def write_installed_marker(descriptor):
     )
 
 
-def install_component_plan(descriptor, components, known, imports, updates):
+def install_component_plan(descriptor, checked, known, imports, updates, removals):
     """Apply a staged install in the established validation/write/restart order."""
     name = descriptor["name"]
+    components = list(checked)
     owners = catalog.role_owners(known, "registration owners")
     network, network_text = check_shared_network()
-    rendered = materialize_component_manifests(components, imports, known)
-    load_and_verify_images(components, [name], rendered)
+    archive = image_archive()
+    if checked:  # Fully qualified image names, decided before generation.
+        rendering.find_images(doc for _, docs in checked.values() for doc in docs)
+    rendered = materialize_component_manifests(checked, imports, known)
+    load_and_verify_images(archive, components, [name], rendered)
     write_installed_metadata(descriptor)
-    changed, pending = apply_registration_updates(name, updates, owners)
-    write_component_units_and_imports(
-        components, imports, rendered, network, network_text, known
-    )
+    changed, pending = apply_registration_updates(name, updates, removals, owners)
+    write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
     write_installed_marker(descriptor)
@@ -1019,26 +1168,35 @@ def install_components():
         )
     check_dependencies_installed(descriptor)
     check_dependents(descriptor, installed)
-    components = [name] if install_needed(descriptor) else []
-    for path in sorted(
-        (common.ROOT / "components" / name / "manifests").glob("*.yaml")
-    ):
-        rendering.check_component_names(rendering.load_yaml_all(path), name, path)
     config_path = component_paths(name)[0]
     config = rendering.load_config(config_path)
+    # Rendered only when the version changes; otherwise only registrations
+    # and owners are refreshed.
+    render = install_needed(descriptor)
     rendering.validate_component_config(
-        config, name, config_path, check_placeholders=bool(components)
+        config, name, config_path, check_placeholders=render
     )
     check_public_settings(descriptor, config, config_path)
-    for component in components:
-        database_preflight(
-            config, config_path, common.ROOT / "components" / component / "manifests"
-        )
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
-        imports, updates = registration_stage([name], Path(directory), known)
-        install_component_plan(descriptor, components, known, imports, updates)
+        # Staging only reads and validates registrations; it writes nothing
+        # outside the temporary directory and runs before any host command.
+        imports, updates, removals = registration_stage([name], Path(directory), known)
+        checked = {}
+        if render:
+            effective = rendering.effective_config(config, config_path, name)
+            checked[name] = (
+                effective,
+                check_manifests(
+                    effective,
+                    config_path,
+                    common.ROOT / "components" / name / "manifests",
+                    name,
+                    descriptor["accepts"].values(),
+                ),
+            )
+        install_component_plan(descriptor, checked, known, imports, updates, removals)
 
 
 def install():
@@ -1051,6 +1209,76 @@ def install():
         )
     else:
         install_standalone()
+
+
+def uninstall_plan(component, delete_data, installed):
+    """Validate installed state and return the uninstall record; changes nothing.
+
+    The volumes come from the installed YAML (Secrets, PVCs and mounted
+    ConfigMaps, all prefixed with the component ID); the owners are those
+    whose registration of this component must be rebuilt after removal.
+    """
+    _, _, output, _ = component_paths(component)
+    route = common.HOME / "routes" / (component + ".conf")
+    client = common.HOME / "clients" / component
+    documents = rendering.load_yaml_all(output)
+    rendering.check_component_names(documents, component, output)
+    volumes = sorted(
+        {
+            doc["metadata"]["name"]
+            for doc in documents
+            if isinstance(doc, dict)
+            and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
+        }
+    )
+    config_maps = {
+        doc["metadata"]["name"]
+        for doc in documents
+        if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
+    }
+    for _, spec in rendering.pod_specs(documents, output):
+        for volume in spec.get("volumes", []):
+            if "configMap" not in volume:
+                continue
+            source = volume["configMap"]
+            if (
+                not isinstance(source, dict)
+                or not isinstance(source.get("name"), str)
+                or source["name"] not in config_maps
+            ):
+                raise common.DeployError("Invalid mounted ConfigMap for uninstall")
+            if source["name"] not in volumes:
+                volumes.append(source["name"])
+    volumes.sort()
+    if any(
+        not common.ID.fullmatch(name) or not name.startswith(component + "-")
+        for name in volumes
+    ):
+        raise common.DeployError("Invalid component volume name for uninstall")
+    # Validate every public input before saving the plan or stopping/deleting anything.
+    with tempfile.TemporaryDirectory(
+        prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+    ) as directory:
+        registration_stage([], Path(directory), installed)
+    role_owners = catalog.role_owners(installed, "installed components")
+    owners = set()
+    if route.is_file():
+        owners.add(role_owners["routes"])
+    if client.exists():
+        owners.add(role_owners["clients"])
+    return {
+        "operation": "uninstall",
+        "component": component,
+        "delete_data": delete_data,
+        "volumes": volumes,
+        "stopped": False,
+        "owners": sorted(
+            owner
+            for owner in owners
+            if owner not in (None, component)
+            and catalog.installed_version(common.HOME, owner)
+        ),
+    }
 
 
 def uninstall(component=None, delete_data=False):
@@ -1084,66 +1312,7 @@ def uninstall(component=None, delete_data=False):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
             raise common.DeployError("Refuse symlinked uninstall state or output paths")
     if state is None:
-        documents = rendering.load_yaml_all(output)
-        rendering.check_component_names(documents, component, output)
-        volumes = sorted(
-            {
-                doc["metadata"]["name"]
-                for doc in documents
-                if isinstance(doc, dict)
-                and doc.get("kind") in ("Secret", "PersistentVolumeClaim")
-            }
-        )
-        config_maps = {
-            doc["metadata"]["name"]
-            for doc in documents
-            if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
-        }
-        for doc in documents:
-            if not isinstance(doc, dict) or doc.get("kind") != "Pod":
-                continue
-            for volume in doc.get("spec", {}).get("volumes", []):
-                if "configMap" not in volume:
-                    continue
-                source = volume["configMap"]
-                if (
-                    not isinstance(source, dict)
-                    or not isinstance(source.get("name"), str)
-                    or source["name"] not in config_maps
-                ):
-                    raise common.DeployError("Invalid mounted ConfigMap for uninstall")
-                if source["name"] not in volumes:
-                    volumes.append(source["name"])
-        volumes.sort()
-        if any(
-            not common.ID.fullmatch(name) or not name.startswith(component + "-")
-            for name in volumes
-        ):
-            raise common.DeployError("Invalid component volume name for uninstall")
-        # Validate every public input before saving the plan or stopping/deleting anything.
-        with tempfile.TemporaryDirectory(
-            prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
-        ) as directory:
-            registration_stage([], Path(directory), installed)
-        role_owners = catalog.role_owners(installed, "installed components")
-        owners = set()
-        if route.is_file():
-            owners.add(role_owners["routes"])
-        if client.exists():
-            owners.add(role_owners["clients"])
-        state = {
-            "operation": "uninstall",
-            "component": component,
-            "delete_data": delete_data,
-            "volumes": volumes,
-            "stopped": False,
-            "owners": sorted(
-                owner
-                for owner in owners
-                if owner not in (None, component)
-                and catalog.installed_version(common.HOME, owner)
-            ),
-        }
+        state = uninstall_plan(component, delete_data, installed)
         save_pending(state)
     if not state["stopped"]:
         run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
@@ -1159,7 +1328,7 @@ def uninstall(component=None, delete_data=False):
         with tempfile.TemporaryDirectory(
             prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
         ) as directory:
-            imports, _ = registration_stage([], Path(directory), installed)
+            imports, _, _ = registration_stage([], Path(directory), installed)
             for owner in list(state["owners"]):
                 component_paths(owner)
                 if owner not in installed or not catalog.installed_version(
@@ -1173,11 +1342,8 @@ def uninstall(component=None, delete_data=False):
                     component_imports(owner, imports, installed) or {},
                     component_paths(owner)[1],
                 )
-                service = "myproduct-" + owner + ".service"
-                run("systemctl", "--user", "restart", service)
-                run("systemctl", "--user", "is-active", "--quiet", service)
-                state["owners"].remove(owner)
-                save_pending(state)
+                restart_service(owner)
+                acknowledge_owner(state, owner)
     if delete_data:
         for name in state["volumes"]:
             result = subprocess.run(  # noqa: UP022 - Python 3.6

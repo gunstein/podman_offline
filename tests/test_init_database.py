@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from render_helper import materialize_and_render
 
 import bundle
 from deployment import render as rendering
@@ -66,7 +67,7 @@ class InitDatabaseTests(unittest.TestCase):
             )
             path = base / "config.yaml"
             path.write_text(yaml.safe_dump(config))
-            text = rendering.materialize_and_render(
+            text = materialize_and_render(
                 base / "files",
                 config_path=path,
                 manifests=ROOT / "components/app1/manifests",
@@ -128,7 +129,7 @@ class InitDatabaseTests(unittest.TestCase):
                 images, bundle.manifest_images(ROOT / "components/app1/manifests")
             )
             before = (base / "credentials/database/password").read_bytes()
-            rendering.materialize_and_render(
+            materialize_and_render(
                 base / "files",
                 config_path=path,
                 manifests=ROOT / "components/app1/manifests",

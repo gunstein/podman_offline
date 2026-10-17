@@ -9,7 +9,7 @@ spec:
     image: localhost/myproduct-help:0.2.0
     imagePullPolicy: Never
     livenessProbe:
-      initialDelaySeconds: 90
+      initialDelaySeconds: 10
       exec:
         command:
         - wget
@@ -17,6 +17,6 @@ spec:
         - -O
         - /dev/null
         - http://127.0.0.1:8080/
-      periodSeconds: 30
+      periodSeconds: 10
       timeoutSeconds: 5
-      failureThreshold: 3
+      failureThreshold: 6

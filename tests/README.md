@@ -1,3 +1,29 @@
+# Manifest validation and registration removal (0.4.10)
+
+Backlog item 21. `test_validation_order.py` breaks one orders manifest five ways
+(undefined mount, missing reference, duplicate, online pull policy, unreplaced
+placeholder) and requires no secret, archive, YAML or host command on install,
+dev prepare and both standalone paths, plus a single render per install.
+`test_database_preflight.py` takes the volume, Secret and password path from
+config and asserts the configured name reaches Podman; absent, existing and
+failing checks; and refuses other `POSTGRES_PASSWORD*` forms (F2).
+`test_registration_removal.py` drops inventory's route, client or both, checks
+exact owner restarts and imported indexes, injects failures after the deletion
+and finishes them in a fresh process, and uninstalls afterwards. See
+[verification](../acceptance/MANIFEST-VALIDATION.md).
+
+After the independent review, `test_validation_order.py` also requires that an
+invalid `client.yaml` stops install and dev prepare before any write or host
+command, and that a missing image archive stops standalone install before
+generation. `test_database_preflight.py` treats a data-directory mount as a
+database container. `test_registration_removal.py` asserts the exact owners
+left and restarted per failure point, including an interrupt after the first
+removal, and that an ownerless role is never recorded. `render_helper.py` holds
+the render-only `materialize_and_render` shortcut used by tests; product code
+calls `check_manifests` and then `materialize`.
+
+---
+
 # Declarative components (0.4.9)
 
 Components come from `bundles.yaml`; see [components](../docs/COMPONENTS.md).
@@ -171,7 +197,7 @@ The tests use Python 3.6-compatible syntax and standard library APIs.
 ## Images from the manifests
 
 181 tests pass with PyYAML 6.0.3 (Python 3.14.4) and 5.4.1 (Python 3.11.17).
-The image tests cover Pod/Deployment, init containers, several files/documents,
+The image tests cover Pods, init containers, several files/documents,
 flow maps, duplicates, full names and expected validation errors. The bundle tests
 check one sorted multi-image save, the name list, tar content and checksums.
 Registry tests require sorted deduplicated pulls with policy=always before save,
@@ -233,13 +259,16 @@ test renders the real product manifests with merged defaults and dummy files,
 without Podman, and checks resources and image names.
 
 `test_health.py` requires one exec liveness probe in every real app manifest,
-with initialDelay 90, period 30, timeout 5 and failureThreshold 3. Init containers
+with initialDelay 10, period 10, timeout 5 and failureThreshold 6. Init containers
 have no probe. The backend's /livez and its authentication guard are tested in isolation, without
 importing the app, a database or the app's dependencies.
 
 Manifest validation tests cover defined and missing ConfigMaps in all three
 reference forms, pod-local mounts, and required Never pull policies on ordinary
-and init containers. Nested Deployment pod specs use the same validation.
+and init containers. Unsupported kinds (Deployment, List, no kind) are refused
+before generation, output or Podman calls, also at build and on install of a
+renamed release, where a Deployment cannot take another component's name or
+skip the database preflight.
 
 Generated-secret tests verify exclusive creation, 32 alphanumeric characters,
 0600/0700 modes, reuse by prepare and install, empty-file errors, path confinement

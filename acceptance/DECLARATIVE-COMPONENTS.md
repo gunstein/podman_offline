@@ -48,12 +48,11 @@ on the generated tree with moved demo credentials, checks that the target
 credential mapping in `remote.sh` matches the generator, and checks the
 scenario's step order and stop-on-failure.
 
-## Real acceptance: outstanding
+## Real acceptance
 
-Not executed: this change was made without lab access. The stubbed tests above
-do not prove Podman, systemd, nginx, OIDC, PostgreSQL or SELinux/fapolicyd
-behavior. Run, from a clean committed checkout with the usual lab setup
-([acceptance README](README.md)):
+Run in the lab from a clean committed checkout of `8e62153` on
+`feature/declarative-components`, which differs from merged `main` (`38705e5`)
+only in documentation. Commands ([acceptance README](README.md)):
 
 ```sh
 # Shipped demo, unchanged scenarios, to confirm no regression:
@@ -80,7 +79,17 @@ The renamed run resets both VMs, then:
 6. PROD: uninstall inventory (route 404, data and orders' client kept), then
    uninstall manual from its retained bundle.
 
-Expected: CLEAN PASS for all four runs. Record the results here when run.
+Results:
+
+| Run | Result |
+| --- | --- |
+| `decl-app1-first-2` | NOT CLEAN: fapolicyd denied a freshly installed file before the trust database was updated (`subj_trust=unknown`). An environment race, not a product failure; tracked as backlog item 29. |
+| `decl-app1-first-3` | CLEAN PASS (rerun of the above) |
+| `decl-app2-first-2` | CLEAN PASS |
+| `decl-help-2` | CLEAN PASS |
+| `decl-renamed-4` | CLEAN PASS |
+
+All four scenarios have a clean pass, so backlog item 20 is verified in the lab.
 
 ## Review follow-up
 

@@ -9,7 +9,7 @@ spec:
     image: localhost/myproduct-postgres:17.11
     imagePullPolicy: Never
     livenessProbe:
-      initialDelaySeconds: 90
+      initialDelaySeconds: 10
       exec:
         command:
         - pg_isready
@@ -17,9 +17,9 @@ spec:
         - '@@DB_USER@@'
         - -d
         - '@@DB_NAME@@'
-      periodSeconds: 30
+      periodSeconds: 10
       timeoutSeconds: 5
-      failureThreshold: 3
+      failureThreshold: 6
     env:
     - name: POSTGRES_DB
       value: '@@DB_NAME@@'

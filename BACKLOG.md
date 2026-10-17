@@ -378,6 +378,9 @@ Status: follow up when adding another PostgreSQL image or mount layout.
   clearly before secret generation or persistent changes.
 - Add focused regressions for each newly supported layout. Keep database-state
   checks in the lifecycle layer and avoid a generic PostgreSQL framework.
+- Since 0.4.10 a container that mounts `/var/lib/postgresql/data` counts as a
+  database container even without any `POSTGRES_PASSWORD*` variable, so
+  `PGPASSWORD`, `envFrom` and missing password settings are refused there.
 
 Review source for items 6–7 and the expanded upgrade scenario: static code review
 of `improvements-0-2` through `87f4e98`. These are follow-up requirements and
@@ -1792,9 +1795,9 @@ Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented in 0.4.9 on branch `feature/declarative-components`; local
-product and harness tests pass, real acceptance runs (demo and
-`--renamed-product`) are outstanding. See
+Status: done in 0.4.9 (merged from `feature/declarative-components`); local
+product and harness tests pass, and the lab runs (demo and
+`--renamed-product`) were CLEAN PASS on `8e62153`. See
 [verification](acceptance/DECLARATIVE-COMPONENTS.md) and
 [components](docs/COMPONENTS.md). The original task follows.
 This addresses custom installations failing when a component is renamed, for
@@ -2214,9 +2217,12 @@ plugin framework or large object hierarchy.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Four findings reproduced in isolated Python checks; no fix or
-real Podman/systemd verification performed. Prioritize the database preflight
-and resource-kind gaps because they affect lifecycle safety checks.
+Status: implemented in 0.4.10 on `feature/manifest-validation`; local checks
+green, and all six lab scenarios were CLEAN PASS on `5ee9748`. The independent
+review's follow-up changed install order, database detection and image checks;
+app1-first, identity-only and renamed-product were CLEAN PASS on `a688c30`. See
+[verification](acceptance/MANIFEST-VALIDATION.md). Original findings: four,
+reproduced in isolated Python checks.
 
 ### Message to the implementing agent
 
@@ -2367,6 +2373,120 @@ undefined mount was rejected). It also found:
   `generate_secrets`, addresses §1, §2, §4 and F2 together. Extracting
   `uninstall_plan()` and one shared restart-and-acknowledge helper would make
   the lifecycle easier to follow. No wider architecture change is needed.
+
+### Implementation plan (2026-10-17, revised after review)
+
+Status of the plan: carried out in five commits. Deviation: imported
+registration volumes are validated by name from the descriptor's `accepts`,
+so staging stays where it was in install (after the preflight, before
+generation); dev validates every component before writing its configs.
+
+**Starting point.** Six places walk manifests with their own idea of resource
+kinds: `check_component_names`, `database_preflight` and uninstall look only at
+top-level `kind: Pod`; `check_pod_spec`, `find_images` and `references` search
+for `spec`/`containers` at any depth. That mismatch is the root cause of §2 and
+F2 and part of §1. `materialize_and_render` mixes validation with side effects,
+derives `PUBLIC_HOSTNAME` internally, runs twice per install (and twice in
+`install_standalone`) and calls `generate_secrets` before mounts and links are
+checked (§4). `registration_stage` copies every installed registration,
+including those of the component being upgraded (§3).
+
+**Resource-kind contract.** Supported: `Pod`, `ConfigMap`,
+`PersistentVolumeClaim`, `Secret`, which are the kinds the demo uses and
+`podman kube play` handles well. Everything else (`Deployment`, `List`, an
+unknown `kind`, a non-map document) is rejected with file and kind named before
+any side effect, and already at `./build-bundle.sh`. No broader Kubernetes
+support. `references()` stays recursive on purpose: a link is a link wherever
+it appears in a supported document.
+
+**Validation order, the same on every path.** Install, `prepare` (dev),
+`prepare_standalone` and `install_standalone` all follow:
+
+1. effective config (`render.effective_config`: merged config plus derived
+   `PUBLIC_HOSTNAME`; the authoritative effective config §1 asks for);
+2. effective documents (`render.effective_documents(config, manifests,
+   component)`: placeholders replaced, kinds, names, pull policy, mounts; pure);
+3. registration staging in a temporary directory (no live writes) when the
+   path has registrations;
+4. links and duplicates (`check_links`) once imports are known;
+5. database preflight on the effective documents (the first host command,
+   `podman volume exists`);
+6. `generate_secrets`, then checks that need generated bytes (file-group
+   content, empty/invalid password file), then output and archives.
+
+A validation failure in 1–4 therefore causes no host command, generation or
+write. In install, staging moves before preflight; staging writes only to its
+temporary directory.
+
+**Five steps, one commit each, tests green after every step:**
+
+1. **One manifest model (§2).** `render.check_kinds(documents, source)` with
+   `SUPPORTED_KINDS`, and `render.pod_specs(documents)` yielding
+   `(document, spec)` for Pods. Use them in `check_pod_spec`, `find_images`,
+   `check_component_names`, database preflight, the uninstall plan and
+   `bundle.manifest_images`; drop the any-depth search. Tests: the same
+   container spec is accepted in a Pod and rejected in a Deployment/List
+   before Podman calls, generation or writes, including at build; a
+   `Deployment` named `gateway-stolen` is rejected.
+2. **Validation before side effects, one render (§4).** Add
+   `effective_config` and `effective_documents` (above) and make
+   `materialize_and_render` a thin sequence of steps 4 and 6. Render once per
+   component: return the rendered text together with the volumes to archive,
+   so `write_component_units_and_imports` and `install_standalone` only write.
+   Apply the validation order to all four paths. Tests: invalid mount, missing
+   reference, duplicates, wrong pull policy, unreplaced placeholder on each
+   path, each with no new secrets, archives, YAML or host commands and
+   existing config/credential bytes unchanged.
+3. **Database preflight on the effective manifest (§1, F2).**
+   `database_preflight` takes the effective documents and uses `pod_specs`,
+   so Podman receives the configured volume name, not `@@DB_VOLUME@@`. Split
+   the ~110-line function into small named helpers (find the PostgreSQL
+   binding, find the password file, check the volume). F2: refuse every
+   `POSTGRES_PASSWORD*` form other than the supported `POSTGRES_PASSWORD_FILE`
+   layout, including `secretKeyRef`, in `containers` and `initContainers`,
+   naming file and container; other layouts stay item 7. Tests on the install,
+   dev and standalone paths: literal and configured volume names with the
+   exact Podman argument; absent volume (exit 1) allows generation; existing
+   volume (exit 0) and inspection errors (other exit, `OSError`) refuse
+   without generating; existing password bytes preserved.
+4. **Registrations removed by a new release (§3).** In `registration_stage`
+   the release files are authoritative for the selected components: their
+   installed route/client is never copied, whatever their declared roles.
+   A dropped role is returned as a separate set,
+   `removals = {"routes/<id>.conf", "clients/<id>"}`, rather than `None`
+   values in `updates` (a client is a directory, `updates` is per file).
+   `registration_changes` counts an existing removal target as a change for
+   its owner; pending owners are saved with `save_pending` before
+   `write_registrations` deletes, with the same symlink checks, using the
+   existing pending mechanism and no transaction logic. Retry in a fresh
+   process rebuilds indexes without the deleted entry and restarts the
+   pending owners. Absence for an unselected component never means removal.
+   Clean-up: extract `uninstall_plan(component, output)` and one shared
+   `restart_and_acknowledge(owner, state)` used by install and uninstall.
+   Tests: route-only, client-only, both and unchanged; exact owner restarts,
+   siblings kept and not restarted; failures injected after deletion, during
+   archive writing and during restart, then retry in a fresh process;
+   uninstall after an upgrade already removed the route.
+5. **Acceptance, docs and version.** Extend the existing `--renamed-product`
+   scenario instead of adding one with its own VM reset: at the end, generate
+   an inventory release with a higher version and without `route.conf`,
+   `client.yaml` and the catalog's `routes`/`clients`, install it, and check
+   that `/stock` returns 404, the inventory client is gone and orders still
+   works. Update `docs/COMPONENTS.md` (supported kinds), `ARCHITECTURE.md`
+   (sequence diagram: validation order) and `docs/REVIEW_GUIDE.md`. Bump the
+   product version per the repository's rules. Write
+   `acceptance/MANIFEST-VALIDATION.md` with the mandatory understandability
+   review.
+
+**Trade-offs.** Rejecting `Deployment` is simpler than supporting it, and no
+existing requirement needs it. No classes or frameworks: a few small functions,
+fewer lines overall as six traversals become one. Validation that needs
+generated bytes still runs after generation; document that explicitly.
+
+**Delivery.** Branch `feature/manifest-validation`, five commits, one PR (as
+for item 20), reviewable commit by commit. Step 2 is the largest and riskiest;
+if smaller reviews are preferred, split into two PRs after step 2 (model and
+validation; then preflight, removal and acceptance).
 
 ### Scope, verification and delivery
 
@@ -2761,15 +2881,183 @@ documentation only; can be done any time after item 20 is merged.
 ### Problem
 
 `deployment/deploy.py` `install_standalone()` says only "Install a standalone
-rootless manifest fixture using the persistent config." It does not say when
-it is used instead of the component install, that it reads the optional
-`~/.config/.../config.yaml`, runs the database preflight only when that file
-exists, renders without writing archives and loads `images/images.tar`.
+rootless manifest fixture using the persistent config." It does not say when it
+is used instead of the component install (a release without `components/`), or
+what it does, in this order (as of 0.4.10):
+
+1. `production_environment()`; requires the service user's `~/config.yaml`
+   (`common.HOME / "config.yaml"`, not `~/.config/...`), else "Missing ...".
+2. `check_manifests()`: validates the effective `manifests/` (kinds,
+   placeholders, pull policy, mounts, links), then the database preflight.
+3. `render.materialize()`: generates allowed missing secrets and renders the
+   YAML once, returning it with the import volumes; no files are written yet.
+4. Requires `images/images.tar`, runs `podman load` and `podman image exists`
+   for every image.
+5. Only then writes the import archives to `files/`, so a failed image check
+   never leaves new imports beside old YAML.
+6. Writes the Quadlet `.yaml`, `.kube` and `.network`, then `daemon-reload`,
+   `restart` and `is-active` for the single service, and `podman ps`.
+
+Before 0.4.10 it rendered twice (without, then with archives) and ran the
+database preflight only when the config existed.
 
 ### Task
 
 Rewrite the docstring so a developer with some Python experience can tell from
-it alone what the function is for, its inputs (persistent config, `files/`,
-`images/images.tar`), what it does not do (no catalog, metadata, registrations
-or markers) and its failure cases. No behaviour change. Keep README's
+it alone what the function is for, its inputs (`~/config.yaml`, `manifests/`,
+`images/images.tar`), the order above, what it does not do (no catalog,
+metadata, registrations, pending record or markers) and its failure cases. No behaviour change. Keep README's
 standalone paragraph consistent.
+
+## 29. fapolicyd denies systemd's Podman launch just after a trust update
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; analyse before changing anything. Found in the item 20
+acceptance run `decl-app1-first-2` (revision `8e62153`, 2026-10-17).
+
+### Observation
+
+Step `10-identity-install` (Identity 0.4.9 → 0.4.10) failed at
+`systemctl --user restart myproduct-identity.service`. The release had been
+added to the trust file, `fapolicyd-cli --update` had run and `wait_trust`
+had confirmed every package file in the live database; validation,
+`podman load` and the image checks had passed. About ten seconds after the
+update, systemd's child for the unit was denied:
+
+```text
+syscall=execve exit=EPERM comm=(podman) exe=/usr/lib/systemd/systemd
+FANOTIFY resp=deny fan_info=5 subj_trust=unknown obj_trust=yes
+Failed at step EXEC spawning /usr/bin/podman: Operation not permitted (203/EXEC)
+```
+
+`/usr/bin/podman` is trusted (`obj_trust=yes`); the subject, a freshly forked
+systemd process of the `myproduct` user manager, was not (`subj_trust=unknown`).
+It was the only denial in the run. The same step passed in `decl-app2-first-2`
+on the same revision, as did every other install, stop/start/restart, crash,
+hang, reboot and upgrade restart in both runs. Earlier launcher denials
+(`exe=systemd`, `comm=(podman)`, run-18) led to the `09-launch-audit-*` steps;
+their cause was not established.
+
+### Why it matters
+
+The documented operator procedure does the same thing: add the release's trust,
+`fapolicyd-cli --update`, then `./deploy install`, which restarts services. If
+the denial is a window after a trust database reload, real installs and
+upgrades can fail intermittently with 203/EXEC.
+
+### Task
+
+1. Reproduce: repeat trust add/update followed immediately by a user-unit
+   restart on the lab PROD VM, and record how often and for how long after the
+   update the denial occurs. Inspect the effective rule 5 (`fapolicyd-cli
+   --list`), fapolicyd's version and its subject-trust handling for processes
+   forked by `systemd --user` during a database reload.
+2. Decide from evidence, not by weakening policy: candidates are waiting for a
+   reliable "reload finished" condition before the restart, ordering the trust
+   update earlier in the operator procedure, or one bounded, logged retry of a
+   restart that fails with 203/EXEC and a matching denial. Never add trust
+   rules, disable fapolicyd, or retry other failures.
+3. If deploy code changes, keep the pending-owner semantics: a restart that
+   still fails leaves the pending record for a later retry.
+4. Add a focused acceptance check that installs right after a trust update and
+   requires no FANOTIFY/AVC events; rerun `decl-app1-first`.
+
+Run product tests, acceptance-harness tests, ruff, format, pyright, vermin,
+shellcheck and `git diff --check`; report real acceptance runs separately.
+
+## 30. Make the acceptance runs much faster
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: step 1 done in 0.4.10, on the operator's decision (2026-10-17): every
+liveness probe now uses initialDelaySeconds 10, periodSeconds 10, timeoutSeconds
+5 and failureThreshold 6 (was 90/30/5/3), without a startupProbe. Measured on
+`a688c30`: each health wait about 11 s (was 92), the hang test 100 s (was 199),
+app1-first 25 min (was 44), identity-only 14 min (was 22), renamed 20 min
+(was 32). Bundle builds (about 262 s each) are now the largest cost: do step 2
+next, then 3–4.
+Raised by the operator on 2026-10-17: the item 21 matrix (six scenarios) took
+several hours, which is far too long.
+
+### Where the time goes
+
+Measured from the step tables of the item 20 runs on `8e62153`:
+
+| Run | Total | Health waits (85–115 s steps) | Bundle builds (~263 s each) | Everything else |
+| --- | ---: | ---: | ---: | ---: |
+| `decl-app1-first-3` | 44 min | 15 steps, 24 min | 2 builds, 9 min | 11 min, including the 200 s hang test |
+| `decl-renamed-4` | 27 min | 9 steps, 14 min | 2 builds, 9 min | 4 min |
+| `decl-help-2` | 12 min | 2 steps, 3 min | 1 build, 4 min | 4 min |
+
+1. **Health waits are more than half of every run.** Every container has
+   `initialDelaySeconds: 90` and `periodSeconds: 30`, so after any install,
+   start, restart, reboot or upgrade, `healthy` cannot pass in less than about
+   90 seconds, even when everything is up in five. The hang test (200 s) is
+   also derived from these numbers.
+2. **Bundle builds take about 4.5 minutes each.** `build-bundle.sh` builds all
+   five bundles, and `bundle.py` writes them with `tarfile` `w:gz`, which is
+   single-threaded gzip at level 9. The upgrade steps rebuild every bundle to
+   change one.
+3. **The six scenarios repeat the same work.** Each one resets both VMs and
+   rebuilds images, runs the unit suite and builds bundles from the same
+   revision.
+
+### Task
+
+Measure first, on the lab VMs, then change in this order. Stop once the full
+matrix is comfortably under an hour.
+
+1. **Health timing (product decision, largest gain).** Check on Podman 5.8.2
+   what `kube play` does with `startupProbe` and with a shorter
+   `initialDelaySeconds`: when the status becomes `healthy`, and how a hung
+   container is detected. Then propose one of these to the operator, with
+   measured times:
+   - a `startupProbe` with a short period and a generous total budget (slow
+     first starts such as Identity and PostgreSQL initialization keep their
+     time), plus a liveness probe without a long initial delay
+   - or a shorter `initialDelaySeconds` and period
+
+   This changes the documented product contract (README "Health checks and
+   acceptance", `tests/test_health.py`, the VM checklist and the hang-test
+   limit), so it needs the operator's approval before it changes.
+2. **Bundle builds.** Time `podman save` against compression separately. Then
+   consider a lower gzip level or a faster compressor available on the build
+   host, and building only the changed component in the upgrade steps. The
+   archive format and checksums must stay the same for the target.
+3. **Repeated work across scenarios.** Consider a matrix mode that builds
+   images, the unit suite and bundles once per revision and reuses them,
+   checked by hash, in each scenario. This conflicts with the current rule
+   that every clean run builds from source, so weigh it last and keep single
+   scenarios unchanged.
+4. Record before and after times per scenario in the acceptance README, and
+   keep every check that exists today. Speed must not come from dropping
+   evidence.
+
+## 31. Refuse component IDs that are prefixes of each other
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned. Found by the independent review of item 21 (`c92897d`); it
+predates that change.
+
+### Observation
+
+Resource names are checked only for the prefix `<component>-`. With components
+`orders` and `orders-data`, the name `orders-data-db` passes the check for both,
+so the two components can declare the same Podman volume or Secret, and
+`uninstall --delete-data` of one can delete the other's data. Reproduced with
+`render.check_component_names`.
+
+### Task
+
+1. Refuse, in the catalog (`catalog.load_catalog`) and for installed metadata,
+   any component ID that equals another ID followed by `-` and more characters.
+   Report both IDs and say how to rename.
+2. Check whether existing installations could already hold such a pair; if so,
+   refuse the install of the second with the same message, before any write.
+3. Add catalog and install regressions. No lab run is needed beyond the usual
+   matrix when this ships.

@@ -36,14 +36,14 @@ this list; update entries with implementation/test evidence when resolved.
 
 | Gap | Owner |
 | --- | --- |
-| ~~Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance~~ | Resolved by backlog 20 in 0.4.9; [verification](../acceptance/DECLARATIVE-COMPONENTS.md), real runs outstanding |
+| ~~Fixed component graph, version sources, registration owners, client allowlist, restart order and config inheritance~~ | Resolved by backlog 20 in 0.4.9; [verification](../acceptance/DECLARATIVE-COMPONENTS.md), lab runs clean |
 | ~~Mandatory public origin/port for every component; hostname derivation tied to `platform`~~ | Resolved by backlog 20 in 0.4.9 |
 | ~~Initial image validation includes unselected component directories; generic dev still has demo dependencies~~ | Resolved by backlog 20 in 0.4.9 |
 | ~~OIDC client ID/path/scopes coupled to component ID; contract needs explicit validation/documentation~~ | Resolved by backlog 20 in 0.4.9; contract in [components](COMPONENTS.md) |
-| Database preflight uses raw placeholders rather than effective manifest values | Backlog 21 |
-| Resource kinds receive inconsistent lifecycle checks: Deployment can bypass Pod checks | Backlog 21 |
-| Removing route/client declarations from a release does not remove prior registrations | Backlog 21 |
-| Some invalid manifests create generated secrets before validation rejects them | Backlog 21 |
+| ~~Database preflight uses raw placeholders rather than effective manifest values~~ | Resolved by backlog 21 in 0.4.10; [verification](../acceptance/MANIFEST-VALIDATION.md), lab runs clean after review follow-up |
+| ~~Resource kinds receive inconsistent lifecycle checks: Deployment can bypass Pod checks~~ | Resolved by backlog 21 in 0.4.10: unsupported kinds are refused |
+| ~~Removing route/client declarations from a release does not remove prior registrations~~ | Resolved by backlog 21 in 0.4.10 |
+| ~~Some invalid manifests create generated secrets before validation rejects them~~ | Resolved by backlog 21 in 0.4.10 |
 | PostgreSQL data mount and explicit Secret items mapping restrict supported layouts | Backlog 7 |
 
 External image support does not by itself demonstrate arbitrary component support.

@@ -277,3 +277,51 @@ class RenamedProductTests(ProductFixture):
             self.commands(), [["podman", "volume", "exists", "orders-data"]]
         )
         self.assertEqual(self.files_under(common.HOME), before)
+
+
+class UnsupportedKindTests(ProductFixture):
+    """A Deployment can neither take another component's name nor skip preflight."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_product(RENAMED)
+
+    def test_unsupported_kinds_in_a_release_fail_before_host_commands(self):
+        releases = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        self.provide_credentials(RENAMED, common.HOME)
+        self.install(releases["gateway"])
+        self.install(releases["login-service"])
+        release = releases["orders"]
+        manifest = release / "components/orders/manifests/10-resources.yaml"
+        original = manifest.read_text()
+        documents = list(yaml.safe_load_all(original))
+        database = next(
+            doc for doc in documents if doc["metadata"]["name"] == "orders-postgres"
+        )
+        for name, spec in (
+            ("gateway-stolen", documents[0]["spec"]),
+            ("orders-postgres", database["spec"]),
+        ):
+            with self.subTest(name=name):
+                deployment = {
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": {"name": name},
+                    "spec": {"template": {"spec": spec}},
+                }
+                manifest.write_text(
+                    original + "---\n" + yaml.safe_dump(deployment, sort_keys=False)
+                )
+                self.use_root(release)
+                deploy.init_config("orders")
+                self.volumes.add("orders-data")
+                before = self.files_under(common.HOME)
+                self.process.reset_mock()
+                with self.assertRaisesRegex(
+                    common.DeployError,
+                    "10-resources.yaml: unsupported resource kind 'Deployment'",
+                ):
+                    deploy.install()
+                self.assertEqual(self.commands(), [])
+                self.assertEqual(self.files_under(common.HOME), before)

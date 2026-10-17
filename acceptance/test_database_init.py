@@ -140,3 +140,60 @@ class DatabaseInitHarnessTests(unittest.TestCase):
             )
         self.assertEqual(podman.call_count, 3)
         self.assertEqual(podman.call_args.args[0][:2], ["kube", "down"])
+
+
+class VolumeGuardTests(unittest.TestCase):
+    """The lab guard calls the real database_preflight with the lab's documents."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
+        self.docs = database_test.database_documents(
+            "db-check-password", "db-check-data", "db-check-postgres", "secret"
+        )
+
+    def volume_exists(self, code):
+        """Answer only Podman's volume check; nothing else may run."""
+
+        def run(arguments, **kwargs):
+            self.assertEqual(arguments, ["podman", "volume", "exists", "db-check-data"])
+            return types.SimpleNamespace(returncode=code)
+
+        return mock.patch.object(
+            database_test.deploy.subprocess, "run", side_effect=run
+        )
+
+    def guard(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            database_test.volume_guard(
+                self.base, "db-check-password", "db-check-data", self.docs
+            )
+        return output.getvalue()
+
+    def test_existing_volume_is_refused_without_writes(self):
+        with self.volume_exists(0):
+            self.assertIn("refuses lost-password generation", self.guard())
+        self.assertFalse((self.base / "guard").exists())
+
+    def test_absent_volume_fails_the_guard(self):
+        with (
+            self.volume_exists(1),
+            self.assertRaisesRegex(
+                RuntimeError, "permitted missing-password generation"
+            ),
+        ):
+            self.guard()
+
+    def test_retained_password_needs_no_volume_check(self):
+        (self.base / "password").write_text("kept")
+        config = {
+            database_test.deployment_common.SECRET_FILES: {
+                "db-check-password": [{"path": ".", "generate": ["password"]}]
+            }
+        }
+        with mock.patch.object(database_test.deploy.subprocess, "run") as run:
+            database_test.deploy.database_preflight(
+                config, self.base / "config.yaml", self.docs
+            )
+        run.assert_not_called()

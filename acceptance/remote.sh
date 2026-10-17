@@ -700,8 +700,8 @@ renamed-dev-up)
 from urllib.parse import urlsplit
 from deployment import deploy
 
-_, settings = deploy.dev_settings()
-deploy.dev_database_preflight(settings)
+known, settings = deploy.dev_settings()
+deploy.check_dev_components(known, settings)
 print(urlsplit(settings["gateway"]["PUBLIC_ORIGIN"]).hostname)
 RENAMED_HOST
 )
@@ -762,6 +762,44 @@ REMOVE_MANUAL
     if grep -q manual dist/current-bundles.txt; then echo 'FAIL: manual still in the product' >&2; exit 1; fi
     ls dist/myproduct-manual-*-offline.tar.gz
     echo 'PASS: manual removed from dev and new bundles; its earlier archive is retained'
+    ;;
+renamed-inventory-drop)
+    # A newer inventory release that no longer declares a route or a client.
+    cd "$renamed"
+    python3 - <<'DROP_REGISTRATIONS'
+import pathlib
+import yaml
+
+with open("bundles.yaml") as stream:
+    catalog = yaml.safe_load(stream)
+entry = catalog["components"]["inventory"]
+entry.pop("routes")
+entry.pop("clients")
+entry["version_file"] = "INVENTORY_VERSION"
+with open("bundles.yaml", "w") as stream:
+    yaml.safe_dump(catalog, stream, sort_keys=False)
+major, minor, patch = pathlib.Path("VERSION").read_text().strip().split(".")
+pathlib.Path("INVENTORY_VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\n")
+DROP_REGISTRATIONS
+    rm components/inventory/route.conf components/inventory/client.yaml
+    ./build-bundle.sh >&2
+    name=$(grep '^myproduct-inventory-' dist/current-bundles.txt)
+    (cd dist && sha256sum -c "$name.sha256" >&2)
+    echo "$name"
+    ;;
+renamed-registrations-removed)
+    sudo -n test ! -e "$state/routes/inventory.conf"
+    sudo -n test ! -e "$state/clients/inventory"
+    sudo -n test -f "$state/routes/orders.conf"
+    sudo -n test -f "$state/clients/orders/client.json"
+    sudo -n test ! -e "$state/pending-operation.json"
+    test "$(sudo -n cat "$state/installed/inventory")" = "$version"
+    as_product podman volume exists inventory-data
+    http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+        --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/stock/")
+    test "$http" = 404
+    echo "PASS: inventory $version without route and client: /stock 404, client gone, orders kept"
     ;;
 renamed-init-check)
     # orders keeps the demo's schema init container; it must have finished successfully.

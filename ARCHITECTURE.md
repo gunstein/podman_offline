@@ -22,11 +22,33 @@ bundles. `common.HOME` follows the service account's user-database home. There
 are no lifecycle actions during package import. Modules share these explicit
 paths without circular imports or a dependency framework.
 
-`materialize_and_render()` advertises its filesystem side effects: it validates
-config/component names, creates allowed missing generated secrets, renders YAML
-and optionally writes import archives. Secret creation stays at the same
-validation boundary as before this refactor. General secret generation never
-performs database volume checks; lifecycle preflight does that first.
+Rendering is split so validation visibly precedes side effects (0.4.10). On
+install and dev `prepare`, `deploy.registration_stage()` runs first: it reads
+and validates routes and client registrations into a temporary directory and
+writes nothing else. Then:
+
+1. `render.effective_config()` validates a component's config and adds the
+   derived `PUBLIC_HOSTNAME`.
+2. `render.effective_documents()` returns the manifests as they will be
+   installed, with placeholders replaced, and checks everything decidable from
+   declarations: resource kinds, names after substitution, pull policy, mounts,
+   duplicates and the links to config and imported registration volumes. It
+   writes nothing.
+3. `deploy.database_preflight()` reads those documents, so Podman is asked
+   about the configured volume. It is the first host command.
+4. `render.materialize()` then creates allowed missing secrets, reads the file
+   groups (checks that need file bytes run here) and returns the YAML and
+   import volumes.
+
+`deploy.check_manifests()` runs steps 2 and 3; install, dev `prepare` and both
+standalone paths use it before any generation. Install also checks the image
+archive and that every image is fully qualified before step 4. General secret
+generation never performs database volume checks.
+
+Only `Pod`, `ConfigMap`, `PersistentVolumeClaim` and `Secret` documents are
+supported. `render.pod_specs()` is the one traversal of pod specs and refuses
+every other kind first, so a `Deployment` cannot pass some lifecycle checks and
+skip others ([components](docs/COMPONENTS.md#manifest-resource-kinds)).
 
 ## Declared component model (0.4.9)
 
@@ -57,18 +79,29 @@ a demo component. The demo's certificate and user provisioning is the explicit
 `install_components()` validates before any write: the bundle descriptor, the
 installed metadata plus this descriptor as one set of known components
 (conflicting owners refused), pending conflicts, dependency and dependent
-ranges, resource/config names, the declared `public_from` settings and DB
-state. Then it stages registrations in a temporary directory. A `newer-only`
-component with an equal installed version is excluded from rendering; its
-images are still verified and its registrations still staged.
+ranges and the declared `public_from` settings. It then stages and validates
+registrations in a temporary directory (`registration_stage`), and only then
+checks the effective manifests and DB state (`check_manifests`), whose
+database preflight is the first host command. A `newer-only` component with an equal installed version is excluded
+from rendering; its images are still verified and its registrations still
+staged.
+
+The incoming release is authoritative for its own registrations: staging never
+copies the selected component's installed route or client, and a role the
+release no longer declares becomes a removal. Absence for any other component
+never means removal.
 
 `install_component_plan()` then reads as explicit steps:
 
-1. Check the existing shared network and materialize selected manifests.
+1. Check the existing shared network, the image archive and that every image
+   is fully qualified, then materialize the validated manifests once
+   (`render.materialize`: generate missing secrets, render YAML).
 2. Load this bundle's archive and verify every required image.
 3. Write the installed metadata, so registrations name a known component.
-4. Record unfinished registration owners, then write public registrations.
-5. Write selected imports/YAML/Quadlets and changed owner imports.
+4. Record unfinished registration owners, including owners of removed
+   registrations, then write or delete public registrations.
+5. Write the rendered YAML, its import archives, Quadlets and changed owner
+   imports.
 6. Reload systemd, restart the component and then changed owners
    (`restart_order`), check `is-active` and acknowledge each owner.
 7. Write the installed version marker last as completion.
@@ -81,8 +114,13 @@ restart the route owner and client changes the client owner; unchanged
 registrations with no pending work restart no owner. Sibling apps remain
 running.
 
+Because owners are saved before a removed registration disappears, a retry in
+a new process still rebuilds their imports and restarts them.
+`restart_service()` and `acknowledge_owner()` are shared by install and
+uninstall.
+
 Uninstall records its validated own volume inventory, deletion choice, stop
-checkpoint and unfinished owners before destructive work. It can resume after
+checkpoint and unfinished owners (`uninstall_plan()`) before destructive work. It can resume after
 YAML, markers or data are gone. The private `pending-operation.json` persists
 across process runs; conflicts are refused rather than guessed away. See
 [retry safety](acceptance/RETRY-SAFETY.md). Run one lifecycle command at a time.
@@ -96,7 +134,8 @@ from the component path; they are not migration or old-release adapters.
 
 ### `./deploy install` from an unpacked bundle
 
-Validation happens before any write; `pending-operation.json` is saved before
+Validation happens before any write or host command; the database preflight
+is the first host command; `pending-operation.json` is saved before
 registrations change; the version marker is written last.
 
 ```mermaid
@@ -120,23 +159,28 @@ sequenceDiagram
     Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
     D->>R: load_config, validate_component_config
     D->>D: check_public_settings (public_from)
-    D->>H: database_preflight: podman volume exists
-    D->>D: registration_stage (temp dir): imports + updates
+    D->>D: registration_stage (temp dir): imports, updates, removals
+    D->>R: effective_config, effective_documents
+    Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links; no writes
+    D->>H: database_preflight: podman volume exists (configured name)
     D->>P: install_component_plan
-    P->>S: check_shared_network
-    P->>R: materialize_and_render (write_archives=False)
-    Note over R: validate names and config, generate missing secrets,<br/>read files, render YAML, check links
+    P->>S: check_shared_network, image archive, find_images
+    P->>R: materialize: generate missing secrets, read files, render YAML
     P->>H: podman load + podman image exists
     P->>S: write metadata/ID.json
-    P->>S: save_pending, then write routes/ and clients/
-    P->>R: materialize_and_render (writes import archives)
-    P->>S: write Quadlet .yaml/.kube, owner import archives
+    P->>S: save_pending, then write/delete routes/ and clients/
+    P->>S: write rendered YAML, import archives, Quadlet .kube, owner imports
     P->>H: daemon-reload, restart component then owners (restart_order)
     P->>S: acknowledge each owner, clear_pending
     P->>S: write installed/ID (completion)
 ```
 
 ### `./build-bundle.sh` in the source checkout
+
+This is the catalog path. Without `bundles.yaml`, `bundle.build()` builds one
+standalone release instead: `manifest_images()` from `manifests/`, the same
+secret guard, then a single `build_release(VERSION)` and no
+`dist/current-bundles.txt`.
 
 ```mermaid
 sequenceDiagram

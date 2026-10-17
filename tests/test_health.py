@@ -44,10 +44,10 @@ class ProbeTests(unittest.TestCase):
                 self.assertNotIn("tcpSocket", probe)
                 self.assertNotIn("readinessProbe", container)
                 self.assertNotIn("startupProbe", container)
-                self.assertEqual(probe["initialDelaySeconds"], 90)
-                self.assertEqual(probe["periodSeconds"], 30)
+                self.assertEqual(probe["initialDelaySeconds"], 10)
+                self.assertEqual(probe["periodSeconds"], 10)
                 self.assertEqual(probe["timeoutSeconds"], 5)
-                self.assertEqual(probe["failureThreshold"], 3)
+                self.assertEqual(probe["failureThreshold"], 6)
                 config = rendering.merge_config(
                     ROOT / "config/common.defaults.yaml",
                     path.parent.parent / "config.defaults.yaml",

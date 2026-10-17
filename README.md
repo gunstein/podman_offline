@@ -74,7 +74,7 @@ in force. See [layout cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md).
 
 Every `bundle.yaml` is the compiled descriptor of its component and declares
 exact dependencies with inclusive `min` and exclusive `before` ranges, for
-example `{platform: {min: 0.4.9, before: 0.5.0}, identity: {min: 0.4.9, before:
+example `{platform: {min: 0.4.10, before: 0.5.0}, identity: {min: 0.4.10, before:
 0.5.0}}` for app1/app2. For 0.x, compatibility follows the minor series; for
 1.x and later, the declared major series. The installed descriptor is retained
 privately under `metadata/`, independently of old release directories. Incoming dependencies and every installed dependent's range must
@@ -415,7 +415,7 @@ flowchart TD
     RENDER["`Deploy reads and validates inputs
     Replaces placeholders with config values
     Creates declared missing secrets when permitted
-    deployment/render.py: materialize_and_render()`"]
+    deployment/render.py: effective_documents(), materialize()`"]
 
     SECRET["`SECRET_FILES
     Reads the selected files
@@ -538,9 +538,13 @@ flowchart TD
     BROWSER -->|Cookie on later requests| BACKEND
 ```
 
-`deployment/deploy.py: database_preflight()` runs before generation. A missing
+`deployment/deploy.py: database_preflight()` runs after manifest validation and
+before generation, on the effective manifest (placeholders replaced). A missing
 database password with an existing database volume stops installation; deploy
-does not invent a replacement password for retained database state.
+does not invent a replacement password for retained database state. A container
+that sets any `POSTGRES_PASSWORD*` variable or mounts `/var/lib/postgresql/data`
+counts as a database container and must use `POSTGRES_PASSWORD_FILE` with a
+mounted Secret; any other password layout is refused before generation.
 
 The session key is an application-wide signing key, not a per-user password or
 the key used to authenticate the app to Identity. Flask stores signed session
@@ -668,7 +672,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
 bundle=platform
-version=0.4.9
+version=0.4.10
 archive="myproduct-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
@@ -917,9 +921,12 @@ launchers still need clean audit evidence; no security rules are weakened.
 
 ## Health checks and acceptance
 
-Every ordinary container has one exec liveness probe: initial delay 90 seconds,
-period 30, timeout 5, three failures. Status is starting during the start period
-after each restart. PostgreSQL uses pg_isready, identity checks its local /health
+Every ordinary container has one exec liveness probe: initial delay 10 seconds,
+period 10, timeout 5, six failures (0.4.10; previously 90/30/5/3). A container
+is usually healthy about 10 seconds after a start, still has about 70 seconds
+to finish starting before it is restarted, and a hung container is restarted
+after about 90 seconds. Status is starting until the first check succeeds after
+each restart. PostgreSQL uses pg_isready, identity checks its local /health
 via Bash /dev/tcp, backend uses Python against local /livez, frontend/help use
 local wget and proxy uses wget against its own HTTPS /livez. No probe depends on
 another pod. Backend /api/health checks the database only for e2e/control.

@@ -5,7 +5,6 @@ import io
 import json
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -23,18 +22,6 @@ class ComponentFixture(DeployFixture):
     def setUp(self):
         """Create a minimal app1 release and two persistent configs."""
         super().setUp()
-        # The environment guard is tested separately. Keep staging inside the fixture,
-        # even on machines without the synthetic /run/user/1000 runtime directory.
-        temporary_directory = tempfile.TemporaryDirectory
-
-        def staging(*args, **kwargs):
-            if kwargs.get("dir") == "/run/user/1000":
-                kwargs["dir"] = str(self.root)
-            return temporary_directory(*args, **kwargs)
-
-        self.stack.enter_context(
-            mock.patch.object(tempfile, "TemporaryDirectory", side_effect=staging)
-        )
         self.write("VERSION", "1.2.3\n")
         self.write("PLATFORM_VERSION", "1.0.0\n")
         self.write("IDENTITY_VERSION", "1.0.0\n")
@@ -323,7 +310,7 @@ class ComponentTests(ComponentFixture):
         sibling = self.write("home/routes/app2.conf", "existing app2 route")
         client = self.write("home/clients/app2/client.json", '{"Id": "app2"}')
         self.write("home/clients/app2/client.crt", "existing public certificate")
-        imports, updates = deploy.registration_stage(["app1"], work, self.known())
+        imports, updates, _ = deploy.registration_stage(["app1"], work, self.known())
         self.assertFalse((common.HOME / "routes/app1.conf").exists())
         self.assertEqual(sibling.read_text(), "existing app2 route")
         self.assertEqual(client.read_text(), '{"Id": "app2"}')
@@ -578,7 +565,7 @@ class ComponentTests(ComponentFixture):
         self.assertIn("location /app1/", (work / "routes/installed.conf").read_text())
         empty = self.root / "empty-stage"
         empty.mkdir()
-        imports, _ = deploy.registration_stage([], empty, self.known())
+        imports, _, _ = deploy.registration_stage([], empty, self.known())
         self.assertEqual(json.loads((empty / "clients/installed.json").read_text()), [])
         self.assertEqual((empty / "routes/installed.conf").read_text(), "")
         self.assertEqual(

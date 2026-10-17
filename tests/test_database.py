@@ -12,6 +12,7 @@ from unittest import mock
 
 import yaml
 from catalog_fixture import DEMO_COMPONENTS, mark_installed, write_descriptor
+from render_helper import materialize_and_render
 from test_deploy import DeployFixture
 
 from deployment import common, deploy
@@ -40,7 +41,12 @@ class DatabaseTests(DeployFixture):
         self.process.return_value = subprocess.CompletedProcess([], 1)
 
     def preflight(self):
-        deploy.database_preflight(self.settings, self.path, self.manifests)
+        deploy.check_manifests(
+            rendering.effective_config(self.settings, self.path, "app1"),
+            self.path,
+            self.manifests,
+            "app1",
+        )
 
     def test_new_database_generates_once_with_private_modes(self):
         self.preflight()
@@ -60,10 +66,11 @@ class DatabaseTests(DeployFixture):
         for component in ("app1", "app2"):
             config = rendering.component_defaults(component)
             base = common.HOME / component
-            deploy.database_preflight(
-                config,
+            deploy.check_manifests(
+                rendering.effective_config(config, base / "config.yaml", component),
                 base / "config.yaml",
                 common.ROOT / "components" / component / "manifests",
+                component,
             )
             rendering.generate_secrets(config, base)
             passwords.append((base / "credentials/database/password").read_bytes())
@@ -86,7 +93,7 @@ class DatabaseTests(DeployFixture):
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
         self.write("home/app1/credentials/todo/public-fixture", b"fixture")
         self.preflight()
-        text = rendering.materialize_and_render(
+        text = materialize_and_render(
             config_path=self.path, manifests=self.manifests, component="app1"
         )
         password = self.password.read_bytes()
@@ -101,7 +108,7 @@ class DatabaseTests(DeployFixture):
         self.assertNotIn(password.decode(), text)
         self.assertNotIn("ConnectionStrings__Default", text)
         self.assertNotIn("@@", text)
-        rendering.materialize_and_render(
+        materialize_and_render(
             config_path=self.path, manifests=self.manifests, component="app1"
         )
         self.assertEqual(self.password.read_bytes(), password)
@@ -124,6 +131,11 @@ class DatabaseTests(DeployFixture):
             yaml.safe_dump(rendering.component_defaults("platform")),
         )
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
+        # The public client certificate is validated by staging, before the guard.
+        self.write(
+            "home/app1/credentials/todo/todo-client.crt",
+            "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
+        )
         before = {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
         self.process.return_value = subprocess.CompletedProcess([], 0)
         with self.assertRaisesRegex(common.DeployError, "existing volume app1-data"):

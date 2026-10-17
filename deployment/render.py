@@ -549,52 +549,86 @@ def check_links(docs, from_config, sources=None):
     for key, where in sorted(from_config.items()):
         if key not in used:
             raise common.DeployError(
-                f"{where} in config.yaml is not used by any manifest. "
+                f"{where} is not used by any manifest. "
                 "Check that the id matches secretName/claimName in the manifest"
             )
 
 
-def check_pod_spec(value):
+SUPPORTED_KINDS = ("Pod", "ConfigMap", "PersistentVolumeClaim", "Secret")
+
+
+def check_kinds(documents, source):
+    """Accept only the resource kinds every lifecycle step understands.
+
+    Rendering, preflight, image discovery, name checks and uninstall all read
+    Pods through pod_specs(). A Deployment or List would pass some of those
+    steps and bypass others, so it is refused before any side effect.
+    """
+    for doc in documents:
+        if doc is None:
+            continue  # An empty YAML document, e.g. after a leading ---.
+        kind = doc.get("kind") if isinstance(doc, dict) else None
+        if not isinstance(kind, str) or kind not in SUPPORTED_KINDS:
+            raise common.DeployError(
+                f"{source}: unsupported resource kind {kind!r}; "
+                "supported: " + ", ".join(SUPPORTED_KINDS)
+            )
+
+
+def pod_specs(documents, source="manifests"):
+    """Return (pod document, spec) for each Pod after checking every kind."""
+    documents = list(documents)  # Callers may pass a one-shot YAML generator.
+    check_kinds(documents, source)
+    specs = []
+    for doc in documents:
+        if doc is not None and doc["kind"] == "Pod":
+            spec = doc.get("spec", {})
+            if not isinstance(spec, dict):
+                raise common.DeployError(f"{source}: Pod spec must be a map")
+            specs.append((doc, spec))
+    return specs
+
+
+def containers(spec):
+    """Return (group, container) for regular and init containers of one pod spec."""
+    found = []
+    for group in ("containers", "initContainers"):
+        entries = spec.get(group, [])
+        if not isinstance(entries, list):
+            raise common.DeployError(f"{group} must be a list")
+        for container in entries:
+            if not isinstance(container, dict):
+                raise common.DeployError(f"{group} entries must be maps")
+            found.append((group, container))
+    return found
+
+
+def check_pod_specs(documents, source="manifests"):
     """Validate offline pull policy and mounts within each pod specification."""
-    if isinstance(value, dict):
-        spec = value.get("spec")
-        if not isinstance(spec, dict):
-            spec = {}
+    for _, spec in pod_specs(documents, source):
         volumes = {
             volume.get("name")
             for volume in spec.get("volumes", [])
             if isinstance(volume, dict)
         }
-        for group in ("containers", "initContainers"):
-            for container in spec.get(group, []):
-                if not isinstance(container, dict):
-                    raise common.DeployError(f"{group} entries must be maps")
-                name = container.get("name", "<unnamed>")
-                if container.get("imagePullPolicy") != "Never":
+        for group, container in containers(spec):
+            name = container.get("name", "<unnamed>")
+            if container.get("imagePullPolicy") != "Never":
+                raise common.DeployError(
+                    f"Container {name!r} ({group}) must use imagePullPolicy: Never"
+                )
+            for mount in container.get("volumeMounts", []):
+                if not isinstance(mount, dict) or mount.get("name") not in volumes:
                     raise common.DeployError(
-                        f"Container {name!r} ({group}) must use imagePullPolicy: Never"
+                        f"Container {name!r} ({group}) mounts an undefined volume: {mount.get('name') if isinstance(mount, dict) else mount!r}"
                     )
-                for mount in container.get("volumeMounts", []):
-                    if not isinstance(mount, dict) or mount.get("name") not in volumes:
-                        raise common.DeployError(
-                            f"Container {name!r} ({group}) mounts an undefined volume: {mount.get('name') if isinstance(mount, dict) else mount!r}"
-                        )
-        for child in value.values():
-            check_pod_spec(child)
-    elif isinstance(value, list):
-        for child in value:
-            check_pod_spec(child)
 
 
 def check_component_names(documents, component, source):
-    """Reject unprefixed component resources before generating or writing files."""
+    """Reject unsupported kinds and unprefixed resources before any writes."""
+    check_kinds(documents, source)
     for doc in documents:
-        if not isinstance(doc, dict) or doc.get("kind") not in (
-            "Pod",
-            "Secret",
-            "PersistentVolumeClaim",
-            "ConfigMap",
-        ):
+        if doc is None:
             continue
         name = (doc.get("metadata") or {}).get("name")
         if (
@@ -623,61 +657,47 @@ def check_component_config_names(config, component, path):
         )
 
 
-def materialize_and_render(
-    files_dir=None,
-    write_archives=True,
-    config_path=None,
-    manifests=None,
-    component=None,
-    extra_volumes=None,
-):
-    """Validate, create allowed missing secrets, render YAML and optionally write imports."""
-    config_path = config_path or common.CONFIG
-    if not config_path.exists():
-        raise common.DeployError(f"Missing {config_path}")
+def effective_config(config, path, component):
+    """Validate a component's config and add the derived PUBLIC_HOSTNAME; no writes."""
+    validate_component_config(config, component, path)
+    config = dict(config)
+    if "PUBLIC_ORIGIN" in config:
+        config["PUBLIC_HOSTNAME"] = public_origin(
+            config["PUBLIC_ORIGIN"], path
+        ).hostname
+    return config
 
-    files_dir = files_dir or common.BUILD / "files"
-    config = load_config(config_path)
-    manifests = manifests or common.MANIFESTS
-    if component:
-        for path in sorted(manifests.glob("*.yaml")):
-            check_component_names(load_yaml_all(path), component, path)
-        check_component_config_names(config, component, config_path)
-    if component:
-        validate_component_config(config, component, config_path)
-        if "PUBLIC_ORIGIN" in config:
-            config["PUBLIC_HOSTNAME"] = public_origin(
-                config["PUBLIC_ORIGIN"], config_path
-            ).hostname
-    generate_secrets(config, config_path.parent)
-    secrets = load_file_group(config, common.SECRET_FILES, config_path.parent)
-    volume_config = dict(config)
-    mapping = config.get(common.VOLUME_FILES, {})
-    if not isinstance(mapping, dict):
-        raise common.DeployError(
-            f"{common.VOLUME_FILES} in {config_path} must be a map"
-        )
-    volume_config[common.VOLUME_FILES] = {
-        key: entries
-        for key, entries in mapping.items()
-        if key not in (extra_volumes or {})
-    }
-    volumes = load_file_group(volume_config, common.VOLUME_FILES, config_path.parent)
-    volumes.update(extra_volumes or {})
 
-    docs: list = secret_documents(secrets) + volume_claims(volumes, files_dir)
-    sources: list = [None] * len(docs)
+def declared_volume_names(config, path, imported):
+    """Return the Secret and PVC names that config and registration imports provide."""
+    try:
+        secrets = sorted(file_group_sources(config, common.SECRET_FILES))
+        volumes = file_group_sources(config, common.VOLUME_FILES)
+    except common.DeployError as error:
+        raise common.DeployError(f"{path}: {error}") from None
+    return secrets, sorted(set(volumes) | set(imported))
 
-    for path in sorted(manifests.glob("*.yaml")):
+
+def effective_documents(config, path, manifests, component=None, imported=()):
+    """Return the manifests as they will be installed, fully validated, without writes.
+
+    Everything that can be decided from declarations is checked here, before
+    any secret is generated: kinds, placeholders, resource names (after
+    substitution), pull policies, mounts, duplicates and the links between
+    manifests, config and imported registration volumes (by name).
+    """
+    documents, sources = [], []
+    for manifest in sorted(manifests.glob("*.yaml")):
+        check_kinds(load_yaml_all(manifest), manifest)
         try:
             rendered = [
                 replace(document, config)
-                for document in load_yaml_all(path)
+                for document in load_yaml_all(manifest)
                 if document is not None
             ]
+            check_pod_specs(rendered)
             for doc in rendered:
-                check_pod_spec(doc)
-                if isinstance(doc, dict) and doc.get("kind") == "ConfigMap":
+                if isinstance(doc, dict) and doc["kind"] == "ConfigMap":
                     data = doc.get("data") or {}
                     if not isinstance(data, dict):
                         raise common.DeployError("ConfigMap.data must be a map")
@@ -687,80 +707,85 @@ def materialize_and_render(
                     'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'
                 )
         except common.DeployError as error:
-            raise common.DeployError(
-                f"{path} (config {config_path}): {error}"
-            ) from None
-        docs += rendered
-        sources.extend([path] * len(rendered))
+            raise common.DeployError(f"{manifest} (config {path}): {error}") from None
+        if component:
+            check_component_names(rendered, component, manifest)
+        documents += rendered
+        sources += [manifest] * len(rendered)
 
-    from_config = {("Secret", i): f"{common.SECRET_FILES}.{i}" for i in secrets}
+    imported = set(imported)
+    secrets, volumes = declared_volume_names(config, path, imported)
+    declared = [{"kind": "Secret", "metadata": {"name": i}} for i in secrets] + [
+        {"kind": "PersistentVolumeClaim", "metadata": {"name": i}} for i in volumes
+    ]
+    from_config = {
+        ("Secret", i): f"{common.SECRET_FILES}.{i} in config.yaml" for i in secrets
+    }
     from_config.update(
-        {("PersistentVolumeClaim", i): f"{common.VOLUME_FILES}.{i}" for i in volumes}
+        {
+            ("PersistentVolumeClaim", i): (
+                f"Imported volume {i} (accepts in bundles.yaml)"
+                if i in imported
+                else f"{common.VOLUME_FILES}.{i} in config.yaml"
+            )
+            for i in volumes
+        }
     )
     try:
-        check_links(docs, from_config, sources)
+        check_links(declared + documents, from_config, [None] * len(declared) + sources)
     except common.DeployError as error:
-        raise common.DeployError(f"{config_path}: {error}") from None
+        raise common.DeployError(f"{path}: {error}") from None
+    return documents
 
-    text = yaml.safe_dump_all(docs, sort_keys=False)
 
-    # Base64 never contains '@', so Secret data cannot give false matches.
-    if "@@" in text:
-        raise common.DeployError(
-            'Unreplaced @@...@@ in the manifests. Only whole values like "@@NAME@@" are supported.'
-        )
+def materialize(config, path, documents, files_dir, extra_volumes=None):
+    """Create allowed missing secrets and return the install YAML and import volumes.
 
-    if write_archives:
-        write_file_archives(volumes, files_dir)
-    return text
+    Call only with effective_documents() output and after the database preflight.
+    Checks that need the files themselves (missing, empty or oversized sources)
+    necessarily run here, after generation.
+    """
+    generate_secrets(config, path.parent)
+    secrets = load_file_group(config, common.SECRET_FILES, path.parent)
+    # Imported registration volumes replace a same-named VOLUME_FILES entry.
+    volume_config = dict(config)
+    volume_config[common.VOLUME_FILES] = {
+        key: entries
+        for key, entries in config.get(common.VOLUME_FILES, {}).items()
+        if key not in (extra_volumes or {})
+    }
+    volumes = load_file_group(volume_config, common.VOLUME_FILES, path.parent)
+    volumes.update(extra_volumes or {})
+    docs = secret_documents(secrets) + volume_claims(volumes, files_dir) + documents
+    return yaml.safe_dump_all(docs, sort_keys=False), volumes
 
 
 def find_images(documents):
     """Find unique, fully qualified images in pod specs."""
     images = set()
-    pending = list(documents)
-    while pending:
-        value = pending.pop()
-        if isinstance(value, list):
-            pending.extend(value)
-        elif isinstance(value, dict):
-            for key, child in value.items():
-                if key in ("containers", "initContainers") and isinstance(child, list):
-                    for container in child:
-                        image = (
-                            container.get("image")
-                            if isinstance(container, dict)
-                            else None
-                        )
-                        container_name = (
-                            container.get("name", "<unnamed>")
-                            if isinstance(container, dict)
-                            else "<unnamed>"
-                        )
-                        where = f"container {container_name!r} ({key})"
-                        if not isinstance(image, str) or not image.strip():
-                            raise common.DeployError(
-                                f"Container must have an image name as a string: {where}"
-                            )
-                        if "@@" in image:
-                            raise common.DeployError(
-                                f"Image {image}: placeholders are not supported in {where}"
-                            )
-                        registry, separator, name = image.partition("/")
-                        if (
-                            not separator
-                            or not name
-                            or not (
-                                "." in registry
-                                or ":" in registry
-                                or registry == "localhost"
-                            )
-                        ):
-                            raise common.DeployError(
-                                f"Image {image} must be fully qualified in {where}"
-                            )
-                        images.add(image)
-                pending.append(child)
+    for _, spec in pod_specs(documents):
+        for key, container in containers(spec):
+            image = container.get("image")
+            container_name = container.get("name", "<unnamed>")
+            where = f"container {container_name!r} ({key})"
+            if not isinstance(image, str) or not image.strip():
+                raise common.DeployError(
+                    f"Container must have an image name as a string: {where}"
+                )
+            if "@@" in image:
+                raise common.DeployError(
+                    f"Image {image}: placeholders are not supported in {where}"
+                )
+            registry, separator, name = image.partition("/")
+            if (
+                not separator
+                or not name
+                or not ("." in registry or ":" in registry or registry == "localhost")
+            ):
+                raise common.DeployError(
+                    f"Image {image} must be fully qualified in {where}"
+                )
+            images.add(image)
     if not images:
         raise common.DeployError("No images found in the manifests")
     return sorted(images)

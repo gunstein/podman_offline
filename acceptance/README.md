@@ -1,3 +1,12 @@
+# Registration removal (0.4.10)
+
+`--renamed-product` now also builds a newer inventory release without route and
+client on DEV, installs it on PROD and checks that `/stock` returns 404, the
+inventory client is gone and orders still works, before the existing inventory
+uninstall. See [verification](MANIFEST-VALIDATION.md).
+
+---
+
 # Declarative components (0.4.9)
 
 `--renamed-product` generates gateway, login-service, orders, inventory and
@@ -612,9 +621,9 @@ Database content and hash values are not written to the log.
 rejects missing, extra or duplicate app containers and requires `running`
 and `State.Health.Status=healthy`. Infra/service containers and manifest-defined
 init containers are excluded. The health check waits up to 150 seconds;
-command/parse errors and unhealthy stop at once. `initialDelaySeconds: 90`
-covers startup. The status is starting for up to 90 seconds after each start,
-and healthy only once the next check succeeds.
+command/parse errors and unhealthy stop at once. With `initialDelaySeconds: 10`
+and `periodSeconds: 10` a container is usually healthy about 10 seconds after a
+start; `failureThreshold: 6` allows about 70 seconds of startup.
 
 `09-hang` follows `09-crash` and the marker check: inspect records PID, start time,
 restart count and health. Every host PID from `podman top ... hpid` gets SIGSTOP,
@@ -624,8 +633,8 @@ Then all containers, the HTTPS backend and `09-markers-hang` are checked.
 No SIGCONT or repair is used on failure. The same health requirement applies after
 reboot and upgrade, and the final audit must still be free of denials.
 
-The hang-test limit is 300 seconds: 3 × (30 s interval + 5 s timeout) + 10 s stop + 90 s start period + 30 s
-for the first healthy check is about 235 s; 300 s leaves a scheduling margin.
+The hang-test limit is 300 seconds: 6 × (10 s interval + 5 s timeout) + 10 s stop + 10 s initial delay
++ 10 s for the first healthy check is about 120 s; 300 s leaves a wide scheduling margin.
 The temporary stop flag on the original non-running unhealthy process is allowed;
 `StoppedByUser` must be false after restart.
 

@@ -313,17 +313,15 @@ class BundleTests(unittest.TestCase):
         self.assertFalse(bundle.DIST.exists())
         self.process.assert_not_called()
 
-    def test_multiple_files_documents_flow_maps_and_deployments(self):
+    def test_multiple_files_documents_flow_maps_and_init_containers(self):
         self.write(
             "manifests/second.yaml",
             """# Empty document
 ---
-kind: Deployment
+kind: Pod
 spec:
-  template:
-    spec:
-      containers: [{image: 'registry.firma.no/team/app:1'}]
-      initContainers: [{image: 'localhost/init:1'}]
+  containers: [{image: 'registry.firma.no/team/app:1'}]
+  initContainers: [{image: 'localhost/init:1'}]
 ---
 kind: Pod
 spec:
@@ -344,11 +342,37 @@ data: {image: ignored}
             ],
         )
 
+    def test_unsupported_kinds_fail_before_podman_or_stage_changes(self):
+        """A Deployment or List would bypass lifecycle checks; refuse it at build."""
+        old = self.write("build/bundle/keep", "previous build")
+        for kind in ("Deployment", "List", None):
+            with self.subTest(kind=kind):
+                self.write(
+                    "manifests/bad.yaml",
+                    yaml.safe_dump(
+                        {
+                            "kind": kind,
+                            "spec": {
+                                "template": {
+                                    "spec": {"containers": [{"image": "localhost/a:1"}]}
+                                }
+                            },
+                        }
+                    ),
+                )
+                with self.assertRaisesRegex(
+                    bundle.BundleError, "bad.yaml: unsupported resource kind"
+                ):
+                    bundle.build()
+        self.assertEqual(old.read_text(), "previous build")
+        self.process.assert_not_called()
+        self.assertFalse(bundle.DIST.exists())
+
     def test_invalid_image_fails_before_stage_is_removed_or_podman_runs(self):
         old = self.write("build/bundle/keep", "previous build")
         self.write(
             "manifests/bad.yaml",
-            "spec:\n  initContainers:\n  - image: team/app:1\n",
+            "kind: Pod\nspec:\n  initContainers:\n  - image: team/app:1\n",
         )
         with self.assertRaisesRegex(bundle.BundleError, "team/app:1.*fully qualified"):
             bundle.build()
@@ -367,7 +391,9 @@ data: {image: ignored}
             with self.subTest(image=image):
                 self.write(
                     "manifests/app.yaml",
-                    yaml.safe_dump({"spec": {"containers": [{"image": image}]}}),
+                    yaml.safe_dump(
+                        {"kind": "Pod", "spec": {"containers": [{"image": image}]}}
+                    ),
                 )
                 with self.assertRaises(bundle.BundleError):
                     bundle.manifest_images()
@@ -443,7 +469,7 @@ data: {image: ignored}
         """Bundle a registry image with its exact full name after a successful pull."""
         self.write(
             "manifests/remote.yaml",
-            "spec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
+            "kind: Pod\nspec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
         )
         bundle.build()
         self.assertEqual(
@@ -489,7 +515,7 @@ data: {image: ignored}
         """Suppress registry diagnostic credentials and refuse cached/build fallback."""
         self.write(
             "manifests/remote.yaml",
-            "spec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
+            "kind: Pod\nspec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
         )
         self.process.side_effect = subprocess.CalledProcessError(
             125,

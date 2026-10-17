@@ -1,0 +1,271 @@
+"""Manifest validation runs before secret generation, output and host commands.
+
+Backlog item 21, section 4: on every path (install, dev prepare, standalone
+prepare and install) a manifest error that can be decided from declarations
+must leave no generated secret, import archive, YAML or Podman call behind.
+"""
+
+import copy
+import shutil
+from unittest import mock
+
+import yaml
+from product_fixture import RENAMED, ProductFixture
+from test_deploy import DeployFixture, document
+
+from deployment import common, deploy
+from deployment import render as rendering
+
+
+def broken_orders(case):
+    """Return orders manifests with one declaration error and the expected message."""
+    documents = copy.deepcopy(RENAMED["orders"]["manifests"])
+    web = documents[2]["spec"]
+    container = web["containers"][0]
+    if case == "undefined mount":
+        container["volumeMounts"].append({"name": "nowhere", "mountPath": "/x"})
+        return documents, "undefined volume: .nowhere."
+    if case == "missing reference":
+        web["volumes"].append({"name": "extra", "secret": {"secretName": "orders-x"}})
+        return documents, "Secret 'orders-x', but it does not exist"
+    if case == "duplicate resource":
+        documents.append(document("ConfigMap", "orders-data", data={}))
+        return documents, "'orders-data' is defined more than once"
+    if case == "online pull policy":
+        container["imagePullPolicy"] = "IfNotPresent"
+        return documents, "imagePullPolicy: Never"
+    if case == "unreplaced placeholder":
+        container["env"].append({"name": "USER", "value": "x-@@DB_USER@@"})
+        return documents, "Unreplaced"
+    raise AssertionError(case)
+
+
+CASES = (
+    "undefined mount",
+    "missing reference",
+    "duplicate resource",
+    "online pull policy",
+    "unreplaced placeholder",
+)
+
+
+class ProductValidationOrderTests(ProductFixture):
+    def setUp(self):
+        super().setUp()
+        self.write_product(RENAMED)
+
+    def write_orders(self, root, documents):
+        (root / "components/orders/manifests/10-resources.yaml").write_text(
+            yaml.safe_dump_all(documents, sort_keys=False)
+        )
+
+    def test_install_validates_before_preflight_generation_or_writes(self):
+        releases = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        self.provide_credentials(RENAMED, common.HOME)
+        self.install(releases["gateway"])
+        self.install(releases["login-service"])
+        release = releases["orders"]
+        self.use_root(release)
+        deploy.init_config("orders")
+        password = common.HOME / "orders/credentials/database/password"
+        for case in CASES:
+            with self.subTest(case=case):
+                documents, message = broken_orders(case)
+                self.write_orders(release, documents)
+                before = self.files_under(common.HOME)
+                self.process.reset_mock()
+                with self.assertRaisesRegex(common.DeployError, message):
+                    deploy.install()
+                # Not even the database volume check: it follows validation.
+                self.assertEqual(self.commands(), [])
+                self.assertEqual(self.files_under(common.HOME), before)
+                self.assertFalse(password.exists())
+
+    def test_install_renders_once_and_writes_what_it_validated(self):
+        releases = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        self.provide_credentials(RENAMED, common.HOME)
+        for name in ("gateway", "login-service"):
+            self.install(releases[name])
+        results = []
+        original = rendering.materialize
+
+        def materialize(*args, **kwargs):
+            results.append(original(*args, **kwargs))
+            return results[-1]
+
+        with mock.patch.object(rendering, "materialize", side_effect=materialize):
+            self.install(releases["orders"])
+        # One generation and render; the installed YAML is exactly that render.
+        self.assertEqual(len(results), 1)
+        self.assertEqual(deploy.component_paths("orders")[2].read_text(), results[0][0])
+        self.assertTrue(
+            (common.HOME / "orders/credentials/database/password").is_file()
+        )
+
+    def test_dev_prepare_validates_every_component_before_any_write(self):
+        dev = common.BUILD / "dev"
+        self.provide_credentials(RENAMED, dev)
+        for case in CASES:
+            with self.subTest(case=case):
+                documents, message = broken_orders(case)
+                self.write_orders(self.source, documents)
+                before = self.files_under(dev)
+                self.process.reset_mock()
+                with self.assertRaisesRegex(common.DeployError, message):
+                    deploy.prepare()
+                self.assertEqual(self.commands(), [])
+                self.assertEqual(self.files_under(dev), before)
+                self.assertFalse((common.BUILD / "install.yaml").exists())
+
+
+class RegistrationValidationOrderTests(ProductFixture):
+    """Registrations are validated by staging, before any write or host command."""
+
+    BROKEN = "id: orders\nbase_path: no-slash\nscopes: [openid]\ncertificate: x\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write_product(RENAMED)
+
+    def test_install_validates_registrations_before_host_commands(self):
+        releases = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        self.provide_credentials(RENAMED, common.HOME)
+        self.install(releases["gateway"])
+        self.install(releases["login-service"])
+        release = releases["orders"]
+        self.use_root(release)
+        deploy.init_config("orders")
+        (release / "components/orders/client.yaml").write_text(self.BROKEN)
+        before = self.files_under(common.HOME)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(common.DeployError, "Invalid public client"):
+            deploy.install()
+        self.assertEqual(self.commands(), [])
+        self.assertEqual(self.files_under(common.HOME), before)
+
+    def test_dev_prepare_validates_registrations_before_any_write(self):
+        dev = common.BUILD / "dev"
+        self.provide_credentials(RENAMED, dev)
+        deploy.prepare()
+        (self.source / "components/orders/client.yaml").write_text(self.BROKEN)
+        before = self.files_under(dev)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(common.DeployError, "Invalid public client"):
+            deploy.prepare()
+        # Configs are not rewritten and the dev registrations are not deleted.
+        self.assertEqual(self.files_under(dev), before)
+        self.assertEqual(self.commands(), [])
+
+
+class StandaloneValidationOrderTests(DeployFixture):
+    def broken_fixture(self):
+        self.config["SECRET_FILES"] = {
+            "db": [{"path": "credentials", "generate": ["password"]}]
+        }
+        self.write_config()
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "app",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "web",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                                "volumeMounts": [
+                                    {"name": "nowhere", "mountPath": "/x"}
+                                ],
+                            }
+                        ],
+                        "volumes": [{"name": "db", "secret": {"secretName": "db"}}],
+                    },
+                )
+            ],
+            "20-images.yaml",
+        )
+
+    def test_prepare_validates_before_generation_or_output(self):
+        self.broken_fixture()
+        with self.assertRaisesRegex(common.DeployError, "undefined volume"):
+            deploy.prepare()
+        self.assertFalse((common.CONFIG.parent / "credentials").exists())
+        self.assertFalse(common.BUILD.exists())
+        self.process.assert_not_called()
+
+    def test_install_checks_the_image_archive_before_generation(self):
+        self.install_fixture()
+        self.config["SECRET_FILES"] = {
+            "db": [{"path": "credentials", "generate": ["password"]}]
+        }
+        self.write_config()
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "app",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "web",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                                "volumeMounts": [{"name": "db", "mountPath": "/x"}],
+                            }
+                        ],
+                        "volumes": [{"name": "db", "secret": {"secretName": "db"}}],
+                    },
+                )
+            ],
+            "20-images.yaml",
+        )
+        (self.root / "images/images.tar").unlink()
+        with self.assertRaisesRegex(common.DeployError, "Missing image archive"):
+            deploy.install()
+        self.assertFalse((common.HOME / "credentials").exists())
+        self.process.assert_not_called()
+
+    def test_install_validates_before_generation_or_host_commands(self):
+        self.install_fixture()
+        self.broken_fixture()
+        config = common.HOME / "config.yaml"
+        with self.assertRaisesRegex(common.DeployError, "undefined volume"):
+            deploy.install()
+        self.assertFalse((config.parent / "credentials").exists())
+        self.assertFalse(common.QUADLET_DIR.exists())
+        self.assertFalse(common.FILES_DIR.exists())
+        self.process.assert_not_called()
+
+
+class ImportedVolumeMessageTests(DeployFixture):
+    def test_unused_imported_volume_names_bundles_yaml(self):
+        """An accepts volume no manifest mounts is reported where it is declared."""
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "app",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "web",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                            }
+                        ]
+                    },
+                )
+            ],
+            "20-images.yaml",
+        )
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Imported volume gw-routes \\(accepts in bundles.yaml\\)",
+        ):
+            rendering.effective_documents(
+                {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+            )
