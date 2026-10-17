@@ -2219,8 +2219,8 @@ contracts and mandatory understandability review alongside this task message.
 
 Status: implemented in 0.4.10 on `feature/manifest-validation`; local checks
 green, and all six lab scenarios were CLEAN PASS on `5ee9748`. The independent
-review's follow-up changed install order, database detection and image checks,
-so the lab matrix must be rerun before merge. See
+review's follow-up changed install order, database detection and image checks;
+app1-first, identity-only and renamed-product were CLEAN PASS on `a688c30`. See
 [verification](acceptance/MANIFEST-VALIDATION.md). Original findings: four,
 reproduced in isolated Python checks.
 
@@ -2974,9 +2974,11 @@ contracts and mandatory understandability review alongside this task message.
 
 Status: step 1 done in 0.4.10, on the operator's decision (2026-10-17): every
 liveness probe now uses initialDelaySeconds 10, periodSeconds 10, timeoutSeconds
-5 and failureThreshold 6 (was 90/30/5/3), without a startupProbe. Expected: each
-health wait drops from about 92 s to about 10–20 s, and the hang test from
-about 200 s to about 120 s. Confirm with the next lab run, then do steps 2–4.
+5 and failureThreshold 6 (was 90/30/5/3), without a startupProbe. Measured on
+`a688c30`: each health wait about 11 s (was 92), the hang test 100 s (was 199),
+app1-first 25 min (was 44), identity-only 14 min (was 22), renamed 20 min
+(was 32). Bundle builds (about 262 s each) are now the largest cost: do step 2
+next, then 3–4.
 Raised by the operator on 2026-10-17: the item 21 matrix (six scenarios) took
 several hours, which is far too long.
 

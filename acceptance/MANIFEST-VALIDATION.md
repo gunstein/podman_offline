@@ -155,6 +155,24 @@ python3 acceptance/acceptance.py --run mv-renamed --renamed-product run
 The matrix took about three hours in total. Backlog item 30 tracks making
 it much faster.
 
+## Rerun after the review follow-up and probe change
+
+On `a688c30`, which includes the review follow-up (`845f847`) and the shorter
+liveness probes (backlog 30 step 1), the three scenarios the reviewer named
+were CLEAN PASS:
+
+| Run | Scenario | Result | Duration | Before (`5ee9748`) |
+| --- | --- | --- | ---: | ---: |
+| `rv-app1-first` | `--first-app app1` | CLEAN PASS | 25 min | 44 min |
+| `rv-identity` | `--identity-only` | CLEAN PASS | 14 min | 22 min |
+| `rv-renamed` | `--renamed-product` | CLEAN PASS | 20 min | 32 min |
+
+Each health wait now takes about 11 seconds (was about 92), `09-hang` 100
+seconds (was 199), `09-check-after-reboot` 13 seconds (was 95) and `09-crash`
+12 seconds (was 94). No container was restarted while starting, and every
+audit step found no FANOTIFY/AVC events. Bundle builds (about 262 seconds each)
+are now the largest remaining cost; see backlog 30.
+
 ## Understandability review
 
 **Successful install, from CLI to durable state.**
@@ -246,6 +264,4 @@ Kept as is:
 
 - Python 3.6 and PyYAML 5.4.1 were checked only with `vermin`, not by running
   the suites.
-- The lab results above are for `5ee9748`. The review follow-up changes the
-  install order (staging first), the database detection and the image checks,
-  so the matrix must be rerun on the follow-up commit.
+- None from the lab: the full matrix passed on `5ee9748`, and the three scenarios that cover the follow-up passed on `a688c30` (above).
