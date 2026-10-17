@@ -2418,3 +2418,68 @@ exact commands, the baseline and final mutation scores per module, the tests
 added, the remaining survivors with their classification, and the run time.
 Mutation results are evidence about the unit tests only; they do not replace
 real Podman/systemd acceptance runs.
+
+## 23. Explicit side-effect-free validation command for YAML, secrets, volumes and placeholders
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned. Requested 2026-10-17. Coordinate with item 21 §4, which moves
+the same checks ahead of secret generation inside install; this item adds the
+explicit command and reuses that validation instead of a second implementation.
+
+### What exists today
+
+The checks exist, but only as steps inside `prepare`/`install`, and partly after
+side effects:
+
+- `render.validate_component_config` requires every whole-value `@@NAME@@`
+  placeholder in a component's manifests to exist in its config before writes.
+  `render.replace` and the final `Unreplaced @@...@@` check catch the rest
+  during rendering.
+- `render.check_links` rejects a Secret/PVC/ConfigMap that a manifest uses but
+  nothing defines, an id in `SECRET_FILES`/`VOLUME_FILES` that no manifest uses,
+  and names defined twice. `render.check_pod_spec` rejects mounts of undefined
+  pod volumes and a missing `imagePullPolicy: Never`.
+- These run inside `materialize_and_render`, after `generate_secrets` and while
+  reading the source files, so a failed check can leave a newly generated secret
+  behind (item 21 §4). There is no command that only validates, and no check
+  that reports every problem at once.
+
+### Message to the implementing agent
+
+Add one explicit validation command that a developer or operator runs before
+`prepare`, `build-bundle.sh` or `install`, for example `./deploy validate`.
+
+1. Scope: in the source checkout, validate every catalog component with its dev
+   config layers (common, component, optional `config/dev.yaml`). In an
+   unpacked bundle, validate the bundle's component against the persistent
+   config, as install would. Standalone manifest fixtures keep their explicit
+   `config.yaml`.
+2. Checks, using the existing functions rather than a parallel implementation:
+   YAML syntax and duplicate keys; supported resource kinds; component name
+   prefixes; every `secretName`, `claimName`, ConfigMap name, `secretKeyRef`,
+   `secretRef`, `configMapRef` and `configMapKeyRef` has a matching
+   `SECRET_FILES`/`VOLUME_FILES` id, import volume or manifest resource; every
+   config id is used; every `@@NAME@@` has a config value of the right type,
+   including init containers; pod mounts and pull policy; Secret `items` keys
+   that can be determined from declared file names or `generate` entries.
+3. No side effects: no secret generation, no reads of private file contents
+   beyond existence and type, no archives, no rendered output, no Podman or
+   systemd calls, and no network. Missing declared source files are reported as
+   such; `generate` entries count as present.
+4. Report all findings in one run, each with file, document/container and the
+   expected declaration, then exit non-zero. Never print config values or
+   secret contents. Exit zero with a short summary when everything passes.
+5. Make `prepare`, `install` and `bundle.py` call the same validation first, so
+   the command and the lifecycle cannot disagree.
+
+### Tests and delivery
+
+Add focused tests for each finding type (missing Secret/PVC id, unused id,
+undefined ConfigMap, missing and wrongly typed placeholder, placeholder only in
+an init container, undefined mount, duplicate resource name) and assert that a
+failing validation creates no files and runs no commands. Validate the shipped
+demo and the renamed/minimal fixtures from item 20. Run product tests,
+acceptance-harness tests, ruff, format, pyright, vermin, shellcheck and
+`git diff --check`. Document the command in README and the review guide.
