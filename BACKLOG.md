@@ -2712,3 +2712,41 @@ names in `shares`, an owner upgrade dropping a used name, and the renamed
 product sharing a value from `gateway`. Run product tests, acceptance-harness
 tests, ruff, format, pyright, vermin, shellcheck and `git diff --check`. Update
 the review guide's contracts, `docs/COMPONENTS.md` and the release version.
+
+## 27. Declare the product name instead of hardcoding `myproduct`
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; own pull request. Requested in the item 20 review (PR #1) on
+2026-10-17. Start after item 20 is merged and its acceptance runs are green.
+
+### Problem
+
+`myproduct` is the product name, not a component ID, and it predates item 20.
+The code builds names from it in `deployment/` and `bundle.py`:
+`myproduct-<id>.service`, the shared `myproduct.network`, Quadlet file names,
+temporary-directory prefixes and archive names
+(`myproduct-<id>-<version>-offline.tar.gz`). It is also fixed in `quadlet/`,
+in `scripts/prepare-host.sh` (the `myproduct` service user and
+`/var/lib/myproduct`), in the dev network and in the acceptance harness.
+
+### Message to the implementing agent
+
+1. Declare the product name once in `bundles.yaml`, for example
+   `product: shop`, validated with the component ID rule. Compile it into every
+   bundle descriptor and installed metadata, so the target needs no source.
+2. Use it everywhere the code builds unit, network, Quadlet, temporary
+   directory and archive names. Keep the standalone example mode working with
+   an explicit name.
+3. All components installed under one service user must share one product
+   name; refuse a bundle with another name before any write.
+4. Keep the host account and home (`prepare-host.sh`) as a separate, explicit
+   setting rather than deriving them silently. Document both.
+5. No migration of existing installations (none use another name); keep
+   the demo name `myproduct`. Update the dev scripts and the acceptance harness
+   to read the name instead of repeating it, and add a run with a different
+   product name to the renamed-product scenario.
+
+Run product tests, acceptance-harness tests, ruff, format, pyright, vermin,
+shellcheck and `git diff --check`; report real acceptance runs separately.
