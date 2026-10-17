@@ -989,8 +989,28 @@ class RenderTests(DeployFixture):
         with self.assertRaisesRegex(common.DeployError, "not used"):
             rendering.materialize_and_render()
         self.assertFalse(common.BUILD.exists())
+        # Size needs the file bytes, so it is checked after the declarations.
+        self.volume_fixture()
         self.write("large", b"x" * 400000)
         self.file_config("SECRET_FILES", {"large": ["large"]})
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "app",
+                    spec={
+                        "volumes": [
+                            {
+                                "name": "uploads",
+                                "persistentVolumeClaim": {"claimName": "uploads"},
+                            },
+                            {"name": "large", "secret": {"secretName": "large"}},
+                        ]
+                    },
+                )
+            ],
+            "10-pod.yaml",
+        )
         with self.assertRaisesRegex(common.DeployError, "too large"):
             rendering.materialize_and_render()
         self.assertFalse(common.BUILD.exists())

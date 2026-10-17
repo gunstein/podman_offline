@@ -700,8 +700,8 @@ renamed-dev-up)
 from urllib.parse import urlsplit
 from deployment import deploy
 
-_, settings = deploy.dev_settings()
-deploy.dev_database_preflight(settings)
+known, settings = deploy.dev_settings()
+deploy.check_dev_components(known, settings)
 print(urlsplit(settings["gateway"]["PUBLIC_ORIGIN"]).hostname)
 RENAMED_HOST
 )

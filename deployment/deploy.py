@@ -215,21 +215,45 @@ def dev_settings():
     return known, settings
 
 
-def dev_database_preflight(settings):
-    """Check the dev database volumes of every catalog component before any writes."""
-    for component, config in settings.items():
-        database_preflight(
+def check_manifests(config, config_path, manifests, component=None, imported=()):
+    """Validate the effective manifests, then check database volumes; no writes.
+
+    Every path (install, prepare, standalone) runs this before generating any
+    secret: declarations are validated first, so a broken manifest never
+    reaches a host command, and the preflight is the first host command.
+    """
+    documents = rendering.effective_documents(
+        config, config_path, manifests, component, imported
+    )
+    database_preflight(config, config_path, manifests)
+    return documents
+
+
+def check_dev_components(known, settings):
+    """Validate and check every catalog component before any dev write.
+
+    Returns component -> (effective config, effective documents) for rendering.
+    """
+    checked = {}
+    for component, component_settings in settings.items():
+        path = common.BUILD / "dev" / component / "config.yaml"
+        config = rendering.effective_config(component_settings, path, component)
+        documents = check_manifests(
             config,
-            common.BUILD / "dev" / component / "config.yaml",
+            path,
             common.ROOT / "components" / component / "manifests",
+            component,
+            known[component]["accepts"].values(),
         )
+        checked[component] = config, documents
+    return checked
 
 
 def prepare_components():
     """Render the catalog components with private dev state and their registrations."""
     state = common.BUILD / "dev"
     known, settings_by_component = dev_settings()
-    dev_database_preflight(settings_by_component)
+    checked = check_dev_components(known, settings_by_component)
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     for component, settings in settings_by_component.items():
         target = state / component / "config.yaml"
@@ -246,17 +270,21 @@ def prepare_components():
         imports, updates = registration_stage(
             list(known), Path(directory), known, home=state
         )
-        documents = []
-        for component in known:
-            text = rendering.materialize_and_render(
-                state / component / "files",
-                config_path=state / component / "config.yaml",
-                manifests=common.ROOT / "components" / component / "manifests",
-                component=component,
-                extra_volumes=component_imports(component, imports, known),
+        documents, archives = [], []
+        for component, (config, component_documents) in checked.items():
+            files = state / component / "files"
+            text, volumes = rendering.materialize(
+                config,
+                state / component / "config.yaml",
+                component_documents,
+                files,
+                component_imports(component, imports, known),
             )
             documents.extend(yaml.safe_load_all(text))
+            archives.append((volumes, files))
         rendering.check_links(documents, {})
+        for volumes, files in archives:
+            rendering.write_file_archives(volumes, files)
         write_registrations(updates, home=state)
         rendering.write_private(
             common.BUILD / "install.yaml",
@@ -280,11 +308,14 @@ def prepare():
 def prepare_standalone():
     """Render the explicit root-config fixture used by standalone examples/tests."""
     output = common.BUILD / "install.yaml"
-    if common.CONFIG.is_file():
-        database_preflight(
-            rendering.load_config(common.CONFIG), common.CONFIG, common.MANIFESTS
-        )
-    rendering.write_private(output, rendering.materialize_and_render())
+    if not common.CONFIG.exists():
+        raise common.DeployError(f"Missing {common.CONFIG}")
+    config = rendering.load_config(common.CONFIG)
+    documents = check_manifests(config, common.CONFIG, common.MANIFESTS)
+    files = common.BUILD / "files"
+    text, volumes = rendering.materialize(config, common.CONFIG, documents, files)
+    rendering.write_file_archives(volumes, files)
+    rendering.write_private(output, text)
     print(f"[OK] {output}")
 
 
@@ -325,12 +356,12 @@ def install_standalone():
     """Install a standalone rootless manifest fixture using the persistent config."""
     production_environment()
     config_path = common.HOME / "config.yaml"
-    if config_path.is_file():
-        database_preflight(
-            rendering.load_config(config_path), config_path, common.MANIFESTS
-        )
-    text = rendering.materialize_and_render(
-        common.FILES_DIR, write_archives=False, config_path=config_path
+    if not config_path.exists():
+        raise common.DeployError(f"Missing {config_path}")
+    config = rendering.load_config(config_path)
+    documents = check_manifests(config, config_path, common.MANIFESTS)
+    text, volumes = rendering.materialize(
+        config, config_path, documents, common.FILES_DIR
     )
     archive = common.ROOT / "images" / "images.tar"
     if not archive.is_file():
@@ -346,7 +377,7 @@ def install_standalone():
             ) from None
 
     # Old YAML must not import new files after a failed image check.
-    rendering.materialize_and_render(common.FILES_DIR, config_path=config_path)
+    rendering.write_file_archives(volumes, common.FILES_DIR)
 
     common.QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     rendering.write_private(common.QUADLET_YAML, text)
@@ -811,18 +842,20 @@ def check_shared_network():
     return network, network_text
 
 
-def materialize_component_manifests(components, imports, known):
-    """Validate and render selected components; missing secrets may be created here."""
+def materialize_component_manifests(checked, imports, known):
+    """Render the validated components; missing secrets may be created here.
+
+    Returns component -> (install YAML, import volumes); nothing else is written.
+    """
     rendered = {}
-    for component in components:
-        config, files, _, _ = component_paths(component)
-        rendered[component] = rendering.materialize_and_render(
+    for component, (config, documents) in checked.items():
+        config_path, files, _, _ = component_paths(component)
+        rendered[component] = rendering.materialize(
+            config,
+            config_path,
+            documents,
             files,
-            write_archives=False,
-            config_path=config,
-            manifests=common.ROOT / "components" / component / "manifests",
-            component=component,
-            extra_volumes=component_imports(component, imports, known),
+            component_imports(component, imports, known),
         )
     return rendered
 
@@ -833,7 +866,9 @@ def load_and_verify_images(components, source_components, rendered):
     if not archive.is_file():
         raise common.DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
-    documents = [doc for text in rendered.values() for doc in yaml.safe_load_all(text)]
+    documents = [
+        doc for text, _ in rendered.values() for doc in yaml.safe_load_all(text)
+    ]
     for component in source_components:
         if component not in components:
             for path in sorted(
@@ -866,24 +901,16 @@ def apply_registration_updates(component, updates, owners):
     return changed, pending
 
 
-def write_component_units_and_imports(
-    components, imports, rendered, network, network_text, known
-):
+def write_component_units_and_imports(rendered, network, network_text):
     """Write selected imports/YAML/Quadlets, retaining the existing shared network."""
     common.QUADLET_DIR.mkdir(parents=True, exist_ok=True)
     if not network.exists():
         network.write_text(network_text, encoding="utf-8")
         network.chmod(0o644)
-    for component in components:
-        config, files, output, quadlet = component_paths(component)
-        rendering.materialize_and_render(
-            files,
-            config_path=config,
-            manifests=common.ROOT / "components" / component / "manifests",
-            component=component,
-            extra_volumes=component_imports(component, imports, known),
-        )
-        rendering.write_private(output, rendered[component])
+    for component, (text, volumes) in rendered.items():
+        _, files, output, quadlet = component_paths(component)
+        rendering.write_file_archives(volumes, files)
+        rendering.write_private(output, text)
         quadlet.write_text(
             common.QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
                 "Yaml=myproduct.yaml", "Yaml=" + output.name
@@ -971,18 +998,17 @@ def write_installed_marker(descriptor):
     )
 
 
-def install_component_plan(descriptor, components, known, imports, updates):
+def install_component_plan(descriptor, checked, known, imports, updates):
     """Apply a staged install in the established validation/write/restart order."""
     name = descriptor["name"]
+    components = list(checked)
     owners = catalog.role_owners(known, "registration owners")
     network, network_text = check_shared_network()
-    rendered = materialize_component_manifests(components, imports, known)
+    rendered = materialize_component_manifests(checked, imports, known)
     load_and_verify_images(components, [name], rendered)
     write_installed_metadata(descriptor)
     changed, pending = apply_registration_updates(name, updates, owners)
-    write_component_units_and_imports(
-        components, imports, rendered, network, network_text, known
-    )
+    write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
     write_installed_marker(descriptor)
@@ -1016,26 +1042,32 @@ def install_components():
         )
     check_dependencies_installed(descriptor)
     check_dependents(descriptor, installed)
-    components = [name] if install_needed(descriptor) else []
-    for path in sorted(
-        (common.ROOT / "components" / name / "manifests").glob("*.yaml")
-    ):
-        rendering.check_component_names(rendering.load_yaml_all(path), name, path)
     config_path = component_paths(name)[0]
     config = rendering.load_config(config_path)
     rendering.validate_component_config(
-        config, name, config_path, check_placeholders=bool(components)
+        config, name, config_path, check_placeholders=install_needed(descriptor)
     )
     check_public_settings(descriptor, config, config_path)
-    for component in components:
-        database_preflight(
-            config, config_path, common.ROOT / "components" / component / "manifests"
+    # Selected for rendering only when the version changes; otherwise only
+    # registrations and owners are refreshed.
+    checked = {}
+    if install_needed(descriptor):
+        effective = rendering.effective_config(config, config_path, name)
+        checked[name] = (
+            effective,
+            check_manifests(
+                effective,
+                config_path,
+                common.ROOT / "components" / name / "manifests",
+                name,
+                descriptor["accepts"].values(),
+            ),
         )
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
         imports, updates = registration_stage([name], Path(directory), known)
-        install_component_plan(descriptor, components, known, imports, updates)
+        install_component_plan(descriptor, checked, known, imports, updates)
 
 
 def install():
