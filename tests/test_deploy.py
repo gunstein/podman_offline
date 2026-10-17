@@ -16,6 +16,7 @@ from unittest import mock
 
 import yaml
 from catalog_fixture import DEMO, DEMO_COMPONENTS
+from render_helper import materialize_and_render
 
 from deployment import cli, common, deploy
 from deployment import render as rendering
@@ -66,6 +67,18 @@ class DeployFixture(unittest.TestCase):
                 os.environ,
                 {"XDG_RUNTIME_DIR": str(runtime), "HOME": str(self.root / "home")},
             )
+        )
+        # The environment guard is tested separately. Keep staging inside the
+        # fixture, even on machines without the synthetic runtime directory.
+        temporary_directory = tempfile.TemporaryDirectory
+
+        def staging(*args, **kwargs):
+            if kwargs.get("dir") == str(runtime):
+                kwargs["dir"] = str(self.root)
+            return temporary_directory(*args, **kwargs)
+
+        self.stack.enter_context(
+            mock.patch.object(tempfile, "TemporaryDirectory", side_effect=staging)
         )
         self.stdout = self.stack.enter_context(
             contextlib.redirect_stdout(io.StringIO())
@@ -659,10 +672,10 @@ class GeneratedSecretTests(DeployFixture):
             (example / "config.yaml").read_text() + "POD_NAME: example-run\n",
         )
         with mock.patch.object(common, "MANIFESTS", example / "manifests"):
-            first = list(yaml.safe_load_all(rendering.materialize_and_render()))
+            first = list(yaml.safe_load_all(materialize_and_render()))
             path = self.root / "credentials/app/API_TOKEN"
             before = path.read_bytes()
-            second = list(yaml.safe_load_all(rendering.materialize_and_render()))
+            second = list(yaml.safe_load_all(materialize_and_render()))
         self.assertTrue(path.read_bytes() == before, "Example regenerated its secret")
         self.assertEqual(self.mode(path), 0o600)
         self.assertTrue(first == second, "Example render changed its secret")
@@ -767,7 +780,7 @@ class ManifestValidationTests(DeployFixture):
     def test_configmap_data_spec_is_not_a_pod_specification(self):
         """Render valid ConfigMap data named spec without treating it as a pod."""
         self.manifest([document("ConfigMap", "settings", data={"spec": "plain text"})])
-        docs = list(yaml.safe_load_all(rendering.materialize_and_render()))
+        docs = list(yaml.safe_load_all(materialize_and_render()))
         self.assertEqual(docs[0]["data"]["spec"], "plain text")
 
     def test_configmap_reference_forms_accept_later_definition(self):
@@ -786,7 +799,7 @@ class ManifestValidationTests(DeployFixture):
             [document("ConfigMap", "settings", data={"value": "ok"})],
             "90-settings.yaml",
         )
-        self.assertIn("settings", rendering.materialize_and_render())
+        self.assertIn("settings", materialize_and_render())
 
     def test_missing_configmap_forms_report_source(self):
         """Reject every missing ConfigMap reference with the originating filename."""
@@ -800,7 +813,7 @@ class ManifestValidationTests(DeployFixture):
                 with self.assertRaisesRegex(
                     common.DeployError, "10-app.yaml.*ConfigMap.*missing"
                 ):
-                    rendering.materialize_and_render()
+                    materialize_and_render()
                 self.assertFalse(common.BUILD.exists())
 
     def test_mounts_and_never_policy_accept_containers_and_init(self):
@@ -809,7 +822,7 @@ class ManifestValidationTests(DeployFixture):
         for group in ("containers", "initContainers"):
             with self.subTest(group=group):
                 self.manifest([self.pod(group)], "10-app.yaml")
-                rendering.materialize_and_render(write_archives=False)
+                materialize_and_render(write_archives=False)
 
     def test_unsupported_kinds_fail_before_generation_or_output(self):
         """The same valid pod spec in a Deployment or List is refused, not half-checked."""
@@ -829,7 +842,7 @@ class ManifestValidationTests(DeployFixture):
                 with self.assertRaisesRegex(
                     common.DeployError, "10-app.yaml: unsupported resource kind"
                 ):
-                    rendering.materialize_and_render()
+                    materialize_and_render()
                 self.assertFalse((self.root / "secrets").exists())
                 self.assertFalse(common.BUILD.exists())
         self.process.assert_not_called()
@@ -842,7 +855,7 @@ class ManifestValidationTests(DeployFixture):
                 with self.assertRaisesRegex(
                     common.DeployError, "10-app.yaml.*worker.*undefined volume.*missing"
                 ):
-                    rendering.materialize_and_render()
+                    materialize_and_render()
                 self.assertFalse(common.BUILD.exists())
 
     def test_missing_or_online_pull_policies_report_file(self):
@@ -858,7 +871,7 @@ class ManifestValidationTests(DeployFixture):
                         common.DeployError,
                         "10-app.yaml.*worker.*imagePullPolicy: Never",
                     ):
-                        rendering.materialize_and_render()
+                        materialize_and_render()
                     self.assertFalse(common.BUILD.exists())
 
 
@@ -873,7 +886,7 @@ class RenderTests(DeployFixture):
             with self.subTest(message=message):
                 self.manifest([doc], "42-bad.yaml")
                 with self.assertRaises(common.DeployError) as error:
-                    rendering.materialize_and_render()
+                    materialize_and_render()
                 self.assertIn(
                     str(common.MANIFESTS / "42-bad.yaml"), str(error.exception)
                 )
@@ -904,7 +917,7 @@ class RenderTests(DeployFixture):
                 volume: [self.write("state/imports/" + volume, "dummy")]
                 for volume in DEMO[component]["accepts"].values()
             }
-            text = rendering.materialize_and_render(
+            text = materialize_and_render(
                 base / "files",
                 write_archives=False,
                 config_path=path,
@@ -924,12 +937,12 @@ class RenderTests(DeployFixture):
 
     def test_render_without_archive_writes_still_validates(self):
         self.volume_fixture()
-        text = rendering.materialize_and_render(common.FILES_DIR, write_archives=False)
+        text = materialize_and_render(common.FILES_DIR, write_archives=False)
         self.assertIn(str(common.FILES_DIR / "uploads.tar"), text)
         self.assertFalse(common.FILES_DIR.exists())
         self.manifest([document("ConfigMap", "uploads")], "99-collision.yaml")
         with self.assertRaisesRegex(common.DeployError, "uploads.*more than once"):
-            rendering.materialize_and_render(common.FILES_DIR, write_archives=False)
+            materialize_and_render(common.FILES_DIR, write_archives=False)
         self.assertFalse(common.FILES_DIR.exists())
 
     def test_sorted_multidocument_manifests_and_configmap_strings(self):
@@ -949,7 +962,7 @@ class RenderTests(DeployFixture):
             ],
             "01.yaml",
         )
-        docs = list(yaml.safe_load_all(rendering.materialize_and_render()))
+        docs = list(yaml.safe_load_all(materialize_and_render()))
         self.assertEqual([doc["metadata"]["name"] for doc in docs], ["first", "last"])
         self.assertEqual(
             docs[0]["data"], {"port": "8443", "host": "example.test", "number": "5"}
@@ -975,19 +988,19 @@ class RenderTests(DeployFixture):
             with self.subTest(error=error):
                 self.manifest([doc], "99-bad.yaml")
                 with self.assertRaisesRegex(common.DeployError, error):
-                    rendering.materialize_and_render()
+                    materialize_and_render()
                 self.assertFalse(common.BUILD.exists())
         self.manifest([document("Pod", "bad", value="@@BAD@@")], "99-bad.yaml")
         old = self.write("build/files/uploads.tar", b"previous archive")
         with self.assertRaises(common.DeployError):
-            rendering.materialize_and_render()
+            materialize_and_render()
         self.assertEqual(old.read_bytes(), b"previous archive")
 
     def test_no_archives_for_unused_id_or_large_secret(self):
         self.volume_fixture()
         (common.MANIFESTS / "10-pod.yaml").unlink()
         with self.assertRaisesRegex(common.DeployError, "not used"):
-            rendering.materialize_and_render()
+            materialize_and_render()
         self.assertFalse(common.BUILD.exists())
         # Size needs the file bytes, so it is checked after the declarations.
         self.volume_fixture()
@@ -1012,19 +1025,19 @@ class RenderTests(DeployFixture):
             "10-pod.yaml",
         )
         with self.assertRaisesRegex(common.DeployError, "too large"):
-            rendering.materialize_and_render()
+            materialize_and_render()
         self.assertFalse(common.BUILD.exists())
 
     def test_duplicate_manifest_keys_report_line(self):
         self.write("manifests/bad.yaml", "kind: Pod\nkind: Secret\n")
         with self.assertRaisesRegex(yaml.YAMLError, "line 2"):
-            rendering.materialize_and_render()
+            materialize_and_render()
         self.assertFalse(common.BUILD.exists())
 
     def test_missing_config(self):
         common.CONFIG.unlink()
         with self.assertRaisesRegex(common.DeployError, "Missing"):
-            rendering.materialize_and_render()
+            materialize_and_render()
 
 
 class CommandTests(DeployFixture):
@@ -1046,9 +1059,7 @@ class CommandTests(DeployFixture):
 
     def test_root_check_precedes_reads_writes_and_commands(self):
         self.euid.return_value = 0
-        render = self.stack.enter_context(
-            mock.patch.object(rendering, "materialize_and_render")
-        )
+        render = self.stack.enter_context(mock.patch.object(rendering, "materialize"))
         load = self.stack.enter_context(mock.patch.object(rendering, "find_images"))
         with self.assertRaisesRegex(common.DeployError, "root"):
             deploy.install()
@@ -1113,9 +1124,7 @@ class CommandTests(DeployFixture):
                     ]
                 )
                 docs = list(
-                    yaml.safe_load_all(
-                        rendering.materialize_and_render(config_path=config_path)
-                    )
+                    yaml.safe_load_all(materialize_and_render(config_path=config_path))
                 )
                 self.assertEqual(
                     base64.b64decode(docs[0]["data"]["key"]), b"persistent secret"
@@ -1146,7 +1155,7 @@ class CommandTests(DeployFixture):
         self.install_fixture()
         operator = self.root / "operator"
         environment = mock.patch.dict(os.environ, {"HOME": str(operator)})
-        renderer = mock.patch.object(rendering, "materialize_and_render")
+        renderer = mock.patch.object(rendering, "materialize")
         with environment, renderer as render:
             with self.assertRaisesRegex(
                 common.DeployError, "HOME=.*differs.*user database"
@@ -1192,7 +1201,7 @@ class CommandTests(DeployFixture):
     def test_missing_runtime_stops_before_render_and_commands(self):
         os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
         directory = mock.patch.object(Path, "is_dir", return_value=False)
-        renderer = mock.patch.object(rendering, "materialize_and_render")
+        renderer = mock.patch.object(rendering, "materialize")
         with directory, renderer as render:
             with self.assertRaisesRegex(
                 common.DeployError, "runtime directory.*linger"
@@ -1211,7 +1220,7 @@ class CommandTests(DeployFixture):
         ):
             with self.subTest(runtime=configured):
                 os.environ["XDG_RUNTIME_DIR"] = configured
-                renderer = mock.patch.object(rendering, "materialize_and_render")
+                renderer = mock.patch.object(rendering, "materialize")
                 with renderer as render:
                     with self.assertRaisesRegex(
                         common.DeployError, "XDG_RUNTIME_DIR=.*expected /run/user/1000"
@@ -1374,10 +1383,8 @@ class CommandTests(DeployFixture):
                 self.process.reset_mock()
                 with self.assertRaisesRegex(common.DeployError, "fully qualified"):
                     deploy.install()
-                self.process.assert_called_once_with(
-                    ["podman", "load", "-i", str(self.root / "images/images.tar")],
-                    check=True,
-                )
+                # Decided from the effective manifest: before load or generation.
+                self.process.assert_not_called()
                 self.assertFalse(common.QUADLET_DIR.exists())
 
 

@@ -40,7 +40,7 @@ this list; update entries with implementation/test evidence when resolved.
 | ~~Mandatory public origin/port for every component; hostname derivation tied to `platform`~~ | Resolved by backlog 20 in 0.4.9 |
 | ~~Initial image validation includes unselected component directories; generic dev still has demo dependencies~~ | Resolved by backlog 20 in 0.4.9 |
 | ~~OIDC client ID/path/scopes coupled to component ID; contract needs explicit validation/documentation~~ | Resolved by backlog 20 in 0.4.9; contract in [components](COMPONENTS.md) |
-| ~~Database preflight uses raw placeholders rather than effective manifest values~~ | Resolved by backlog 21 in 0.4.10; [verification](../acceptance/MANIFEST-VALIDATION.md), lab runs clean |
+| ~~Database preflight uses raw placeholders rather than effective manifest values~~ | Resolved by backlog 21 in 0.4.10; [verification](../acceptance/MANIFEST-VALIDATION.md), lab rerun after review follow-up outstanding |
 | ~~Resource kinds receive inconsistent lifecycle checks: Deployment can bypass Pod checks~~ | Resolved by backlog 21 in 0.4.10: unsupported kinds are refused |
 | ~~Removing route/client declarations from a release does not remove prior registrations~~ | Resolved by backlog 21 in 0.4.10 |
 | ~~Some invalid manifests create generated secrets before validation rejects them~~ | Resolved by backlog 21 in 0.4.10 |

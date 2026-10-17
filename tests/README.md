@@ -12,6 +12,16 @@ exact owner restarts and imported indexes, injects failures after the deletion
 and finishes them in a fresh process, and uninstalls afterwards. See
 [verification](../acceptance/MANIFEST-VALIDATION.md).
 
+After the independent review, `test_validation_order.py` also requires that an
+invalid `client.yaml` stops install and dev prepare before any write or host
+command, and that a missing image archive stops standalone install before
+generation. `test_database_preflight.py` treats a data-directory mount as a
+database container. `test_registration_removal.py` asserts the exact owners
+left and restarted per failure point, including an interrupt after the first
+removal, and that an ownerless role is never recorded. `render_helper.py` holds
+the render-only `materialize_and_render` shortcut used by tests; product code
+calls `check_manifests` and then `materialize`.
+
 ---
 
 # Declarative components (0.4.9)

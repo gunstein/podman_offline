@@ -378,6 +378,9 @@ Status: follow up when adding another PostgreSQL image or mount layout.
   clearly before secret generation or persistent changes.
 - Add focused regressions for each newly supported layout. Keep database-state
   checks in the lifecycle layer and avoid a generic PostgreSQL framework.
+- Since 0.4.10 a container that mounts `/var/lib/postgresql/data` counts as a
+  database container even without any `POSTGRES_PASSWORD*` variable, so
+  `PGPASSWORD`, `envFrom` and missing password settings are refused there.
 
 Review source for items 6–7 and the expanded upgrade scenario: static code review
 of `improvements-0-2` through `87f4e98`. These are follow-up requirements and
@@ -2215,7 +2218,9 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevan
 contracts and mandatory understandability review alongside this task message.
 
 Status: implemented in 0.4.10 on `feature/manifest-validation`; local checks
-green, and all six lab scenarios were CLEAN PASS on `5ee9748`. See
+green, and all six lab scenarios were CLEAN PASS on `5ee9748`. The independent
+review's follow-up changed install order, database detection and image checks,
+so the lab matrix must be rerun before merge. See
 [verification](acceptance/MANIFEST-VALIDATION.md). Original findings: four,
 reproduced in isolated Python checks.
 
@@ -3023,3 +3028,29 @@ matrix is comfortably under an hour.
 4. Record before and after times per scenario in the acceptance README, and
    keep every check that exists today. Speed must not come from dropping
    evidence.
+
+## 31. Refuse component IDs that are prefixes of each other
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned. Found by the independent review of item 21 (`c92897d`); it
+predates that change.
+
+### Observation
+
+Resource names are checked only for the prefix `<component>-`. With components
+`orders` and `orders-data`, the name `orders-data-db` passes the check for both,
+so the two components can declare the same Podman volume or Secret, and
+`uninstall --delete-data` of one can delete the other's data. Reproduced with
+`render.check_component_names`.
+
+### Task
+
+1. Refuse, in the catalog (`catalog.load_catalog`) and for installed metadata,
+   any component ID that equals another ID followed by `-` and more characters.
+   Report both IDs and say how to rename.
+2. Check whether existing installations could already hold such a pair; if so,
+   refuse the install of the second with the same message, before any write.
+3. Add catalog and install regressions. No lab run is needed beyond the usual
+   matrix when this ships.

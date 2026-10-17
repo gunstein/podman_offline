@@ -120,6 +120,46 @@ class ProductValidationOrderTests(ProductFixture):
                 self.assertFalse((common.BUILD / "install.yaml").exists())
 
 
+class RegistrationValidationOrderTests(ProductFixture):
+    """Registrations are validated by staging, before any write or host command."""
+
+    BROKEN = "id: orders\nbase_path: no-slash\nscopes: [openid]\ncertificate: x\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write_product(RENAMED)
+
+    def test_install_validates_registrations_before_host_commands(self):
+        releases = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        self.provide_credentials(RENAMED, common.HOME)
+        self.install(releases["gateway"])
+        self.install(releases["login-service"])
+        release = releases["orders"]
+        self.use_root(release)
+        deploy.init_config("orders")
+        (release / "components/orders/client.yaml").write_text(self.BROKEN)
+        before = self.files_under(common.HOME)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(common.DeployError, "Invalid public client"):
+            deploy.install()
+        self.assertEqual(self.commands(), [])
+        self.assertEqual(self.files_under(common.HOME), before)
+
+    def test_dev_prepare_validates_registrations_before_any_write(self):
+        dev = common.BUILD / "dev"
+        self.provide_credentials(RENAMED, dev)
+        deploy.prepare()
+        (self.source / "components/orders/client.yaml").write_text(self.BROKEN)
+        before = self.files_under(dev)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(common.DeployError, "Invalid public client"):
+            deploy.prepare()
+        # Configs are not rewritten and the dev registrations are not deleted.
+        self.assertEqual(self.files_under(dev), before)
+        self.assertEqual(self.commands(), [])
+
+
 class StandaloneValidationOrderTests(DeployFixture):
     def broken_fixture(self):
         self.config["SECRET_FILES"] = {
@@ -157,6 +197,38 @@ class StandaloneValidationOrderTests(DeployFixture):
         self.assertFalse(common.BUILD.exists())
         self.process.assert_not_called()
 
+    def test_install_checks_the_image_archive_before_generation(self):
+        self.install_fixture()
+        self.config["SECRET_FILES"] = {
+            "db": [{"path": "credentials", "generate": ["password"]}]
+        }
+        self.write_config()
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "app",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "web",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                                "volumeMounts": [{"name": "db", "mountPath": "/x"}],
+                            }
+                        ],
+                        "volumes": [{"name": "db", "secret": {"secretName": "db"}}],
+                    },
+                )
+            ],
+            "20-images.yaml",
+        )
+        (self.root / "images/images.tar").unlink()
+        with self.assertRaisesRegex(common.DeployError, "Missing image archive"):
+            deploy.install()
+        self.assertFalse((common.HOME / "credentials").exists())
+        self.process.assert_not_called()
+
     def test_install_validates_before_generation_or_host_commands(self):
         self.install_fixture()
         self.broken_fixture()
@@ -167,3 +239,33 @@ class StandaloneValidationOrderTests(DeployFixture):
         self.assertFalse(common.QUADLET_DIR.exists())
         self.assertFalse(common.FILES_DIR.exists())
         self.process.assert_not_called()
+
+
+class ImportedVolumeMessageTests(DeployFixture):
+    def test_unused_imported_volume_names_bundles_yaml(self):
+        """An accepts volume no manifest mounts is reported where it is declared."""
+        self.manifest(
+            [
+                document(
+                    "Pod",
+                    "app",
+                    spec={
+                        "containers": [
+                            {
+                                "name": "web",
+                                "image": "localhost/app:1",
+                                "imagePullPolicy": "Never",
+                            }
+                        ]
+                    },
+                )
+            ],
+            "20-images.yaml",
+        )
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Imported volume gw-routes \\(accepts in bundles.yaml\\)",
+        ):
+            rendering.effective_documents(
+                {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+            )

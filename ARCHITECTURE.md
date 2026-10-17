@@ -22,7 +22,10 @@ bundles. `common.HOME` follows the service account's user-database home. There
 are no lifecycle actions during package import. Modules share these explicit
 paths without circular imports or a dependency framework.
 
-Rendering is split so validation visibly precedes side effects (0.4.10):
+Rendering is split so validation visibly precedes side effects (0.4.10). On
+install and dev `prepare`, `deploy.registration_stage()` runs first: it reads
+and validates routes and client registrations into a temporary directory and
+writes nothing else. Then:
 
 1. `render.effective_config()` validates a component's config and adds the
    derived `PUBLIC_HOSTNAME`.
@@ -38,9 +41,9 @@ Rendering is split so validation visibly precedes side effects (0.4.10):
    import volumes.
 
 `deploy.check_manifests()` runs steps 2 and 3; install, dev `prepare` and both
-standalone paths use it before any generation. `render.materialize_and_render()`
-combines steps 1, 2 and 4 without the database check, for render-level callers
-and tests. General secret generation never performs database volume checks.
+standalone paths use it before any generation. Install also checks the image
+archive and that every image is fully qualified before step 4. General secret
+generation never performs database volume checks.
 
 Only `Pod`, `ConfigMap`, `PersistentVolumeClaim` and `Secret` documents are
 supported. `render.pod_specs()` is the one traversal of pod specs and refuses
@@ -154,12 +157,12 @@ sequenceDiagram
     Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
     D->>R: load_config, validate_component_config
     D->>D: check_public_settings (public_from)
+    D->>D: registration_stage (temp dir): imports, updates, removals
     D->>R: effective_config, effective_documents
     Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links; no writes
     D->>H: database_preflight: podman volume exists (configured name)
-    D->>D: registration_stage (temp dir): imports, updates, removals
     D->>P: install_component_plan
-    P->>S: check_shared_network
+    P->>S: check_shared_network, image archive, find_images
     P->>R: materialize: generate missing secrets, read files, render YAML
     P->>H: podman load + podman image exists
     P->>S: write metadata/ID.json

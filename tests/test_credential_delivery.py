@@ -5,6 +5,7 @@ import stat
 from pathlib import Path
 
 import yaml
+from render_helper import materialize_and_render
 from test_deploy import DeployFixture
 
 from deployment import render as rendering
@@ -30,7 +31,7 @@ class CredentialDeliveryTests(DeployFixture):
             files = path.parent / "files"
 
             def render(files=files, path=path, component=component):
-                return rendering.materialize_and_render(
+                return materialize_and_render(
                     files,
                     config_path=path,
                     manifests=REPO / "components" / component / "manifests",

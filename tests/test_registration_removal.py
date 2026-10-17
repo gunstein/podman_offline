@@ -122,25 +122,40 @@ class RegistrationRemovalTests(ProductFixture):
             "--quiet",
             "myproduct-login-service.service",
         ]
-        for failure in (
-            {"archive_failure": "gateway"},
-            {"interrupt": ["systemctl", "--user", "daemon-reload"]},
-            {"failure": restart},
-            {"failure": check},
+        both = ["gateway", "login-service"]
+        # failure -> (owners left in the record, restarts on the retry). An owner
+        # acknowledged before the failure is never restarted again.
+        for failure, owners, retry in (
+            (
+                {"removal_interrupt": True},
+                both,
+                ["inventory", "login-service", "gateway"],
+            ),
+            (
+                {"archive_failure": "gateway"},
+                both,
+                ["inventory", "login-service", "gateway"],
+            ),
+            (
+                {"interrupt": ["systemctl", "--user", "daemon-reload"]},
+                both,
+                ["inventory", "login-service", "gateway"],
+            ),
+            ({"failure": restart}, ["gateway"], ["inventory", "gateway"]),
+            ({"failure": check}, both, ["inventory", "login-service", "gateway"]),
         ):
             with self.subTest(failure=failure):
                 self.setUp()
                 self.drop("routes", "clients")
                 status, _ = self.attempt(self.inventory, **failure)
                 self.assertNotEqual(status, 0)
-                # The registrations are already gone; the record keeps the work.
-                self.assertFalse((common.HOME / ROUTE).exists())
+                # The record keeps the work, however much was already deleted.
                 self.assertFalse((common.HOME / CLIENT).exists())
                 pending = json.loads(
                     (common.HOME / "pending-operation.json").read_text()
                 )
                 self.assertEqual(pending["component"], "inventory")
-                self.assertTrue(pending["owners"])
+                self.assertEqual(pending["owners"], owners)
                 status, events = self.attempt(self.inventory)
                 self.assertEqual(status, 0, events)
                 restarted = [
@@ -148,9 +163,8 @@ class RegistrationRemovalTests(ProductFixture):
                     for event in events
                     if event[:3] == ["systemctl", "--user", "restart"]
                 ]
-                self.assertEqual(restarted[0], "inventory")
-                self.assertTrue(set(pending["owners"]) <= set(restarted))
-                self.assertNotIn("orders", restarted)
+                self.assertEqual(restarted, retry)
+                self.assertFalse((common.HOME / ROUTE).exists())
                 self.assertNotIn("inventory/client.json", self.client_index())
                 self.assertNotIn("/stock/", self.route_index())
                 self.assertFalse((common.HOME / "pending-operation.json").exists())
@@ -175,3 +189,25 @@ class RegistrationRemovalTests(ProductFixture):
         self.assertTrue((common.HOME / CLIENT / "client.json").is_file())
         self.assertIn("inventory/client.json", self.client_index())
         self.assertIn("/stock/", self.route_index())
+
+
+class OwnerlessRemovalTests(ProductFixture):
+    """A removal whose role nobody accepts has no owner work to record."""
+
+    def test_no_owner_is_never_recorded(self):
+        owners = {"routes": None, "clients": "login-service"}
+        self.assertEqual(
+            deploy.registration_changes(
+                {}, owners, home=self.root, removals={"routes/inventory.conf"}
+            ),
+            set(),
+        )
+        self.assertEqual(
+            deploy.registration_changes(
+                {},
+                owners,
+                home=self.root,
+                removals={"routes/inventory.conf", "clients/inventory"},
+            ),
+            {"login-service"},
+        )

@@ -116,9 +116,12 @@ def database_preflight(config, config_path, documents):
 def postgres_binding(pod, spec, group, container):
     """Return (data claim, password Secret, Secret key) or None for a non-database container.
 
-    Only the POSTGRES_PASSWORD_FILE layout with a mounted Secret and a PVC at
-    the data directory is supported; any other POSTGRES_PASSWORD* form is
-    refused so a lost password can never be replaced silently (item 7).
+    A container is a database container when it sets any POSTGRES_PASSWORD*
+    variable or mounts the PostgreSQL data directory. Only the
+    POSTGRES_PASSWORD_FILE layout with a mounted Secret and a PVC at the data
+    directory is supported; anything else (another password form, envFrom, no
+    password setting) is refused so a lost password can never be replaced
+    silently (item 7).
     """
     where = f"container {container.get('name', '<unnamed>')!r} ({group}) of Pod {pod.get('metadata', {}).get('name')!r}"
     env = [entry for entry in container.get("env", []) if isinstance(entry, dict)]
@@ -128,12 +131,16 @@ def postgres_binding(pod, spec, group, container):
         if isinstance(entry.get("name"), str)
         and entry["name"].startswith("POSTGRES_PASSWORD")
     )
-    if not names:
+    data_mounted = any(
+        isinstance(mount, dict) and mount.get("mountPath") == POSTGRES_DATA
+        for mount in container.get("volumeMounts", [])
+    )
+    if not names and not data_mounted:
         return None
     if names != ["POSTGRES_PASSWORD_FILE"]:
         raise common.DeployError(
-            f"Unsupported PostgreSQL password setting {', '.join(names)} in {where}; "
-            "use only POSTGRES_PASSWORD_FILE with a mounted Secret"
+            f"Unsupported PostgreSQL password setting {', '.join(names) or '(none)'} "
+            f"in {where}; use only POSTGRES_PASSWORD_FILE with a mounted Secret"
         )
     entry = next(entry for entry in env if entry["name"] == "POSTGRES_PASSWORD_FILE")
     reference = entry.get("value")
@@ -276,6 +283,14 @@ def check_manifests(config, config_path, manifests, component=None, imported=())
     return documents
 
 
+def image_archive():
+    """Return the bundle's image archive; checked before any secret is generated."""
+    archive = common.ROOT / "images/images.tar"
+    if not archive.is_file():
+        raise common.DeployError(f"Missing image archive {archive}")
+    return archive
+
+
 def check_dev_components(known, settings):
     """Validate and check every catalog component before any dev write.
 
@@ -301,22 +316,29 @@ def prepare_components():
     state = common.BUILD / "dev"
     known, settings_by_component = dev_settings()
     checked = check_dev_components(known, settings_by_component)
-    state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for component, settings in settings_by_component.items():
-        target = state / component / "config.yaml"
-        rendering.write_private(target, yaml.safe_dump(settings, sort_keys=False))
-    # Dev registrations come only from the current catalog. Removing older copies
-    # keeps a service removed from bundles.yaml out of the proxy and Identity.
     for name in catalog.ROLE_FILES:
         if (state / name).is_symlink():
             raise common.DeployError(
                 f"Refuse symlinked dev registrations: {state / name}"
             )
-        shutil.rmtree(str(state / name), ignore_errors=True)
     with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
+        # Validate every registration before the first dev write.
         imports, updates, _ = registration_stage(
-            list(known), Path(directory), known, home=state
+            list(known),
+            Path(directory),
+            known,
+            home=state,
+            configs=settings_by_component,
         )
+        state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for component, settings in settings_by_component.items():
+            target = state / component / "config.yaml"
+            rendering.write_private(target, yaml.safe_dump(settings, sort_keys=False))
+        # Dev registrations come only from the current catalog. Removing older
+        # copies keeps a service removed from bundles.yaml out of the proxy and
+        # Identity.
+        for name in catalog.ROLE_FILES:
+            shutil.rmtree(str(state / name), ignore_errors=True)
         documents, archives = [], []
         for component, (config, component_documents) in checked.items():
             files = state / component / "files"
@@ -407,12 +429,11 @@ def install_standalone():
         raise common.DeployError(f"Missing {config_path}")
     config = rendering.load_config(config_path)
     documents = check_manifests(config, config_path, common.MANIFESTS)
+    archive = image_archive()
+    rendering.find_images(documents)
     text, volumes = rendering.materialize(
         config, config_path, documents, common.FILES_DIR
     )
-    archive = common.ROOT / "images" / "images.tar"
-    if not archive.is_file():
-        raise common.DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     for image in rendering.find_images(yaml.safe_load_all(text)):
         try:
@@ -546,7 +567,7 @@ def component_paths(component, home=None):
     )
 
 
-def registration_stage(components, directory, known, home=None):
+def registration_stage(components, directory, known, home=None, configs=None):
     """Stage existing and proposed public routes and clients without changing live state.
 
     known maps component IDs to descriptors: installed metadata plus the incoming
@@ -557,6 +578,9 @@ def registration_stage(components, directory, known, home=None):
     installed registrations are never copied, and a role the release no longer
     declares is returned in removals. Absence for any other component never
     means removal. Returns (imports, updates, removals).
+
+    configs (dev) maps each component to its config before it is written; dev
+    registrations then come only from the catalog, so existing ones are ignored.
     """
     home = home or common.HOME
     owners = catalog.role_owners(known, "registration owners")
@@ -567,7 +591,7 @@ def registration_stage(components, directory, known, home=None):
                 f"Refuse symlinked shared registration directory: {source}"
             )
         (directory / name).mkdir()
-        if not source.exists():
+        if configs is not None or not source.exists():
             continue
         for path in sorted(source.iterdir()):
             if path.is_symlink():
@@ -622,7 +646,10 @@ def registration_stage(components, directory, known, home=None):
         if not declared:
             continue
         config_path = component_paths(component, home)[0]
-        config = rendering.load_config(config_path)
+        if configs is None:
+            config = rendering.load_config(config_path)
+        else:
+            config = configs[component]
         if "routes" in declared:
             updates["routes/" + component + ".conf"] = declared["routes"].read_bytes()
         if "clients" in declared:
@@ -897,7 +924,12 @@ def clear_pending():
 
 
 def registration_changes(updates, owners, home=None, removals=()):
-    """Compare before writing so unfinished owners can be recorded first."""
+    """Compare before writing so unfinished owners can be recorded first.
+
+    Returns the owners that must rebuild their imports and restart. A removed
+    registration whose role no known component accepts has no owner to
+    restart; recording None would make the pending record unreadable.
+    """
     changed = {owners[relative.split("/", 1)[0]] for relative in removals}
     for relative, data in updates.items():
         target = (home or common.HOME) / relative
@@ -905,7 +937,7 @@ def registration_changes(updates, owners, home=None, removals=()):
             raise common.DeployError("Refuse symlinked public registration output")
         if not target.is_file() or target.read_bytes() != data:
             changed.add(owners[relative.split("/", 1)[0]])
-    return changed
+    return changed - {None}
 
 
 def check_shared_network():
@@ -939,11 +971,8 @@ def materialize_component_manifests(checked, imports, known):
     return rendered
 
 
-def load_and_verify_images(components, source_components, rendered):
+def load_and_verify_images(archive, components, source_components, rendered):
     """Load this bundle and verify every required image before persistent service changes."""
-    archive = common.ROOT / "images/images.tar"
-    if not archive.is_file():
-        raise common.DeployError(f"Missing image archive {archive}")
     run("podman", "load", "-i", archive)
     documents = [
         doc for text, _ in rendered.values() for doc in yaml.safe_load_all(text)
@@ -1098,8 +1127,11 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     components = list(checked)
     owners = catalog.role_owners(known, "registration owners")
     network, network_text = check_shared_network()
+    archive = image_archive()
+    if checked:  # Fully qualified image names, decided before generation.
+        rendering.find_images(doc for _, docs in checked.values() for doc in docs)
     rendered = materialize_component_manifests(checked, imports, known)
-    load_and_verify_images(components, [name], rendered)
+    load_and_verify_images(archive, components, [name], rendered)
     write_installed_metadata(descriptor)
     changed, pending = apply_registration_updates(name, updates, removals, owners)
     write_component_units_and_imports(rendered, network, network_text)
@@ -1138,29 +1170,32 @@ def install_components():
     check_dependents(descriptor, installed)
     config_path = component_paths(name)[0]
     config = rendering.load_config(config_path)
+    # Rendered only when the version changes; otherwise only registrations
+    # and owners are refreshed.
+    render = install_needed(descriptor)
     rendering.validate_component_config(
-        config, name, config_path, check_placeholders=install_needed(descriptor)
+        config, name, config_path, check_placeholders=render
     )
     check_public_settings(descriptor, config, config_path)
-    # Selected for rendering only when the version changes; otherwise only
-    # registrations and owners are refreshed.
-    checked = {}
-    if install_needed(descriptor):
-        effective = rendering.effective_config(config, config_path, name)
-        checked[name] = (
-            effective,
-            check_manifests(
-                effective,
-                config_path,
-                common.ROOT / "components" / name / "manifests",
-                name,
-                descriptor["accepts"].values(),
-            ),
-        )
     with tempfile.TemporaryDirectory(
         prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
+        # Staging only reads and validates registrations; it writes nothing
+        # outside the temporary directory and runs before any host command.
         imports, updates, removals = registration_stage([name], Path(directory), known)
+        checked = {}
+        if render:
+            effective = rendering.effective_config(config, config_path, name)
+            checked[name] = (
+                effective,
+                check_manifests(
+                    effective,
+                    config_path,
+                    common.ROOT / "components" / name / "manifests",
+                    name,
+                    descriptor["accepts"].values(),
+                ),
+            )
         install_component_plan(descriptor, checked, known, imports, updates, removals)
 
 

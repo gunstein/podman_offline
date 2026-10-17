@@ -157,3 +157,43 @@ class UnsupportedPasswordSettingTests(ProductFixture):
                         deploy.prepare()
                     self.assertEqual(self.commands(), [])
                     self.assertFalse((common.BUILD / "dev").exists())
+
+
+class DataDirectoryDetectionTests(ProductFixture):
+    """A container mounting the PostgreSQL data directory is a database container."""
+
+    def test_data_mount_without_supported_password_file_is_refused(self):
+        for case in ("PGPASSWORD", "envFrom", "no password"):
+            with self.subTest(case=case):
+                product = copy.deepcopy(RENAMED)
+                spec = product["orders"]["manifests"][1]["spec"]
+                container = spec["containers"][0]
+                container["env"] = [
+                    e for e in container["env"] if e["name"] != "POSTGRES_PASSWORD_FILE"
+                ]
+                if case == "PGPASSWORD":
+                    container["env"].append(
+                        {
+                            "name": "PGPASSWORD",
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": "orders-database-password",
+                                    "key": "password",
+                                }
+                            },
+                        }
+                    )
+                elif case == "envFrom":
+                    container["envFrom"] = [
+                        {"secretRef": {"name": "orders-database-password"}}
+                    ]
+                shutil.rmtree(self.root / "source", ignore_errors=True)
+                self.write_product(product)
+                self.process.reset_mock()
+                with self.assertRaisesRegex(
+                    common.DeployError,
+                    "Unsupported PostgreSQL password setting \\(none\\) in container 'db'",
+                ):
+                    deploy.prepare()
+                self.assertEqual(self.commands(), [])
+                self.assertFalse((common.BUILD / "dev").exists())

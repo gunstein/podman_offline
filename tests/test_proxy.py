@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+from render_helper import materialize_and_render
 
 from deployment import render as rendering
 
@@ -43,7 +44,7 @@ class ProxyTests(unittest.TestCase):
         )
         path = base / "config.yaml"
         path.write_text(yaml.safe_dump(config))
-        rendered = rendering.materialize_and_render(
+        rendered = materialize_and_render(
             base / "files",
             config_path=path,
             manifests=MANIFESTS,

@@ -549,7 +549,7 @@ def check_links(docs, from_config, sources=None):
     for key, where in sorted(from_config.items()):
         if key not in used:
             raise common.DeployError(
-                f"{where} in config.yaml is not used by any manifest. "
+                f"{where} is not used by any manifest. "
                 "Check that the id matches secretName/claimName in the manifest"
             )
 
@@ -713,13 +713,23 @@ def effective_documents(config, path, manifests, component=None, imported=()):
         documents += rendered
         sources += [manifest] * len(rendered)
 
+    imported = set(imported)
     secrets, volumes = declared_volume_names(config, path, imported)
     declared = [{"kind": "Secret", "metadata": {"name": i}} for i in secrets] + [
         {"kind": "PersistentVolumeClaim", "metadata": {"name": i}} for i in volumes
     ]
-    from_config = {("Secret", i): f"{common.SECRET_FILES}.{i}" for i in secrets}
+    from_config = {
+        ("Secret", i): f"{common.SECRET_FILES}.{i} in config.yaml" for i in secrets
+    }
     from_config.update(
-        {("PersistentVolumeClaim", i): f"{common.VOLUME_FILES}.{i}" for i in volumes}
+        {
+            ("PersistentVolumeClaim", i): (
+                f"Imported volume {i} (accepts in bundles.yaml)"
+                if i in imported
+                else f"{common.VOLUME_FILES}.{i} in config.yaml"
+            )
+            for i in volumes
+        }
     )
     try:
         check_links(declared + documents, from_config, [None] * len(declared) + sources)
@@ -748,41 +758,6 @@ def materialize(config, path, documents, files_dir, extra_volumes=None):
     volumes.update(extra_volumes or {})
     docs = secret_documents(secrets) + volume_claims(volumes, files_dir) + documents
     return yaml.safe_dump_all(docs, sort_keys=False), volumes
-
-
-def materialize_and_render(
-    files_dir=None,
-    write_archives=True,
-    config_path=None,
-    manifests=None,
-    component=None,
-    extra_volumes=None,
-):
-    """Validate, create allowed missing secrets, render YAML and optionally write imports.
-
-    The deploy commands call the steps separately so the database preflight
-    runs between validation and generation (deploy.database_preflight).
-    """
-    config_path = config_path or common.CONFIG
-    if not config_path.exists():
-        raise common.DeployError(f"Missing {config_path}")
-    files_dir = files_dir or common.BUILD / "files"
-    config = load_config(config_path)
-    if component:
-        config = effective_config(config, config_path, component)
-    documents = effective_documents(
-        config,
-        config_path,
-        manifests or common.MANIFESTS,
-        component,
-        extra_volumes or {},
-    )
-    text, volumes = materialize(
-        config, config_path, documents, files_dir, extra_volumes
-    )
-    if write_archives:
-        write_file_archives(volumes, files_dir)
-    return text
 
 
 def find_images(documents):

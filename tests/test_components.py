@@ -5,7 +5,6 @@ import io
 import json
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -23,18 +22,6 @@ class ComponentFixture(DeployFixture):
     def setUp(self):
         """Create a minimal app1 release and two persistent configs."""
         super().setUp()
-        # The environment guard is tested separately. Keep staging inside the fixture,
-        # even on machines without the synthetic /run/user/1000 runtime directory.
-        temporary_directory = tempfile.TemporaryDirectory
-
-        def staging(*args, **kwargs):
-            if kwargs.get("dir") == "/run/user/1000":
-                kwargs["dir"] = str(self.root)
-            return temporary_directory(*args, **kwargs)
-
-        self.stack.enter_context(
-            mock.patch.object(tempfile, "TemporaryDirectory", side_effect=staging)
-        )
         self.write("VERSION", "1.2.3\n")
         self.write("PLATFORM_VERSION", "1.0.0\n")
         self.write("IDENTITY_VERSION", "1.0.0\n")

@@ -541,7 +541,10 @@ flowchart TD
 `deployment/deploy.py: database_preflight()` runs after manifest validation and
 before generation, on the effective manifest (placeholders replaced). A missing
 database password with an existing database volume stops installation; deploy
-does not invent a replacement password for retained database state.
+does not invent a replacement password for retained database state. A container
+that sets any `POSTGRES_PASSWORD*` variable or mounts `/var/lib/postgresql/data`
+counts as a database container and must use `POSTGRES_PASSWORD_FILE` with a
+mounted Secret; any other password layout is refused before generation.
 
 The session key is an application-wide signing key, not a per-user password or
 the key used to authenticate the app to Identity. Flask stores signed session

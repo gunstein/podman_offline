@@ -54,8 +54,8 @@ installed.
 
 ## Product and unit tests
 
-`python3 -B -m unittest discover -s tests`: 301 tests, OK (1 skipped). The
-baseline was 275.
+`python3 -B -m unittest discover -s tests`: 307 tests, OK (1 skipped). The
+baseline was 275; 301 before the review follow-up.
 
 | File | Covers |
 | --- | --- |
@@ -163,13 +163,14 @@ it much faster.
 2. Descriptors, pending conflicts, owners, dependency ranges and
    `install_needed` are checked.
 3. `load_config`, `validate_component_config` and `check_public_settings` run.
-4. `check_manifests` runs. It calls `effective_config` and `effective_documents`
+4. `registration_stage` runs in a temporary directory and validates and returns
+   imports, updates and removals.
+5. `check_manifests` runs. It calls `effective_config` and `effective_documents`
    (pure), then `database_preflight`, which is the first host command.
-5. `registration_stage` runs in a temporary directory and returns imports,
-   updates and removals.
 6. `install_component_plan` then takes over:
-   1. `materialize` (secrets, YAML)
-   2. images
+   1. the image archive and image names are checked, then `materialize`
+      (secrets, YAML)
+   2. images are loaded and verified
    3. metadata
    4. `apply_registration_updates` (save the pending record, then write or
       delete)
@@ -206,21 +207,45 @@ gateway import and restarts it. `acknowledge_owner` clears the record.
 
 **Remaining complexity:**
 
-- `materialize_and_render` stays as a render-level helper used by tests. Its
-  docstring says that deploy commands call the steps separately because of the
-  database check.
 - Imported registration volumes appear in two forms: as names in
   `effective_documents`, taken from the descriptor's `accepts`, and as paths in
-  `materialize`, taken from staging. Validation must run before staging, and
-  staging needs written dev configs.
+  `materialize`, taken from staging. Validation needs only the names, and the
+  archive contents exist only once staging has run.
 - The deploy and render modules grew by about 180 lines net. Most of that is
   documented helpers and the split preflight, not new mechanisms. The plan's
   expectation of "fewer lines" did not hold.
 
+## Independent review follow-up
+
+An independent code and understandability review of `c92897d` found no
+blocking defect. Each finding was checked against the code before it was fixed:
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | A removal whose role no known component accepts recorded `None` as an owner, so `pending-operation.json` became unreadable and blocked every later install and uninstall. | `registration_changes` drops `None`. `OwnerlessRemovalTests`. |
+| 2 | `registration_stage`, which validates `client.yaml`, certificates and role files, ran after the database volume check on install, and after dev configs were rewritten and dev registrations deleted on `prepare`. | Staging runs first on install. Dev `prepare` stages from in-memory configs, ignoring existing dev registrations, before its first write. `RegistrationValidationOrderTests`. |
+| 3 | A container mounting the PostgreSQL data directory without any `POSTGRES_PASSWORD*` variable (for example `PGPASSWORD` from a Secret, or `envFrom`) skipped the database guard. | A data-directory mount also marks a database container, which must use the supported layout. `DataDirectoryDetectionTests`. This also closes the `envFrom` gap. |
+| 4 | An unused imported volume was reported as `VOLUME_FILES.<name> in config.yaml`, although it comes from `accepts` in `bundles.yaml`. | The message names its source. `ImportedVolumeMessageTests`. |
+| 5 | The image-archive check and image-name validation ran after secret generation. | `image_archive()` and `find_images` run before `materialize` on install and standalone install. |
+| 6 | The retry test accepted any non-empty owner set and any superset of restarts, and had no interrupt during the deletion. | Exact owners and exact retry restarts per failure point, and a new interrupt after the first removal. |
+
+Also from the review:
+- `materialize_and_render` moved to `tests/render_helper.py`, so product code
+  has one sequence (`check_manifests`, then `materialize`). Four tests patched
+  it on install, which never called it, so they could not fail. They now patch
+  `materialize`.
+- `install_needed` is evaluated once per install.
+
+Kept as is:
+- The split of the registration and pending code into its own module (low
+  priority in the review). The current module structure is the starting point.
+- Prefix-ambiguous component IDs (`orders` and `orders-data`) predate this
+  change and are tracked as backlog item 31.
+
 ## Remaining gaps
 
-- `envFrom` in a PostgreSQL container could inject a password variable that
-  the preflight cannot see. Broader layouts remain backlog item 7.
 - Python 3.6 and PyYAML 5.4.1 were checked only with `vermin`, not by running
   the suites.
-- None from the lab: all six scenarios were CLEAN PASS (above).
+- The lab results above are for `5ee9748`. The review follow-up changes the
+  install order (staging first), the database detection and the image checks,
+  so the matrix must be rerun on the follow-up commit.
