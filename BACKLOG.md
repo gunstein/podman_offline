@@ -2977,8 +2977,12 @@ liveness probe now uses initialDelaySeconds 10, periodSeconds 10, timeoutSeconds
 5 and failureThreshold 6 (was 90/30/5/3), without a startupProbe. Measured on
 `a688c30`: each health wait about 11 s (was 92), the hang test 100 s (was 199),
 app1-first 25 min (was 44), identity-only 14 min (was 22), renamed 20 min
-(was 32). Bundle builds (about 262 s each) are now the largest cost: do step 2
-next, then 3–4.
+(was 32). Step 2 done on `main`: bundles are written with gzip level 6
+instead of 9 (measured locally on 3 GB of binaries: 150 s instead of 484 s,
+archives 0.6 % larger), and `./build-bundle.sh <component>` builds only the
+named bundles; the app1 upgrade and the inventory release without registrations
+now build only that bundle. Confirm the build times in the next lab run, then
+weigh steps 3–4.
 Raised by the operator on 2026-10-17: the item 21 matrix (six scenarios) took
 several hours, which is far too long.
 

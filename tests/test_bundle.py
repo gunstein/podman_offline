@@ -397,7 +397,7 @@ data: {image: ignored}
                 )
                 with self.assertRaises(bundle.BundleError):
                     bundle.manifest_images()
-                self.assertEqual(bundle.main(), 1)
+                self.assertEqual(bundle.main([]), 1)
                 self.assertIn("ERROR:", self.errors.getvalue())
                 self.assertNotIn("Traceback", self.errors.getvalue())
         self.process.assert_not_called()
@@ -413,7 +413,7 @@ data: {image: ignored}
 
     def test_invalid_yaml_returns_error_without_podman(self):
         self.write("manifests/app.yaml", "spec: [")
-        self.assertEqual(bundle.main(), 1)
+        self.assertEqual(bundle.main([]), 1)
         self.assertIn("ERROR:", self.errors.getvalue())
         self.assertNotIn("Traceback", self.errors.getvalue())
         self.process.assert_not_called()
@@ -424,7 +424,7 @@ data: {image: ignored}
             "spec:\n  containers:\n  - image: localhost/first:1\n"
             "    image: localhost/second:1\n",
         )
-        self.assertEqual(bundle.main(), 1)
+        self.assertEqual(bundle.main([]), 1)
         self.assertIn("line 4", self.errors.getvalue())
         self.assertNotIn("Traceback", self.errors.getvalue())
         self.process.assert_not_called()
@@ -432,12 +432,12 @@ data: {image: ignored}
 
     def test_failed_save_returns_one_without_final_bundle(self):
         self.process.side_effect = subprocess.CalledProcessError(1, "podman save")
-        self.assertEqual(bundle.main(), 1)
+        self.assertEqual(bundle.main([]), 1)
         self.assertIn("ERROR:", self.errors.getvalue())
         self.assertFalse(bundle.DIST.exists())
 
     def test_main_success(self):
-        self.assertEqual(bundle.main(), 0)
+        self.assertEqual(bundle.main([]), 0)
 
     def test_registry_pulls_are_sorted_and_localhost_names_are_preserved(self):
         """Pull each remote name once, including localhost:port, and never build."""
@@ -523,7 +523,7 @@ data: {image: ignored}
             output=b"private-auth-token",
             stderr=b"private-auth-token",
         )
-        self.assertEqual(bundle.main(), 1)
+        self.assertEqual(bundle.main([]), 1)
         self.process.assert_called_once()
         self.assertIn("registry.example.test/app:2", self.errors.getvalue())
         self.assertIn("podman login registry.example.test", self.errors.getvalue())
@@ -653,9 +653,8 @@ data: {image: ignored}
         )
         self.assertEqual(save.count(image), 1)
 
-    def test_component_bundles_include_only_selected_components_and_images(self):
-        """Build three independent archives with matching platform versions and no local state."""
-        # The demo graph without registrations: these fixtures have no route/client files.
+    def write_component_catalog(self):
+        """Write the demo graph without registrations: no route/client files."""
         catalog = {
             name: {
                 key: DEMO[name][key] for key in ("requires", "version_file", "upgrade")
@@ -685,6 +684,10 @@ data: {image: ignored}
             self.write(
                 "components/" + component + "/config.yaml", "PRIVATE: do-not-bundle\n"
             )
+
+    def test_component_bundles_include_only_selected_components_and_images(self):
+        """Build three independent archives with matching platform versions and no local state."""
+        self.write_component_catalog()
         bundle.build()
         for name, components in (
             ("platform", ("platform",)),
@@ -800,6 +803,45 @@ data: {image: ignored}
                 "myproduct-help-1.2.3-offline.tar.gz",
             ],
         )
+
+    def test_selected_components_build_only_those_bundles(self):
+        """A partial build validates the catalog but writes only the named bundles."""
+        self.write_component_catalog()
+        bundle.build()
+        current = (bundle.DIST / "current-bundles.txt").read_text()
+        self.write("VERSION", "1.2.4\n")
+        self.process.reset_mock()
+        bundle.build(["app1"])
+        saved = [
+            call.args[0]
+            for call in self.process.call_args_list
+            if call.args[0][:2] == ["podman", "save"]
+        ]
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0][-1], "localhost/app1:1")
+        self.assertTrue((bundle.DIST / "myproduct-app1-1.2.4-offline.tar.gz").is_file())
+        for name in ("app2", "help"):
+            self.assertFalse(
+                (bundle.DIST / ("myproduct-" + name + "-1.2.4-offline.tar.gz")).exists()
+            )
+        # The complete product list is written only by a full build.
+        self.assertEqual((bundle.DIST / "current-bundles.txt").read_text(), current)
+
+    def test_archives_use_gzip_level_6(self):
+        """Level 9 is about three times slower for under 1 % smaller archives."""
+        self.write_component_catalog()
+        bundle.build(["help"])
+        header = (bundle.DIST / "myproduct-help-1.2.3-offline.tar.gz").read_bytes()[:10]
+        # XFL is 2 for level 9, 4 for level 1 and 0 for the levels in between.
+        self.assertEqual(header[:2], b"\x1f\x8b")
+        self.assertEqual(header[8], 0)
+
+    def test_unknown_selected_component_builds_nothing(self):
+        self.write_component_catalog()
+        with self.assertRaisesRegex(bundle.BundleError, "Unknown component reports"):
+            bundle.build(["app1", "reports"])
+        self.process.assert_not_called()
+        self.assertFalse(bundle.DIST.exists())
 
     def test_sha256_reads_more_than_one_chunk(self):
         path = self.root / "large.bin"

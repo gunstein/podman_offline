@@ -177,7 +177,10 @@ sequenceDiagram
 
 ### `./build-bundle.sh` in the source checkout
 
-This is the catalog path. Without `bundles.yaml`, `bundle.build()` builds one
+This is the catalog path. Component names as arguments
+(`./build-bundle.sh app1`) build only those releases after the same catalog
+validation and do not rewrite `dist/current-bundles.txt`. Without
+`bundles.yaml`, `bundle.build()` builds one
 standalone release instead: `manifest_images()` from `manifests/`, the same
 secret guard, then a single `build_release(VERSION)` and no
 `dist/current-bundles.txt`.

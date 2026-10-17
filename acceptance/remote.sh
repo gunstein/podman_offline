@@ -782,8 +782,8 @@ major, minor, patch = pathlib.Path("VERSION").read_text().strip().split(".")
 pathlib.Path("INVENTORY_VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\n")
 DROP_REGISTRATIONS
     rm components/inventory/route.conf components/inventory/client.yaml
-    ./build-bundle.sh >&2
-    name=$(grep '^myproduct-inventory-' dist/current-bundles.txt)
+    ./build-bundle.sh inventory >&2
+    name="myproduct-inventory-$(cat INVENTORY_VERSION)-offline.tar.gz"
     (cd dist && sha256sum -c "$name.sha256" >&2)
     echo "$name"
     ;;
@@ -904,7 +904,8 @@ upgrade-bundle)
     changed=$(git diff --name-only)
     test "$changed" = VERSION
     git diff -- VERSION
-    ./build-bundle.sh
+    # Only app1 is transferred and upgraded; the catalog is still validated.
+    ./build-bundle.sh app1
     (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
     ;;

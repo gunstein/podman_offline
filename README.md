@@ -235,7 +235,9 @@ unreleased version; published release tags must remain immutable.
 
 One invocation creates one bundle per catalog component and lists them in
 `dist/current-bundles.txt`; older archives in `dist/` are retained, for example
-for uninstalling a removed component. Only catalog components are scanned for
+for uninstalling a removed component. `./build-bundle.sh app1 help` builds only
+the named components, after validating the whole catalog, and leaves
+`dist/current-bundles.txt` unchanged. Only catalog components are scanned for
 images. Each bundle contains `config/common.defaults.yaml` (when present), its
 component's `config.defaults.yaml`, only its component,
 `deploy`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,

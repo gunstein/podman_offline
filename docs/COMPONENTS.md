@@ -204,7 +204,8 @@ Add the entry to `bundles.yaml`:
 No Python or shell file changes. `./deploy prepare` and `dev/dev.sh up` start
 it; `./build-bundle.sh` pulls the image, saves it in
 `dist/myproduct-reports-<version>-offline.tar.gz` and lists it in
-`dist/current-bundles.txt`. On the target: `./deploy init-config reports`,
+`dist/current-bundles.txt`; `./build-bundle.sh reports` builds only that bundle
+and leaves the list unchanged. On the target: `./deploy init-config reports`,
 prepare any credentials, then `./deploy install` from that bundle. Installing
 it restarts `reports` and `platform`.
 
