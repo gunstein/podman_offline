@@ -2214,7 +2214,7 @@ plugin framework or large object hierarchy.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Four findings reproduced in isolated Python checks; no fix or
+Status: planned; implementation plan below. Four findings reproduced in isolated Python checks; no fix or
 real Podman/systemd verification performed. Prioritize the database preflight
 and resource-kind gaps because they affect lifecycle safety checks.
 
@@ -2367,6 +2367,93 @@ undefined mount was rejected). It also found:
   `generate_secrets`, addresses §1, §2, §4 and F2 together. Extracting
   `uninstall_plan()` and one shared restart-and-acknowledge helper would make
   the lifecycle easier to follow. No wider architecture change is needed.
+
+### Implementation plan (2026-10-17)
+
+Status of the plan: agreed, not started. Start only when item 20's four
+acceptance runs are CLEAN PASS on merged `main`.
+
+**Starting point.** Six places walk manifests with their own idea of resource
+kinds: `check_component_names`, `database_preflight` and uninstall look only at
+top-level `kind: Pod`; `check_pod_spec`, `find_images` and `references` search
+for `spec`/`containers` at any depth. That mismatch is the root cause of §2 and
+F2 and part of §1. `materialize_and_render` mixes validation with side effects,
+runs twice per install and calls `generate_secrets` before mounts and links are
+checked (§4). `registration_stage` copies every installed registration,
+including those of the component being upgraded (§3).
+
+**Resource-kind contract.** Supported: `Pod`, `ConfigMap`,
+`PersistentVolumeClaim`, `Secret`, which are the kinds the demo uses and
+`podman kube play` handles well. Everything else (`Deployment`, `List`, an
+unknown `kind`, a non-map document) is rejected with file and kind named before
+any side effect. No broader Kubernetes support.
+
+**Five steps, one commit each, tests green after every step:**
+
+1. **One manifest model (§2).** `render.check_kinds(documents, source)` with
+   `SUPPORTED_KINDS`, and `render.pod_specs(documents)` yielding
+   `(document, spec)` for Pods. Use them in `check_pod_spec`, `find_images`,
+   `check_component_names`, database preflight and the uninstall plan; drop
+   the any-depth search. Tests: the same container spec is accepted in a Pod,
+   rejected in a Deployment/List before Podman calls, generation or writes; a
+   `Deployment` named `gateway-stolen` is rejected.
+2. **Validation before side effects, one render (§4).** A pure
+   `render.effective_documents(config, manifests, component, volumes)`:
+   placeholders replaced (unreplaced ones rejected), kinds, names, pull
+   policy, mounts, duplicates and Secret/PVC/ConfigMap links against what
+   config declares; no writes. `materialize_and_render` becomes a thin
+   sequence: effective documents, `generate_secrets`, load file groups,
+   validate generated file content, produce text, optionally write archives.
+   Install renders once; `write_component_units_and_imports` receives the
+   rendered text and only writes archives. Tests: invalid mount, missing
+   reference, duplicates, wrong pull policy, unreplaced placeholder, each
+   with no new secrets, archives, YAML or host commands, and existing
+   config/credential bytes unchanged.
+3. **Database preflight on the effective manifest (§1, F2).**
+   `database_preflight` takes the documents from `effective_documents` and
+   uses `pod_specs`, so Podman receives the configured volume name, not
+   `@@DB_VOLUME@@`. Split the ~110-line function into small named helpers
+   (find the PostgreSQL binding, find the password file, check the volume).
+   F2: refuse every `POSTGRES_PASSWORD*` form other than the supported
+   `POSTGRES_PASSWORD_FILE` layout, including `secretKeyRef`, naming file and
+   container; other layouts stay item 7. Tests: literal and configured volume
+   names with the exact Podman argument; absent volume (exit 1) allows
+   generation; existing volume (exit 0) and inspection errors (other exit,
+   `OSError`) refuse without generating; existing password bytes preserved.
+4. **Registrations removed by a new release (§3).** In `registration_stage`
+   the release files are authoritative for the components being installed:
+   their installed route/client is not copied, and a dropped role becomes
+   `updates[relative path] = None` (delete). `registration_changes` counts
+   deleting an existing file as a change for its owner; pending owners are
+   saved with `save_pending` before `write_registrations` deletes, using the
+   existing pending mechanism with one new value case and no transaction
+   logic. Retry in a fresh process already rebuilds indexes without the
+   deleted file and restarts the pending owners; cover it with tests.
+   Absence for an unselected component never means removal. Clean-up:
+   extract `uninstall_plan(component, output)` and one shared
+   `restart_and_acknowledge(owner, state)` used by install and uninstall.
+   Tests: route-only, client-only, both and unchanged; exact owner restarts,
+   siblings kept and not restarted; failures injected after deletion, during
+   archive writing and during restart, then retry in a fresh process;
+   uninstall after an upgrade already removed the route.
+5. **Acceptance, docs and version.** A focused harness scenario
+   (`--registration-removal`): install inventory, upgrade to a release
+   without route and client, check `/stock` returns 404, the client is gone
+   and orders still works. Update `docs/COMPONENTS.md` (supported kinds),
+   `ARCHITECTURE.md` (sequence diagram: validation before generation) and
+   `docs/REVIEW_GUIDE.md`. Bump the version per the repository's rules. Write
+   `acceptance/MANIFEST-VALIDATION.md` with the mandatory understandability
+   review.
+
+**Trade-offs.** Rejecting `Deployment` is simpler than supporting it, and no
+existing requirement needs it. No classes or frameworks: three or four small
+functions, fewer lines overall as six traversals become one. Validation that
+needs generated bytes (file-group content, empty/invalid password file) still
+runs after generation; document that explicitly.
+
+**Delivery.** Branch `feature/manifest-validation`, five commits, one PR (as
+for item 20), reviewable commit by commit; steps 1–3 and 4–5 can be split into
+two PRs if smaller reviews are preferred.
 
 ### Scope, verification and delivery
 
