@@ -2925,8 +2925,12 @@ standalone paragraph consistent.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; analyse before changing anything. Found in the item 20
-acceptance run `decl-app1-first-2` (revision `8e62153`, 2026-10-17).
+Status: step 1 in progress. `acceptance/fapolicyd-reload-probe.sh` reproduces
+the sequence on the PROD VM (trust add/delete, `fapolicyd-cli --update`, wait
+0–15 s, restart a user unit) and reports failed restarts per delay, the
+effective rules, `fapolicyd.conf`, fapolicyd's journal and every FANOTIFY/AVC
+denial; results are pending. Found in the item 20 acceptance run
+`decl-app1-first-2` (revision `8e62153`, 2026-10-17).
 
 ### Observation
 
