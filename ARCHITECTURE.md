@@ -92,6 +92,81 @@ against `build/dev/<component>`. `prepare_standalone()` and
 `install_standalone()` isolate the supported root-config examples/test fixtures
 from the component path; they are not migration or old-release adapters.
 
+## Sequence diagrams
+
+### `./deploy install` from an unpacked bundle
+
+Validation happens before any write; `pending-operation.json` is saved before
+registrations change; the version marker is written last.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant CLI as cli.main
+    participant D as deploy.install_components
+    participant C as catalog
+    participant R as render
+    participant P as deploy.install_component_plan
+    participant H as Podman / systemd
+    participant S as Service home
+
+    Op->>CLI: ./deploy install
+    CLI->>D: install()
+    D->>C: load_bundle_descriptor (bundle.yaml)
+    D->>S: check_pending (pending-operation.json)
+    D->>C: load_installed_metadata, check_owners
+    D->>C: installed_version / dependents
+    Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
+    D->>R: load_config, validate_component_config
+    D->>D: check_public_settings (public_from)
+    D->>H: database_preflight: podman volume exists
+    D->>D: registration_stage (temp dir): imports + updates
+    D->>P: install_component_plan
+    P->>S: check_shared_network
+    P->>R: materialize_and_render (write_archives=False)
+    Note over R: validate names and config, generate missing secrets,<br/>read files, render YAML, check links
+    P->>H: podman load + podman image exists
+    P->>S: write metadata/ID.json
+    P->>S: save_pending, then write routes/ and clients/
+    P->>R: materialize_and_render (writes import archives)
+    P->>S: write Quadlet .yaml/.kube, owner import archives
+    P->>H: daemon-reload, restart component then owners (restart_order)
+    P->>S: acknowledge each owner, clear_pending
+    P->>S: write installed/ID (completion)
+```
+
+### `./build-bundle.sh` in the source checkout
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant B as bundle.build
+    participant C as catalog
+    participant R as render
+    participant G as generated_secret_guard
+    participant BR as bundle.build_release
+    participant H as Podman
+    participant FS as build/ and dist/
+
+    Dev->>B: ./build-bundle.sh
+    B->>C: source_descriptors (bundles.yaml, versions, role files)
+    C-->>B: descriptors in dependency order
+    B->>R: manifest_images (catalog components only)
+    B->>G: guard every catalog component's secrets
+    B->>FS: remove build/bundle
+    loop each descriptor
+        B->>BR: build_release(version, descriptor)
+        BR->>FS: copy deploy, deployment/, own component, scripts, quadlet
+        BR->>FS: write bundle.yaml (compiled descriptor) and VERSION
+        BR->>H: podman pull --policy=always (registry images)
+        BR->>H: podman save -m images.tar
+        BR->>FS: checksums.sha256, tar.gz + .sha256 in dist/
+    end
+    B->>FS: dist/current-bundles.txt
+```
+
 ## Persistent state and trust
 
 Component config and `credentials/`, imported archives, registration directories,
