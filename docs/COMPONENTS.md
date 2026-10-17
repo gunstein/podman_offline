@@ -47,7 +47,10 @@ IDs use lowercase letters, digits and inner hyphens: `my-identity` is valid,
 Secret, PVC and ConfigMap the component owns, its systemd unit
 (`myproduct-<id>.service`) and directory names, so names are checked, never
 rewritten. `installed`, `metadata`, `routes`, `clients` and `files` are
-reserved for shared state on the target.
+reserved for shared state on the target. No ID may be another ID followed by
+`-`: with `orders` and `orders-data`, the name `orders-data-db` would belong to
+both, so their volumes could be confused. The catalog and install refuse such a
+pair, also against already installed components.
 
 Component IDs, image names, resource names, public URL paths and OIDC client
 IDs are separate things. Only resource names carry the component ID; for

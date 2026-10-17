@@ -50,6 +50,18 @@ class CatalogTests(unittest.TestCase):
                 )
         self.refuse("reserved for shared state", {"metadata": {}})
 
+    def test_ids_that_extend_another_id_are_refused(self):
+        """orders-data-db would be a resource name of both orders and orders-data."""
+        self.refuse(
+            "component orders-data starts with orders-.*rename one",
+            {"orders": {}, "orders-data": {}},
+        )
+        self.product({"orders": {}, "ordersdata": {}, "data-orders": {}})
+        self.assertEqual(
+            sorted(catalog.source_descriptors(self.root)),
+            ["data-orders", "orders", "ordersdata"],
+        )
+
     def test_unknown_fields_values_and_duplicate_keys_are_refused(self):
         self.refuse("allowed fields are", {"app": {"depends": ["x"]}})
         self.refuse("upgrade must be one of", {"app": {"upgrade": "sometimes"}})

@@ -1144,8 +1144,9 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
 def install_components():
     """Validate the bundle, installed state and config before writing anything.
 
-    Order: descriptors and dependencies, then config and database preflight,
-    then staging in a temporary directory, then install_component_plan.
+    Order: descriptors and dependencies, then config, then staging in a
+    temporary directory, then manifests and database preflight, then
+    install_component_plan.
     """
     production_environment()
     descriptor = bundle_descriptor()
@@ -1154,6 +1155,7 @@ def install_components():
     installed = catalog.load_installed_metadata(common.HOME)
     known = dict(installed)
     known[name] = descriptor
+    catalog.check_id_prefixes(known, "installed components and this bundle")
     # An incoming descriptor must not take over a role another component serves.
     catalog.check_owners(known, "installed components and this bundle")
     # Unfinished owner work stays valid even if this release drops the role,

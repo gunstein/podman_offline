@@ -3094,7 +3094,12 @@ matrix is comfortably under an hour.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Found by the independent review of item 21 (`c92897d`); it
+Status: done on `main`. `catalog.check_id_prefixes` refuses the pair in
+`bundles.yaml` and, on install, among the installed components and the
+incoming bundle, before any write or host command; documented in
+[components](docs/COMPONENTS.md#component-ids). An existing installation with
+such a pair cannot install either component again until one is renamed;
+none is known. Found by the independent review of item 21 (`c92897d`); it
 predates that change.
 
 ### Observation

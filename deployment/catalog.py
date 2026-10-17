@@ -137,6 +137,7 @@ def load_catalog(root):
                     f"{path}: components.{name}.requires names {dependency}, "
                     "which is not in the catalog"
                 )
+    check_id_prefixes(catalog, str(path))
     check_owners(catalog, str(path))
     dependency_order(catalog)  # Reject cycles before anything else uses the graph.
     return catalog
@@ -178,6 +179,22 @@ def check_entry(name, entry, where):
             )
     if len(set(accepts.values())) != len(accepts):
         raise common.DeployError(f"{where}.accepts needs a separate volume per role")
+
+
+def check_id_prefixes(names, where):
+    """Refuse an ID that is another ID plus "-": resource names would collide.
+
+    Every resource of a component starts with "<id>-", so with orders and
+    orders-data the name orders-data-db would belong to both, and deleting the
+    data of one could delete the other's volume.
+    """
+    for name in sorted(names):
+        for other in sorted(names):
+            if other != name and other.startswith(name + "-"):
+                raise common.DeployError(
+                    f"{where}: component {other} starts with {name}-, so their "
+                    "resource names can collide; rename one of them"
+                )
 
 
 def check_owners(descriptors, where):

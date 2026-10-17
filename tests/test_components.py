@@ -290,6 +290,30 @@ class ComponentTests(ComponentFixture):
             (platform_yaml.read_bytes(), platform_yaml.stat().st_mtime_ns), before
         )
 
+    def test_prefix_ambiguous_component_ids_are_refused_before_any_change(self):
+        """An installed app1-tools and an incoming app1 would share resource names."""
+        self.select("app1")
+        descriptor = mark_installed(self.root, common.HOME, "app2", "1.2.3")
+        descriptor["name"] = "app1-tools"
+        for path, text in (
+            (
+                catalog.metadata_path(common.HOME, "app1-tools"),
+                json.dumps(descriptor, sort_keys=True),
+            ),
+            (common.HOME / "installed/app1-tools", "1.2.3\n"),
+        ):
+            path.write_text(text, encoding="utf-8")
+        before = {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
+        self.process.reset_mock()
+        with self.assertRaisesRegex(
+            common.DeployError, "component app1-tools starts with app1-"
+        ):
+            deploy.install()
+        self.process.assert_not_called()
+        self.assertEqual(
+            {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}, before
+        )
+
     def test_platform_downgrade_fails_before_any_command_or_generated_file(self):
         """Reject an older app bundle's platform before touching private or runtime state."""
         self.select("platform")
