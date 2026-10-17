@@ -172,6 +172,11 @@ sequenceDiagram
 
 ### `./build-bundle.sh` in the source checkout
 
+This is the catalog path. Without `bundles.yaml`, `bundle.build()` builds one
+standalone release instead: `manifest_images()` from `manifests/`, the same
+secret guard, then a single `build_release(VERSION)` and no
+`dist/current-bundles.txt`.
+
 ```mermaid
 sequenceDiagram
     autonumber

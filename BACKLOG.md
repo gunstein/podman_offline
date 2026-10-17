@@ -2876,17 +2876,32 @@ documentation only; can be done any time after item 20 is merged.
 ### Problem
 
 `deployment/deploy.py` `install_standalone()` says only "Install a standalone
-rootless manifest fixture using the persistent config." It does not say when
-it is used instead of the component install, that it reads the optional
-`~/.config/.../config.yaml`, runs the database preflight only when that file
-exists, renders without writing archives and loads `images/images.tar`.
+rootless manifest fixture using the persistent config." It does not say when it
+is used instead of the component install (a release without `components/`), or
+what it does, in this order (as of 0.4.10):
+
+1. `production_environment()`; requires the service user's `~/config.yaml`
+   (`common.HOME / "config.yaml"`, not `~/.config/...`), else "Missing ...".
+2. `check_manifests()`: validates the effective `manifests/` (kinds,
+   placeholders, pull policy, mounts, links), then the database preflight.
+3. `render.materialize()`: generates allowed missing secrets and renders the
+   YAML once, returning it with the import volumes; no files are written yet.
+4. Requires `images/images.tar`, runs `podman load` and `podman image exists`
+   for every image.
+5. Only then writes the import archives to `files/`, so a failed image check
+   never leaves new imports beside old YAML.
+6. Writes the Quadlet `.yaml`, `.kube` and `.network`, then `daemon-reload`,
+   `restart` and `is-active` for the single service, and `podman ps`.
+
+Before 0.4.10 it rendered twice (without, then with archives) and ran the
+database preflight only when the config existed.
 
 ### Task
 
 Rewrite the docstring so a developer with some Python experience can tell from
-it alone what the function is for, its inputs (persistent config, `files/`,
-`images/images.tar`), what it does not do (no catalog, metadata, registrations
-or markers) and its failure cases. No behaviour change. Keep README's
+it alone what the function is for, its inputs (`~/config.yaml`, `manifests/`,
+`images/images.tar`), the order above, what it does not do (no catalog,
+metadata, registrations, pending record or markers) and its failure cases. No behaviour change. Keep README's
 standalone paragraph consistent.
 
 ## 29. fapolicyd denies systemd's Podman launch just after a trust update
