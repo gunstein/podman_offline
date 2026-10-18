@@ -96,7 +96,7 @@ class ImageHelperTests(unittest.TestCase):
 
     def test_build_uses_manifest_tag_and_pull_skips_local_images(self):
         """Build a local demo image with the manifest tag and avoid registry pulls."""
-        self.manifest(["localhost/myproduct-help:1.2.3"])
+        self.manifest(["localhost/demo-help:1.2.3"])
         app = self.root / "apps/help"
         app.mkdir(parents=True)
         (app / "Containerfile").write_text("FROM scratch\n")
@@ -108,7 +108,7 @@ class ImageHelperTests(unittest.TestCase):
                 [
                     "build",
                     "-t",
-                    "localhost/myproduct-help:1.2.3",
+                    "localhost/demo-help:1.2.3",
                     "-f",
                     "apps/help/Containerfile",
                     "apps/help",
@@ -126,10 +126,10 @@ class ImageHelperTests(unittest.TestCase):
         for name in ("bundles.yaml", "VERSION", "PLATFORM_VERSION", "IDENTITY_VERSION"):
             shutil.copy2(ROOT / name, self.root / name)
         recipes = (
-            ("help", "localhost/myproduct-help:0.2.0"),
-            ("identity", "localhost/myproduct-identity:0.2.1"),
-            ("todo-backend", "localhost/myproduct-todo-backend:0.2.2"),
-            ("todo-frontend", "localhost/myproduct-todo-frontend:0.2.0"),
+            ("help", "localhost/demo-help:0.2.0"),
+            ("identity", "localhost/demo-identity:0.2.1"),
+            ("todo-backend", "localhost/demo-todo-backend:0.2.2"),
+            ("todo-frontend", "localhost/demo-todo-frontend:0.2.0"),
         )
         for name, _ in recipes:
             target = self.root / "apps" / name
@@ -160,7 +160,7 @@ class ImageHelperTests(unittest.TestCase):
                 [
                     "tag",
                     "docker.io/library/postgres:17.11",
-                    "localhost/myproduct-postgres:17.11",
+                    "localhost/demo-postgres:17.11",
                 ],
             ],
         )
@@ -189,7 +189,7 @@ class ImageHelperTests(unittest.TestCase):
 
     def test_postgres_demo_source_tag_follows_manifest(self):
         """Prepare the local PostgreSQL demo alias from the exact manifest tag."""
-        self.manifest(["localhost/myproduct-postgres:17.11"])
+        self.manifest(["localhost/demo-postgres:17.11"])
         result, calls = self.helper("build-images.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -199,7 +199,7 @@ class ImageHelperTests(unittest.TestCase):
                 [
                     "tag",
                     "docker.io/library/postgres:17.11",
-                    "localhost/myproduct-postgres:17.11",
+                    "localhost/demo-postgres:17.11",
                 ],
             ],
         )

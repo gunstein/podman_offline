@@ -2960,9 +2960,11 @@ validate refuse a bundle of another product than the installed components
 (`check_same_product`). Standalone fixtures keep `common.STANDALONE_PRODUCT`
 (`myproduct`). `dev/dev.sh` reads the name for its network. The harness takes
 the name as `remote.sh`'s 13th argument; `--renamed-product` now runs as
-product `shop` (service user, units, archives). Demo image names
-(`localhost/myproduct-*`) and `PUBLIC_ORIGIN` are deliberately not the product
-name. Tests: `ProductNameTests` (every installed name follows `hubbabubba`;
+product `shop` (service user, units, archives). The demo images are renamed
+to the neutral `localhost/demo-*` (manifests, `dev/build-images.sh`, harness), so
+no installed name keeps `myproduct` after a rename; image names stay a
+manifest choice, not derived from the product. `PUBLIC_ORIGIN` is
+configuration. Tests: `ProductNameTests` (every installed name follows `hubbabubba`;
 another product refused before any write), catalog and prepare-host argument
 tests.
 

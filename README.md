@@ -50,9 +50,9 @@ chooses another service user; then use that name wherever this README uses
 the service user. One service user runs one product: install refuses a bundle
 of another product before any write. There is no rename of an existing
 installation; install the renamed product on a fresh service user.
-Not part of the product name: the demo's own image names
-(`localhost/myproduct-*`, set in its manifests) and `PUBLIC_ORIGIN`, which you
-configure. Below, `myproduct` is the demo's product name.
+Image names are not derived from it: each component's manifests name their
+images, and the demo's are neutral (`localhost/demo-*`). `PUBLIC_ORIGIN` is
+configuration you set. Below, `myproduct` is the demo's product name.
 
 Platform owns the HTTPS proxy, web TLS and public route imports. Identity owns
 IdentityServer, its PostgreSQL database, signing keys, API secret, demo users,
@@ -248,7 +248,7 @@ structurally, deduplicates and sorts full names. Every container must use
 `imagePullPolicy: Never`; image placeholders and short names are rejected.
 
 - `localhost/<name>:<tag>` is prepared locally before bundling. The demo build
-  helper discovers `localhost/myproduct-<app>:<tag>` from manifests and builds
+  helper discovers `localhost/demo-<app>:<tag>` from manifests and builds
   `apps/<app>/Containerfile`; the PostgreSQL alias is pulled/tagged explicitly.
 - All other full names, including `localhost:<port>/...`, are registry sources.
   Bundling pulls each with `--policy=always` before save. A failed pull stops;
@@ -1009,7 +1009,7 @@ changes. For a new demo-style app also consider:
 
 | Need | Files and changes |
 | --- | --- |
-| Image | A full registry tag in the manifest, or `apps/<app>/Containerfile` for a local `localhost/myproduct-<app>` demo image. |
+| Image | A full registry tag in the manifest, or `apps/<app>/Containerfile` for a local `localhost/demo-<app>` demo image. |
 | Config | `components/<id>/config.defaults.yaml` for initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
@@ -1043,7 +1043,7 @@ existing rows, IDs, database volumes and credential bytes. After fixing a failed
 database/credential setup, retry the same dev or bundle install command.
 
 App2 still creates its own Todo table from backend startup. Both apps use
-`localhost/myproduct-todo-backend:0.2.2`; rebuild it on the build machine with
+`localhost/demo-todo-backend:0.2.2`; rebuild it on the build machine with
 `dev/build-images.sh`. Existing manifest discovery includes it once in each
 app's offline archive, covering both app1 init and backend. No packages or images
 are fetched on the target. Other images, component dependencies, data ownership

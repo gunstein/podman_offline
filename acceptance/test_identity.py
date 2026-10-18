@@ -127,9 +127,9 @@ class IdentityEvidenceTests(unittest.TestCase):
                 "identity-protection": "retained-protection",
             },
             "image": "old-id",
-            "image_name": "localhost/myproduct-identity:0.2.1",
+            "image_name": "localhost/demo-identity:0.2.1",
         }
-        new = dict(old, image="new-id", image_name="localhost/myproduct-identity:0.4.1")
+        new = dict(old, image="new-id", image_name="localhost/demo-identity:0.4.1")
         with (
             tempfile.TemporaryDirectory() as directory,
             contextlib.redirect_stdout(io.StringIO()) as output,
@@ -164,7 +164,7 @@ class IdentityEvidenceTests(unittest.TestCase):
                     dict(new, image="old-id"),
                     dict(new, files={}),
                     dict(new, volumes={}),
-                    dict(new, image_name="localhost/myproduct-identity:0.2.1"),
+                    dict(new, image_name="localhost/demo-identity:0.2.1"),
                 ):
                     code["observe"] = lambda bad=bad: bad
                     with self.assertRaises(RuntimeError):
@@ -201,7 +201,7 @@ class IdentityEvidenceTests(unittest.TestCase):
                 "bundles.yaml": "product: myproduct\ncomponents:\n  platform:\n    version_file: PLATFORM_VERSION\n  identity:\n    requires: [platform]\n    version_file: IDENTITY_VERSION\n    upgrade: newer-only\n",
                 "components/platform/manifests/10-proxy.yaml": "kind: Pod\n",
                 "components/identity/config.defaults.yaml": "{}\n",
-                "components/identity/manifests/50-identity.yaml": "kind: Pod\nspec:\n  containers:\n  - name: app\n    image: localhost/myproduct-identity:0.2.1\n    imagePullPolicy: Never\n",
+                "components/identity/manifests/50-identity.yaml": "kind: Pod\nspec:\n  containers:\n  - name: app\n    image: localhost/demo-identity:0.2.1\n    imagePullPolicy: Never\n",
                 "apps/identity/Program.cs": 'app.MapGet("/health", () => Results.Ok(new { status = "ok" }));\n',
                 "apps/identity/Containerfile": "FROM fixture\n",
                 "scripts/prepare-host.sh": "#!/bin/sh\n",
@@ -236,7 +236,7 @@ class IdentityEvidenceTests(unittest.TestCase):
             ):
                 exec(compile(code, "HELP_BUILD", "exec"), {})  # noqa: S102 - repository action under test
             self.assertEqual(len(builds), 1)
-            self.assertIn("localhost/myproduct-identity:0.4.1", builds[0][0])
+            self.assertIn("localhost/demo-identity:0.4.1", builds[0][0])
             self.assertIn('release = "0.4.1"', builds[0][1])
             with tarfile.open(
                 str(source / "dist/myproduct-identity-0.4.1-offline.tar.gz")
@@ -253,7 +253,7 @@ class IdentityEvidenceTests(unittest.TestCase):
                 assert images is not None
                 self.assertEqual(
                     images.read().decode().splitlines(),
-                    ["localhost/myproduct-identity:0.4.1"],
+                    ["localhost/demo-identity:0.4.1"],
                 )
                 descriptor = archive.extractfile(prefix + "bundle.yaml")
                 assert descriptor is not None

@@ -625,7 +625,7 @@ data: {image: ignored}
         for name in ("route.conf", "client.yaml"):
             (self.root / "components/app1" / name).unlink()
         bundle.build()
-        image = "localhost/myproduct-todo-backend:0.2.2"
+        image = "localhost/demo-todo-backend:0.2.2"
         with tarfile.open(
             str(bundle.DIST / "myproduct-app1-1.2.3-offline.tar.gz")
         ) as archive:

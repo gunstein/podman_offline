@@ -16,12 +16,12 @@ BUILD_IMAGES
 )
 while IFS= read -r image; do
     case "$image" in
-        localhost/myproduct-postgres:*)
+        localhost/demo-postgres:*)
             source="docker.io/library/postgres:${image##*:}"
             podman pull --policy=always "$source"
             podman tag "$source" "$image";;
-        localhost/myproduct-*:* )
-            app=${image#localhost/myproduct-}
+        localhost/demo-*:* )
+            app=${image#localhost/demo-}
             app=${app%:*}
             [[ $app =~ ^[a-z0-9-]+$ && -f apps/$app/Containerfile ]] || {
                 echo "ERROR: no demo build recipe for $image; prepare it with podman build" >&2; exit 1;

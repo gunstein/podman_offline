@@ -945,14 +945,14 @@ from deployment import catalog
 
 version = os.environ["HELP_RELEASE_VERSION"]
 source = Path.cwd()
-with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
+with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
     release = Path(directory) / "release"
     subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(source), str(release)], check=True)
     (release / "VERSION").write_text(version + "\n")
     kind = os.environ["RELEASE_KIND"]
     if kind == "help":
         manifest = next((release / "components/help/manifests").glob("*.yaml"))
-        text, count = re.subn(r"localhost/myproduct-help:[0-9]+\.[0-9]+\.[0-9]+", "localhost/myproduct-help:" + version, manifest.read_text())
+        text, count = re.subn(r"localhost/demo-help:[0-9]+\.[0-9]+\.[0-9]+", "localhost/demo-help:" + version, manifest.read_text())
         if count != 1:
             raise SystemExit("FAIL: expected exactly one help image")
         manifest.write_text(text)
@@ -960,7 +960,7 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
         if "</body>" not in content.read_text():
             raise SystemExit("FAIL: missing help content insertion point")
         content.write_text(content.read_text().replace("</body>", "<p>help-release-" + version + "</p></body>"))
-        subprocess.run(["podman", "build", "-t", "localhost/myproduct-help:" + version,
+        subprocess.run(["podman", "build", "-t", "localhost/demo-help:" + version,
                         "-f", str(release / "apps/help/Containerfile"), str(release / "apps/help")], check=True)
     elif kind == "identity":
         (release / "IDENTITY_VERSION").write_text(version + "\n")
@@ -970,11 +970,11 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
             raise SystemExit("FAIL: expected one Identity health marker")
         program.write_text(program.read_text().replace(marker, 'new { status = "ok", release = "' + version + '" }'))
         manifest = release / "components/identity/manifests/50-identity.yaml"
-        text, count = re.subn(r"localhost/myproduct-identity:[0-9]+\.[0-9]+\.[0-9]+", "localhost/myproduct-identity:" + version, manifest.read_text())
+        text, count = re.subn(r"localhost/demo-identity:[0-9]+\.[0-9]+\.[0-9]+", "localhost/demo-identity:" + version, manifest.read_text())
         if count != 1:
             raise SystemExit("FAIL: expected one Identity image")
         manifest.write_text(text)
-        subprocess.run(["podman", "build", "-t", "localhost/myproduct-identity:" + version,
+        subprocess.run(["podman", "build", "-t", "localhost/demo-identity:" + version,
                         "-f", str(release / "apps/identity/Containerfile"), str(release / "apps/identity")], check=True)
     else:
         (release / "PLATFORM_VERSION").write_text(version + "\n")
@@ -1047,7 +1047,7 @@ def main():
     else:
         before = json.loads(snapshot.read_text())
         version = sys.argv[2]
-        image = "localhost/myproduct-identity:" + version
+        image = "localhost/demo-identity:" + version
         if state["files"] != before["files"] or state["volumes"] != before["volumes"]:
             raise RuntimeError("Identity credentials, config or data volumes changed")
         if (Path.home() / "installed/identity").read_text().strip() != version:

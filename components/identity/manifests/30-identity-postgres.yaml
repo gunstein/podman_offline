@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: db
-    image: localhost/myproduct-postgres:17.11
+    image: localhost/demo-postgres:17.11
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 10

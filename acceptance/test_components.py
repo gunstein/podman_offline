@@ -189,7 +189,7 @@ class ComponentHarnessTests(unittest.TestCase):
         build = base.shell_code(REMOTE, action="help-upgrade-bundle")
         self.assertIn("catalog.source_descriptors(release)[kind]", build)
         self.assertIn('bundle.build_release(descriptor["version"], descriptor)', build)
-        self.assertIn('"localhost/myproduct-help:" + version', build)
+        self.assertIn('"localhost/demo-help:" + version', build)
         self.assertIn('"<p>help-release-" + version', build)
         self.assertNotIn("./build-bundle.sh", build)
 
