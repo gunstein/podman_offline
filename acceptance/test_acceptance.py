@@ -1636,7 +1636,7 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         """Preserve audit evidence and a failing result even when launch diagnostics fail."""
         block = shell_code(self.remote, action="audit|audit-check|launch-audit-check")
         script = (
-            "set -euo pipefail\nrun_started=123\naction=launch-audit-check\n"
+            "set -euo pipefail\nrun_started=123\naction=launch-audit-check\nrole=DEV\n"
             "health_launch_diagnostics() { echo diagnostic-failed; return 7; }\n"
             "sudo() { return 0; }\n"
             "audit_events() { echo audit-mode=$1; }\n" + block
@@ -1646,6 +1646,23 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("audit-mode=check", result.stdout)
+
+    def test_clean_prod_audit_check_reports_fapolicyd_cache(self):
+        """A clean run uses audit-check, so it must also log the backlog 29 cache figures."""
+        block = shell_code(self.remote, action="audit|audit-check|launch-audit-check")
+        script = (
+            "set -euo pipefail\nrun_started=123\naction=audit-check\nrole=PROD\n"
+            "health_launch_diagnostics() { return 0; }\n"
+            "sudo() { if [[ $* == *check-status* ]]; then"
+            " printf 'Subject cache size: 16381\\nEarly subject cache evictions: 0\\nother: 1\\n'; fi; }\n"
+            "audit_events() { echo audit-mode=$1; }\n" + block
+        )
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Early subject cache evictions: 0", result.stdout)
+        self.assertNotIn("other: 1", result.stdout)
 
 
 class DeliveredSecretTests(unittest.TestCase):

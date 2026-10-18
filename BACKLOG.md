@@ -2586,7 +2586,9 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevan
 contracts and mandatory understandability review alongside this task message.
 
 Status: implemented on `main` (plan below, approved 2026-10-17), revised after
-an independent review of `4023c6d`; lab runs pending. `./deploy validate` in the source checkout, an unpacked bundle and a
+an independent review of `4023c6d`; the full lab matrix (`val-app1-first`,
+`val-app2-first`, `val-help-only`, `val-identity`, `val-platform-help`,
+`val-renamed`) was CLEAN PASS on `9dc0381`. `./deploy validate` in the source checkout, an unpacked bundle and a
 standalone fixture; the lab runs it on DEV before `dev up` (demo and renamed
 product) and on PROD before every install and upgrade. Item 21 already moved the checks ahead of secret generation;
 this item adds the explicit command and reuses that validation instead of a
@@ -3059,6 +3061,9 @@ events): with `subj_cache_size = 16381` the report showed 0 early evictions
 (was 6), 19 % of slots in use (was 83 %), 444 evictions (was 3556) and a
 maximum queue depth of 5. The audit's figures were empty in that run because
 the CLI read the script's stdin; fixed by redirecting it from `/dev/null`.
+The `val-*` runs on `9dc0381` still had no figures: a clean run calls
+`audit-check`, and the block ran only for `audit`. It now runs for every PROD
+audit action (test: `test_clean_prod_audit_check_reports_fapolicyd_cache`).
 
 ### Observation
 
