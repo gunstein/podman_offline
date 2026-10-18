@@ -2750,10 +2750,16 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevan
 contracts and mandatory understandability review alongside this task message.
 
 Status: planned; large. Requested 2026-10-17. Requires a separate analysis and
-an agreed plan before any implementation. Builds on item 20 (declarative
-components) and should start after it has been merged; coordinate with items 2
-(password rotation), 3 (backup and credential recovery, which this item may
-absorb), 7 (PostgreSQL layouts) and 21.
+an agreed plan before any implementation. Analysis and a proposed agent plan
+were prepared on 2026-10-18: [DR implementation plan](docs/DR-IMPLEMENTATION-PLAN.md).
+Read that document in full; it adds the code reuse analysis, runtime ownership
+design, declaration proposals, failure/retry contracts, delivery gates and
+acceptance scenarios. It is not implementation approval or runtime evidence.
+Once agreed, its detailed delivery sequence supersedes the outline below.
+Builds on items 20 (declarative components) and 21; recheck the current baseline.
+Coordinate with items 2 (password rotation), 3 (backup and credential recovery)
+and 7 (PostgreSQL layouts). Backup/recovery must remain usable without standby,
+even if its implementation is delivered by this optional operations package.
 
 ### Source of the existing implementation
 
@@ -2780,8 +2786,10 @@ absorb), 7 (PostgreSQL layouts) and 21.
 
 ### Differences to resolve in podman_offline
 
-- Components and databases are declared per product (item 20), not a fixed
-  todo/notes/keycloak group. The replicated set must come from declarations,
+- The reference already derives its replicated group from its declared
+  `Platform`/apps model, but has its own naming, database and Identity conventions.
+  Here components and databases must follow this product's model (item 20),
+  without copying a second `Platform` model. The replicated set must come from declarations,
   for example an optional per-component DR declaration, and be recorded in
   installed metadata so the target knows it without the source checkout.
 - Each component is a separate offline bundle with its own version and
@@ -2801,8 +2809,14 @@ with no new requirement, service, timer, port or package. DR is enabled
 explicitly, for example as a separate operations bundle and explicit
 commands. Component bundles must not depend on DR code, and the deploy
 package must never import DR code (add a boundary test). Disabling DR or
-never enabling it must not leave replication slots, archive volumes or
-timers behind.
+never enabling it must not leave active replication resources or orphaned
+timers behind. Enablement after ordinary installation must retain existing data
+and credentials. Disablement must restore ordinary deployment ownership and
+remove owned replication slots/endpoints and DR timers, while retaining backup
+history and standby data by default. Retained resources must be inventoried;
+purging them requires a separate explicit destructive operation. A separately
+enabled backup feature may retain its own archive and timer. Do not silently
+delete recovery history to satisfy cleanup; see the plan's disablement contract.
 
 ### Phase 1: analysis and plan (deliver before implementing)
 
