@@ -2881,7 +2881,9 @@ podman_test's acceptance results as evidence for this repository.
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 
-Status: done on `main` (2026-10-18); lab run pending.
+Status: done on `main` (2026-10-18); the full lab matrix on `2528769` (`b26-app1-first`, `b26-app2-first`,
+`b26-help-only`, `b26-identity`, `b26-platform-help`, `b26-renamed`) was CLEAN
+PASS.
 
 - F7: uninstall of a component with metadata but no marker now says it is an
   unfinished first install and that `./deploy install` from its bundle finishes
@@ -2924,7 +2926,11 @@ Original findings:
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: done on `main` in 0.4.11 (2026-10-18); lab run pending.
+Status: done on `main` in 0.4.11 (2026-10-18); the full lab matrix on `2528769` (`b26-app1-first`, `b26-app2-first`,
+`b26-help-only`, `b26-identity`, `b26-platform-help`, `b26-renamed`) was CLEAN
+PASS; `07-init-check`
+confirmed that login-service, orders, inventory and manual inherited gateway's
+`SHOP_NAME` on PROD.
 
 - Reserved names are documented once in docs/COMPONENTS.md ("Reserved
   configuration names"), linked from README; `deploy.PUBLIC_KEYS` and
