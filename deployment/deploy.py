@@ -456,7 +456,31 @@ def production_environment():
 
 
 def install_standalone():
-    """Install a standalone rootless manifest fixture using the persistent config."""
+    """Install a release without components/: one manifests/ folder, one service.
+
+    install() calls this for a release that has neither bundle.yaml nor
+    components/, such as a fixture under examples/ (examples/VM-CHECKLIST.md).
+    It reads the service user's ~/config.yaml (not ~/.config/...) and the
+    release's manifests/ and images/images.tar, in this order:
+
+    1. production_environment() (service user, HOME, runtime directory), then
+       ~/config.yaml must exist.
+    2. check_manifests(): kinds, placeholders, pull policy, mounts and links
+       of the effective manifests, then the database preflight; images.tar
+       must exist and every container needs a fully qualified image.
+    3. rendering.materialize(): may generate allowed missing secrets and
+       renders the YAML once; no other files are written yet.
+    4. podman load of images.tar, then podman image exists for every image.
+    5. Only then the import archives in files/, so a failed image check never
+       leaves new imports beside the old YAML.
+    6. The Quadlet .yaml, .kube and .network, then daemon-reload, restart and
+       is-active for the single service, and podman ps.
+
+    It uses no catalog, metadata, registrations, pending record or markers.
+    It raises DeployError for a missing config, invalid manifests, a database
+    preflight finding, a missing images.tar or an image the archive did not
+    provide; a failing systemctl or podman command raises CalledProcessError.
+    """
     production_environment()
     config_path = common.HOME / "config.yaml"
     if not config_path.exists():

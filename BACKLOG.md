@@ -2985,8 +2985,9 @@ shellcheck and `git diff --check`; report real acceptance runs separately.
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 
-Status: planned. Requested in the item 20 review (PR #1) on 2026-10-17. Small,
-documentation only; can be done any time after item 20 is merged.
+Status: done on `main` (2026-10-18). The docstring names when install uses it,
+its inputs, the six steps, what it does not touch and its failures; README's
+standalone sentence points to it. No behaviour change.
 
 ### Problem
 
@@ -3064,6 +3065,9 @@ the CLI read the script's stdin; fixed by redirecting it from `/dev/null`.
 The `val-*` runs on `9dc0381` still had no figures: a clean run calls
 `audit-check`, and the block ran only for `audit`. It now runs for every PROD
 audit action (test: `test_clean_prod_audit_check_reports_fapolicyd_cache`).
+Confirmed in `fapo-stats-app1-first` on `8629614` (CLEAN PASS): cache size
+16381, 0 early evictions, 19 % of slots in use, 453 evictions, maximum queue
+depth 7.
 
 ### Observation
 

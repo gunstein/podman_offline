@@ -196,7 +196,10 @@ components in dependency order, followed by `podman kube play`. Run
 the last prepare rendered.
 Run `./deploy prepare` from the source checkout; product bundles reject dev
 prepare and use persistent config through install. Standalone fixtures retain
-their explicit prepare flow. Component prepare merges common defaults, component
+their explicit prepare flow; in a release without `components/`, `./deploy
+install` validates `manifests/` against `~/config.yaml`, loads
+`images/images.tar` and runs one `myproduct.service` (see the
+`install_standalone` docstring for the order). Component prepare merges common defaults, component
 defaults and optional `config/dev.yaml`.
 The local overrides apply to every rendered component. Generated config under
 `build/dev/<component>/` is output, never an input layer; credentials and data
