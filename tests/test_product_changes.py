@@ -4,12 +4,13 @@ import copy
 import shutil
 import tarfile
 import warnings
+from unittest import mock
 
 import yaml
 from product_fixture import RENAMED, WORKER, ProductFixture, pod, route
 
 import bundle
-from deployment import common, deploy
+from deployment import common, deploy, registrations, validation
 
 REPORTS = {
     "catalog": {"requires": ["gateway"], "routes": "gateway"},
@@ -64,6 +65,22 @@ class ProductNameTests(ProductFixture):
             if path.is_file()
         )
 
+    def installed_files(self):
+        """Every file under the service home with its bytes."""
+        return {
+            name: (common.HOME / name).read_bytes() for name in self.installed_names()
+        }
+
+    def other_product_release(self):
+        """Build worker 1.0.1 as product other-shop; the source is replaced."""
+        shutil.rmtree(self.source)
+        self.product_name = "other-shop"
+        self.write_product(WORKER, version="1.0.1")
+        release = self.build_and_unpack()["worker"]
+        self.use_root(release)
+        self.process.reset_mock()
+        return release
+
     def test_product_name_reaches_every_installed_name(self):
         self.product_name = "hubbabubba"
         self.write_product(WORKER)
@@ -106,15 +123,9 @@ class ProductNameTests(ProductFixture):
         self.product_name = "hubbabubba"
         self.write_product(WORKER)
         self.install(self.build_and_unpack()["worker"])
-        before = self.installed_names()
-        shutil.rmtree(self.source)
-        shutil.rmtree(self.releases)
-        self.product_name = "other-shop"
-        self.write_product(WORKER, version="1.0.1")
-        release = self.build_and_unpack()["worker"]
-        self.use_root(release)
-        self.process.reset_mock()
-        for action in (deploy.install, deploy.uninstall):
+        before = self.installed_files()
+        self.other_product_release()
+        for action in (deploy.install, deploy.uninstall, validation.validate_bundle):
             with (
                 self.subTest(action=action.__name__),
                 self.assertRaisesRegex(
@@ -124,7 +135,37 @@ class ProductNameTests(ProductFixture):
             ):
                 action()
         self.assertEqual(self.commands(), [])
-        self.assertEqual(self.installed_names(), before)
+        self.assertEqual(self.installed_files(), before)
+
+    def test_unfinished_last_uninstall_stays_with_its_product(self):
+        """Once the last metadata is gone, the pending record names the product."""
+        self.product_name = "hubbabubba"
+        self.write_product(WORKER)
+        release = self.build_and_unpack()["worker"]
+        self.install(release)
+        with (
+            mock.patch.object(
+                registrations, "clear_pending", side_effect=OSError("disk full")
+            ),
+            self.assertRaises(OSError),
+        ):
+            deploy.uninstall()
+        self.assertFalse((common.HOME / "metadata/worker.json").exists())
+        record = (common.HOME / "pending-operation.json").read_bytes()
+        self.assertIn(b'"product": "hubbabubba"', record)
+        self.other_product_release()
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Pending uninstall of worker belongs to product hubbabubba; "
+            "this bundle belongs to other-shop",
+        ):
+            deploy.uninstall()
+        self.assertEqual(self.commands(), [])
+        self.assertEqual((common.HOME / "pending-operation.json").read_bytes(), record)
+        # The product's own bundle still finishes the uninstall.
+        self.use_root(release)
+        deploy.uninstall()
+        self.assertFalse((common.HOME / "pending-operation.json").exists())
 
 
 class ServiceChangeTests(ProductFixture):

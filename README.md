@@ -33,8 +33,8 @@ metadata and complete add/remove examples. The shipped demo product is:
 
 `product:` in `bundles.yaml` names the whole installation. The demo uses
 `myproduct`; to install the same product as, for example, `hubbabubba`, change
-only that line and rebuild the bundles. Everything the installation creates
-then follows it:
+only that line and rebuild the bundles. Every name the installation gives the
+host then follows it:
 
 | What | Name |
 | --- | --- |
@@ -51,8 +51,15 @@ the service user. One service user runs one product: install refuses a bundle
 of another product before any write. There is no rename of an existing
 installation; install the renamed product on a fresh service user.
 Image names are not derived from it: each component's manifests name their
-images, and the demo's are neutral (`localhost/demo-*`). `PUBLIC_ORIGIN` is
-configuration you set. Below, `myproduct` is the demo's product name.
+images, and the demo's are neutral (`localhost/demo-*`), as is the demo CA
+(`Demo Development CA`). `PUBLIC_ORIGIN` (demo default
+`https://myproduct-proxy:8443`) is configuration you set to your own DNS name.
+Below, `myproduct` is the demo's product name.
+
+Installations made before product names (0.4.10 and older) have no product in
+their installed metadata. This release refuses them with a message naming the
+file; there is no migration. Remove such an installation with its own releases,
+or install on a new service user.
 
 Platform owns the HTTPS proxy, web TLS and public route imports. Identity owns
 IdentityServer, its PostgreSQL database, signing keys, API secret, demo users,

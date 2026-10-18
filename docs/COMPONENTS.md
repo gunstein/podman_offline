@@ -37,7 +37,8 @@ components:
       clients: <id>-<volume>     # volume that receives all OIDC clients
 ```
 
-Every field is optional; `<id>: {}` is a complete entry. Unknown fields,
+`product:` is required; every component field is optional, and `<id>: {}` is a
+complete entry. Unknown fields,
 duplicate keys and invalid values are refused before any file, secret, image or
 service is touched. Errors name `bundles.yaml`, the component and the field.
 

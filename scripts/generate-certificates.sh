@@ -28,7 +28,7 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
     else
         openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
             -keyout PKI/private/ca.key -out PKI/private/ca.crt \
-            -subj '/CN=MyProduct Development CA' \
+            -subj '/CN=Demo Development CA' \
             -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign'
     fi
     # Issue missing pairs once; a partial existing pair requires operator investigation.
@@ -94,7 +94,7 @@ fi
 mkdir -p PKI/private credentials/{identity,todo,web,users,client}
 openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
     -keyout PKI/private/ca.key -out PKI/private/ca.crt \
-    -subj '/CN=MyProduct Development CA' \
+    -subj '/CN=Demo Development CA' \
     -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign'
 # Issue a private key and a certificate signed by the demo CA.
 issue() {

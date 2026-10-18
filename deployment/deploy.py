@@ -24,7 +24,7 @@ def init_config(component):
         raise common.DeployError(
             f"Component {component} is not included in this bundle"
         )
-    registrations.check_pending("init-config", component)
+    registrations.check_pending("init-config", component, descriptor["product"])
     check_dependencies_installed(descriptor)
     target = common.HOME / component / "config.yaml"
     for path in [target] + list(target.parents):
@@ -797,7 +797,7 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     load_and_verify_images(archive, components, [name], rendered)
     write_installed_metadata(descriptor)
     changed, pending = registrations.apply_registration_updates(
-        name, updates, removals, owners
+        name, descriptor["product"], updates, removals, owners
     )
     write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
@@ -817,7 +817,7 @@ def install_checks():
     """
     descriptor = bundle_descriptor()
     name = descriptor["name"]
-    pending = registrations.check_pending("install", name)
+    pending = registrations.check_pending("install", name, descriptor["product"])
     installed = catalog.load_installed_metadata(common.HOME)
     check_same_product(descriptor["product"], installed)
     known = dict(installed)
@@ -896,7 +896,7 @@ def install():
         install_standalone()
 
 
-def uninstall_plan(component, delete_data, installed):
+def uninstall_plan(component, delete_data, installed, product):
     """Validate installed state and return the uninstall record; changes nothing.
 
     The volumes come from the installed YAML (Secrets, PVCs and mounted
@@ -955,6 +955,7 @@ def uninstall_plan(component, delete_data, installed):
     return {
         "operation": "uninstall",
         "component": component,
+        "product": product,
         "delete_data": delete_data,
         "volumes": volumes,
         "stopped": False,
@@ -975,7 +976,9 @@ def uninstall(component=None, delete_data=False):
     component = component or own
     if component != own:
         raise common.DeployError("This bundle can only uninstall its own component")
-    state = registrations.check_pending("uninstall", component, delete_data)
+    state = registrations.check_pending(
+        "uninstall", component, descriptor["product"], delete_data
+    )
     marker = common.HOME / "installed" / component
     if state is None and not marker.is_file():
         raise common.DeployError(f"Component {component} is not installed")
@@ -1000,7 +1003,7 @@ def uninstall(component=None, delete_data=False):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
             raise common.DeployError("Refuse symlinked uninstall state or output paths")
     if state is None:
-        state = uninstall_plan(component, delete_data, installed)
+        state = uninstall_plan(component, delete_data, installed, descriptor["product"])
         registrations.save_pending(state)
     if not state["stopped"]:
         run("systemctl", "--user", "stop", catalog.unit_name(component) + ".service")

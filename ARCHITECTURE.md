@@ -24,7 +24,7 @@ are no lifecycle actions during package import. Modules share these explicit
 paths without circular imports or a dependency framework.
 
 Rendering is split so validation visibly precedes side effects (0.4.10). On
-install and dev `prepare`, `deploy.registration_stage()` runs first: it reads
+install and dev `prepare`, `registrations.registration_stage()` runs first: it reads
 and validates routes and client registrations into a temporary directory and
 writes nothing else. Then:
 

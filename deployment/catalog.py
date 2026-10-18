@@ -442,6 +442,10 @@ def installed_version(home, name):
     return marker.read_text().strip() if marker.is_file() else None
 
 
+class PreProductMetadata(Exception):
+    """Installed metadata from before product names; there is no migration."""
+
+
 def load_installed_metadata(home):
     """Read every installed descriptor strictly; temporary files start with a dot.
 
@@ -462,9 +466,21 @@ def load_installed_metadata(home):
             if path.is_symlink() or not path.is_file():
                 raise ValueError("regular file required")
             check_id(name, str(path))
-            descriptor = check_descriptor(json.loads(path.read_text()), str(path))
+            data = json.loads(path.read_text())
+            if isinstance(data, dict) and set(data) == set(DESCRIPTOR_KEYS) - {
+                "product"
+            }:
+                raise PreProductMetadata()
+            descriptor = check_descriptor(data, str(path))
             if descriptor["name"] != name:
                 raise ValueError("name")
+        except PreProductMetadata:
+            raise common.DeployError(
+                f"{path} was written by a release before product names "
+                "(0.4.10 or older), and there is no migration. Remove that installation "
+                "with its own releases, or install on a new service user "
+                "(README: Product name)"
+            ) from None
         except (OSError, ValueError, common.DeployError):
             raise common.DeployError(f"Invalid installed metadata {path}") from None
         descriptors[name] = descriptor

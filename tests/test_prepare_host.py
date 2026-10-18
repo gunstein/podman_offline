@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 class HostLabelTests(unittest.TestCase):
     def run_labels(self, old=False, correct=False, conflict=False):
@@ -97,8 +99,12 @@ class HostPortTests(unittest.TestCase):
             release = Path(directory)
             (release / "scripts").mkdir()
             if product:
+                # Serialized like bundle.py, which quotes values such as 'on'.
                 (release / "bundle.yaml").write_text(
-                    "name: app\nproduct: " + product + "\nversion: 1.0.0\n"
+                    yaml.safe_dump(
+                        {"name": "app", "product": product, "version": "1.0.0"},
+                        sort_keys=False,
+                    )
                 )
             return subprocess.run(
                 [
@@ -131,6 +137,8 @@ class HostPortTests(unittest.TestCase):
             (["--port", "8443", "extra"], False),
             (["--port"], False),
             (["--port", "8443", "--user"], False),
+            (["--port", "8443", "--port", "9443"], False),
+            (["--port", "8443", "--user", "a", "--user", "b"], False),
         ):
             with self.subTest(args=args):
                 result = self.run_arguments(args)
@@ -143,6 +151,8 @@ class HostPortTests(unittest.TestCase):
         cases = (
             ([], None, "user=myproduct port=8443"),
             ([], "hubbabubba", "user=hubbabubba port=8443"),
+            ([], "on", "user=on port=8443"),
+            ([], "null", "user=null port=8443"),
             (["--user", "svc-shop"], "hubbabubba", "user=svc-shop port=8443"),
         )
         for extra, product, expected in cases:

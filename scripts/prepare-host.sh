@@ -12,14 +12,17 @@ usage="Use --port <integer 1024-65535> [--user <service user>]"
 release=$(cd "$(dirname "$0")/.." && pwd)
 user=myproduct
 if [[ -f $release/bundle.yaml ]]; then
-    user=$(sed -n 's/^product: //p' "$release/bundle.yaml")
+    # Parse the YAML: bundle.py may quote a value such as 'on'.
+    user=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["product"])' "$release/bundle.yaml") \
+        || die "Cannot read the product name from $release/bundle.yaml"
 fi
 port=
+user_option=
 while [[ $# -gt 0 ]]; do
     case $1 in
         # The required port must match HTTPS_PORT and PUBLIC_ORIGIN in config.
-        --port) [[ $# -ge 2 && $2 =~ ^[0-9]{1,5}$ ]] || die "$usage"; port=$((10#$2)); shift 2;;
-        --user) [[ $# -ge 2 ]] || die "$usage"; user=$2; shift 2;;
+        --port) [[ $# -ge 2 && -z $port && $2 =~ ^[0-9]{1,5}$ ]] || die "$usage"; port=$((10#$2)); shift 2;;
+        --user) [[ $# -ge 2 && -z $user_option ]] || die "$usage"; user=$2; user_option=1; shift 2;;
         *) die "$usage";;
     esac
 done

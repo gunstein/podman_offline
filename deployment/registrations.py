@@ -273,9 +273,9 @@ def registration_changes(updates, owners, home=None, removals=()):
     return changed - {None}
 
 
-def apply_registration_updates(component, updates, removals, owners):
+def apply_registration_updates(component, product, updates, removals, owners):
     """Record unfinished owners durably before writing or deleting registrations."""
-    pending = check_pending("install", component)
+    pending = check_pending("install", component, product)
     changed = registration_changes(updates, owners, removals=removals) | set(
         pending["owners"] if pending else []
     )
@@ -283,6 +283,7 @@ def apply_registration_updates(component, updates, removals, owners):
         pending = {
             "operation": "install",
             "component": component,
+            "product": product,
             "owners": sorted(changed),
         }
         save_pending(pending)
@@ -299,7 +300,11 @@ def pending_path():
 
 
 def load_pending():
-    """Accept only the small, component-scoped install/uninstall retry record."""
+    """Accept only the small, component-scoped install/uninstall retry record.
+
+    The record names its product: when the last component's metadata is
+    already gone, it is the only place that still says whose work this is.
+    """
     path = pending_path()
     if not path.exists():
         return None
@@ -310,7 +315,7 @@ def load_pending():
         if not isinstance(state, dict):
             raise TypeError("record required")
         operation = state.get("operation")
-        keys = {"operation", "component", "owners"}
+        keys = {"operation", "component", "product", "owners"}
         if operation == "uninstall":
             keys.update(("delete_data", "volumes", "stopped"))
         elif operation != "install":
@@ -320,6 +325,8 @@ def load_pending():
             set(state) != keys
             or not isinstance(component, str)
             or not common.ID.fullmatch(component)
+            or not isinstance(state["product"], str)
+            or not common.PRODUCT.fullmatch(state["product"])
         ):
             raise ValueError("component/fields")
         owners = state["owners"]
@@ -358,11 +365,27 @@ def load_pending():
     return state
 
 
-def check_pending(operation, component, delete_data=False):
-    """Reject conflicting lifecycle commands; resume only the recorded operation."""
+def check_pending(operation, component, product, delete_data=False):
+    """Reject conflicting lifecycle commands; resume only the recorded operation.
+
+    product is the bundle's product; another product's bundle never resumes or
+    clears the record, even with the same component ID.
+    """
     state = load_pending()
     if state is None:
         return None
+    if state["product"] != product:
+        raise common.DeployError(
+            "Pending "
+            + state["operation"]
+            + " of "
+            + state["component"]
+            + " belongs to product "
+            + state["product"]
+            + "; this bundle belongs to "
+            + product
+            + ". Finish it with that product's bundle"
+        )
     if state["operation"] != operation or state["component"] != component:
         flag = " --delete-data" if state.get("delete_data") else ""
         raise common.DeployError(

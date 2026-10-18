@@ -2982,6 +2982,20 @@ configuration. Tests: `ProductNameTests` (every installed name follows `hubbabub
 another product refused before any write), catalog and prepare-host argument
 tests.
 
+### Review follow-up (2026-10-18)
+
+An independent review of `8629614..f8a9258` (items 27, 28, 32) confirmed the
+move of item 32 and the docstring of item 28 and found:
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | The pending record had no product. After a last uninstall failed at `clear_pending`, its metadata was gone, so another product's bundle with the same component ID resumed and cleared the record. | The record stores `product`; `check_pending` refuses another product before anything else. `test_unfinished_last_uninstall_stays_with_its_product`. |
+| 2 | `prepare-host.sh` read `product:` with `sed`, so a valid name that YAML quotes (`'on'`, `'null'`) became an invalid user name. | It parses `bundle.yaml` with PyYAML; tests serialize the descriptor as bundle.py does. Repeated `--port`/`--user` are refused. |
+| 3 | Metadata from before product names was reported as "Invalid installed metadata". | A specific message names the format break and the remedies; README documents it. |
+| 4 | ARCHITECTURE still named `deploy.registration_stage()`. | Fixed; COMPONENTS says `product:` is required; README's claim narrowed; the demo CA is `Demo Development CA`. |
+
+The wrong-product test now also runs `validate` and compares file bytes.
+
 ### Problem
 
 `myproduct` is the product name, not a component ID, and it predates item 20.

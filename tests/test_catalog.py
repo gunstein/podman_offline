@@ -244,6 +244,30 @@ class CatalogTests(unittest.TestCase):
             with self.subTest(change=change), failure:
                 catalog.check_descriptor(dict(descriptors["app"], **change), "fixture")
 
+    def test_metadata_from_before_product_names_is_named_not_corrupt(self):
+        """0.4.10 metadata has no product; say so instead of 'invalid'."""
+        home = self.root / "home"
+        (home / "metadata").mkdir(parents=True)
+        old = {
+            "name": "app",
+            "version": "1.0.0",
+            "requires": {},
+            "upgrade": "always",
+            "public_from": None,
+            "routes": None,
+            "clients": None,
+            "accepts": {},
+        }
+        (home / "metadata/app.json").write_text(json.dumps(old))
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "app.json was written by a release before product names.*no migration",
+        ):
+            catalog.load_installed_metadata(home)
+        (home / "metadata/app.json").write_text(json.dumps(dict(old, extra=1)))
+        with self.assertRaisesRegex(common.DeployError, "Invalid installed metadata"):
+            catalog.load_installed_metadata(home)
+
     def test_installed_metadata_is_read_strictly(self):
         home = self.root / "home"
         (home / "installed").mkdir(parents=True)
