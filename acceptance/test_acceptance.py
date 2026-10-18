@@ -27,6 +27,10 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
+# remote.sh exports the product name under test; its Python steps read it.
+os.environ.setdefault("PRODUCT_NAME", "myproduct")
+
+
 def shell_code(source, function=None, heredoc=None, action=None):
     """Get named shell code or a heredoc without depending on comments or indentation."""
     if heredoc:
@@ -274,7 +278,7 @@ sleep() { :; }
 installed_components() { echo platform; }
 """
         script = (
-            "set -eu\nstate_file="
+            "set -eu\nproduct_name=myproduct\nstate_file="
             + shlex.quote(str(state_file))
             + "\ncalls="
             + shlex.quote(str(calls))
@@ -477,7 +481,7 @@ timeout() { shift; "$@"; }
 echo '** WARNING: connection is not using a post-quantum key exchange algorithm.' >&2
 """
         return (
-            "set -euo pipefail\npull_status="
+            "set -euo pipefail\nproduct_name=myproduct\npull_status="
             + str(status)
             + "\ndiagnostic="
             + shlex.quote(diagnostic)
@@ -593,7 +597,7 @@ timeout() { shift; "$@"; }
 wait_trust /new/deployment/ /old/deployment/
 """
         prefix = (
-            "set -eu\nexpected_files="
+            "set -eu\nproduct_name=myproduct\nexpected_files="
             + shlex.quote("\n".join(files or ["/new/deployment/__main__.py"]))
             + "\nfixtures="
             + shlex.quote(str(fixtures))
@@ -762,7 +766,7 @@ prepare_release
                 base.mkdir()
                 (base / "myproduct-app1-0.4.3-offline.tar.gz").touch()
                 prefix = (
-                    "set -euo pipefail\nbase="
+                    "set -euo pipefail\nproduct_name=myproduct\nbase="
                     + shlex.quote(str(base))
                     + '\nstate="$base/state"\nproduct="$state/releases/myproduct-app1-0.4.3"\n'
                     + "bundle=app1\nversion=0.4.3\nfailure=$1\n"
@@ -852,7 +856,7 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
 validate_release() { :; }
 """
         prefix = (
-            "set -eu\nbase="
+            "set -eu\nproduct_name=myproduct\nbase="
             + shlex.quote(str(self.root))
             + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\nstate=/var/lib/myproduct\nold_version=0.1.0\nas_product() { :; }\ncalls="
             + shlex.quote(str(calls))
@@ -1208,7 +1212,7 @@ validate_release() { :; }
         operator.mkdir(mode=0o700)
         probe = "import json,os,sys; print(json.dumps([os.getcwd(), os.environ['HOME'], os.environ['XDG_RUNTIME_DIR'], sys.argv[1:]]))"
         # Simulate sudo changing identity/HOME while retaining the caller's cwd.
-        stub = 'sudo() { shift 4; "$@"; }\n'
+        stub = 'product_name=myproduct\nsudo() { shift 4; "$@"; }\n'
         script = (
             stub
             + function
@@ -1273,7 +1277,9 @@ validate_release() { :; }
         (release / "deploy").write_text('#!/bin/bash\npwd\nprintf "%s\\n" "$1"\n')
         operator = self.root / "operator-private"
         operator.mkdir(mode=0o700)
-        script = 'sudo() { shift 4; "$@"; }\nproduct=$1\n' + command
+        script = (
+            'product_name=myproduct\nsudo() { shift 4; "$@"; }\nproduct=$1\n' + command
+        )
         result = subprocess.run(
             ["bash", "-eu", "-c", script, "bash", str(release)],
             cwd=operator,
@@ -1636,7 +1642,7 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         """Preserve audit evidence and a failing result even when launch diagnostics fail."""
         block = shell_code(self.remote, action="audit|audit-check|launch-audit-check")
         script = (
-            "set -euo pipefail\nrun_started=123\naction=launch-audit-check\nrole=DEV\n"
+            "set -euo pipefail\nproduct_name=myproduct\nrun_started=123\naction=launch-audit-check\nrole=DEV\n"
             "health_launch_diagnostics() { echo diagnostic-failed; return 7; }\n"
             "sudo() { return 0; }\n"
             "audit_events() { echo audit-mode=$1; }\n" + block
@@ -1651,7 +1657,7 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         """A clean run uses audit-check, so it must also log the backlog 29 cache figures."""
         block = shell_code(self.remote, action="audit|audit-check|launch-audit-check")
         script = (
-            "set -euo pipefail\nrun_started=123\naction=audit-check\nrole=PROD\n"
+            "set -euo pipefail\nproduct_name=myproduct\nrun_started=123\naction=audit-check\nrole=PROD\n"
             "health_launch_diagnostics() { return 0; }\n"
             "sudo() { if [[ $* == *check-status* ]]; then"
             " printf 'Subject cache size: 16381\\nEarly subject cache evictions: 0\\nother: 1\\n'; fi; }\n"
@@ -2141,6 +2147,7 @@ class CrashTests(unittest.TestCase):
         self.assertIn("CRASH\n    healthy\n    wait_backend\n", block)
         function = shell_code(remote, function="wait_backend")
         script = """set -eu
+product_name=myproduct
 state=/var/lib/myproduct
 prod_host=myproduct-proxy
 prod_ip=192.0.2.2

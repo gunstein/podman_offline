@@ -17,6 +17,7 @@ class HostLabelTests(unittest.TestCase):
             )
         ]
         stubs = r"""
+user=myproduct
 service_home=/var/lib/myproduct
 die() { echo "ERROR: $*" >&2; exit 1; }
 semanage() {
@@ -86,13 +87,37 @@ restorecon() { echo "restorecon $*"; }
 
 
 class HostPortTests(unittest.TestCase):
-    def test_required_port_and_bounds(self):
+    def run_arguments(self, args, product=None):
+        """Run only the argument block, as scripts/prepare-host.sh of a release."""
         script = (
             Path(__file__).resolve().parent.parent / "scripts/prepare-host.sh"
         ).read_text()
-        block = script[
-            script.index("# The required port") : script.index("for command in")
-        ]
+        block = script[script.index("# Arguments:") : script.index("for command in")]
+        with tempfile.TemporaryDirectory() as directory:
+            release = Path(directory)
+            (release / "scripts").mkdir()
+            if product:
+                (release / "bundle.yaml").write_text(
+                    "name: app\nproduct: " + product + "\nversion: 1.0.0\n"
+                )
+            return subprocess.run(
+                [
+                    "bash",
+                    "-eu",
+                    "-c",
+                    'die() { echo "ERROR: $*"; exit 1; }\n'
+                    + block
+                    + 'echo "user=$user port=$port"\n',
+                    str(release / "scripts/prepare-host.sh"),
+                ]
+                + args,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,  # noqa: UP021 - Python 3.6
+            )
+
+    def test_required_port_and_bounds(self):
         for args, valid in (
             ([], False),
             (["--port", "1024"], True),
@@ -104,25 +129,32 @@ class HostPortTests(unittest.TestCase):
             (["--port", "abc"], False),
             (["config.yaml"], False),
             (["--port", "8443", "extra"], False),
+            (["--port"], False),
+            (["--port", "8443", "--user"], False),
         ):
             with self.subTest(args=args):
-                result = subprocess.run(
-                    [
-                        "bash",
-                        "-eu",
-                        "-c",
-                        'die() { echo "ERROR: $*"; exit 1; }\n' + block,
-                        "bash",
-                    ]
-                    + args,
-                    check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,  # noqa: UP021 - Python 3.6
-                )
+                result = self.run_arguments(args)
                 self.assertEqual(result.returncode == 0, valid, result.stdout)
                 if not valid:
                     self.assertIn("ERROR:", result.stdout)
+
+    def test_service_user_defaults_to_the_bundle_product(self):
+        """A renamed product needs no extra argument; --user overrides it."""
+        cases = (
+            ([], None, "user=myproduct port=8443"),
+            ([], "hubbabubba", "user=hubbabubba port=8443"),
+            (["--user", "svc-shop"], "hubbabubba", "user=svc-shop port=8443"),
+        )
+        for extra, product, expected in cases:
+            with self.subTest(extra=extra, product=product):
+                result = self.run_arguments(["--port", "8443"] + extra, product)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(result.stdout.strip(), expected)
+        for user in ("Shop", "1shop", "shop_", "a" * 33, "shop;id"):
+            with self.subTest(user=user):
+                result = self.run_arguments(["--port", "8443", "--user", user])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid service user", result.stdout)
 
 
 class HostFapolicydTests(unittest.TestCase):

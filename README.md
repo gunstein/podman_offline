@@ -29,6 +29,31 @@ metadata and complete add/remove examples. The shipped demo product is:
 | `myproduct-app2-<v>-offline.tar.gz` | app2 | platform + identity | `/app2/` |
 | `myproduct-help-<v>-offline.tar.gz` | help | platform | `/help/` |
 
+### Product name
+
+`product:` in `bundles.yaml` names the whole installation. The demo uses
+`myproduct`; to install the same product as, for example, `hubbabubba`, change
+only that line and rebuild the bundles. Everything the installation creates
+then follows it:
+
+| What | Name |
+| --- | --- |
+| Bundle archives and release folders | `hubbabubba-<component>-<version>-offline.tar.gz` |
+| Service user and home (`prepare-host.sh` default) | `hubbabubba`, `/var/lib/hubbabubba` |
+| Component units and Quadlet files | `hubbabubba-<component>.service`, `.kube`, `.yaml` |
+| Shared Podman network | `hubbabubba` (`hubbabubba.network`) |
+
+`./deploy` reads the name from the bundle, so the target needs no other
+setting. Lowercase letters, digits and inner hyphens, a letter first, at most
+32 characters (it is also a Linux user name). `prepare-host.sh --user <name>`
+chooses another service user; then use that name wherever this README uses
+the service user. One service user runs one product: install refuses a bundle
+of another product before any write. There is no rename of an existing
+installation; install the renamed product on a fresh service user.
+Not part of the product name: the demo's own image names
+(`localhost/myproduct-*`, set in its manifests) and `PUBLIC_ORIGIN`, which you
+configure. Below, `myproduct` is the demo's product name.
+
 Platform owns the HTTPS proxy, web TLS and public route imports. Identity owns
 IdentityServer, its PostgreSQL database, signing keys, API secret, demo users,
 Data Protection and public client registrations. Each Todo owns its PostgreSQL
@@ -44,8 +69,8 @@ components, which use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
 names must start with their component prefix; the renderer rejects other names
 before writes.
 
-Each component has its own `myproduct-<component>` Quadlet service. The identical
-`myproduct.network` is shared and never removed by component uninstall. Install
+Each component has its own `<product>-<component>` Quadlet service. The identical
+`<product>.network` is shared and never removed by component uninstall. Install
 platform, then Identity, then either app. Help needs only platform; the proxy
 starts without Identity DNS. Bundles contain only their own resources and images.
 Only a component's own bundle upgrades it. Equal shared versions retain installed
@@ -679,26 +704,27 @@ either order. For a platform/help-only installation, install `help` after
 remain installed on its own.
 
 `--port`, every `HTTPS_PORT` and the port in `PUBLIC_ORIGIN` must agree.
-The archive is opened by the operator and streamed to myproduct, which cannot
+The archive is opened by the operator and streamed to the service user, which cannot
 read the operator's private home. No `cd` by the operator into the 0700 service
 home is needed. Shell scripts run through `bash` under fapolicyd.
 
 ```sh
+product_name=myproduct  # product: in bundles.yaml; also the service user
 bundle=platform
 version=0.4.10
-archive="myproduct-$bundle-$version-offline.tar.gz"
+archive="$product_name-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
-stage=$(mktemp -d /tmp/myproduct-install.XXXXXXXX)
+stage=$(mktemp -d "/tmp/$product_name-install.XXXXXXXX")
 tar xzf "$archive" -C "$stage"
-sudo bash "$stage/myproduct-$bundle-$version/scripts/prepare-host.sh" --port 8443
+sudo bash "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" --port 8443
 rm -rf -- "$stage"
 ```
 
-prepare-host creates the system user myproduct with home `/var/lib/myproduct`
-and nologin shell, allocates noncolliding subuid/subgid ranges, enables linger
+prepare-host creates the system user named after the product (`myproduct` in
+the demo) with home `/var/lib/<user>` and nologin shell, allocates noncolliding subuid/subgid ranges, enables linger
 and opens the HTTPS port permanently. SELinux stays Enforcing. Storage outside
 the normal home uses Podman's [troubleshooting guide, point 11](https://github.com/containers/podman/blob/v5.8.2/troubleshooting.md#11-podman-run-fails-with-cannot-open-shared-object-file):
-`/var/lib/containers` is mapped to `/var/lib/myproduct/.local/share/containers`.
+`/var/lib/containers` is mapped to `/var/lib/<user>/.local/share/containers`.
 Unexpected existing equivalences fail instead of being deleted automatically.
 Recursive restorecon excludes storage; only the storage directory itself is
 restored nonrecursively. Never run recursive or force restorecon on filled storage.
@@ -708,7 +734,7 @@ Use these helpers for subsequent commands:
 ```sh
 # Run commands as the service user from its home and systemd runtime.
 as_product() {
-    sudo -H -u myproduct bash -c '
+    sudo -H -u "$product_name" bash -c '
         cd "$HOME" || exit
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         exec "$@"
@@ -716,7 +742,8 @@ as_product() {
 }
 # Require every installed component container to be running and healthy.
 healthy() {
-    as_product python3 - <<'HEALTH'
+    as_product env PRODUCT_NAME="$product_name" python3 - <<'HEALTH'
+import os
 import pathlib
 import subprocess
 import yaml
@@ -724,7 +751,7 @@ import yaml
 
 def main():
     """Check each installed Pod container without printing private inspect fields."""
-    paths = sorted((pathlib.Path.home() / ".config/containers/systemd").glob("myproduct-*.yaml"))
+    paths = sorted((pathlib.Path.home() / ".config/containers/systemd").glob(os.environ["PRODUCT_NAME"] + "-*.yaml"))
     if not paths:
         raise SystemExit("No installed component manifests")
     for path in paths:
@@ -800,23 +827,23 @@ beneath the old package path disappear. Do not trust the shell wrapper, config,
 credentials or other release directories. Repeat checksum/trust for each release:
 
 ```sh
-release="/var/lib/myproduct/releases/myproduct-$bundle-$version"
-as_product mkdir -p /var/lib/myproduct/releases
-as_product tar xzf - -C /var/lib/myproduct/releases < "$archive"
+release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
+as_product mkdir -p "/var/lib/$product_name/releases"
+as_product tar xzf - -C "/var/lib/$product_name/releases" < "$archive"
 sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
-sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "$product_name-$bundle"
 sudo fapolicyd-cli --update
 wait_trust "$release/deployment/"
 # Start with bundle=platform, then identity, then app1/app2; help needs only platform.
 as_product bash "$release/deploy" init-config "$bundle"
-sudoedit "/var/lib/myproduct/$bundle/config.yaml"
+sudoedit "/var/lib/$product_name/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
-as_product bash "$release/scripts/generate-certificates.sh" --root /var/lib/myproduct "$bundle" myproduct-proxy
-sudoedit "/var/lib/myproduct/$bundle/config.yaml"
+as_product bash "$release/scripts/generate-certificates.sh" --root "/var/lib/$product_name" "$bundle" myproduct-proxy
+sudoedit "/var/lib/$product_name/$bundle/config.yaml"
 # Checks the bundle against config and installed components; changes nothing.
-sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
-sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
-sudo systemctl --user -M myproduct@ status "myproduct-$bundle.service"
+sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
+sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+sudo systemctl --user -M "$product_name@" status "$product_name-$bundle.service"
 ```
 
 Set IP_ADDRESS in platform to the target's host IP. Set PUBLIC_ORIGIN/HTTPS_PORT
@@ -881,15 +908,15 @@ or generate a new CA/password set. Install and check health/e2e first. Only afte
 success remove the old own trust entry, leaving other bundles' trust untouched:
 
 ```sh
-sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "$product_name-$bundle"
 sudo fapolicyd-cli --update
 wait_trust "$release/deployment/"
-sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 as_product podman ps
 healthy
-sudo fapolicyd-cli --file delete "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deployment/" --trust-file "myproduct-$bundle"
+sudo fapolicyd-cli --file delete "/var/lib/$product_name/releases/$product_name-$bundle-$old_version/deployment/" --trust-file "$product_name-$bundle"
 sudo fapolicyd-cli --update
-wait_trust "$release/deployment/" "/var/lib/myproduct/releases/myproduct-$bundle-$old_version/deployment/"
+wait_trust "$release/deployment/" "/var/lib/$product_name/releases/$product_name-$bundle-$old_version/deployment/"
 ```
 
 Use the `healthy` helper defined above. Also verify HTTPS and application e2e
@@ -923,9 +950,9 @@ Podman Secret contents also remain in named volumes after down/stop; removed
 Secret keys can remain there. The private home/storage restricts host access.
 Explicit own-data deletion removes those volumes too. Never enable KubeDownForce:
 it can delete database volumes. At final host removal, remove all release trust,
-`loginctl disable-linger myproduct`, remove the storage fcontext equivalence with
-`semanage fcontext -d /var/lib/myproduct/.local/share/containers`, and optionally
-`userdel -r myproduct`. These are destructive operator choices, not bundle install steps.
+`loginctl disable-linger <user>`, remove the storage fcontext equivalence with
+`semanage fcontext -d /var/lib/<user>/.local/share/containers`, and optionally
+`userdel -r <user>`. These are destructive operator choices, not bundle install steps.
 
 fapolicyd's subject cache must be large enough that processes are not evicted
 while they start: an early eviction can make rule `deny_audit perm=any

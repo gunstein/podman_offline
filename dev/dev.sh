@@ -7,8 +7,10 @@ case "${1:-}" in
     up)
         # prepare checks database volumes before it writes config or creates secrets.
         ./deploy prepare
-        podman network exists myproduct || podman network create myproduct
-        podman kube play --replace --network myproduct build/install.yaml
+        # The shared network carries the product name from bundles.yaml.
+        product=$(python3 -B -c 'from deployment import catalog, common; print(catalog.product_name(common.ROOT))')
+        podman network exists "$product" || podman network create "$product"
+        podman kube play --replace --network "$product" build/install.yaml
         ;;
     down)
         # Stops what the last prepare rendered; run it before removing a component.

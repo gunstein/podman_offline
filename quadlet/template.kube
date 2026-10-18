@@ -1,0 +1,15 @@
+# ./deploy install fills in the product name (bundles.yaml) and the unit name
+# (<product>-<component>, or the product for a standalone fixture).
+[Unit]
+Description={name}
+
+[Kube]
+Yaml={name}.yaml
+Network={product}.network
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target

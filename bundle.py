@@ -1,4 +1,8 @@
-"""Build the offline bundle: dist/myproduct-<version>-offline.tar.gz (+ .sha256)."""
+"""Build the offline bundles: dist/<product>-<component>-<version>-offline.tar.gz (+ .sha256).
+
+<product> is bundles.yaml's product name; a standalone manifest fixture builds
+dist/myproduct-<version>-offline.tar.gz (common.STANDALONE_PRODUCT).
+"""
 
 import hashlib
 import shutil
@@ -184,7 +188,9 @@ def build_release(version, descriptor=None):
     """Package one compiled component descriptor or a standalone manifest fixture."""
     components = [str(descriptor["name"])] if descriptor else []
     name = (
-        f"myproduct-{components[0]}-{version}" if components else f"myproduct-{version}"
+        f"{descriptor['product']}-{components[0]}-{version}"
+        if descriptor
+        else f"{common.STANDALONE_PRODUCT}-{version}"
     )
     target = STAGE / name
 

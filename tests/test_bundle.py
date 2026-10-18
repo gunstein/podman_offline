@@ -51,8 +51,8 @@ class BundleTests(unittest.TestCase):
             "dev/dev.sh": "#!/bin/sh\nexit 0\n",
             "dev/build-images.sh": "#!/bin/sh\nexit 0\n",
             "dev/smoke-test.py": "print('dev only')\n",
-            "quadlet/myproduct.kube": "[Kube]\nYaml=myproduct.yaml\n",
-            "quadlet/myproduct.network": "[Network]\nNetworkName=myproduct\n",
+            "quadlet/template.kube": "[Kube]\nYaml={name}.yaml\n",
+            "quadlet/template.network": "[Network]\nNetworkName={product}\n",
             "manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
         }.items():
             self.write(name, text)
@@ -125,8 +125,8 @@ class BundleTests(unittest.TestCase):
                     "config.defaults.yaml",
                     "scripts/generate-certificates.sh",
                     "scripts/prepare-host.sh",
-                    "quadlet/myproduct.kube",
-                    "quadlet/myproduct.network",
+                    "quadlet/template.kube",
+                    "quadlet/template.network",
                     "images/images.tar",
                     "images/images.txt",
                     "manifests/app.yaml",
@@ -572,7 +572,7 @@ data: {image: ignored}
         repo = Path(__file__).resolve().parent.parent
         self.write(
             "bundles.yaml",
-            "components:\n  platform:\n    version_file: PLATFORM_VERSION\n"
+            "product: myproduct\ncomponents:\n  platform:\n    version_file: PLATFORM_VERSION\n"
             "    upgrade: newer-only\n    accepts: {routes: platform-routes}\n",
         )
         self.write("PLATFORM_VERSION", "1.2.4\n")
@@ -616,7 +616,7 @@ data: {image: ignored}
     def test_actual_app1_bundle_includes_init_image_once_and_retains_init_command(self):
         repo = Path(__file__).resolve().parent.parent
         # Only the app1 manifests matter here, so the catalog has no registrations.
-        self.write("bundles.yaml", "components:\n  app1: {}\n")
+        self.write("bundles.yaml", "product: myproduct\ncomponents:\n  app1: {}\n")
         self.write(
             "config/common.defaults.yaml",
             (repo / "config/common.defaults.yaml").read_text(),
@@ -661,7 +661,10 @@ data: {image: ignored}
             }
             for name in DEMO_COMPONENTS
         }
-        self.write("bundles.yaml", yaml.safe_dump({"components": catalog}))
+        self.write(
+            "bundles.yaml",
+            yaml.safe_dump({"product": "myproduct", "components": catalog}),
+        )
         self.write("PLATFORM_VERSION", "1.0.0\n")
         self.write("IDENTITY_VERSION", "1.1.0\n")
         self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")

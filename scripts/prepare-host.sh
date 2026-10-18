@@ -4,11 +4,29 @@ set -euo pipefail
 umask 077
 # Show an explanatory host error and stop the preparation.
 die() { echo "ERROR: $*" >&2; exit 1; }
-[[ $EUID == 0 ]] || die "Run sudo bash scripts/prepare-host.sh --port <1024-65535>"
-# The required port must match HTTPS_PORT and PUBLIC_ORIGIN in config.
-[[ $# == 2 && ${1:-} == --port && ${2:-} =~ ^[0-9]{1,5}$ ]] || die "Use --port <integer 1024-65535>"
-port=$((10#$2))
+[[ $EUID == 0 ]] || die "Run sudo bash scripts/prepare-host.sh --port <1024-65535> [--user <service user>]"
+# Arguments: --port <1024-65535> [--user <service user>].
+usage="Use --port <integer 1024-65535> [--user <service user>]"
+# The service user defaults to the product name compiled into this bundle
+# (product: in bundles.yaml); a standalone fixture has none and uses myproduct.
+release=$(cd "$(dirname "$0")/.." && pwd)
+user=myproduct
+if [[ -f $release/bundle.yaml ]]; then
+    user=$(sed -n 's/^product: //p' "$release/bundle.yaml")
+fi
+port=
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        # The required port must match HTTPS_PORT and PUBLIC_ORIGIN in config.
+        --port) [[ $# -ge 2 && $2 =~ ^[0-9]{1,5}$ ]] || die "$usage"; port=$((10#$2)); shift 2;;
+        --user) [[ $# -ge 2 ]] || die "$usage"; user=$2; shift 2;;
+        *) die "$usage";;
+    esac
+done
+[[ -n $port ]] || die "$usage"
 [[ $port -ge 1024 && $port -le 65535 ]] || die "The port must be 1024-65535"
+# Same rule as the product name: a portable Linux user name.
+[[ $user =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]] || die "Invalid service user ${user@Q}; use lowercase letters, digits and inner hyphens, a letter first, at most 32 characters"
 for command in python3 useradd usermod semanage restorecon loginctl firewall-cmd newuidmap newgidmap install; do
     command -v "$command" >/dev/null || die "Missing $command"
 done
@@ -24,18 +42,20 @@ if [[ -r $fapolicyd_conf ]]; then
         echo "WARNING: fapolicyd subj_cache_size is ${subj_cache:-unset}; set it to 16381 in $fapolicyd_conf and restart fapolicyd before installing (see README)" >&2
     fi
 fi
-service_home=/var/lib/myproduct
-if ! getent passwd myproduct >/dev/null; then
-    useradd --system --create-home --home-dir "$service_home" --shell /sbin/nologin myproduct
+service_home=/var/lib/$user
+if ! getent passwd "$user" >/dev/null; then
+    useradd --system --create-home --home-dir "$service_home" --shell /sbin/nologin "$user"
 fi
 # An existing account is never redefined and its data is never moved.
-[[ $(getent passwd myproduct | cut -d: -f6) == "$service_home" ]] || die "myproduct must have home $service_home"
-[[ $(getent passwd myproduct | cut -d: -f7) == /sbin/nologin ]] || die "myproduct must have shell /sbin/nologin"
-[[ $(stat -c %u "$service_home") == "$(id -u myproduct)" ]] || die "The home $service_home must be owned by myproduct"
+[[ $(getent passwd "$user" | cut -d: -f6) == "$service_home" ]] || die "$user must have home $service_home"
+[[ $(getent passwd "$user" | cut -d: -f7) == /sbin/nologin ]] || die "$user must have shell /sbin/nologin"
+[[ $(stat -c %u "$service_home") == "$(id -u "$user")" ]] || die "The home $service_home must be owned by $user"
 chmod 0700 "$service_home"
 # Keep ID mappings for existing volumes; users must not overlap.
-read -r uid_range gid_range < <(python3 - <<'PY'
+read -r uid_range gid_range < <(python3 - "$user" <<'PY'
+import sys
 from pathlib import Path
+user = sys.argv[1]
 rows = []
 for name in ("subuid", "subgid"):
     entries = []
@@ -50,12 +70,12 @@ if next_id + 65535 > 4294967294:
     raise SystemExit("ERROR: No free subuid/subgid block")
 result = []
 for entries in rows:
-    own = [(start, end) for owner, start, end in entries if owner == "myproduct"]
+    own = [(start, end) for owner, start, end in entries if owner == user]
     if own:
         if not any(end - start + 1 >= 65536 for start, end in own):
-            raise SystemExit("ERROR: myproduct needs at least 65536 subordinate IDs")
+            raise SystemExit("ERROR: " + user + " needs at least 65536 subordinate IDs")
         for start, end in own:
-            if any(owner != "myproduct" and start <= other_end and other_start <= end
+            if any(owner != user and start <= other_end and other_start <= end
                    for owner, other_start, other_end in entries):
                 raise SystemExit("ERROR: Overlap in subuid/subgid")
         result.append("existing")
@@ -64,8 +84,8 @@ for entries in rows:
 print(" ".join(result))
 PY
 )
-[[ $uid_range == existing ]] || usermod --add-subuids "$uid_range" myproduct
-[[ $gid_range == existing ]] || usermod --add-subgids "$gid_range" myproduct
+[[ $uid_range == existing ]] || usermod --add-subuids "$uid_range" "$user"
+[[ $gid_range == existing ]] || usermod --add-subgids "$gid_range" "$user"
 # SELinux: storage needs its own equivalence because system users lack HOME_DIR rules.
 equivalences=$(semanage fcontext -l -C)
 container_home="$service_home/.local/share/containers"
@@ -81,17 +101,17 @@ fi
 # Creating these first stops Podman from creating config directories with a runtime type.
 for directory in .local .local/share .local/share/containers .local/share/containers/storage \
     .config .config/cni .config/cni/net.d .config/containers .config/containers/systemd; do
-    install -d -m 0700 -o myproduct -g "$(id -gn myproduct)" "$service_home/$directory"
+    install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$service_home/$directory"
 done
 # The CNI lock is also opened during backend initialization. Create it first without
 # truncating an existing lock, so Podman does not create it with a runtime type.
 if [[ ! -e $service_home/.config/cni/net.d/cni.lock ]]; then
-    install -m 0600 -o myproduct -g "$(id -gn myproduct)" /dev/null "$service_home/.config/cni/net.d/cni.lock"
+    install -m 0600 -o "$user" -g "$(id -gn "$user")" /dev/null "$service_home/.config/cni/net.d/cni.lock"
 fi
 # Podman's runtime labels in populated storage must survive a repeated preparation.
 restorecon -R -e "$container_home/storage" "$service_home"
 restorecon "$container_home/storage"
-loginctl enable-linger myproduct
+loginctl enable-linger "$user"
 firewall-cmd --permanent --add-port="$port/tcp"
 firewall-cmd --reload
-printf '[OK] myproduct: home %s (0700), linger enabled, HTTPS port %s/tcp open\n' "$service_home" "$port"
+printf '[OK] service user %s: home %s (0700), linger enabled, HTTPS port %s/tcp open\n' "$user" "$service_home" "$port"

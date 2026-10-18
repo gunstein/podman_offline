@@ -1,3 +1,13 @@
+# Product name (backlog 27)
+
+`product:` in `bundles.yaml` now names the service user, units, network and
+archives. `remote.sh` takes the product name as its 13th argument (exported as
+`PRODUCT_NAME` for its Python steps); every scenario passes `myproduct` except
+`--renamed-product`, whose generated catalog declares `product: shop`, so that
+run installs under the service user `shop` with `shop-*` units and archives.
+
+---
+
 # Registration removal (0.4.10)
 
 `--renamed-product` now also builds a newer inventory release without route and

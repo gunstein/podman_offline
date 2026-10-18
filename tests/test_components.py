@@ -26,10 +26,10 @@ class ComponentFixture(DeployFixture):
         self.write("PLATFORM_VERSION", "1.0.0\n")
         self.write("IDENTITY_VERSION", "1.0.0\n")
         self.write(
-            "quadlet/myproduct.kube",
-            "[Kube]\nYaml=myproduct.yaml\nNetwork=myproduct.network\n",
+            "quadlet/template.kube",
+            "[Kube]\nYaml={name}.yaml\nNetwork={product}.network\n",
         )
-        self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
+        self.write("quadlet/template.network", "[Network]\nNetworkName={product}\n")
         self.write("images/images.tar")
         for component in ("platform", "identity", "app1"):
             self.write(

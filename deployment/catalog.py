@@ -39,6 +39,7 @@ CATALOG_KEYS = (
 )
 DESCRIPTOR_KEYS = (
     "name",
+    "product",
     "version",
     "requires",
     "upgrade",
@@ -66,6 +67,16 @@ def check_id(value, where):
         )
 
 
+def check_product(value, where):
+    """Accept a product name: it prefixes units, the network and archives."""
+    if not isinstance(value, str) or not common.PRODUCT.fullmatch(value):
+        raise common.DeployError(
+            f"{where}: invalid product name {value!r}; use lowercase letters, "
+            "digits and inner hyphens, a letter first and at most 32 characters, "
+            "for example my-shop"
+        )
+
+
 def version_number(value):
     """Parse a three-part numeric version for deterministic comparisons."""
     if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
@@ -90,14 +101,37 @@ def check_range(requirement):
         raise common.DeployError("Empty dependency version requirement")
 
 
-def load_catalog(root):
-    """Read bundles.yaml and validate the graph before any file or host action."""
+def catalog_document(root):
+    """Read bundles.yaml and check its top level: product and components."""
     path = root / "bundles.yaml"
     if not path.is_file():
         raise common.DeployError(f"Missing component catalog {path}")
     data = rendering.config_layer(path)  # Rejects duplicate keys with their line.
-    if set(data) != {"components"}:
-        raise common.DeployError(f"{path} must contain only a components: map")
+    if set(data) != {"product", "components"}:
+        raise common.DeployError(
+            f"{path} must contain exactly product: <name> and a components: map"
+        )
+    check_product(data["product"], f"{path}: product")
+    return path, data
+
+
+def product_name(root):
+    """Return the product name of the release or checkout at root.
+
+    A bundle reads its compiled bundle.yaml, the source checkout reads
+    bundles.yaml, and a standalone manifest fixture uses
+    common.STANDALONE_PRODUCT.
+    """
+    if (root / "bundle.yaml").is_file():
+        return load_bundle_descriptor(root)["product"]
+    if (root / "bundles.yaml").is_file():
+        return catalog_document(root)[1]["product"]
+    return common.STANDALONE_PRODUCT
+
+
+def load_catalog(root):
+    """Read bundles.yaml and validate the graph before any file or host action."""
+    path, data = catalog_document(root)
     entries = data["components"]
     if not isinstance(entries, dict) or not entries:
         raise common.DeployError(f"{path}: components must be a nonempty map")
@@ -288,6 +322,7 @@ def component_directory(root, name):
 def source_descriptors(root):
     """Compile every catalog entry into a descriptor, checking its source files."""
     catalog = load_catalog(root)
+    product = catalog_document(root)[1]["product"]
     versions = {}
     for name, entry in catalog.items():
         version_path = confined_file(
@@ -319,6 +354,7 @@ def source_descriptors(root):
         entry = catalog[name]
         descriptors[name] = {
             "name": name,
+            "product": product,
             "version": versions[name],
             "requires": {
                 dependency: compatible_range(versions[dependency])
@@ -340,6 +376,7 @@ def check_descriptor(data, where):
             f"{where}: expected exactly the fields {', '.join(DESCRIPTOR_KEYS)}"
         )
     check_id(data["name"], f"{where}: name")
+    check_product(data["product"], f"{where}: product")
     version_number(data["version"])
     requires = data["requires"]
     if not isinstance(requires, dict):
@@ -364,10 +401,16 @@ def metadata_path(home, name):
     return home / "metadata" / (name + ".json")
 
 
+def unit_name(component):
+    """Name of the component's Quadlet files and service: <product>-<component>."""
+    return product_name(common.ROOT) + "-" + component
+
+
 def component_paths(component, home=None):
     """Return one component's persistent config, archives and Quadlet paths."""
     base = (home or common.HOME).resolve()
     state = base / component
+    unit = unit_name(component)
     paths = [
         state,
         state / "files",
@@ -379,10 +422,7 @@ def component_paths(component, home=None):
     paths.extend((state / "files").glob("*.tar"))
     if home is None:
         paths.extend(
-            [
-                common.QUADLET_DIR / ("myproduct-" + component + suffix)
-                for suffix in (".yaml", ".kube")
-            ]
+            [common.QUADLET_DIR / (unit + suffix) for suffix in (".yaml", ".kube")]
         )
     if any(path.is_symlink() for path in paths):
         raise common.DeployError(
@@ -391,8 +431,8 @@ def component_paths(component, home=None):
     return (
         state / "config.yaml",
         state / "files",
-        common.QUADLET_DIR / ("myproduct-" + component + ".yaml"),
-        common.QUADLET_DIR / ("myproduct-" + component + ".kube"),
+        common.QUADLET_DIR / (unit + ".yaml"),
+        common.QUADLET_DIR / (unit + ".kube"),
     )
 
 

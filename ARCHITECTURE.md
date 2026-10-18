@@ -13,7 +13,7 @@ build entrypoint and also uses `-B`.
 | `deployment/__main__.py` | Minimal CLI delegation |
 | `deployment/cli.py` | Arguments, exit codes and concise errors |
 | `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
-| `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners and per-component paths (`component_paths`) |
+| `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners, the product name (`product_name`, `unit_name`) and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |

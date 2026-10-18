@@ -2,7 +2,7 @@
 
 The renamed product reuses the demo's application images and code. Only YAML,
 route/client descriptors and runtime settings change, which is what a product
-owner would edit:
+owner would edit, including the product name `shop` in bundles.yaml:
 
     python3 acceptance/renamed_product.py generate SOURCE TARGET
     python3 acceptance/renamed_product.py credentials ROOT HOSTNAME [COMPONENT...]
@@ -32,6 +32,8 @@ NAMES = {
     "app2": "inventory",
     "help": "manual",
 }
+# The product name: service user, units, network and archive names on the target.
+PRODUCT = "shop"
 PATHS = {"/app1": "/orders", "/app2": "/stock"}
 CLIENT_IDS = {"app1": "orders-web", "app2": "inventory"}
 
@@ -133,7 +135,7 @@ def rename_catalog(data):
                 role: rename(volume) for role, volume in entry["accepts"].items()
             }
         entries[rename(name)] = entry
-    return {"components": entries}
+    return {"product": PRODUCT, "components": entries}
 
 
 def dump(path, data, multiple=False):

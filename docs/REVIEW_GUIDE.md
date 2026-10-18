@@ -23,6 +23,7 @@ The known gaps below explicitly identify outstanding work.
 | Isolation | Operate on the selected component's resources/state; preserve sibling data and registrations and avoid sibling app restarts. |
 | Compatibility | Preserve host Python 3.6, checksums, offline delivery, version/dependency rules, SELinux and fapolicyd behavior. |
 | Validation | `./deploy validate` and the lifecycle share one validation (`validate_component`, staging, `install_checks`, `install_preconditions`); the command writes nothing, reads no credential contents and runs no host command. A new declaration check belongs in one of those functions, never inline in `install_component_plan`; a validate-only check names where the lifecycle does the same. |
+| Product name | `product:` in `bundles.yaml` is the only source of the installation's names. Code builds unit, network, Quadlet, temporary-directory and archive names from `catalog.product_name()` / `catalog.unit_name()` (or the descriptor's `product`), never from a literal; `common.STANDALONE_PRODUCT` is only for standalone fixtures. `prepare-host.sh` defaults the service user to the bundle's product; the harness passes it as `product_name`. One service user runs one product (`check_same_product`). Demo image names and `PUBLIC_ORIGIN` are not the product name. |
 
 For items 20 and 21 there are no existing installations requiring migration to a
 new schema. Do not add migration code, aliases or old-layout fallback. This does

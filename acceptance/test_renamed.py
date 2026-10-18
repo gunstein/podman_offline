@@ -279,11 +279,10 @@ class ScenarioTests(unittest.TestCase):
             self.calls.append((role, action, kwargs.get("bundle")))
             if action == "renamed-bundle-list":
                 return "".join(
-                    "myproduct-" + name + "-0.4.9-offline.tar.gz\n"
-                    for name in RENAMED_ORDER
+                    "shop-" + name + "-0.4.9-offline.tar.gz\n" for name in RENAMED_ORDER
                 )
             if action == "renamed-inventory-drop":
-                return "myproduct-inventory-0.4.10-offline.tar.gz\n"
+                return "shop-inventory-0.4.10-offline.tar.gz\n"
             return ""
 
         self.harness.guest = mock.Mock(side_effect=guest)
@@ -336,7 +335,7 @@ class ScenarioTests(unittest.TestCase):
         def guest(role, action, *args, **kwargs):
             self.calls.append((role, action, kwargs.get("bundle")))
             if action in ("renamed-bundle-list", "renamed-inventory-drop"):
-                return "myproduct-inventory-0.4.9-offline.tar.gz\n"
+                return "shop-inventory-0.4.9-offline.tar.gz\n"
             return ""
 
         self.harness.guest = mock.Mock(side_effect=guest)
@@ -372,9 +371,29 @@ class ScenarioTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "No bundles listed"):
             runner.bundle_versions("build failed\n")
+        # The renamed product's archives carry its own product name.
+        self.assertEqual(
+            runner.bundle_versions("shop-orders-1.2.3-offline.tar.gz\n", "shop"),
+            {"orders": "1.2.3"},
+        )
+        with self.assertRaisesRegex(RuntimeError, "No bundles listed"):
+            runner.bundle_versions("myproduct-orders-1.2.3-offline.tar.gz\n", "shop")
+
+    def test_renamed_scenario_runs_under_the_generated_product_name(self):
+        """The harness and the generator name the same product and service user."""
+        self.assertEqual(runner.RENAMED_PRODUCT, renamed_product.PRODUCT)
+        self.assertEqual(
+            renamed_product.rename_catalog({"components": {"app1": {}}})["product"],
+            runner.RENAMED_PRODUCT,
+        )
+        harness = runner.Run("product-name", "not-used")
+        self.assertEqual(harness.product, "myproduct")
+        harness.renamed_product = True
+        self.assertEqual(harness.product, "shop")
 
     def test_transfer_reads_the_renamed_tree_and_version_keys(self):
         harness = runner.Run("transfer", "not-used")
+        harness.renamed_product = True
         harness.meta.update(
             platform_version="0.4.7", identity_version="0.4.7", version="0.4.9"
         )
@@ -382,15 +401,15 @@ class ScenarioTests(unittest.TestCase):
         harness.ssh = mock.Mock()
         harness.host = lambda role: role.lower()
         harness.guest = mock.Mock()
-        archive = harness.folder / "myproduct-gateway-0.4.7-offline.tar.gz"
+        archive = harness.folder / "shop-gateway-0.4.7-offline.tar.gz"
         archive.write_bytes(b"archive")
         harness.meta["bundles_built"] = runner.bundle_versions(
-            "build noise\nmyproduct-gateway-0.4.7-offline.tar.gz\n"
+            "build noise\nshop-gateway-0.4.7-offline.tar.gz\n", "shop"
         )
         harness.transfer(bundle="gateway", tree="renamed")
         sources = [call.args[0][-2] for call in harness.command.call_args_list]
         self.assertTrue(
-            sources[0].endswith("/renamed/dist/myproduct-gateway-0.4.7-offline.tar.gz")
+            sources[0].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
         )
         harness.guest.assert_called_once_with(
             "PROD", "unpack", "0.4.7", bundle="gateway"

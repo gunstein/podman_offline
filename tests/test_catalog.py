@@ -23,7 +23,9 @@ class CatalogTests(unittest.TestCase):
     def product(self, entries, files=()):
         """Write a catalog and a manifest directory for every listed component."""
         (self.root / "bundles.yaml").write_text(
-            yaml.safe_dump({"components": entries}, sort_keys=False)
+            yaml.safe_dump(
+                {"product": "myproduct", "components": entries}, sort_keys=False
+            )
         )
         for name in entries if isinstance(entries, dict) else ():
             manifests = self.root / "components" / str(name) / "manifests"
@@ -50,6 +52,33 @@ class CatalogTests(unittest.TestCase):
                 )
         self.refuse("reserved for shared state", {"metadata": {}})
 
+    def test_product_name_is_required_and_follows_user_name_rules(self):
+        """It becomes the service user, unit prefix, network and archive name."""
+        path = self.root / "bundles.yaml"
+        self.product({"app": {}})
+        self.assertEqual(catalog.product_name(self.root), "myproduct")
+        self.assertEqual(
+            catalog.source_descriptors(self.root)["app"]["product"], "myproduct"
+        )
+        path.write_text("components:\n  app: {}\n")
+        with self.assertRaisesRegex(common.DeployError, "exactly product: <name>"):
+            catalog.load_catalog(self.root)
+        for name in ("hubbabubba", "my-shop", "a", "a" * 32):
+            with self.subTest(name=name):
+                path.write_text(
+                    yaml.safe_dump({"product": name, "components": {"app": {}}})
+                )
+                self.assertEqual(catalog.product_name(self.root), name)
+        for name in ("MyShop", "1shop", "shop-", "my_shop", "a" * 33, 7, None):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(common.DeployError, "invalid product name"),
+            ):
+                path.write_text(
+                    yaml.safe_dump({"product": name, "components": {"app": {}}})
+                )
+                catalog.load_catalog(self.root)
+
     def test_ids_that_extend_another_id_are_refused(self):
         """orders-data-db would be a resource name of both orders and orders-data."""
         self.refuse(
@@ -68,7 +97,7 @@ class CatalogTests(unittest.TestCase):
         self.refuse("requires must be a list", {"app": {"requires": "x"}})
         self.refuse("components must be a nonempty map", {})
         (self.root / "bundles.yaml").write_text(
-            "components:\n  app: {}\n  app: {requires: []}\n"
+            "product: myproduct\ncomponents:\n  app: {}\n  app: {requires: []}\n"
         )
         with self.assertRaisesRegex(yaml.YAMLError, "duplicate key 'app'"):
             catalog.load_catalog(self.root)
@@ -147,7 +176,9 @@ class CatalogTests(unittest.TestCase):
     def test_selected_directories_and_version_files_are_confined(self):
         self.product({"app": {}})
         (self.root / "bundles.yaml").write_text(
-            yaml.safe_dump({"components": {"app": {}, "gone": {}}})
+            yaml.safe_dump(
+                {"product": "myproduct", "components": {"app": {}, "gone": {}}}
+            )
         )
         with self.assertRaisesRegex(
             common.DeployError,
@@ -190,6 +221,7 @@ class CatalogTests(unittest.TestCase):
             descriptors["app"],
             {
                 "name": "app",
+                "product": "myproduct",
                 "version": "1.0.0",
                 "requires": {"base": {"min": "0.4.2", "before": "0.5.0"}},
                 "upgrade": "always",
@@ -206,6 +238,7 @@ class CatalogTests(unittest.TestCase):
             ({"version": "1.0"}, "three numeric parts"),
             ({"requires": {"base": {"min": "1.0.0", "before": "1.0.0"}}}, "Empty"),
             ({"name": "my_app"}, "invalid component ID"),
+            ({"product": "My App"}, "invalid product name"),
         ):
             failure = self.assertRaisesRegex(common.DeployError, pattern)
             with self.subTest(change=change), failure:
@@ -222,6 +255,7 @@ class CatalogTests(unittest.TestCase):
         (home / "metadata/.install-temporary").write_text("partial")
         descriptor = {
             "name": "app",
+            "product": "myproduct",
             "version": "1.0.0",
             "requires": {"base": {"min": "1.0.0", "before": "2.0.0"}},
             "upgrade": "always",

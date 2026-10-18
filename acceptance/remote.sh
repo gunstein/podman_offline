@@ -13,27 +13,32 @@ run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
 bundle=${12:-app1}
+# product: in the bundles.yaml under test; also the service user (prepare-host default).
+product_name=${13:-myproduct}
 # Any component ID; the bundle's own descriptor decides what it may do.
 [[ $bundle =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || exit 2
-state=/var/lib/myproduct
+[[ $product_name =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]] || exit 2
+# Python steps read the name from the environment; sudo passes it with env.
+export PRODUCT_NAME=$product_name
+state=/var/lib/$product_name
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
 # The renamed product generated from $src by acceptance/renamed_product.py.
 renamed="$base/renamed"
 version=$requested_version
 if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
-product="$state/releases/myproduct-$bundle-${version:-RELEASE}"
+product="$state/releases/$product_name-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
 # Run commands as the service user from its home with the right runtime.
 as_product() {
-    sudo -n -H -u myproduct bash -c '
+    sudo -n -H -u "$product_name" env PRODUCT_NAME="$product_name" bash -c '
         cd "$HOME" || exit
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         exec "$@"
     ' bash "$@"
 }
 # Control the product service in the service user's systemd instance.
-user_service() { sudo -n systemctl --user -M myproduct@ "$@"; }
+user_service() { sudo -n systemctl --user -M "$product_name@" "$@"; }
 # List only validated installed component markers, never their private state.
 installed_components() {
     as_product python3 - <<'INSTALLED'
@@ -65,7 +70,7 @@ INSTALLED
 prepare_release() {
     local trust_status=0 trust_output
     cd "$base"
-    archive="myproduct-$bundle-$version-offline.tar.gz"
+    archive="$product_name-$bundle-$version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
     if ! sudo -n test -d "$product"; then
         # shellcheck disable=SC2024
@@ -73,7 +78,7 @@ prepare_release() {
     fi
     sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
     # Retry trust even after a previous attempt extracted the release successfully.
-    trust_output=$(sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "myproduct-$bundle" 2>&1) || trust_status=$?
+    trust_output=$(sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "$product_name-$bundle" 2>&1) || trust_status=$?
     # fapolicyd 1.4.5 returns 9 for an entirely duplicate add. Accept only that
     # diagnostic, then still require every package file in the live database.
     if [[ $trust_status != 0 ]]; then
@@ -91,7 +96,7 @@ prepare_release() {
 # ./deploy validate must pass for this release before it is installed (backlog 23).
 validate_release() {
     local output
-    output=$(sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy validate' bash "$product")
+    output=$(sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$product")
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated $bundle;"* ]] || { echo "FAIL: validate did not pass for $bundle" >&2; return 1; }
 }
@@ -188,8 +193,9 @@ AUDIT
 }
 # Preserve safe launcher evidence before reboot discards the volatile journal.
 health_launch_diagnostics() {
-    sudo -n python3 - "$run_started" <<'LAUNCH_DIAGNOSTICS'
+    sudo -n env PRODUCT_NAME="$product_name" python3 - "$run_started" <<'LAUNCH_DIAGNOSTICS'
 import json
+import os
 import pathlib
 import pwd
 import re
@@ -279,7 +285,7 @@ def unit_state(name, output):
 def main():
     """Collect read-only launcher state and failures without application messages or environments."""
     try:
-        user = pwd.getpwnam("myproduct")
+        user = pwd.getpwnam(os.environ["PRODUCT_NAME"])
     except KeyError:
         print("LAUNCH_DIAGNOSTICS: service user absent; no product launcher to inspect")
         return
@@ -292,12 +298,12 @@ def main():
     for event in events:
         print("LAUNCH_EVENT " + json.dumps(event, sort_keys=True))
     print("LAUNCH_EVENTS count=" + str(len(events)))
-    listing = command(["systemctl", "--user", "-M", "myproduct@", "list-units",
+    listing = command(["systemctl", "--user", "-M", os.environ["PRODUCT_NAME"] + "@", "list-units",
                        "--all", "--type=service", "--plain", "--no-legend", "--no-pager"])
     units.update(UNIT.findall(listing))
     print("LAUNCH_UNITS count=" + str(len(units)))
     for name in sorted(units):
-        output = command(["systemctl", "--user", "-M", "myproduct@", "show", name]
+        output = command(["systemctl", "--user", "-M", os.environ["PRODUCT_NAME"] + "@", "show", name]
                          + ["--property=" + key for key in PROPERTIES])
         print("LAUNCH_UNIT " + json.dumps(unit_state(name, output), sort_keys=True))
     print("PASS: read-only launcher diagnostics collected; unrecognized messages and arguments withheld")
@@ -393,19 +399,19 @@ wait_boot_service() {
     for component in $components; do
     for _ in {1..120}; do
         status=0
-        service=$(user_service is-active "myproduct-$component.service") || status=$?
+        service=$(user_service is-active "$product_name-$component.service") || status=$?
         printf 'boot-service state=%s exit=%s\n' "$service" "$status"
         case "$service:$status" in
             active:0) break;;
             failed:*)
-                user_service status --no-pager "myproduct-$component.service" || true
+                user_service status --no-pager "$product_name-$component.service" || true
                 echo 'FAIL: product service failed after reboot'; return 1;;
             activating:3|inactive:3) sleep 2;;
             *) echo 'FAIL: unexpected service state or command failure'; return 1;;
         esac
     done
     if [[ $service != active || $status != 0 ]]; then
-        user_service status --no-pager "myproduct-$component.service" || true
+        user_service status --no-pager "$product_name-$component.service" || true
         echo 'FAIL: product service did not become active within 240s'; return 1
     fi
     done
@@ -453,9 +459,10 @@ PY
 healthy() {
     local component components
     components=$(installed_components)
-    for component in $components; do user_service is-active "myproduct-$component.service"; done
+    for component in $components; do user_service is-active "$product_name-$component.service"; done
     as_product python3 - <<'HEALTHY'
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -525,7 +532,7 @@ def states(expected, init):
 def main():
     """Wait up to 150 seconds for healthy; reject inventory, command and parse errors at once."""
     folder = pathlib.Path.home() / ".config/containers/systemd"
-    paths = sorted(folder.glob("myproduct-*.yaml"))
+    paths = sorted(folder.glob(os.environ["PRODUCT_NAME"] + "-*.yaml"))
     if not paths:
         raise RuntimeError("No installed component YAML")
     expected, init = set(), set()
@@ -595,11 +602,11 @@ clean)
         test -z "$output"
         $prefix podman images --format '{{.Repository}}:{{.Tag}}'
     done
-    output=$(sudo -n find /etc/containers/systemd -maxdepth 1 -name 'myproduct.*' -print)
+    output=$(sudo -n find /etc/containers/systemd -maxdepth 1 -name "$product_name.*" -print)
     test -z "$output"
     if [[ $role == PROD ]]; then
-        if getent passwd myproduct; then echo 'FAIL: myproduct user already exists'; exit 1; fi
-        sudo -n test ! -e /var/lib/myproduct
+        if getent passwd "$product_name"; then echo "FAIL: $product_name user already exists"; exit 1; fi
+        sudo -n test ! -e "$state"
     fi
     test ! -e "$base"
     ;;
@@ -742,7 +749,7 @@ renamed-bundle)
     cd "$renamed"
     ./build-bundle.sh
     while IFS= read -r name; do
-        [[ $name =~ ^myproduct-(gateway|login-service|orders|inventory|manual)-[0-9]+\.[0-9]+\.[0-9]+-offline\.tar\.gz$ ]]
+        [[ $name =~ ^"$product_name"-(gateway|login-service|orders|inventory|manual)-[0-9]+\.[0-9]+\.[0-9]+-offline\.tar\.gz$ ]]
         (cd dist && sha256sum -c "$name.sha256")
     done < dist/current-bundles.txt
     test "$(wc -l < dist/current-bundles.txt)" = 5
@@ -774,7 +781,7 @@ REMOVE_MANUAL
     ./build-bundle.sh
     test "$(wc -l < dist/current-bundles.txt)" = 4
     if grep -q manual dist/current-bundles.txt; then echo 'FAIL: manual still in the product' >&2; exit 1; fi
-    ls dist/myproduct-manual-*-offline.tar.gz
+    ls dist/"$product_name"-manual-*-offline.tar.gz
     echo 'PASS: manual removed from dev and new bundles; its earlier archive is retained'
     ;;
 renamed-inventory-drop)
@@ -797,7 +804,7 @@ pathlib.Path("INVENTORY_VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\
 DROP_REGISTRATIONS
     rm components/inventory/route.conf components/inventory/client.yaml
     ./build-bundle.sh inventory >&2
-    name="myproduct-inventory-$(cat INVENTORY_VERSION)-offline.tar.gz"
+    name="$product_name-inventory-$(cat INVENTORY_VERSION)-offline.tar.gz"
     (cd dist && sha256sum -c "$name.sha256" >&2)
     echo "$name"
     ;;
@@ -848,8 +855,8 @@ renamed-uninstall)
         manual) path=/help volume=;;
         *) echo "Unsupported renamed uninstall: $bundle" >&2; exit 2;;
     esac
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
-    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file "myproduct-$bundle"
+    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file "$product_name-$bundle"
     sudo -n fapolicyd-cli --update
     sudo -n test ! -e "$state/installed/$bundle"
     sudo -n test ! -e "$state/metadata/$bundle.json"
@@ -873,7 +880,7 @@ bundle)
     cd dist
     sha256sum -c ./*.sha256
     cd ..
-    cat build/bundle/myproduct-*/images/images.txt
+    cat build/bundle/"$product_name"-*/images/images.txt
     ;;
 legacy-build)
     cd "$src"
@@ -898,11 +905,11 @@ legacy-install)
     as_product "$product/deploy" install
     ;;
 legacy-retire)
-    old_release="$state/releases/myproduct-$bundle-$old_version"
+    old_release="$state/releases/$product_name-$bundle-$old_version"
     # Retire only the selected release; compare every other bundle's trust records.
     sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-after"
     cmp "$base/legacy-trust-before" "$base/legacy-trust-after"
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "$product_name-$bundle"
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deploy.py" "$old_release/deploy.py"
     sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-after"
@@ -920,8 +927,8 @@ upgrade-bundle)
     git diff -- VERSION
     # Only app1 is transferred and upgraded; the catalog is still validated.
     ./build-bundle.sh app1
-    (cd dist && sha256sum -c "myproduct-app1-$requested_version-offline.tar.gz.sha256")
-    cat "build/bundle/myproduct-app1-$requested_version/images/images.txt"
+    (cd dist && sha256sum -c "$product_name-app1-$requested_version-offline.tar.gz.sha256")
+    cat "build/bundle/$product_name-app1-$requested_version/images/images.txt"
     ;;
 help-upgrade-bundle|platform-upgrade-bundle|identity-upgrade-bundle)
     cd "$src"
@@ -979,13 +986,13 @@ with tempfile.TemporaryDirectory(prefix="myproduct-help-release-") as directory:
     bundle.build_release(descriptor["version"], descriptor)
 
 HELP_BUILD
-    (cd dist && sha256sum -c "myproduct-$bundle-$requested_version-offline.tar.gz.sha256")
-    cat "build/help-upgrade/myproduct-$bundle-$requested_version/images/images.txt"
+    (cd dist && sha256sum -c "$product_name-$bundle-$requested_version-offline.tar.gz.sha256")
+    cat "build/help-upgrade/$product_name-$bundle-$requested_version/images/images.txt"
     ;;
 help-upgrade|platform-upgrade|identity-upgrade)
     prepare_release
     validate_release
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
+    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     healthy
     wait_trust "$product/deployment/"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
@@ -1071,7 +1078,7 @@ help-without-identity)
     echo 'PASS: platform/help are healthy without Identity installed or DNS-resolvable'
     ;;
 platform-before|platform-after|platform-downgrade)
-    as_product python3 - "$action" "$state/platform-lifecycle.json" "$product" "$state/releases/myproduct-platform-$old_version" <<'PLATFORM_LIFECYCLE'
+    as_product python3 - "$action" "$state/platform-lifecycle.json" "$product" "$state/releases/$product_name-platform-$old_version" <<'PLATFORM_LIFECYCLE'
 import hashlib
 import json
 import os
@@ -1148,8 +1155,8 @@ help-content)
     echo 'PASS: new help content served via verified HTTPS'
     ;;
 help-retire|platform-retire|identity-retire)
-    old_release="$state/releases/myproduct-$bundle-$old_version"
-    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "myproduct-$bundle"
+    old_release="$state/releases/$product_name-$bundle-$old_version"
+    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "$product_name-$bundle"
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deployment/" "$old_release/deployment/"
     as_product rm -rf -- "$old_release"
@@ -1158,9 +1165,9 @@ help-retire|platform-retire|identity-retire)
     ;;
 prepare-host)
     cd "$base"
-    archive="myproduct-$bundle-$version-offline.tar.gz"
+    archive="$product_name-$bundle-$version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
-    stage=$(mktemp -d /tmp/myproduct-host.XXXXXXXX)
+    stage=$(mktemp -d "/tmp/$product_name-host.XXXXXXXX")
     tar xzf "$archive" -C "$stage"
     # The documented host baseline (README, fapolicyd): a subject cache large
     # enough that starting processes are not evicted (backlog 29).
@@ -1169,7 +1176,7 @@ prepare-host)
         || echo 'subj_cache_size = 16381' | sudo -n tee -a /etc/fapolicyd/fapolicyd.conf >/dev/null
     sudo -n systemctl restart fapolicyd
     sudo -n systemctl is-active fapolicyd
-    sudo -n bash "$stage/myproduct-$bundle-$version/scripts/prepare-host.sh" --port "$port"
+    sudo -n bash "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" --port "$port"
     rm -rf -- "$stage"
     as_product mkdir -p "$state/releases"
     ;;
@@ -1202,11 +1209,11 @@ HELP_ALONE
     ;;
 upgrade)
     prepare_release
-    old_release="$state/releases/myproduct-$bundle-$old_version"
+    old_release="$state/releases/$product_name-$bundle-$old_version"
     validate_release
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
+    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     healthy
-    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "myproduct-$bundle"
+    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "$product_name-$bundle"
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deployment/" "$old_release/deployment/"
     echo 'PASS: old own deployment package trust removed; other bundles untouched'
@@ -1243,9 +1250,9 @@ HASHES
     ;;
 unpack)
     cd "$base"
-    archive="myproduct-$bundle-$requested_version-offline.tar.gz"
+    archive="$product_name-$bundle-$requested_version-offline.tar.gz"
     sha256sum -c "$archive.sha256"
-    tar -xOf "$archive" "myproduct-$bundle-$requested_version/VERSION" > "version-$bundle"
+    tar -xOf "$archive" "$product_name-$bundle-$requested_version/VERSION" > "version-$bundle"
     version=$(cat "version-$bundle")
     test "$version" = "$requested_version"
     [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -1274,9 +1281,9 @@ install)
     install_configuration
     validate_release
     date +%s > "$base/install-start-$bundle"
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
+    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
     as_product podman ps --all
-    sudo -n -H -u myproduct cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
+    sudo -n -H -u "$product_name" cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
 database-auth)
     as_product python3 - <<'DATABASE_AUTH'
@@ -1358,14 +1365,15 @@ health) healthy;;
 check)
     profile
     healthy
-    user_service is-active myproduct-network.service
+    user_service is-active "$product_name-network.service"
     generated=$(as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun)
     printf '%s\n' "$generated"
     grep -q 'podman-user-wait-network-online.service' <<< "$generated"
     output=$(sudo -n podman ps -aq)
     test -z "$output"
-    sudo -n ls -Zd /var/lib/myproduct /var/lib/myproduct/.local/share/containers/storage
-    sudo -n python3 - <<'PERMISSIONS'
+    sudo -n ls -Zd "$state" "$state/.local/share/containers/storage"
+    sudo -n env PRODUCT_NAME="$product_name" python3 - <<'PERMISSIONS'
+import os
 import pathlib
 import pwd
 import stat
@@ -1373,11 +1381,12 @@ import stat
 
 def main():
     """Require private state and readable Quadlets for every installed component."""
-    account = pwd.getpwnam("myproduct")
-    root = pathlib.Path("/var/lib/myproduct")
+    product = os.environ["PRODUCT_NAME"]
+    account = pwd.getpwnam(product)
+    root = pathlib.Path("/var/lib", product)
     paths = {root: 0o700, root / "PKI/private": 0o700}
     units = root / ".config/containers/systemd"
-    paths[units / "myproduct.network"] = 0o644
+    paths[units / (product + ".network")] = 0o644
     for marker in (root / "installed").glob("*"):
         component = marker.name
         paths[root / component / "config.yaml"] = 0o600
@@ -1387,14 +1396,14 @@ def main():
                 paths[folder] = 0o700
                 for path in folder.rglob("*"):
                     paths[path] = 0o700 if path.is_dir() else 0o600
-        paths[units / ("myproduct-" + component + ".yaml")] = 0o600
-        paths[units / ("myproduct-" + component + ".kube")] = 0o644
+        paths[units / (product + "-" + component + ".yaml")] = 0o600
+        paths[units / (product + "-" + component + ".kube")] = 0o644
     for path, mode in sorted(paths.items()):
         item = path.lstat()
         if (item.st_uid != account.pw_uid or item.st_gid != account.pw_gid
                 or stat.S_IMODE(item.st_mode) != mode):
             raise SystemExit("FAIL: private ownership/mode: " + str(path))
-        print("PASS: myproduct:myproduct {:04o} {}".format(mode, path))
+        print("PASS: {0}:{0} {1:04o} {2}".format(product, mode, path))
 
 
 main()
@@ -1403,7 +1412,7 @@ PERMISSIONS
     test -n "$container_ids"
     mapfile -t containers <<< "$container_ids"
     upper_dirs=$(as_product podman inspect --format '{{.GraphDriver.Data.UpperDir}}' "${containers[@]}")
-    sudo -n python3 - "$upper_dirs" <<'LABELS'
+    sudo -n env PRODUCT_NAME="$product_name" python3 - "$upper_dirs" <<'LABELS'
 import os
 import pathlib
 import re
@@ -1416,7 +1425,8 @@ try:
 except ImportError:
     raise SystemExit("FAIL: the selinux Python module is missing; install the host's policycoreutils-python-utils before the snapshot")
 
-STORAGE = pathlib.Path("/var/lib/myproduct/.local/share/containers/storage")
+HOME = pathlib.Path("/var/lib", os.environ["PRODUCT_NAME"])
+STORAGE = HOME / ".local/share/containers/storage"
 CUSTOMIZABLE = pathlib.Path("/etc/selinux/targeted/contexts/customizable_types")
 
 
@@ -1542,7 +1552,7 @@ def main():
                 check_label(pathlib.Path(directory) / name)
     outputs, failures = [], []
     # Both dry runs are read-only evidence, even when the first one reports an error.
-    for arguments in (["-e", str(STORAGE), "/var/lib/myproduct"], [str(STORAGE)]):
+    for arguments in (["-e", str(STORAGE), str(HOME)], [str(STORAGE)]):
         try:
             outputs.append(dryrun(arguments))
         except RuntimeError as error:
@@ -1654,7 +1664,7 @@ CREDENTIAL_FILES
     done
     as_product podman exec platform-proxy-nginx wget -qO- http://identity-server:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
-    uid=$(id -u myproduct)
+    uid=$(id -u "$product_name")
     journal=$(sudo -n journalctl _UID="$uid" --since "@$run_started" --no-pager)
     if grep -Ei 'Trying to pull|Pulling image|pull access denied' <<< "$journal"; then
         echo 'FAIL: install attempted a pull'; exit 1
@@ -1686,7 +1696,7 @@ prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers
     ;;
 stop)
     components=$(installed_components)
-    for component in $components; do user_service stop "myproduct-$component.service"; done
+    for component in $components; do user_service stop "$product_name-$component.service"; done
     output=$(as_product podman ps -q)
     test -z "$output"
     as_product podman secret ls
@@ -1694,12 +1704,13 @@ stop)
     ;;
 start|restart)
     components=$(installed_components)
-    for component in $components; do user_service "$action" "myproduct-$component.service"; done
+    for component in $components; do user_service "$action" "$product_name-$component.service"; done
     healthy
     ;;
 crash)
     python3 - <<'CRASH'
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -1710,7 +1721,7 @@ CONTAINER = "app1-todo-backend"
 
 def product_command(arguments):
     """Build a Podman call as the service user from the right home and runtime."""
-    return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+    return ["sudo", "-n", "-H", "-u", os.environ["PRODUCT_NAME"], "bash", "-c",
             'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
             "bash"] + arguments
 
@@ -1788,6 +1799,7 @@ CRASH
 hang)
     python3 - <<'HANG'
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -1798,7 +1810,7 @@ CONTAINER = "app1-todo-backend"
 
 def product_command(arguments):
     """Build a Podman call as the service user from the right home and runtime."""
-    return ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+    return ["sudo", "-n", "-H", "-u", os.environ["PRODUCT_NAME"], "bash", "-c",
             'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
             "bash"] + arguments
 
@@ -1901,7 +1913,7 @@ siblings-before|siblings-after|help-siblings-before|help-siblings-after|platform
     if [[ $action == platform-siblings-* ]]; then mode=platform; fi
     if [[ $action == identity-siblings-* ]]; then observation="$base/identity-siblings.json"; mode=identity; fi
     if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
-    sudo -n python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
+    sudo -n env PRODUCT_NAME="$product_name" python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
 import hashlib
 import json
 import os
@@ -1909,6 +1921,9 @@ import pathlib
 import re
 import subprocess
 import sys
+
+PRODUCT = os.environ["PRODUCT_NAME"]
+HOME = pathlib.Path("/var/lib", PRODUCT)
 
 
 def command(arguments):
@@ -1923,14 +1938,14 @@ def command(arguments):
 
 def observe():
     """Project sibling process identity, version markers and their exact trust records."""
-    prefix = ["sudo", "-n", "-H", "-u", "myproduct", "bash", "-c",
+    prefix = ["sudo", "-n", "-H", "-u", PRODUCT, "bash", "-c",
               'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
     mode = sys.argv[3] if len(sys.argv) > 3 else "app1"
     components = {"app1": ["platform", "identity", "app2", "help"],
                   "help": ["platform", "identity", "app1", "app2"],
                   "platform": ["identity", "app1", "app2", "help"],
                   "identity": ["platform", "app1", "app2", "help"]}[mode]
-    components = [name for name in components if pathlib.Path("/var/lib/myproduct/installed", name).is_file()]
+    components = [name for name in components if pathlib.Path(HOME, "installed", name).is_file()]
     names = []
     for component in components:
         if component == "platform":
@@ -1956,11 +1971,11 @@ def observe():
         observed[name] = {"Pid": state["Pid"], "StartedAt": state["StartedAt"], "RestartCount": row["RestartCount"]}
     trust = command(["fapolicyd-cli", "--dump-db"])
     records = sorted(line for line in trust.splitlines()
-                     if any("/releases/myproduct-" + component + "-" in line for component in components))
+                     if any("/releases/" + PRODUCT + "-" + component + "-" in line for component in components))
     expected = set()
     for component in components:
-        version = pathlib.Path("/var/lib/myproduct/installed", component).read_text().strip()
-        package = pathlib.Path("/var/lib/myproduct/releases") / ("myproduct-" + component + "-" + version) / "deployment"
+        version = pathlib.Path(HOME, "installed", component).read_text().strip()
+        package = HOME / "releases" / (PRODUCT + "-" + component + "-" + version) / "deployment"
         files = [str(path) for path in package.rglob("*") if path.is_file()]
         if not files:
             raise SystemExit("FAIL: missing sibling deployment package")
@@ -1973,20 +1988,20 @@ def observe():
         trusted.append(match.group(1))
     if set(trusted) != expected or len(trusted) != len(expected):
         raise SystemExit("FAIL: expected exact package trust for sibling bundles")
-    versions = {name: (pathlib.Path("/var/lib/myproduct/installed") / name).read_text()
+    versions = {name: (HOME / "installed" / name).read_text()
                 for name in components}
     result = {"containers": observed, "trust": records, "versions": versions}
     if components:
-        root = pathlib.Path("/var/lib/myproduct")
+        root = HOME
         files = []
         for component in components:
             files.append(root / component / "config.yaml")
             for directory in ("credentials", "files"):
                 files.extend(path for path in (root / component / directory).rglob("*") if path.is_file())
             for suffix in (".yaml", ".kube"):
-                files.append(root / ".config/containers/systemd" / ("myproduct-" + component + suffix))
+                files.append(root / ".config/containers/systemd" / (PRODUCT + "-" + component + suffix))
         result["state"] = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
-        network = json.loads(command(prefix + ["podman", "network", "inspect", "myproduct"]))
+        network = json.loads(command(prefix + ["podman", "network", "inspect", PRODUCT]))
         if not isinstance(network, list) or len(network) != 1 or not network[0].get("id"):
             raise SystemExit("FAIL: invalid shared network observation")
         result["network"] = network[0]["id"]
@@ -2014,17 +2029,17 @@ except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
 SIBLINGS
     ;;
 uninstall)
-    sudo -n -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
-    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file myproduct-app1
+    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file "$product_name-app1"
     sudo -n fapolicyd-cli --update
-    app2_version=$(sudo -n -H -u myproduct cat "$state/installed/app2")
-    wait_trust "$state/releases/myproduct-app2-$app2_version/deployment/" "$product/deployment/"
+    app2_version=$(sudo -n -H -u "$product_name" cat "$state/installed/app2")
+    wait_trust "$state/releases/$product_name-app2-$app2_version/deployment/" "$product/deployment/"
     sudo -n test ! -e "$state/installed/app1"
     sudo -n test ! -e "$state/routes/app1.conf"
     sudo -n test ! -e "$state/clients/app1"
     sudo -n test -f "$state/app1/config.yaml"
     as_product podman volume exists app1-data
-    as_product podman network exists myproduct
+    as_product podman network exists "$product_name"
     healthy
     http=$(as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
         --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \

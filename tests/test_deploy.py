@@ -39,7 +39,7 @@ class DeployFixture(unittest.TestCase):
             "CONFIG": self.root / "config.yaml",
             "MANIFESTS": self.root / "manifests",
             "BUILD": self.root / "build",
-            "QUADLET_TEMPLATE": self.root / "quadlet/myproduct.kube",
+            "QUADLET_TEMPLATE": self.root / "quadlet/template.kube",
             "QUADLET_DIR": self.root / "home/.config/containers/systemd",
             "QUADLET_TARGET": self.root
             / "home/.config/containers/systemd/myproduct.kube",
@@ -153,8 +153,8 @@ class DeployFixture(unittest.TestCase):
             mock.patch.dict(os.environ, {"HOME": str(self.root / "home")})
         )
         self.config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
-        self.write("quadlet/myproduct.kube", "[Kube]\nYaml=myproduct.yaml\n")
-        self.write("quadlet/myproduct.network", "[Network]\nNetworkName=myproduct\n")
+        self.write("quadlet/template.kube", "[Kube]\nYaml={name}.yaml\n")
+        self.write("quadlet/template.network", "[Network]\nNetworkName={product}\n")
         self.write("images/images.tar")
         self.config["APP_IMAGE"] = "localhost/app:1"
         self.write_config()
@@ -1243,13 +1243,13 @@ class CommandTests(DeployFixture):
             if args[0] == "systemctl":
                 self.assertTrue((common.FILES_DIR / "uploads.tar").exists())
                 self.assertTrue(common.QUADLET_YAML.exists())
+                # The standalone fixture fills the templates with its explicit name.
                 self.assertEqual(
-                    common.QUADLET_TARGET.with_suffix(".network").read_bytes(),
-                    common.QUADLET_TEMPLATE.with_suffix(".network").read_bytes(),
+                    common.QUADLET_TARGET.with_suffix(".network").read_text(),
+                    "[Network]\nNetworkName=myproduct\n",
                 )
                 self.assertEqual(
-                    common.QUADLET_TARGET.read_bytes(),
-                    common.QUADLET_TEMPLATE.read_bytes(),
+                    common.QUADLET_TARGET.read_text(), "[Kube]\nYaml=myproduct.yaml\n"
                 )
 
         self.process.side_effect = command

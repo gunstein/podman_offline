@@ -122,6 +122,7 @@ class HistoricalTrustTests(unittest.TestCase):
                 body = shell
                 script = (
                     r"""set -euo pipefail
+product_name=myproduct
 base=$1
 bundle=app1
 state=/var/lib/myproduct

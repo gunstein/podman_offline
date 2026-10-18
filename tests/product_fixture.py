@@ -233,6 +233,7 @@ class ProductFixture(DeployFixture):
         super().setUp()
         self.source = self.root / "source"
         self.releases = self.root / "releases"
+        self.product_name = "myproduct"  # product: in the generated bundles.yaml
         self.volumes = set()
         self.process.side_effect = self.host_command
         temporary_directory = tempfile.TemporaryDirectory
@@ -261,7 +262,7 @@ class ProductFixture(DeployFixture):
 
     def restarts(self):
         return [
-            args[-1][len("myproduct-") : -len(".service")]
+            args[-1][len(self.product_name + "-") : -len(".service")]
             for args in self.commands()
             if args[:3] == ["systemctl", "--user", "restart"]
         ]
@@ -270,7 +271,7 @@ class ProductFixture(DeployFixture):
         """Point the deploy package at a source checkout or an unpacked release."""
         common.ROOT = root
         common.BUILD = root / "build"
-        common.QUADLET_TEMPLATE = root / "quadlet/myproduct.kube"
+        common.QUADLET_TEMPLATE = root / "quadlet/template.kube"
         bundle.ROOT = root
         bundle.STAGE = root / "build/bundle"
         bundle.DIST = root / "dist"
@@ -295,7 +296,9 @@ class ProductFixture(DeployFixture):
 
     def write_catalog(self, entries):
         (self.source / "bundles.yaml").write_text(
-            yaml.safe_dump({"components": entries}, sort_keys=False)
+            yaml.safe_dump(
+                {"product": self.product_name, "components": entries}, sort_keys=False
+            )
         )
 
     def write_component(self, name, spec):

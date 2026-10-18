@@ -5,7 +5,7 @@ import sys
 
 import yaml
 
-from . import common, deploy, validation
+from . import catalog, common, deploy, validation
 
 
 def main():
@@ -58,7 +58,7 @@ def main():
         print(f"ERROR: {error}", file=sys.stderr)
         if args[0] == "install":
             service = (
-                "myproduct-" + deploy.bundle_descriptor()["name"] + ".service"
+                catalog.unit_name(deploy.bundle_descriptor()["name"]) + ".service"
                 if (common.ROOT / "bundle.yaml").is_file()
                 else common.SERVICE
             )

@@ -14,11 +14,17 @@ BUILD = ROOT / "build"
 MANIFESTS = ROOT / "manifests"
 CONFIG = ROOT / "config.yaml"  # Standalone manifest fixtures only.
 
-QUADLET_TEMPLATE = ROOT / "quadlet" / "myproduct.kube"
+# A product declares its name in bundles.yaml (product:); it prefixes units,
+# the shared network and archives. Standalone manifest fixtures have no
+# catalog, so they use this explicit name.
+STANDALONE_PRODUCT = "myproduct"
+
+# quadlet/template.kube and template.network; {product} and {name} are filled in.
+QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
 QUADLET_DIR = HOME / ".config/containers/systemd"
-QUADLET_TARGET = QUADLET_DIR / "myproduct.kube"
-QUADLET_YAML = QUADLET_DIR / "myproduct.yaml"  # Yaml=myproduct.yaml in .kube
-SERVICE = "myproduct.service"
+QUADLET_TARGET = QUADLET_DIR / (STANDALONE_PRODUCT + ".kube")
+QUADLET_YAML = QUADLET_DIR / (STANDALONE_PRODUCT + ".yaml")
+SERVICE = STANDALONE_PRODUCT + ".service"
 
 SECRET_FILES = "SECRET_FILES"
 VOLUME_FILES = "VOLUME_FILES"
@@ -29,6 +35,9 @@ FILES_DIR = HOME / "files"
 IMPORT_SOURCE = "volume.podman.io/import-source"
 
 ID = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+# The product name is also the default service user, so it follows the
+# portable Linux user name rule: a letter first, at most 32 characters.
+PRODUCT = re.compile(r"^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$")
 SECRET_KEY = re.compile(r"^[-._a-zA-Z0-9]+$")
 # Podman rejects secrets over 512,000 bytes (the whole Secret document).
 MAX_SECRET_SIZE = 500000

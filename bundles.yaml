@@ -12,6 +12,13 @@
 #   clients:      dependency that registers this component's client.yaml
 #   accepts:      roles this component serves, mapped to the volume ID that
 #                 receives the registrations: {routes: <id>, clients: <id>}
+#
+# product names the whole installation: the service user and its home
+# /var/lib/<product> (prepare-host.sh default), units <product>-<id>.service,
+# the shared network <product>, Quadlet files and the bundle archives
+# <product>-<id>-<version>-offline.tar.gz. Lowercase letters, digits and inner
+# hyphens, a letter first, at most 32 characters.
+product: myproduct
 components:
   platform:
     version_file: PLATFORM_VERSION

@@ -84,6 +84,7 @@ class WrapperTests(unittest.TestCase):
             (source / "bundles.yaml").write_text(
                 yaml.safe_dump(
                     {
+                        "product": "myproduct",
                         "components": {
                             "platform": {
                                 "version_file": "PLATFORM_VERSION",
@@ -101,7 +102,7 @@ class WrapperTests(unittest.TestCase):
                                 "requires": ["platform", "identity"],
                                 "public_from": "platform",
                             },
-                        }
+                        },
                     }
                 )
             )

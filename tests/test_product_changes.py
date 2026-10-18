@@ -54,6 +54,79 @@ class MinimalWorkerTests(ProductFixture):
         self.assertFalse((common.HOME / "metadata/worker.json").exists())
 
 
+class ProductNameTests(ProductFixture):
+    """product: in bundles.yaml names everything the installation creates."""
+
+    def installed_names(self):
+        return sorted(
+            str(path.relative_to(common.HOME))
+            for path in common.HOME.rglob("*")
+            if path.is_file()
+        )
+
+    def test_product_name_reaches_every_installed_name(self):
+        self.product_name = "hubbabubba"
+        self.write_product(WORKER)
+        deploy.prepare()
+        releases = self.build_and_unpack()
+        self.assertEqual(
+            (self.source / "dist/current-bundles.txt").read_text(),
+            "hubbabubba-worker-1.0.0-offline.tar.gz\n",
+        )
+        shutil.rmtree(self.source)
+        self.assertEqual(self.install(releases["worker"]), ["worker"])
+        self.assertIn(
+            ["systemctl", "--user", "restart", "hubbabubba-worker.service"],
+            self.commands(),
+        )
+        units = common.QUADLET_DIR
+        self.assertEqual(
+            sorted(path.name for path in units.iterdir()),
+            ["hubbabubba-worker.kube", "hubbabubba-worker.yaml", "hubbabubba.network"],
+        )
+        kube = (units / "hubbabubba-worker.kube").read_text()
+        self.assertIn("Yaml=hubbabubba-worker.yaml\n", kube)
+        self.assertIn("Network=hubbabubba.network\n", kube)
+        self.assertIn(
+            "NetworkName=hubbabubba\n", (units / "hubbabubba.network").read_text()
+        )
+        for name in self.installed_names():
+            self.assertNotIn("myproduct", name)
+            self.assertNotIn("myproduct", (common.HOME / name).read_text())
+        self.assertNotIn("myproduct", str(self.commands()))
+        self.process.reset_mock()
+        deploy.uninstall()
+        self.assertIn(
+            ["systemctl", "--user", "stop", "hubbabubba-worker.service"],
+            self.commands(),
+        )
+
+    def test_another_product_is_refused_before_any_write(self):
+        """One service user runs one product; units of two products would mix."""
+        self.product_name = "hubbabubba"
+        self.write_product(WORKER)
+        self.install(self.build_and_unpack()["worker"])
+        before = self.installed_names()
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.releases)
+        self.product_name = "other-shop"
+        self.write_product(WORKER, version="1.0.1")
+        release = self.build_and_unpack()["worker"]
+        self.use_root(release)
+        self.process.reset_mock()
+        for action in (deploy.install, deploy.uninstall):
+            with (
+                self.subTest(action=action.__name__),
+                self.assertRaisesRegex(
+                    common.DeployError,
+                    "already runs product hubbabubba; this bundle belongs to other-shop",
+                ),
+            ):
+                action()
+        self.assertEqual(self.commands(), [])
+        self.assertEqual(self.installed_names(), before)
+
+
 class ServiceChangeTests(ProductFixture):
     """Add and remove a service by editing bundles.yaml and components/ only."""
 

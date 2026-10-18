@@ -352,7 +352,9 @@ def prepare_components():
             raise common.DeployError(
                 f"Refuse symlinked dev registrations: {state / name}"
             )
-    with tempfile.TemporaryDirectory(prefix="myproduct-prepare-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix=catalog.product_name(common.ROOT) + "-prepare-"
+    ) as directory:
         # Validate every registration before the first dev write.
         imports, updates, _ = registrations.registration_stage(
             list(known),
@@ -511,7 +513,7 @@ def install_standalone():
     for suffix in (".kube", ".network"):
         target = common.QUADLET_TARGET.with_suffix(suffix)
         target.write_text(
-            common.QUADLET_TEMPLATE.with_suffix(suffix).read_text(encoding="utf-8"),
+            quadlet_text(suffix, common.STANDALONE_PRODUCT, common.STANDALONE_PRODUCT),
             encoding="utf-8",
         )
         target.chmod(0o644)
@@ -594,12 +596,34 @@ def install_needed(descriptor):
     return requested > catalog.version_number(installed)
 
 
+def quadlet_text(suffix, product, name):
+    """Fill quadlet/template.kube or template.network for one unit.
+
+    {product} becomes the product name (the shared network), {name} the unit's
+    file name without suffix: <product>-<component>, or the product itself.
+    """
+    text = common.QUADLET_TEMPLATE.with_suffix(suffix).read_text(encoding="utf-8")
+    return text.replace("{product}", product).replace("{name}", name)
+
+
+def check_same_product(product, installed):
+    """One service user runs one product; refuse another before any write."""
+    others = sorted({descriptor["product"] for descriptor in installed.values()})
+    if others and others != [product]:
+        raise common.DeployError(
+            "This service user already runs product "
+            + ", ".join(others)
+            + "; this bundle belongs to "
+            + product
+            + ". Install each product under its own service user"
+        )
+
+
 def check_shared_network():
     """Validate the shared network before creating secrets or loading images."""
-    network = common.QUADLET_DIR / "myproduct.network"
-    network_text = common.QUADLET_TEMPLATE.with_suffix(".network").read_text(
-        encoding="utf-8"
-    )
+    product = catalog.product_name(common.ROOT)
+    network = common.QUADLET_DIR / (product + ".network")
+    network_text = quadlet_text(".network", product, product)
     if network.exists() and network.read_text(encoding="utf-8") != network_text:
         raise common.DeployError(
             f"Existing shared network differs from the bundle: {network}"
@@ -657,9 +681,7 @@ def write_component_units_and_imports(rendered, network, network_text):
         rendering.write_file_archives(volumes, files)
         rendering.write_private(output, text)
         quadlet.write_text(
-            common.QUADLET_TEMPLATE.read_text(encoding="utf-8").replace(
-                "Yaml=myproduct.yaml", "Yaml=" + output.name
-            ),
+            quadlet_text(".kube", catalog.product_name(common.ROOT), output.stem),
             encoding="utf-8",
         )
         quadlet.chmod(0o644)
@@ -701,7 +723,7 @@ def restart_component_services(components, changed, pending, known):
 
 def restart_service(component):
     """Restart one component's unit and require it to be active."""
-    service = "myproduct-" + component + ".service"
+    service = catalog.unit_name(component) + ".service"
     run("systemctl", "--user", "restart", service)
     run("systemctl", "--user", "is-active", "--quiet", service)
 
@@ -797,6 +819,7 @@ def install_checks():
     name = descriptor["name"]
     pending = registrations.check_pending("install", name)
     installed = catalog.load_installed_metadata(common.HOME)
+    check_same_product(descriptor["product"], installed)
     known = dict(installed)
     known[name] = descriptor
     catalog.check_id_prefixes(known, "installed components and this bundle")
@@ -838,7 +861,7 @@ def install_components():
     descriptor, known, config, config_path, render = install_checks()
     name = descriptor["name"]
     with tempfile.TemporaryDirectory(
-        prefix="myproduct-install-", dir=os.environ["XDG_RUNTIME_DIR"]
+        prefix=descriptor["product"] + "-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
         # Staging only reads and validates registrations; it writes nothing
         # outside the temporary directory and runs before any host command.
@@ -919,7 +942,8 @@ def uninstall_plan(component, delete_data, installed):
         raise common.DeployError("Invalid component volume name for uninstall")
     # Validate every public input before saving the plan or stopping/deleting anything.
     with tempfile.TemporaryDirectory(
-        prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+        prefix=catalog.product_name(common.ROOT) + "-remove-",
+        dir=os.environ["XDG_RUNTIME_DIR"],
     ) as directory:
         registrations.registration_stage([], Path(directory), installed)
     role_owners = catalog.role_owners(installed, "installed components")
@@ -946,7 +970,8 @@ def uninstall_plan(component, delete_data, installed):
 def uninstall(component=None, delete_data=False):
     """Resume one scoped uninstall from validated metadata, even after removing its YAML."""
     production_environment()
-    own = bundle_descriptor()["name"]
+    descriptor = bundle_descriptor()
+    own = descriptor["name"]
     component = component or own
     if component != own:
         raise common.DeployError("This bundle can only uninstall its own component")
@@ -955,6 +980,7 @@ def uninstall(component=None, delete_data=False):
     if state is None and not marker.is_file():
         raise common.DeployError(f"Component {component} is not installed")
     installed = catalog.load_installed_metadata(common.HOME)
+    check_same_product(descriptor["product"], installed)
     dependents = catalog.dependents(installed, common.HOME, component)
     if dependents:
         raise common.DeployError(
@@ -977,7 +1003,7 @@ def uninstall(component=None, delete_data=False):
         state = uninstall_plan(component, delete_data, installed)
         registrations.save_pending(state)
     if not state["stopped"]:
-        run("systemctl", "--user", "stop", "myproduct-" + component + ".service")
+        run("systemctl", "--user", "stop", catalog.unit_name(component) + ".service")
         state["stopped"] = True
         registrations.save_pending(state)
     for path in (output, quadlet, route):
@@ -988,7 +1014,8 @@ def uninstall(component=None, delete_data=False):
     run("systemctl", "--user", "daemon-reload")
     if state["owners"]:
         with tempfile.TemporaryDirectory(
-            prefix="myproduct-remove-", dir=os.environ["XDG_RUNTIME_DIR"]
+            prefix=catalog.product_name(common.ROOT) + "-remove-",
+            dir=os.environ["XDG_RUNTIME_DIR"],
         ) as directory:
             imports, _, _ = registrations.registration_stage(
                 [], Path(directory), installed

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from . import common, deploy, registrations
+from . import catalog, common, deploy, registrations
 from . import render as rendering
 
 ERRORS = (common.DeployError, OSError, yaml.YAMLError)
@@ -73,7 +73,9 @@ def validate_catalog():
         except ERRORS as error:
             findings.append((component, str(error)))
     try:
-        with tempfile.TemporaryDirectory(prefix="myproduct-validate-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix=catalog.product_name(common.ROOT) + "-validate-"
+        ) as directory:
             registrations.registration_stage(
                 list(known), Path(directory), known, home=state, configs=settings
             )
@@ -93,7 +95,9 @@ def validate_bundle():
     name = descriptor["name"]
     findings = []
     try:
-        with tempfile.TemporaryDirectory(prefix="myproduct-validate-") as directory:
+        with tempfile.TemporaryDirectory(
+            prefix=catalog.product_name(common.ROOT) + "-validate-"
+        ) as directory:
             registrations.registration_stage([name], Path(directory), known)
     except ERRORS as error:
         findings.append(("registrations", str(error)))

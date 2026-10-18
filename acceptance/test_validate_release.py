@@ -15,7 +15,7 @@ class ValidateReleaseTests(unittest.TestCase):
             [
                 "bash",
                 "-c",
-                "set -euo pipefail\nbundle=orders\nproduct=/r\n"
+                "set -euo pipefail\nproduct_name=myproduct\nbundle=orders\nproduct=/r\n"
                 + stub
                 + helper
                 + "validate_release",

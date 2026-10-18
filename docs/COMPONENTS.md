@@ -12,7 +12,7 @@ component names. The five shipped components (`platform`, `identity`, `app1`,
 | --- | --- | --- | --- |
 | Source checkout | `bundles.yaml` (the catalog) | you | `./deploy validate`, `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
 | Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `validate`, `install`, `uninstall` |
-| Target host | `/var/lib/myproduct/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
+| Target host | `/var/lib/<product>/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
 
 `deployment/catalog.py` validates all three with the same rules. The compiled
 descriptor adds what the target cannot look up: the component's version and the
@@ -23,6 +23,7 @@ and without the release directories of other components.
 ## The catalog: `bundles.yaml`
 
 ```yaml
+product: <name>                  # required; names the whole installation
 components:
   <id>:
     requires: [<id>, ...]        # installed first; default []
@@ -40,12 +41,25 @@ Every field is optional; `<id>: {}` is a complete entry. Unknown fields,
 duplicate keys and invalid values are refused before any file, secret, image or
 service is touched. Errors name `bundles.yaml`, the component and the field.
 
+### Product name
+
+`product:` names everything the installation creates: the bundle archives
+`<product>-<id>-<version>-offline.tar.gz`, the default service user and home
+`/var/lib/<product>`, the units `<product>-<id>.service` with their Quadlet
+files, and the shared network `<product>`. It is compiled into every
+`bundle.yaml` and installed metadata, so the target needs no other setting;
+install and uninstall refuse a bundle whose product differs from the installed
+components'. Use lowercase letters, digits and inner hyphens, a letter first and
+at most 32 characters. The demo uses `myproduct`; the renamed acceptance product
+uses `shop`. A standalone manifest fixture (no `bundles.yaml`) is always
+`myproduct`.
+
 ### Component IDs
 
 IDs use lowercase letters, digits and inner hyphens: `my-identity` is valid,
 `my_identity` and `MyIdentity` are not. An ID becomes the prefix of every Pod,
 Secret, PVC and ConfigMap the component owns, its systemd unit
-(`myproduct-<id>.service`) and directory names, so names are checked, never
+(`<product>-<id>.service`) and directory names, so names are checked, never
 rewritten. `installed`, `metadata`, `routes`, `clients` and `files` are
 reserved for shared state on the target. No ID may be another ID followed by
 `-`: with `orders` and `orders-data`, the name `orders-data-db` would belong to
@@ -142,7 +156,7 @@ would pass some checks and skip others.
 ## Installed state
 
 ```text
-/var/lib/myproduct/
+/var/lib/<product>/
 ├── <id>/config.yaml        authoritative config (init-config, then you)
 ├── metadata/<id>.json      compiled descriptor, written before registrations
 ├── installed/<id>          version, written last: the install is complete
@@ -171,7 +185,7 @@ the declaration it expected) without writing anything or calling Podman.
 
 `dev/demo-credentials.sh` runs `scripts/generate-certificates.sh` for the five
 demo components. Another product prepares its own credentials in
-`build/dev/<id>/` (dev) or `/var/lib/myproduct/<id>/` (production) before
+`build/dev/<id>/` (dev) or `/var/lib/<product>/<id>/` (production) before
 prepare or install.
 
 ## Example: add a service with an external image
@@ -210,7 +224,7 @@ Add the entry to `bundles.yaml`:
 
 No Python or shell file changes. `./deploy prepare` and `dev/dev.sh up` start
 it; `./build-bundle.sh` pulls the image, saves it in
-`dist/myproduct-reports-<version>-offline.tar.gz` and lists it in
+`dist/<product>-reports-<version>-offline.tar.gz` and lists it in
 `dist/current-bundles.txt`; `./build-bundle.sh reports` builds only that bundle
 and leaves the list unchanged. On the target: `./deploy init-config reports`,
 prepare any credentials, then `./deploy install` from that bundle. Installing

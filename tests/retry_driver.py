@@ -25,7 +25,7 @@ def main():
         HOME=home,
         BUILD=root / "build",
         QUADLET_DIR=home / ".config/containers/systemd",
-        QUADLET_TEMPLATE=root / "quadlet/myproduct.kube",
+        QUADLET_TEMPLATE=root / "quadlet/template.kube",
     )
     state.update(production_environment=lambda: None)
     os.environ["XDG_RUNTIME_DIR"] = str(root)

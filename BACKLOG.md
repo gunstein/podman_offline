@@ -2948,8 +2948,23 @@ the review guide's contracts, `docs/COMPONENTS.md` and the release version.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Requested in the item 20 review (PR #1) on 2026-10-17. Start
-after item 20 is merged and its acceptance runs are green.
+Status: implemented on `main` (2026-10-18), prioritized by the operator; lab
+runs pending. `product:` in `bundles.yaml` (required, Linux user name rule) is
+compiled into `bundle.yaml` and installed metadata. `catalog.product_name()` /
+`unit_name()` name units, Quadlet files, the network, temporary directories and
+archives; the Quadlet files are filled from `quadlet/template.kube` and
+`template.network`. `prepare-host.sh` defaults the service user and
+`/var/lib/<user>` to the bundle's product, with `--user` to override (point 4:
+explicit, printed and documented rather than silent). Install, uninstall and
+validate refuse a bundle of another product than the installed components
+(`check_same_product`). Standalone fixtures keep `common.STANDALONE_PRODUCT`
+(`myproduct`). `dev/dev.sh` reads the name for its network. The harness takes
+the name as `remote.sh`'s 13th argument; `--renamed-product` now runs as
+product `shop` (service user, units, archives). Demo image names
+(`localhost/myproduct-*`) and `PUBLIC_ORIGIN` are deliberately not the product
+name. Tests: `ProductNameTests` (every installed name follows `hubbabubba`;
+another product refused before any write), catalog and prepare-host argument
+tests.
 
 ### Problem
 

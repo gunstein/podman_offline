@@ -318,7 +318,12 @@ class ConfigTests(ComponentFixture):
         (self.root / "bundle.yaml").unlink()
         self.write(
             "bundles.yaml",
-            yaml.safe_dump({"components": {name: {} for name in DEMO_COMPONENTS}}),
+            yaml.safe_dump(
+                {
+                    "product": "myproduct",
+                    "components": {name: {} for name in DEMO_COMPONENTS},
+                }
+            ),
         )
         for name in ("app2", "help"):
             self.component_manifest(name)

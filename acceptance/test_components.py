@@ -123,7 +123,7 @@ class ComponentHarnessTests(unittest.TestCase):
             code = base.shell_code(REMOTE, action="upgrade-bundle")
             result = subprocess.run(
                 ["bash", "-se"],
-                input="set -euo pipefail\nsrc="
+                input="set -euo pipefail\nproduct_name=myproduct\nsrc="
                 + str(source)
                 + "\nrequested_version=0.2.1\n"
                 + stubs
@@ -284,7 +284,8 @@ class ComponentHarnessTests(unittest.TestCase):
         self.harness.guest = types.MethodType(base.runner.Run.guest, self.harness)
         self.harness.guest("PROD", "install", bundle="app2")
         header = self.harness.ssh.call_args.args[1].splitlines()[0]
-        self.assertTrue(header.endswith(" app2"))
+        # The product name under test follows the bundle as the last argument.
+        self.assertTrue(header.endswith(" app2 myproduct"), header)
 
 
 class ComponentObservationTests(unittest.TestCase):
@@ -533,6 +534,7 @@ class ComponentObservationTests(unittest.TestCase):
                 )
 
             code["pathlib"] = types.SimpleNamespace(Path=rooted)
+            code["HOME"] = home
             contents = {
                 "installed/platform": "0.4.3",
                 "platform/config.yaml": "retained",
@@ -669,10 +671,10 @@ class ComponentObservationTests(unittest.TestCase):
         for text in (
             "./deploy uninstall",
             "volume exists app1-data",
-            "network exists myproduct",
+            'network exists "$product_name"',
             'test "$http" = 404',
             "healthy",
-            "--trust-file myproduct-app1",
+            '--trust-file "$product_name-app1"',
         ):
             self.assertIn(text, block)
         self.assertNotIn("--delete-data", block)

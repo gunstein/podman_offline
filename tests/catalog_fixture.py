@@ -29,6 +29,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
     directory = root / "components" / name
     descriptor = {
         "name": name,
+        "product": "myproduct",
         "version": version or (root / entry["version_file"]).read_text().strip(),
         "requires": {
             dependency: dict(requirement or COMPATIBLE)

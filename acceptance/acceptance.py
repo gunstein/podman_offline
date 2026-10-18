@@ -20,17 +20,23 @@ from pve import Proxmox, env_file
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = Path.home() / "podman-offline-acceptance-runs"
-# One line of dist/current-bundles.txt, which bundle.py writes in dependency order.
-BUNDLE_ARCHIVE = re.compile(
-    r"myproduct-([a-z0-9]+(?:-[a-z0-9]+)*)-([0-9]+\.[0-9]+\.[0-9]+)-offline\.tar\.gz"
-)
+# product: in bundles.yaml; acceptance/renamed_product.py declares RENAMED_PRODUCT.
+DEMO_PRODUCT = "myproduct"
+RENAMED_PRODUCT = "shop"
 
 
-def bundle_versions(listing):
-    """Map each component to its built version, in the order bundle.py listed them."""
+def bundle_versions(listing, product=DEMO_PRODUCT):
+    """Map each component to its built version, in the order bundle.py listed them.
+
+    Each line of dist/current-bundles.txt is <product>-<id>-<version>-offline.tar.gz.
+    """
+    archive = re.compile(
+        re.escape(product)
+        + r"-([a-z0-9]+(?:-[a-z0-9]+)*)-([0-9]+\.[0-9]+\.[0-9]+)-offline\.tar\.gz"
+    )
     versions = {}
     for line in listing.splitlines():
-        match = BUNDLE_ARCHIVE.fullmatch(line.strip())
+        match = archive.fullmatch(line.strip())
         if match:
             versions[match.group(1)] = match.group(2)
     if not versions:
@@ -182,6 +188,11 @@ class Run:
             SSH + [self.host(role), "bash -se"], script, timeout, log_stdout
         )
 
+    @property
+    def product(self):
+        """The product name under test: the service user, units and archives."""
+        return RENAMED_PRODUCT if self.renamed_product else DEMO_PRODUCT
+
     def guest(
         self, role, action, version="", log_stdout=True, old_version="", bundle="app1"
     ):
@@ -199,6 +210,7 @@ class Run:
             version,
             old_version,
             bundle,
+            self.product,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
@@ -355,7 +367,7 @@ class Run:
         """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["bundles_built"][bundle]
-        archive = "myproduct-" + bundle + "-" + version + "-offline.tar.gz"
+        archive = self.product + "-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
         for suffix in ("", ".sha256"):
             local = self.folder / (archive + suffix)
@@ -386,7 +398,9 @@ class Run:
 
     def record_bundles(self, action):
         """Read the components and versions the last build produced on DEV."""
-        self.meta["bundles_built"] = bundle_versions(self.guest("DEV", action))
+        self.meta["bundles_built"] = bundle_versions(
+            self.guest("DEV", action), self.product
+        )
         self.write("bundles_built=" + json.dumps(self.meta["bundles_built"]) + "\n")
 
     def transfer_bundles(self):
@@ -414,7 +428,7 @@ class Run:
         folder = self.folder / "registry"
         folder.mkdir(mode=0o700)
         self.ssh("PROD", "mkdir -p " + shlex.quote(base + "/registry"))
-        archive = "myproduct-0.0.0-offline.tar.gz"
+        archive = "myproduct-0.0.0-offline.tar.gz"  # Standalone fixture name.
         for suffix in ("", ".sha256"):
             local = folder / (archive + suffix)
             self.command(
@@ -684,7 +698,7 @@ class Run:
             raise RuntimeError("Unexpected VM runtime path")
         self.dev_private = runtime + "/podman-offline-" + self.id
         self.ssh("DEV", "mkdir -m 700 " + shlex.quote(self.dev_private))
-        base = "/var/lib/myproduct/"
+        base = "/var/lib/" + self.product + "/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
             "alice-password": component + "/" + directory + "/users/alice-password",
@@ -695,7 +709,10 @@ class Run:
             # Secret bytes go straight to a private file, never through command logs.
             args = SSH + [
                 self.host("PROD"),
-                "sudo -n -H -u myproduct cat " + shlex.quote(base + relative),
+                "sudo -n -H -u "
+                + self.product
+                + " cat "
+                + shlex.quote(base + relative),
             ]
             self.write("$ " + shlex.join(args) + " > [private runtime file]\n")
             with local.open("xb") as stream:
@@ -957,7 +974,9 @@ class Run:
 
     def inventory_without_registrations(self):
         """Build a newer inventory without route and client on DEV; record its version."""
-        versions = bundle_versions(self.guest("DEV", "renamed-inventory-drop"))
+        versions = bundle_versions(
+            self.guest("DEV", "renamed-inventory-drop"), self.product
+        )
         version = versions["inventory"]
         if version == self.meta["bundles_built"]["inventory"]:
             raise RuntimeError(
