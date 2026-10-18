@@ -9,7 +9,13 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from catalog_fixture import DEMO, DEMO_COMPONENTS, mark_installed, write_descriptor
+from catalog_fixture import (
+    DEMO,
+    DEMO_COMPONENTS,
+    mark_installed,
+    write_descriptor,
+    write_secret_fixtures,
+)
 from test_deploy import DeployFixture, document
 
 from deployment import catalog, cli, common, deploy, registrations
@@ -549,6 +555,9 @@ class ComponentTests(ComponentFixture):
                                 "build/dev/" + component + "/" + entry + "/dummy",
                                 b"dummy",
                             )
+            write_secret_fixtures(
+                self.root / "build/dev" / component, config, component
+            )
             if component.startswith("app"):
                 self.write(
                     "build/dev/" + component + "/credentials/todo/todo-client.crt",

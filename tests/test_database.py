@@ -11,7 +11,12 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from catalog_fixture import DEMO_COMPONENTS, mark_installed, write_descriptor
+from catalog_fixture import (
+    DEMO_COMPONENTS,
+    mark_installed,
+    write_descriptor,
+    write_secret_fixtures,
+)
 from render_helper import materialize_and_render
 from test_deploy import DeployFixture
 
@@ -92,6 +97,7 @@ class DatabaseTests(DeployFixture):
     def test_generated_password_is_the_shared_kube_secret_and_never_a_placeholder(self):
         self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
         self.write("home/app1/credentials/todo/public-fixture", b"fixture")
+        write_secret_fixtures(self.path.parent, self.settings, "app1")
         self.preflight()
         text = materialize_and_render(
             config_path=self.path, manifests=self.manifests, component="app1"

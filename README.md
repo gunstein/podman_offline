@@ -353,6 +353,10 @@ preserve int/string types; ConfigMap data becomes text.
 `SECRET_FILES` maps resource IDs to lists of source mappings, each with a `path`
 and optional `generate`. It encodes file contents into Secrets (about 375 kB per id).
 Directories expand one level; nested directories are not allowed for Secrets.
+A Secret's keys are its file names (and `generate` names); every key a pod
+selects (`secret.items[].key`, `secretKeyRef.key`) must be one of them, or
+`validate`, `prepare` and `install` refuse before generating anything, naming
+the keys that exist. Only names are read, never contents.
 `VOLUME_FILES` creates private import tar archives and PVCs. Import archives
 normalize ownership, modes and timestamps (mtime 0), so identical imported
 content has a stable checksum across fresh staging directories. Podman imports at

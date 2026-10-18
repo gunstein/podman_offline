@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
+from catalog_fixture import write_secret_fixtures
 from render_helper import materialize_and_render
 
 import bundle
@@ -65,6 +66,7 @@ class InitDatabaseTests(unittest.TestCase):
                 ROOT / "config/common.defaults.yaml",
                 ROOT / "components/app1/config.defaults.yaml",
             )
+            write_secret_fixtures(base, config, "app1")
             path = base / "config.yaml"
             path.write_text(yaml.safe_dump(config))
             text = materialize_and_render(

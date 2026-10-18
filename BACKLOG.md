@@ -3365,8 +3365,19 @@ next scheduled matrix covers it.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; first priority. Found by the best-practice review at
-`689156b` (finding 2, CONFIRMED by reproduction).
+Status: done on `main` (2026-10-18); lab run pending. `render.secret_keys`
+decides each Secret's keys from file names, `generate` names and inline
+`data`/`stringData` (no contents read; a missing source stays unknown and is
+reported by the source check). `render.check_secret_keys` refuses a missing
+`secret.items[].key` or `secretKeyRef.key` (optional references skipped). It
+runs at the start of `materialize`, before generation (so dev `prepare` and
+`install` refuse before writes, after the database preflight), and in
+`validate`'s source checks in the same order. Tests: tests/test_secret_keys.py,
+including one product refused identically by validate, prepare and install;
+demo test fixtures now write the key files the demo pods select.
+
+Found by the best-practice review at `689156b` (finding 2, CONFIRMED by
+reproduction).
 
 ### Problem
 

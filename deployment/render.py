@@ -439,6 +439,85 @@ def check_file_sources(config, path, imported=()):
         load_file_group({group: present}, group, path.parent)
 
 
+def secret_keys(config, path, documents):
+    """Return the keys each Secret provides, decided from declarations only.
+
+    SECRET_FILES keys are the file names of its sources (a directory's entries
+    or the file itself) plus generate names; an inline Secret's keys are its
+    data and stringData keys. A Secret whose source is still missing (and not
+    generated) maps to None: its keys are unknown, and the missing source is
+    reported by check_file_sources. No file contents are read.
+    """
+    keys = {}
+    for name, entries in file_group_sources(config, common.SECRET_FILES).items():
+        found = set()
+        for entry in entries:
+            source = resolve_path(entry["path"], path.parent)
+            found.update(entry.get("generate", []))
+            if source.is_dir():
+                found.update(item.name for item in source.iterdir())
+            elif source.exists():
+                found.add(source.name)
+            elif "generate" not in entry:
+                found = None
+                break
+        keys[name] = found
+    for doc in documents:
+        if isinstance(doc, dict) and doc.get("kind") == "Secret":
+            name = (doc.get("metadata") or {}).get("name")
+            data = {}
+            for field in ("data", "stringData"):
+                if isinstance(doc.get(field), dict):
+                    data.update(doc[field])
+            keys[name] = {str(key) for key in data}
+    return keys
+
+
+def check_secret_keys(config, path, documents):
+    """Every Secret key a pod selects must exist; Podman would fail at start.
+
+    Checks volumes[].secret.items[].key and env[].valueFrom.secretKeyRef.key
+    against secret_keys(); references marked optional are skipped.
+    """
+    keys = secret_keys(config, path, documents)
+
+    def check(name, key, where):
+        available = keys.get(name)
+        if available is None or key in available:
+            return
+        raise common.DeployError(
+            f"{path}: {where} uses key {key!r} of Secret {name!r}, which provides "
+            f"only {', '.join(sorted(available)) or 'no keys'}"
+        )
+
+    for pod, spec in pod_specs(documents):
+        pod_name = (pod.get("metadata") or {}).get("name")
+        for volume in spec.get("volumes", []):
+            secret = volume.get("secret") if isinstance(volume, dict) else None
+            if not isinstance(secret, dict) or secret.get("optional"):
+                continue
+            for item in secret.get("items") or []:
+                if isinstance(item, dict) and "key" in item:
+                    check(
+                        secret.get("secretName"),
+                        str(item["key"]),
+                        f"Pod {pod_name!r} volume {volume.get('name')!r}",
+                    )
+        for _, container in containers(spec):
+            for entry in container.get("env", []):
+                source = (
+                    (entry.get("valueFrom") or {}) if isinstance(entry, dict) else {}
+                )
+                ref = source.get("secretKeyRef")
+                if isinstance(ref, dict) and "key" in ref and not ref.get("optional"):
+                    check(
+                        ref.get("name"),
+                        str(ref["key"]),
+                        f"Pod {pod_name!r} container {container.get('name')!r} "
+                        f"env {entry.get('name')!r}",
+                    )
+
+
 def secret_documents(secrets):
     """Build base64-encoded Secrets within Podman's size limit."""
     docs = []
@@ -804,8 +883,10 @@ def materialize(config, path, documents, files_dir, extra_volumes=None):
 
     Call only with effective_documents() output and after the database preflight.
     Checks that need the files themselves (missing, empty or oversized sources)
-    necessarily run here, after generation.
+    necessarily run here, after generation. Secret keys the pods select are
+    checked first, from file names and generate declarations.
     """
+    check_secret_keys(config, path, documents)
     generate_secrets(config, path.parent)
     secrets = load_file_group(config, common.SECRET_FILES, path.parent)
     # Imported registration volumes replace a same-named VOLUME_FILES entry.

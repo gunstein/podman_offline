@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from catalog_fixture import DEMO, DEMO_COMPONENTS
+from catalog_fixture import DEMO, DEMO_COMPONENTS, write_secret_fixtures
 from render_helper import materialize_and_render
 
 from deployment import cli, common, deploy
@@ -909,6 +909,7 @@ class RenderTests(DeployFixture):
                         target = base / source["path"]
                         target.mkdir(parents=True, exist_ok=True)
                         (target / "dummy").write_bytes(b"dummy")
+            write_secret_fixtures(base, config, component)
             path = self.write(
                 "state/" + component + "/config.yaml", yaml.safe_dump(config)
             )

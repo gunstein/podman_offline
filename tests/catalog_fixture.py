@@ -67,3 +67,31 @@ def mark_installed(root, home, name, version, requirement=None):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     return descriptor
+
+
+def demo_secret_keys(component):
+    """Secret name -> the keys the demo component's pods select (items[].key)."""
+    keys = {}
+    for path in sorted((REPO / "components" / component / "manifests").glob("*.yaml")):
+        for doc in yaml.safe_load_all(path.read_text()):
+            for volume in ((doc or {}).get("spec") or {}).get("volumes", []):
+                secret = volume.get("secret") or {}
+                for item in secret.get("items") or []:
+                    keys.setdefault(secret["secretName"], set()).add(item["key"])
+    return keys
+
+
+def write_secret_fixtures(base, config, component, data=b"dummy"):
+    """Write one file per selected key into each Secret's first source directory.
+
+    Generated keys are left to generation. Synthetic bytes only; tests that need
+    a real certificate overwrite that file afterwards.
+    """
+    keys = demo_secret_keys(component)
+    for name, sources in config.get("SECRET_FILES", {}).items():
+        source = sources[0]
+        target = Path(base) / source["path"]
+        target.mkdir(parents=True, exist_ok=True)
+        for key in sorted(keys.get(name, ())):
+            if key not in source.get("generate", []):
+                (target / key).write_bytes(data)
