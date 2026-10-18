@@ -2541,10 +2541,10 @@ nothing about real Podman, systemd or fapolicyd; the lab runs do.
 
 Only these decisions, where an undetected change does the most harm:
 
-- `deploy.registration_stage` and `deploy.registration_changes` (which
-  registrations are removed, which owners restart)
-- the pending record: `save_pending`, `load_pending`, `check_pending`,
-  `acknowledge_owner`, `apply_registration_updates`
+- `registrations.registration_stage` and `registrations.registration_changes`
+  (which registrations are removed, which owners restart)
+- the pending record in `registrations.py`: `save_pending`, `load_pending`,
+  `check_pending`, `acknowledge_owner`, `apply_registration_updates`
 - `deploy.database_preflight` and `deploy.postgres_binding`
 - `deploy.uninstall_plan`
 - catalog validation in `catalog.load_catalog`, `catalog.role_owners` and
