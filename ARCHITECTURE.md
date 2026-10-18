@@ -15,6 +15,7 @@ build entrypoint and also uses `-B`.
 | `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
 | `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners, the product name (`product_name`, `unit_name`) and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
+| `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
 
@@ -188,7 +189,7 @@ sequenceDiagram
     P->>S: write metadata/ID.json
     P->>G: apply_registration_updates: save_pending,<br/>then write/delete routes/ and clients/
     P->>S: write rendered YAML, import archives, Quadlet .kube, owner imports
-    P->>H: daemon-reload, restart component then owners (restart_order)
+    P->>H: daemon-reload, restart component then owners (restart_order),<br/>each waiting for healthy containers (health.py)
     P->>G: acknowledge_owner for each owner, clear_pending
     P->>S: write installed/ID (completion)
 ```

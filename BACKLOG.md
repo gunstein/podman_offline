@@ -3412,8 +3412,21 @@ that claim is corrected there.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; second priority. Found by the best-practice review at
-`689156b` (finding 5).
+Status: done on `main` (2026-10-18); lab run pending. `deployment/health.py`
+waits after every `restart_service` (component, install owners and uninstall
+owners) and after the standalone restart: every app container of the unit's
+installed YAML (`<pod>-<container>`, init containers excluded) must be running
+and healthy, or running without a health check, within 150 s. `unhealthy` fails
+at once; the timeout lists each container with its last state (`missing`,
+`exited`, `running/starting`). Only `podman container inspect` State is read.
+Because the wait is part of `restart_service`, an owner is acknowledged and the
+completion marker written only after health, so retries behave as for a failed
+restart. `validate` and dev `prepare` make no Podman calls. Tests:
+tests/test_health_wait.py; fresh-process `test_unhealthy_owner_stays_pending_and_the_retry_finishes`
+and `test_unhealthy_first_install_writes_no_marker_and_the_retry_finishes`. The
+harness keeps its stricter whole-installation `healthy` step.
+
+Found by the best-practice review at `689156b` (finding 5).
 
 ### Problem
 

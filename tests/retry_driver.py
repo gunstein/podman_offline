@@ -60,6 +60,17 @@ def main():
         return subprocess.CompletedProcess(args, status)
 
     subprocess.run = command
+
+    # Containers are healthy at once; the health wait itself has its own tests.
+    def container_state(name):
+        # Containers of the component named by "unhealthy" fail their check.
+        if name.startswith(parameters.get("unhealthy", "\0") + "-"):
+            return ("running", "unhealthy")
+        return ("running", "healthy")
+
+    vars(importlib.import_module("deployment.health"))["container_state"] = (
+        container_state
+    )
     archives = rendering.write_file_archives
 
     def write_archives(groups, directory):

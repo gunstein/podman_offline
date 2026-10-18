@@ -287,6 +287,38 @@ class RetryTests(ComponentFixture):
                     self.assertEqual(set(self.pending()["owners"]), set(expected))
                     self.assert_finished(self.attempt(), ["app1"] + expected)
 
+    def test_unhealthy_owner_stays_pending_and_the_retry_finishes(self):
+        """An active but unhealthy owner is not acknowledged (backlog 34)."""
+        for owner, expected in (
+            ("identity", ["identity", "platform"]),
+            ("platform", ["platform"]),
+        ):
+            with self.subTest(owner=owner):
+                self.changed()
+                self.write(
+                    "components/app1/route.conf",
+                    "location /app1/ { return " + str(230 + self.sequence) + "; }\n",
+                )
+                self.write(
+                    "home/app1/credentials/todo/todo-client.crt",
+                    "-----BEGIN CERTIFICATE-----\n"
+                    + base64.b64encode(str(self.sequence).encode("ascii")).decode()
+                    + "\n-----END CERTIFICATE-----\n",
+                )
+                self.before = self.protected()
+                self.attempt(expected=1, unhealthy=owner)
+                self.assertEqual(set(self.pending()["owners"]), set(expected))
+                self.assert_finished(self.attempt(), ["app1"] + expected)
+
+    def test_unhealthy_first_install_writes_no_marker_and_the_retry_finishes(self):
+        (common.HOME / "installed/app1").unlink()
+        (common.HOME / "metadata/app1.json").unlink()
+        self.attempt(expected=1, unhealthy="app1")
+        self.assertTrue((common.HOME / "metadata/app1.json").is_file())
+        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.attempt()
+        self.assertTrue((common.HOME / "installed/app1").is_file())
+
     def test_import_failure_rebuilds_actual_archives_with_identical_registrations(self):
         self.changed()
         old = (common.HOME / "identity/files/identity-clients.tar").read_bytes()

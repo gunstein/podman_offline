@@ -873,7 +873,12 @@ consistently in each component; use the DNS name passed to the certificate
 script. The proxy pod's hostname is derived from PUBLIC_ORIGIN, so app pods
 resolve that same HTTPS name internally. Each install validates the user database
 home and runtime, renders, loads/verifies images, writes component imports/units
-and calls `systemctl --user`. It does not wait for health; do the checks below.
+and calls `systemctl --user`. It then waits up to 150 s until every app
+container of the restarted units is running and, where it has a health check,
+healthy; an unhealthy container or the timeout fails the install with the
+container's name and state (rerun install after fixing the cause; owners are
+retried). `healthy` below additionally checks every installed component, and
+HTTPS/e2e checks the application itself.
 
 For app1/app2, after platform repeat checksum/unpack/trust with `bundle=identity`
 and `IDENTITY_VERSION`; initialize Identity, prepare its credentials and install.

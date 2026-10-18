@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, registrations
+from . import catalog, common, health, registrations
 from . import render as rendering
 
 
@@ -569,6 +569,7 @@ def install_standalone():
     run("systemctl", "--user", "daemon-reload")
     run("systemctl", "--user", "restart", common.SERVICE)
     run("systemctl", "--user", "is-active", "--quiet", common.SERVICE)
+    health.wait_healthy(common.SERVICE, common.QUADLET_YAML)
     run("podman", "ps", "--all", "--pod")
 
     print(
@@ -770,10 +771,11 @@ def restart_component_services(components, changed, pending, known):
 
 
 def restart_service(component):
-    """Restart one component's unit and require it to be active."""
+    """Restart one component's unit and require it active with healthy containers."""
     service = catalog.unit_name(component) + ".service"
     run("systemctl", "--user", "restart", service)
     run("systemctl", "--user", "is-active", "--quiet", service)
+    health.wait_healthy(service, catalog.component_paths(component)[2])
 
 
 def write_install_record(path, text):

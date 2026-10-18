@@ -45,6 +45,9 @@ def command(args, **kwargs):
         stream.write(json.dumps(args) + "\\n")
     if args[:2] == ["podman", "save"]:
         Path(args[4]).write_bytes(b"fixture image archive")
+    if args[:3] == ["podman", "container", "inspect"]:
+        healthy = '[{"State": {"Status": "running", "Health": {"Status": "healthy"}}}]'
+        return subprocess.CompletedProcess(args, 0, stdout=healthy, stderr="")
     return subprocess.CompletedProcess(args, 1 if args[:3] == ["podman", "volume", "exists"] else 0, stdout=b"", stderr=b"")
 subprocess.run = command
 """

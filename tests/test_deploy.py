@@ -18,7 +18,7 @@ import yaml
 from catalog_fixture import DEMO, DEMO_COMPONENTS, write_secret_fixtures
 from render_helper import materialize_and_render
 
-from deployment import cli, common, deploy
+from deployment import cli, common, deploy, health
 from deployment import render as rendering
 
 
@@ -50,6 +50,12 @@ class DeployFixture(unittest.TestCase):
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(common, name, path))
         self.process = self.stack.enter_context(mock.patch.object(subprocess, "run"))
+        # Containers report healthy unless a test says otherwise (backlog 34).
+        self.container_state = self.stack.enter_context(
+            mock.patch.object(
+                health, "container_state", return_value=("running", "healthy")
+            )
+        )
         self.euid = self.stack.enter_context(
             mock.patch.object(os, "geteuid", return_value=1000)
         )
