@@ -48,6 +48,12 @@ this list; update entries with implementation/test evidence when resolved.
 | ~~Removing route/client declarations from a release does not remove prior registrations~~ | Resolved by backlog 21 in 0.4.10 |
 | ~~Some invalid manifests create generated secrets before validation rejects them~~ | Resolved by backlog 21 in 0.4.10 |
 | PostgreSQL data mount and explicit Secret items mapping restrict supported layouts | Backlog 7 |
+| Secret `items[].key` / `secretKeyRef.key` naming a key no source provides passes validation and fails only at pod start | Backlog 33 |
+| `install` reports success once units are active; containers are not required to be running or healthy | Backlog 34 |
+| Demo apps connect to PostgreSQL as the image's superuser | Backlog 35 |
+| Demo containers run as container root without `securityContext` or resource limits | Backlog 36 |
+| Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
+| Bundles carry checksums but no signature | Backlog 38 |
 
 External image support does not by itself demonstrate arbitrary component support.
 The baseline review ran 66 existing database/config/bundle/Identity tests

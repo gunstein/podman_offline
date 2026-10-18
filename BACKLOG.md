@@ -9,6 +9,25 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
+## Current priority (agreed 2026-10-18)
+
+From the best-practice review of manifests and secret handling at `689156b`:
+
+1. [Item 33](#33-refuse-secret-item-keys-that-no-source-provides): refuse Secret
+   `items[].key` references that no source provides (functional bug).
+2. [Item 34](#34-wait-for-healthy-containers-after-install-and-upgrade): wait for
+   healthy containers after install and upgrade.
+3. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+   demo apps use a database role that is not a superuser.
+4. [Item 36](#36-harden-the-demo-application-containers): container hardening
+   (user, capabilities, read-only root, resource limits) with secret file modes.
+5. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+   copies at rest, Identity key protection; with items 2, 3 and 24.
+6. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+   bundles, beside the existing checksums.
+
+Then the earlier open items (22, 24, 2, 3, 5, 6, 7) as agreed separately.
+
 Implemented: test baseline (item 10, commit `511099e`) and rename/separate
 platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
 path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), and
@@ -2704,8 +2723,9 @@ install and both standalone paths call `validate_component` through
 kinds and images, but not dev config, which is developer-local.
 
 **Out of scope.** Secret `items` keys checked against declared file names
-(keys are known only from file names or `generate`, and a wrong key already
-fails at materialize with the file name); F8 from item 25 (application
+(keys are known only from file names or `generate`; correction 2026-10-18: a
+wrong key does *not* fail at materialize, it passes every check and fails only
+when the pod starts; now item 33); F8 from item 25 (application
 identity across `client.yaml`, environment and route), which can be added later
 as an optional check; and a machine-readable output format.
 
@@ -3333,3 +3353,149 @@ changing behavior. Tests and `tests/retry_driver.py` patch these functions on
 the `deploy` module, so update those references in the same change. Run the
 full product and harness suites; no lab run is needed for a pure move, but the
 next scheduled matrix covers it.
+
+## 33. Refuse Secret item keys that no source provides
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; first priority. Found by the best-practice review at
+`689156b` (finding 2, CONFIRMED by reproduction).
+
+### Problem
+
+`render.check_links` (around `deployment/render.py:559`) checks that a Secret a
+manifest mounts or references exists, but not that the keys it selects exist.
+A volume `secret: {secretName: app1-todo-files, items: [{key: nonexistent-key,
+path: ...}]}`, or an `env.valueFrom.secretKeyRef.key`, naming a key that no
+source provides passes `validate`, the file-source checks and `materialize`.
+It fails only when Podman starts the pod. Item 21's text claimed the opposite;
+that claim is corrected there.
+
+### Task
+
+1. Decide each Secret's keys from declarations, before any side effect and
+   without reading credential contents: the file names of a `SECRET_FILES`
+   source (a directory's entries or the file itself), `generate` names, and the
+   `data`/`stringData` keys of an inline Secret manifest.
+2. Refuse a `volumes[].secret.items[].key`, `secretKeyRef.key` (env) or other
+   explicit key reference to a key the Secret does not provide. The error names
+   the manifest, the pod/container, the Secret and the key, and lists the keys
+   that exist (names only).
+3. Run it where the other link checks run, so `validate`, `prepare` and
+   `install` agree. Keys of a `SECRET_FILES` directory that is still missing
+   at validate time follow the existing missing-source rule.
+4. Regression tests: missing item key, missing `secretKeyRef` key, generated
+   key present, inline Secret key, and a directory source; plus a demo manifest
+   check. Update docs/COMPONENTS.md or README where Secret references are
+   described.
+
+## 34. Wait for healthy containers after install and upgrade
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; second priority. Found by the best-practice review at
+`689156b` (finding 5).
+
+### Problem
+
+`deploy.restart_service` runs `systemctl --user restart` and `is-active`. An
+active unit does not prove that the pod's containers are running, let alone
+healthy: a crash loop or a failing health check still reports success, and
+`./deploy install` prints OK. The acceptance harness has its own health wait
+(`healthy` in acceptance/remote.sh and the README helper); the product does not.
+
+### Task
+
+1. After the component's own restart (and each restarted owner), wait until
+   every container of that component's installed YAML is running and, where it
+   has a health check, healthy. Use `podman inspect` state only; print no
+   environment or inspect content beyond names and states.
+2. Bounded wait (for example 150 s, as the harness), then fail with the
+   component, the container and its last state, plus the journal hint cli.py
+   already prints. The failure must keep the retry contract: the pending owner
+   record and completion marker behave exactly as for a failed restart today
+   (the marker is written only after the component is healthy).
+3. Decide and document whether `uninstall` restarts of owners also wait.
+4. Keep `./deploy validate` and dev `prepare` free of Podman calls.
+5. Tests: healthy, starting then healthy, unhealthy, exited, missing container
+   and timeout; a fresh-process retry after an unhealthy first install. Update
+   README (what install guarantees), ARCHITECTURE's sequence diagram and the
+   harness where its own wait becomes redundant (keep its stricter checks).
+
+## 35. Run demo apps with a database role that is not a superuser
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
+
+Status: planned. Found by the best-practice review at `689156b` (finding 1,
+CONFIRMED). Matters if the demo apps or their manifests are used in production.
+
+The official PostgreSQL image creates `POSTGRES_USER` as a superuser, and the
+demo backends (app1, app2, Identity) connect with that same user
+(`components/*/manifests/40-postgres.yaml`, `60-todo.yaml`). A compromised web
+application thus has administrator rights in its database instance.
+
+Separate administration and migration from normal operation: the init/schema
+step uses the superuser; the application gets its own role with only the
+rights it needs and its own password (a second generated secret). Adapt the
+database preflight, which today assumes one password shared by server and
+client, and item 7 (PostgreSQL layouts). Document the pattern for products in
+docs/COMPONENTS.md. Lab run required (fresh install and upgrade with retained
+volumes, which must keep working: existing databases need the role created by
+an idempotent init step).
+
+## 36. Harden the demo application containers
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
+
+Status: planned. Found by the best-practice review at `689156b` (finding 3).
+
+`apps/todo-backend/Containerfile` and `apps/identity/Containerfile` set no
+`USER`; the manifests set no `securityContext` and no CPU/memory limits.
+Rootless Podman already means container root is not host root, but the apps can
+be confined further: a non-root container user, `allowPrivilegeEscalation:
+false`, dropped capabilities, `readOnlyRootFilesystem` where the app allows it
+(with explicit writable mounts), and realistic resource limits.
+
+Do it together with the secret file modes: signing keys and other mounted
+secrets are 0400 for container UID 0 today, so changing the user alone breaks
+startup. Use only fields Podman 5.8.2 `kube play` supports (for example
+`runAsUser`, `capabilities`, `readOnlyRootFilesystem`; not `runAsNonRoot`,
+`fsGroup`, `readinessProbe`, `startupProbe`), and add manifest validation for
+fields Podman would silently ignore if that proves necessary. Lab run required.
+
+## 37. Document and protect credential copies at rest
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
+
+Status: planned. Found by the best-practice review at `689156b` (finding 4,
+a deliberate limitation today). Coordinate with items 2, 3 and 24.
+
+Private files are written 0600 from the first byte and existing credentials are
+kept, but nothing is encrypted at rest: source credentials, the rendered YAML
+(base64 Secrets, not encryption) and Podman's Secret volumes all hold the
+values, and removed keys can remain in volumes. Identity stores Data
+Protection keys with `PersistKeysToFileSystem` (apps/identity/Program.cs)
+without key encryption.
+
+Document every copy of each credential (where, who can read it, how it is
+backed up, rotated and removed), and offer an encrypted backup procedure and an
+explicit at-rest protection choice for the Identity keys (for example a
+certificate) that an organisation can apply offline. No online secret service
+is required.
+
+## 38. Sign bundles so the target can authenticate them
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
+
+Status: planned. Found by the best-practice review at `689156b`.
+
+`bundle.py` writes `.sha256` files and `checksums.sha256` inside each release.
+They detect corruption, but anyone who can replace the archive can replace its
+checksum too, so they do not prove who built it. Add an optional detached
+signature per archive (for example OpenPGP or minisign, with a key the
+organisation controls on the build machine), a documented verification step on
+the offline target before `prepare-host.sh` and unpacking, and harness support
+for a lab key. Keep unsigned builds possible for development; the README states
+which one an operator has.
