@@ -226,6 +226,111 @@ class ClientIdentityTests(ProductFixture):
         self.refused("Invalid public client descriptor")
 
 
+class SharedSettingTests(ProductFixture):
+    """shares: an owner's custom settings travel and are compared like PUBLIC_ORIGIN."""
+
+    def product(self, shares=("SHOP_REGION",), version="1.0.0"):
+        """gateway owns SHOP_REGION; login-service (public_from gateway) uses it."""
+        product = copy.deepcopy(RENAMED)
+        gateway, login = product["gateway"], product["login-service"]
+        gateway["catalog"]["shares"] = list(shares)
+        gateway["defaults"].update(SHOP_REGION="eu", LOCAL_NOTE="gateway")
+        login["defaults"] = {"SHOP_REGION": "us", "LOCAL_NOTE": "login"}
+        environment = login["manifests"][0]["spec"]["containers"][0]["env"]
+        environment += [
+            {"name": "REGION", "value": "@@SHOP_REGION@@"},
+            {"name": "NOTE", "value": "@@LOCAL_NOTE@@"},
+        ]
+        gateway["manifests"][0]["spec"]["containers"][0]["env"].append(
+            {"name": "NOTE", "value": "@@LOCAL_NOTE@@"}
+        )
+        self.write_product(product, version=version)
+        return product
+
+    def edit(self, component, **values):
+        path = common.HOME / component / "config.yaml"
+        config = yaml.safe_load(path.read_text())
+        config.update(values)
+        for key in [key for key, value in values.items() if value is None]:
+            del config[key]
+        path.write_text(yaml.safe_dump(config))
+
+    def install_gateway_and_init_login(self, region="nordic"):
+        releases = self.build_and_unpack()
+        self.install(
+            releases["gateway"], lambda _: self.edit("gateway", SHOP_REGION=region)
+        )
+        self.use_root(releases["login-service"])
+        deploy.init_config("login-service")
+        return releases
+
+    def test_dev_inherits_shared_names_only(self):
+        product = self.product()
+        self.provide_credentials(product, common.BUILD / "dev")
+        deploy.prepare()
+        config = yaml.safe_load(
+            (common.BUILD / "dev/login-service/config.yaml").read_text()
+        )
+        self.assertEqual(config["SHOP_REGION"], "eu")
+        self.assertEqual(config["LOCAL_NOTE"], "login")
+
+    def test_init_config_inherits_and_install_refuses_a_mismatch(self):
+        self.product()
+        releases = self.install_gateway_and_init_login()
+        config = yaml.safe_load((common.HOME / "login-service/config.yaml").read_text())
+        self.assertEqual(config["SHOP_REGION"], "nordic")
+        self.assertEqual(config["LOCAL_NOTE"], "login")  # Unshared: its own value.
+        self.edit("login-service", SHOP_REGION="eu")
+        self.process.reset_mock()
+        with self.assertRaises(common.DeployError) as raised:
+            deploy.install()
+        message = str(raised.exception)
+        self.assertRegex(
+            message,
+            "SHOP_REGION in .*login-service/config.yaml must match "
+            ".*gateway/config.yaml \\(gateway shares it\\)",
+        )
+        self.assertNotIn("nordic", message)
+        self.assertNotIn("'eu'", message)
+        self.assertEqual(self.commands(), [])
+        # Unshared names may differ; the matching shared value installs.
+        self.edit("login-service", SHOP_REGION="nordic", LOCAL_NOTE="different")
+        self.use_root(releases["login-service"])
+        deploy.install()
+        self.assertTrue((common.HOME / "installed/login-service").is_file())
+
+    def test_owner_must_define_what_it_shares(self):
+        self.product()
+        releases = self.build_and_unpack()
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Missing SHOP_REGION in .*gateway/config.yaml; gateway shares it",
+        ):
+            self.install(
+                releases["gateway"], lambda _: self.edit("gateway", SHOP_REGION=None)
+            )
+
+    def test_owner_upgrade_cannot_drop_a_share_its_dependents_take(self):
+        self.product()
+        self.install_gateway_and_init_login()
+        self.edit("login-service", SHOP_REGION="nordic")
+        deploy.install()
+        before = (common.HOME / "metadata/gateway.json").read_bytes()
+        shutil.rmtree(self.source)
+        self.product(shares=(), version="1.0.1")
+        release = self.build_and_unpack()["gateway"]
+        self.use_root(release)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "gateway no longer shares SHOP_REGION, which installed login-service "
+            "take from it",
+        ):
+            deploy.install()
+        self.assertEqual(self.commands(), [])
+        self.assertEqual((common.HOME / "metadata/gateway.json").read_bytes(), before)
+
+
 class ServiceChangeTests(ProductFixture):
     """Add and remove a service by editing bundles.yaml and components/ only."""
 

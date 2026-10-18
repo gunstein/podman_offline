@@ -44,7 +44,10 @@ def init_config(component):
             raise common.DeployError(
                 f"Missing {source_path}; restore installed {source} config before initializing {component}"
             )
-        overrides = public_settings(rendering.load_config(source_path), source_path)
+        owner = catalog.load_installed_metadata(common.HOME)[source]
+        overrides = public_settings(
+            rendering.load_config(source_path), source_path, shared_keys(owner)
+        )
     config = rendering.component_defaults(component, overrides=overrides)
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
@@ -57,31 +60,73 @@ def init_config(component):
     )
 
 
+# Always shared with public_from dependents, with extra validation. Other names
+# are shared only when the owner lists them in shares (bundles.yaml). Reserved
+# names: docs/COMPONENTS.md, "Reserved configuration names".
 PUBLIC_KEYS = ("PUBLIC_ORIGIN", "HTTPS_PORT")
 
 
-def public_settings(config, path):
-    """Return the validated shared public origin and port of one config."""
-    for key in PUBLIC_KEYS:
+def shared_keys(owner):
+    """The config names an owner's public_from dependents take from it."""
+    return PUBLIC_KEYS + tuple(key for key in owner["shares"] if key not in PUBLIC_KEYS)
+
+
+def public_settings(config, path, keys=PUBLIC_KEYS):
+    """Return the validated shared settings of one config (origin, port, shares)."""
+    for key in keys:
         if key not in config:
             raise common.DeployError(
                 f"Missing {key} in {path}; add it explicitly before installation"
             )
     rendering.public_origin(config["PUBLIC_ORIGIN"], path)
-    return {key: config[key] for key in PUBLIC_KEYS}
+    return {key: config[key] for key in keys}
 
 
-def check_public_settings(descriptor, config, path):
-    """A component declaring public_from must use that dependency's origin and port."""
+def check_public_settings(descriptor, config, path, known):
+    """A component declaring public_from must use that dependency's shared settings.
+
+    known holds the owner's descriptor (installed metadata, or this bundle).
+    Errors name the setting, both files and the owner, never the values.
+    """
     source = descriptor["public_from"]
     if source is None:
         return
+    keys = shared_keys(known[source])
     source_path = catalog.component_paths(source)[0]
-    expected = public_settings(rendering.load_config(source_path), source_path)
-    actual = public_settings(config, path)
-    for key in PUBLIC_KEYS:
+    expected = public_settings(rendering.load_config(source_path), source_path, keys)
+    actual = public_settings(config, path, keys)
+    for key in keys:
         if actual[key] != expected[key]:
-            raise common.DeployError(f"{key} in {path} must match {source_path}")
+            raise common.DeployError(
+                f"{key} in {path} must match {source_path} ({source} shares it)"
+            )
+
+
+def check_own_shares(descriptor, config, path):
+    """An owner's own config must define every name it shares."""
+    for key in descriptor["shares"]:
+        if key not in config:
+            raise common.DeployError(
+                f"Missing {key} in {path}; {descriptor['name']} shares it "
+                "(shares in bundles.yaml)"
+            )
+
+
+def check_kept_shares(descriptor, installed):
+    """An owner upgrade must keep every name its installed dependents take from it."""
+    name = descriptor["name"]
+    if name not in installed:
+        return
+    dropped = set(installed[name]["shares"]) - set(descriptor["shares"])
+    dependents = sorted(
+        other for other, entry in installed.items() if entry["public_from"] == name
+    )
+    if dropped and dependents:
+        raise common.DeployError(
+            f"{name} no longer shares {', '.join(sorted(dropped))}, which installed "
+            f"{', '.join(dependents)} take from it (public_from); keep it in "
+            f"{name}'s shares until they no longer use it"
+        )
 
 
 POSTGRES_DATA = "/var/lib/postgresql/data"
@@ -275,7 +320,9 @@ def dev_settings():
         source = descriptor["public_from"]
         overrides = (
             public_settings(
-                settings[source], common.BUILD / "dev" / source / "config.yaml"
+                settings[source],
+                common.BUILD / "dev" / source / "config.yaml",
+                shared_keys(known[source]),
             )
             if source
             else None
@@ -838,6 +885,7 @@ def install_checks():
         )
     check_dependencies_installed(descriptor)
     check_dependents(descriptor, installed)
+    check_kept_shares(descriptor, installed)
     config_path = catalog.component_paths(name)[0]
     if not config_path.is_file():
         raise common.DeployError(
@@ -848,7 +896,8 @@ def install_checks():
     rendering.validate_component_config(
         config, name, config_path, check_placeholders=render
     )
-    check_public_settings(descriptor, config, config_path)
+    check_own_shares(descriptor, config, config_path)
+    check_public_settings(descriptor, config, config_path, known)
     return descriptor, known, config, config_path, render
 
 

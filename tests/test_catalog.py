@@ -79,6 +79,25 @@ class CatalogTests(unittest.TestCase):
                 )
                 catalog.load_catalog(self.root)
 
+    def test_shares_are_config_names_and_not_reserved(self):
+        self.product({"gate": {"shares": ["SHOP_REGION", "PUBLIC_ORIGIN"]}})
+        self.assertEqual(
+            catalog.source_descriptors(self.root)["gate"]["shares"],
+            ["SHOP_REGION", "PUBLIC_ORIGIN"],
+        )
+        for shares, pattern in (
+            ("SHOP_REGION", "shares must be a list"),
+            (["A", "A"], "shares must be a list without repeats"),
+            (["shop_region"], "'shop_region' is not a config name"),
+            (["SHOP-REGION"], "is not a config name"),
+            ([7], "is not a config name"),
+            (["PUBLIC_HOSTNAME"], "PUBLIC_HOSTNAME is reserved and cannot be shared"),
+            (["SECRET_FILES"], "SECRET_FILES is reserved"),
+            (["VOLUME_FILES"], "VOLUME_FILES is reserved"),
+        ):
+            with self.subTest(shares=shares):
+                self.refuse(pattern, {"gate": {"shares": shares}})
+
     def test_ids_that_extend_another_id_are_refused(self):
         """orders-data-db would be a resource name of both orders and orders-data."""
         self.refuse(
@@ -226,6 +245,7 @@ class CatalogTests(unittest.TestCase):
                 "requires": {"base": {"min": "0.4.2", "before": "0.5.0"}},
                 "upgrade": "always",
                 "public_from": None,
+                "shares": [],
                 "routes": None,
                 "clients": None,
                 "accepts": {},
@@ -233,12 +253,17 @@ class CatalogTests(unittest.TestCase):
         )
         for descriptor in descriptors.values():
             catalog.check_descriptor(descriptor, "fixture")
+        # Bundles built before shares existed share nothing; still readable.
+        older = {k: v for k, v in descriptors["app"].items() if k != "shares"}
+        self.assertEqual(catalog.check_descriptor(older, "fixture")["shares"], [])
+        self.assertNotIn("shares", older)
         for change, pattern in (
             ({"components": ["app"]}, "expected exactly the fields"),
             ({"version": "1.0"}, "three numeric parts"),
             ({"requires": {"base": {"min": "1.0.0", "before": "1.0.0"}}}, "Empty"),
             ({"name": "my_app"}, "invalid component ID"),
             ({"product": "My App"}, "invalid product name"),
+            ({"shares": ["PUBLIC_HOSTNAME"]}, "reserved and cannot be shared"),
         ):
             failure = self.assertRaisesRegex(common.DeployError, pattern)
             with self.subTest(change=change), failure:

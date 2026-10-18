@@ -28,11 +28,18 @@ RESERVED_IDS = ("installed", "metadata", "routes", "clients", "files")
 ROLE_FILES = {"routes": "route.conf", "clients": "client.yaml"}
 
 UPGRADES = ("always", "newer-only")
+# Config names a component may share with its public_from dependents, beside
+# PUBLIC_ORIGIN and HTTPS_PORT (always shared). The placeholder name rule; the
+# names below have built-in meaning and cannot be shared. See
+# docs/COMPONENTS.md, "Reserved configuration names".
+SETTING = re.compile(r"^[A-Z0-9_]+$")
+UNSHAREABLE = ("PUBLIC_HOSTNAME", "SECRET_FILES", "VOLUME_FILES")
 CATALOG_KEYS = (
     "requires",
     "version_file",
     "upgrade",
     "public_from",
+    "shares",
     "routes",
     "clients",
     "accepts",
@@ -44,6 +51,7 @@ DESCRIPTOR_KEYS = (
     "requires",
     "upgrade",
     "public_from",
+    "shares",
     "routes",
     "clients",
     "accepts",
@@ -150,6 +158,7 @@ def load_catalog(root):
             "version_file": entry.get("version_file", "VERSION"),
             "upgrade": entry.get("upgrade", "always"),
             "public_from": entry.get("public_from"),
+            "shares": entry.get("shares", []),
             "routes": entry.get("routes"),
             "clients": entry.get("clients"),
             "accepts": entry.get("accepts", {}),
@@ -197,6 +206,18 @@ def check_entry(name, entry, where):
         raise common.DeployError(
             f"{where}: clients needs public_from for the redirect URI origin"
         )
+    shares = entry["shares"]
+    if not isinstance(shares, list) or len(set(map(str, shares))) != len(shares):
+        raise common.DeployError(f"{where}.shares must be a list without repeats")
+    for setting in shares:
+        if not isinstance(setting, str) or not SETTING.fullmatch(setting):
+            raise common.DeployError(
+                f"{where}.shares: {setting!r} is not a config name (A-Z, 0-9, _)"
+            )
+        if setting in UNSHAREABLE:
+            raise common.DeployError(
+                f"{where}.shares: {setting} is reserved and cannot be shared"
+            )
     accepts = entry["accepts"]
     if not isinstance(accepts, dict) or set(accepts) - set(ROLE_FILES):
         raise common.DeployError(
@@ -362,6 +383,7 @@ def source_descriptors(root):
             },
             "upgrade": entry["upgrade"],
             "public_from": entry["public_from"],
+            "shares": list(entry["shares"]),
             "routes": entry["routes"],
             "clients": entry["clients"],
             "accepts": dict(entry["accepts"]),
@@ -370,7 +392,14 @@ def source_descriptors(root):
 
 
 def check_descriptor(data, where):
-    """Validate one compiled descriptor read from bundle.yaml or installed metadata."""
+    """Validate one compiled descriptor read from bundle.yaml or installed metadata.
+
+    shares came after the first product-named releases; a descriptor without it
+    shares nothing, so it is read as []. Every other field is required.
+    """
+    if isinstance(data, dict) and "shares" not in data:
+        data = dict(data)
+        data["shares"] = []
     if not isinstance(data, dict) or set(data) != set(DESCRIPTOR_KEYS):
         raise common.DeployError(
             f"{where}: expected exactly the fields {', '.join(DESCRIPTOR_KEYS)}"
@@ -468,7 +497,8 @@ def load_installed_metadata(home):
             check_id(name, str(path))
             data = json.loads(path.read_text())
             if isinstance(data, dict) and set(data) == set(DESCRIPTOR_KEYS) - {
-                "product"
+                "product",
+                "shares",
             }:
                 raise PreProductMetadata()
             descriptor = check_descriptor(data, str(path))

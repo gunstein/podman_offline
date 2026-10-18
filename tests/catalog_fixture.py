@@ -37,6 +37,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
         },
         "upgrade": entry["upgrade"],
         "public_from": entry["public_from"],
+        "shares": list(entry["shares"]),
         "routes": entry["routes"],
         "clients": entry["clients"],
         "accepts": dict(entry["accepts"]),

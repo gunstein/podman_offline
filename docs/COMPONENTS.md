@@ -29,7 +29,8 @@ components:
     requires: [<id>, ...]        # installed first; default []
     version_file: VERSION        # release file with major.minor.patch; default VERSION
     upgrade: always              # or newer-only; default always
-    public_from: <id>            # take PUBLIC_ORIGIN and HTTPS_PORT from this dependency
+    public_from: <id>            # take PUBLIC_ORIGIN, HTTPS_PORT and its shares from this dependency
+    shares: [<NAME>, ...]        # config names this component's public_from dependents take from it
     routes: <id>                 # register route.conf with this dependency
     clients: <id>                # register client.yaml with this dependency
     accepts:                     # roles this component serves
@@ -103,14 +104,49 @@ components may share one file; the demo apps share `VERSION`.
   installed version unchanged (its route/client imports may still be rebuilt)
   and refuses a downgrade. The demo uses it for `platform` and `identity`.
 
-### Public settings
+### Public settings and shared settings
 
 `public_from: <id>` declares that the component uses the same `PUBLIC_ORIGIN`
-and `HTTPS_PORT` as that dependency. `init-config` copies these two values from
-the dependency's persistent config, dev prepare copies them from the
-dependency's dev config, and install refuses a mismatch. A component without
-`public_from` needs neither value unless its manifests use them.
-`PUBLIC_HOSTNAME` is always derived from `PUBLIC_ORIGIN` and must not be set.
+and `HTTPS_PORT` as that dependency, plus every name that dependency lists in
+`shares`. `init-config` copies these values from the dependency's persistent
+config, dev prepare copies them from the dependency's dev config, and install
+(and `validate`) refuse a mismatch, naming the setting, both files and the
+owner, never the values. A component without `public_from` needs none of them
+unless its manifests use them.
+
+```yaml
+gateway:
+  shares: [SHOP_NAME]            # dependents with public_from: gateway take it
+orders:
+  requires: [gateway]
+  public_from: gateway           # gets PUBLIC_ORIGIN, HTTPS_PORT and SHOP_NAME
+```
+
+`shares` holds config names (`A-Z`, `0-9`, `_`, the placeholder rule) without
+repeats. `PUBLIC_ORIGIN` and `HTTPS_PORT` are always shared; listing them changes
+nothing. The owner's own config must define every name it shares. `shares` is
+compiled into `bundle.yaml` and installed metadata, so a dependent's install
+compares against the owner's installed declaration without the source. An owner
+upgrade that stops sharing a name an installed dependent takes from it is
+refused before any write; keep the name until the dependents no longer use it.
+A descriptor from before `shares` existed is read as sharing nothing.
+
+### Reserved configuration names
+
+All settings are written the same way, but these names have built-in meaning.
+The tools must know them to validate values, derive the hostname and build
+redirect URIs, so they cannot be renamed or shared freely:
+
+| Name | What the tools do with it |
+| --- | --- |
+| `PUBLIC_ORIGIN` | Validated as an HTTPS origin; always shared with `public_from` dependents (copied at `init-config` and in dev, compared at install); OIDC redirect URIs are built from it |
+| `HTTPS_PORT` | Validated as a port 1-65535; always shared and compared like `PUBLIC_ORIGIN` |
+| `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error; cannot be shared |
+| `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values; cannot be shared |
+| Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@`; each component keeps its own copy unless the `public_from` owner lists it in `shares` |
+
+A `PUBLIC_` prefix has no meaning of its own. `deploy.PUBLIC_KEYS` and
+`catalog.UNSHAREABLE` hold these names in code.
 
 ### Registrations: routes and OIDC clients
 

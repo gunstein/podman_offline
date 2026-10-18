@@ -35,6 +35,9 @@ NAMES = {
 # The product name: service user, units, network and archive names on the target.
 PRODUCT = "shop"
 PATHS = {"/app1": "/orders", "/app2": "/stock"}
+# A product-owned setting the gateway shares (backlog 26); its public_from
+# dependents inherit it at init-config and must keep the same value.
+SHARED = {"SHOP_NAME": "Renamed shop"}
 CLIENT_IDS = {"app1": "orders-web", "app2": "inventory"}
 
 
@@ -134,6 +137,8 @@ def rename_catalog(data):
             entry["accepts"] = {
                 role: rename(volume) for role, volume in entry["accepts"].items()
             }
+        if rename(name) == "gateway":
+            entry["shares"] = sorted(SHARED)
         entries[rename(name)] = entry
     return {"product": PRODUCT, "components": entries}
 
@@ -186,9 +191,10 @@ def generate(source, target):
         defaults = origin / "config.defaults.yaml"
         if defaults.exists():
             with defaults.open(encoding="utf-8") as stream:
-                dump(
-                    destination / defaults.name, rename_defaults(yaml.safe_load(stream))
-                )
+                values = rename_defaults(yaml.safe_load(stream))
+            if new == "gateway":
+                values.update(SHARED)
+            dump(destination / defaults.name, values)
         if (origin / "route.conf").exists():
             (destination / "route.conf").write_text(
                 rename_route((origin / "route.conf").read_text(encoding="utf-8")),

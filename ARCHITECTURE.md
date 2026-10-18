@@ -79,7 +79,7 @@ reference. `catalog.py` is the single reader and validator:
 
 Decisions read only these descriptors: `install_needed()` (upgrade policy),
 `check_dependencies_installed()` / `check_dependents()` (version ranges),
-`check_public_settings()` (`public_from`), `role_owners()` (who accepts routes
+`check_public_settings()` / `check_kept_shares()` (`public_from`, `shares`), `role_owners()` (who accepts routes
 and clients), `registration_stage()` (which registrations exist and which owner
 imports them) and `restart_order()` (reverse dependency order). No module names
 a demo component. The demo's certificate and user provisioning is the explicit

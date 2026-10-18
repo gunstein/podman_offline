@@ -832,6 +832,19 @@ renamed-init-check)
     as_product podman volume exists inventory-data
     sudo -n test ! -e "$state/platform"
     sudo -n test ! -e "$state/app1"
+    # gateway shares SHOP_NAME; every public_from dependent inherited the same value.
+    as_product python3 - <<'SHARED_SETTING'
+import pathlib
+import yaml
+
+home = pathlib.Path.home()
+expected = yaml.safe_load((home / "gateway/config.yaml").read_text())["SHOP_NAME"]
+for component in ("login-service", "orders", "inventory", "manual"):
+    config = yaml.safe_load((home / component / "config.yaml").read_text())
+    if config.get("SHOP_NAME") != expected:
+        raise SystemExit("FAIL: " + component + " did not inherit gateway's SHOP_NAME")
+print("PASS: login-service, orders, inventory and manual share gateway's SHOP_NAME")
+SHARED_SETTING
     echo 'PASS: orders init container exited 0; renamed volumes exist; no demo component state'
     ;;
 renamed-e2e|renamed-markers-create|renamed-markers-check|renamed-survivor)

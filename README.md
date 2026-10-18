@@ -106,7 +106,7 @@ in force. See [layout cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md).
 
 Every `bundle.yaml` is the compiled descriptor of its component and declares
 exact dependencies with inclusive `min` and exclusive `before` ranges, for
-example `{platform: {min: 0.4.10, before: 0.5.0}, identity: {min: 0.4.10, before:
+example `{platform: {min: 0.4.11, before: 0.5.0}, identity: {min: 0.4.11, before:
 0.5.0}}` for app1/app2. For 0.x, compatibility follows the minor series; for
 1.x and later, the declared major series. The installed descriptor is retained
 privately under `metadata/`, independently of old release directories. Incoming dependencies and every installed dependent's range must
@@ -115,6 +115,13 @@ before mutation. See [Identity verification](acceptance/IDENTITY-SPLIT.md) for
 coverage, local evidence and pending lab commands.
 
 ## Configuration and initialization
+
+Some setting names have built-in meaning (`PUBLIC_ORIGIN`, `HTTPS_PORT`,
+`PUBLIC_HOSTNAME`, `SECRET_FILES`, `VOLUME_FILES`); every other name only
+replaces its placeholder in each component separately. A component can share
+its own settings with its `public_from` dependents through `shares:` in
+`bundles.yaml`. See [reserved configuration names and shared
+settings](docs/COMPONENTS.md#reserved-configuration-names).
 
 | File | Role |
 | --- | --- |
@@ -721,7 +728,7 @@ home is needed. Shell scripts run through `bash` under fapolicyd.
 ```sh
 product_name=myproduct  # product: in bundles.yaml; also the service user
 bundle=platform
-version=0.4.10
+version=0.4.11
 archive="$product_name-$bundle-$version-offline.tar.gz"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d "/tmp/$product_name-install.XXXXXXXX")

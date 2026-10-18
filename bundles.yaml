@@ -7,7 +7,9 @@
 #   version_file: release file holding the version (default VERSION)
 #   upgrade:      always (default) reinstalls on every install;
 #                 newer-only keeps an equal installed version and refuses downgrades
-#   public_from:  dependency whose PUBLIC_ORIGIN and HTTPS_PORT this component must match
+#   public_from:  dependency whose PUBLIC_ORIGIN, HTTPS_PORT and shares this component must match
+#   shares:       config names this component's public_from dependents take from it
+#                 (see docs/COMPONENTS.md, "Reserved configuration names")
 #   routes:       dependency that serves this component's route.conf
 #   clients:      dependency that registers this component's client.yaml
 #   accepts:      roles this component serves, mapped to the volume ID that

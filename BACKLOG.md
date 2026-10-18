@@ -2904,7 +2904,26 @@ Original findings:
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned. Start after item 21. Requested 2026-10-17.
+Status: done on `main` in 0.4.11 (2026-10-18); lab run pending.
+
+- Reserved names are documented once in docs/COMPONENTS.md ("Reserved
+  configuration names"), linked from README; `deploy.PUBLIC_KEYS` and
+  `catalog.UNSHAREABLE` point there.
+- `shares: [NAME, ...]` on the owner (catalog, compiled into `bundle.yaml` and
+  installed metadata). `public_from` dependents inherit those names with
+  `PUBLIC_ORIGIN`/`HTTPS_PORT` at `init-config` and in dev; install and
+  validate compare them (`deploy.shared_keys`, `check_public_settings`). The
+  owner's config must define them (`check_own_shares`); an owner upgrade that
+  drops a name installed dependents take is refused before writes
+  (`check_kept_shares`). Names follow the placeholder rule; `PUBLIC_HOSTNAME`,
+  `SECRET_FILES` and `VOLUME_FILES` are refused.
+- Deviation, deliberate: a descriptor without `shares` is read as `[]`, so a
+  product installed from a 0.4.10-with-product-name bundle can still upgrade.
+  Every other field stays strict.
+- Tests: `SharedSettingTests` (dev and init-config inheritance, mismatch
+  refused without values, unshared names free, owner must define its shares,
+  owner upgrade dropping a share), catalog name tests; the renamed product's
+  gateway shares `SHOP_NAME`, checked in dev and on PROD (`07-init-check`).
 
 ### Problem
 

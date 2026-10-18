@@ -226,6 +226,12 @@ class GeneratorTests(unittest.TestCase):
             sorted(path.name for path in (dev / "routes").iterdir()),
             ["inventory.conf", "login-service.conf", "manual.conf", "orders.conf"],
         )
+        # gateway shares SHOP_NAME; its public_from dependents inherit it in dev.
+        catalog_data = yaml.safe_load((self.target / "bundles.yaml").read_text())
+        self.assertEqual(catalog_data["components"]["gateway"]["shares"], ["SHOP_NAME"])
+        for name in ("gateway", "login-service", "orders", "inventory", "manual"):
+            config = yaml.safe_load((dev / name / "config.yaml").read_text())
+            self.assertEqual(config["SHOP_NAME"], "Renamed shop", name)
 
 
 class RemoteActionTests(unittest.TestCase):
