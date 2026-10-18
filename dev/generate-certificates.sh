@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Demo provisioning: generate the demo CA, certificates and passwords without replacing existing keys.
+# Not part of product bundles: an organisation brings its own certificates. On a
+# target, pass it on stdin: bash -s -- --root DIR <component> <host> < generate-certificates.sh
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 umask 077
 if [[ ${1:-} == --root ]]; then
     if [[ $# -lt 2 || -z $2 ]]; then
-        echo 'Usage: scripts/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
+        echo 'Usage: dev/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
         exit 2
     fi
     root=$2
@@ -82,7 +84,7 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
 fi
 hostname=${1:-myproduct-proxy}
 if [[ $# -gt 1 || ! $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]; then
-    echo 'Usage: scripts/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
+    echo 'Usage: dev/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
     exit 2
 fi
 mkdir -p "$root"

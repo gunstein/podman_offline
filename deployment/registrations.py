@@ -159,19 +159,24 @@ def registered_client_id(path):
 CLIENT_PATH = re.compile(r"^(/[a-z0-9][a-z0-9-]*)+$")
 
 
-def client_registration(component, path, config, config_path):
-    """Build one public OIDC client registration from client.yaml.
+CLIENT_KEYS = {"id", "base_path", "scopes", "certificate"}
+VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-    Protocol of the existing apps and Identity: the app requests its client ID
-    as a scope, so scopes are exactly [openid, profile, <id>], and the redirect
-    URI is PUBLIC_ORIGIN + base_path + /auth/callback. The client ID and
-    base_path must match the app's APP_ID and BASE_PATH settings; they may
-    differ from the component ID. Only public certificates are accepted.
+
+def client_descriptor(path):
+    """Read and check client.yaml: id, base_path, scopes, certificate, environment.
+
+    environment is optional: {id: <variable>, base_path: <variable>} names the
+    container variables that carry these values (the demo: APP_ID, BASE_PATH),
+    so check_client_identity can compare them.
     """
     metadata = rendering.load_yaml(path)
+    environment = (
+        metadata.get("environment", {}) if isinstance(metadata, dict) else None
+    )
     if (
         not isinstance(metadata, dict)
-        or set(metadata) != {"id", "base_path", "scopes", "certificate"}
+        or not CLIENT_KEYS <= set(metadata) <= CLIENT_KEYS | {"environment"}
         or not isinstance(metadata["id"], str)
         or not common.ID.fullmatch(metadata["id"])
         or not isinstance(metadata["base_path"], str)
@@ -180,11 +185,70 @@ def client_registration(component, path, config, config_path):
         or not isinstance(metadata["certificate"], str)
         or Path(metadata["certificate"]).is_absolute()
         or ".." in Path(metadata["certificate"]).parts
+        or not isinstance(environment, dict)
+        or not set(environment) <= {"id", "base_path"}
+        or not all(
+            isinstance(name, str) and VARIABLE.fullmatch(name)
+            for name in environment.values()
+        )
     ):
         raise common.DeployError(
             f"Invalid public client descriptor: {path}; expected id, "
-            "base_path (/path), scopes [openid, profile, <id>] and a relative certificate"
+            "base_path (/path), scopes [openid, profile, <id>], a relative certificate "
+            "and optionally environment: {id: <VARIABLE>, base_path: <VARIABLE>}"
         )
+    return metadata
+
+
+def check_client_identity(directory, documents):
+    """The client ID and base_path in client.yaml must match the app and its route.
+
+    A mismatch otherwise shows only as an OIDC failure at login. route.conf, if
+    present, must have a location for base_path. With environment declared,
+    some container must set each named variable, and every container that sets
+    it must use the client.yaml value. documents are the effective manifests.
+    """
+    path = directory / "client.yaml"
+    if not path.is_file():
+        return
+    metadata = client_descriptor(path)
+    base_path = metadata["base_path"]
+    route = directory / "route.conf"
+    if route.is_file() and not re.search(
+        r"\blocation\s+(=\s*)?" + re.escape(base_path) + r"[/\s{]",
+        route.read_text(encoding="utf-8"),
+    ):
+        raise common.DeployError(
+            f"{route} has no location for base_path {base_path} from {path}"
+        )
+    for key, variable in sorted(metadata.get("environment", {}).items()):
+        values = sorted(
+            {
+                str(entry.get("value"))
+                for _, spec in rendering.pod_specs(documents)
+                for _, container in rendering.containers(spec)
+                for entry in container.get("env", [])
+                if isinstance(entry, dict) and entry.get("name") == variable
+            }
+        )
+        if values != [metadata[key]]:
+            raise common.DeployError(
+                f"{path}: {key} is {metadata[key]!r}, but the manifests set "
+                f"{variable} to {', '.join(map(repr, values)) or 'nothing'}"
+            )
+
+
+def client_registration(component, path, config, config_path):
+    """Build one public OIDC client registration from client.yaml.
+
+    Protocol of the existing apps and Identity: the app requests its client ID
+    as a scope, so scopes are exactly [openid, profile, <id>], and the redirect
+    URI is PUBLIC_ORIGIN + base_path + /auth/callback. The client ID and
+    base_path must match the app's settings (check_client_identity compares
+    them when client.yaml names the variables); they may differ from the
+    component ID. Only public certificates are accepted.
+    """
+    metadata = client_descriptor(path)
     certificate = rendering.resolve_path(metadata["certificate"], config_path.parent)
     try:
         certificate_bytes = certificate.read_bytes()

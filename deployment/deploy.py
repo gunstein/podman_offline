@@ -299,6 +299,7 @@ def validate_component(config, config_path, manifests, component=None, imported=
         config, config_path, manifests, component, imported
     )
     database_bindings(config, config_path, documents)
+    registrations.check_client_identity(manifests.parent, documents)
     return documents
 
 
@@ -981,6 +982,15 @@ def uninstall(component=None, delete_data=False):
     )
     marker = common.HOME / "installed" / component
     if state is None and not marker.is_file():
+        if catalog.metadata_path(common.HOME, component).is_file():
+            # Metadata is written before the units and the marker last, so this
+            # is a first install that stopped. Finishing it is the one recovery.
+            raise common.DeployError(
+                f"Component {component} has an unfinished first install "
+                f"(metadata without installed/{component}). Run ./deploy install "
+                "from its bundle again to finish it, then uninstall; if that "
+                "install keeps failing, fix the cause it reports first"
+            )
         raise common.DeployError(f"Component {component} is not installed")
     installed = catalog.load_installed_metadata(common.HOME)
     check_same_product(descriptor["product"], installed)

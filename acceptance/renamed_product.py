@@ -209,7 +209,7 @@ def credentials(root, hostname, components):
     Existing renamed credentials are moved back first, so the demo script keeps
     them byte-for-byte instead of generating new keys.
     """
-    script = Path(__file__).resolve().parent.parent / "scripts/generate-certificates.sh"
+    script = Path(__file__).resolve().parent.parent / "dev/generate-certificates.sh"
     old_names = {new: old for old, new in NAMES.items()}
     for component in components or list(old_names):
         old = old_names[component]

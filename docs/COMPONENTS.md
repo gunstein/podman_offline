@@ -134,10 +134,20 @@ id: orders-web                 # the app's APP_ID; any valid ID, unique across c
 base_path: /orders             # the app's BASE_PATH; redirect URI is origin + base_path + /auth/callback
 scopes: [openid, profile, orders-web]   # the app requests its client ID as a scope
 certificate: credentials/client/client.crt   # public certificate, relative to the config folder
+environment:                   # optional: the app's variables carrying id and base_path
+  id: APP_ID
+  base_path: BASE_PATH
 ```
 
 A component with `clients` must also declare `public_from`, because the
 redirect URI needs the public origin. Only public certificates are accepted.
+
+The same id and base_path appear in three places: `client.yaml`, the app's own
+settings and `route.conf`. A mismatch would show only as an OIDC failure at
+login, so `validate`, `prepare` and `install` check it first: `route.conf` must
+have a `location` for `base_path`, and with `environment:` every container that
+sets a named variable must set it to the `client.yaml` value (and one must set
+it). The tools do not know an app's variable names; a product names them here.
 
 Restarts follow the changes: no change restarts no owner, a route change the
 route owner, a client change the client owner. The selected component restarts
@@ -184,7 +194,7 @@ After adding or changing a component, run `./deploy validate` first: it
 reports the first finding of every component (file, document or container and
 the declaration it expected) without writing anything or calling Podman.
 
-`dev/demo-credentials.sh` runs `scripts/generate-certificates.sh` for the five
+`dev/demo-credentials.sh` runs `dev/generate-certificates.sh` for the five
 demo components. Another product prepares its own credentials in
 `build/dev/<id>/` (dev) or `/var/lib/<product>/<id>/` (production) before
 prepare or install.

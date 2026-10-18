@@ -369,6 +369,14 @@ class Run:
         version = version or self.meta["bundles_built"][bundle]
         archive = self.product + "-" + bundle + "-" + version + "-offline.tar.gz"
         self.ssh("PROD", "mkdir -p " + shlex.quote(base))
+        # Demo provisioning is not in product bundles (backlog 25, F10).
+        self.command(
+            SCP
+            + [
+                str(ROOT / "dev/generate-certificates.sh"),
+                self.host("PROD") + ":" + base + "/generate-certificates.sh",
+            ]
+        )
         for suffix in ("", ".sha256"):
             local = self.folder / (archive + suffix)
             self.command(

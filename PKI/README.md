@@ -1,6 +1,6 @@
 # Demo PKI
 
-`scripts/generate-certificates.sh [--root DIR] platform|identity|app1|app2|help [DNS hostname]`
+`dev/generate-certificates.sh [--root DIR] platform|identity|app1|app2|help [DNS hostname]`
 creates missing component material once. `PKI/generate.sh` forwards arguments to
 that script. Dev uses build/dev; prod passes --root /var/lib/myproduct explicitly.
 Component passwords, private keys and certificates live under

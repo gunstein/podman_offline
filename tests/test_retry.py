@@ -488,6 +488,24 @@ class RetryTests(ComponentFixture):
         )
         self.assertFalse((common.HOME / "pending-operation.json").exists())
 
+    def test_unfinished_first_install_names_the_retry_for_uninstall(self):
+        """Metadata without a marker: uninstall explains, and the retry finishes."""
+        (common.HOME / "installed/app1").unlink()
+        (common.HOME / "metadata/app1.json").unlink()
+        events = self.attempt(expected=1, failure=service("app1"))
+        self.assertTrue((common.HOME / "metadata/app1.json").is_file())
+        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        events = self.attempt("uninstall", expected=1)
+        self.assertEqual(events[-1][:2], ["error", "DeployError"])
+        self.assertIn("app1 has an unfinished first install", events[-1][2])
+        self.assertIn("Run ./deploy install from its bundle again", events[-1][2])
+        self.assertEqual([event for event in events if event[0] != "error"], [])
+        self.attempt()
+        self.assertTrue((common.HOME / "installed/app1").is_file())
+        self.attempt("uninstall")
+        self.assertFalse((common.HOME / "metadata/app1.json").exists())
+
     def test_flag_conflicts_installs_and_dependencies_refuse_during_uninstall(self):
         self.attempt("uninstall", expected=1, failure=service("app1", "stop"))
         before = (common.HOME / "pending-operation.json").read_bytes()

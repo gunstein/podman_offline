@@ -616,8 +616,11 @@ remain subject to [target verification](acceptance/CREDENTIAL-DELIVERY.md).
 ### Certificate and private-key flow
 
 Certificate preparation is a separate operator step before `deploy install`.
-The demo uses `scripts/generate-certificates.sh --root /var/lib/myproduct
-<component> <DNS-hostname>`; see the complete commands below. The script creates
+The demo uses `dev/generate-certificates.sh --root /var/lib/myproduct
+<component> <DNS-hostname>`; see the complete commands below. It is demo
+provisioning and is not part of the product bundles (which ship only
+`scripts/prepare-host.sh`); copy it from the source checkout to the target and
+run it on stdin. The script creates
 a shared demo CA under `PKI/private/` and missing component certificate/key pairs.
 `dev/dev.sh up` runs this preparation automatically for development. Real
 production certificates are issued externally and delivered to the persistent
@@ -632,7 +635,7 @@ script does not automatically renew certificates.
 flowchart TD
     ISSUE["`Prepare certificates and private keys
     Demo: OpenSSL and a shared demo CA
-    scripts/generate-certificates.sh: issue_component()
+    dev/generate-certificates.sh: issue_component()
     Production: prepare externally issued certificates`"]
 
     TLSFILES["`Platform: persistent HTTPS files
@@ -845,7 +848,8 @@ wait_trust "$release/deployment/"
 as_product bash "$release/deploy" init-config "$bundle"
 sudoedit "/var/lib/$product_name/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
-as_product bash "$release/scripts/generate-certificates.sh" --root "/var/lib/$product_name" "$bundle" myproduct-proxy
+# Demo only: dev/generate-certificates.sh copied from the source checkout.
+as_product bash -s -- --root "/var/lib/$product_name" "$bundle" myproduct-proxy < generate-certificates.sh
 sudoedit "/var/lib/$product_name/$bundle/config.yaml"
 # Checks the bundle against config and installed components; changes nothing.
 sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"

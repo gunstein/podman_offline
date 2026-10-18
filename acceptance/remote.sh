@@ -133,7 +133,9 @@ CONFIG
         demo_credentials "$component"
     done
 }
-# Demo provisioning on the target. The renamed product reuses the demo script
+# Demo provisioning on the target. The demo script is not in product bundles;
+# the runner copies dev/generate-certificates.sh to $base and it runs on stdin.
+# The renamed product reuses the demo script
 # under the demo name, then moves the result; mirrors renamed_product.NAMES.
 demo_credentials() {
     local component=$1 demo
@@ -146,7 +148,7 @@ demo_credentials() {
         *) demo=$component;;
     esac
     if [[ $demo == "$component" ]]; then
-        as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$component" "$prod_host"
+        as_product bash -s -- --root "$state" "$component" "$prod_host" < "$base/generate-certificates.sh"
         return
     fi
     if sudo -n test -e "$state/$demo/credentials"; then
@@ -157,7 +159,7 @@ demo_credentials() {
         as_product mkdir -m 700 -p "$state/$demo"
         as_product mv "$state/$component/credentials" "$state/$demo/credentials"
     fi
-    as_product bash "$product/scripts/generate-certificates.sh" --root "$state" "$demo" "$prod_host"
+    as_product bash -s -- --root "$state" "$demo" "$prod_host" < "$base/generate-certificates.sh"
     as_product mkdir -m 700 -p "$state/$component"
     as_product mv "$state/$demo/credentials" "$state/$component/credentials"
     as_product rmdir "$state/$demo"

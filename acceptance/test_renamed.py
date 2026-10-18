@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -237,6 +238,40 @@ class RemoteActionTests(unittest.TestCase):
             mapping, {new: old for old, new in renamed_product.NAMES.items()}
         )
 
+    def test_demo_credentials_run_the_script_from_stdin(self):
+        """Product bundles lack the demo script; the target runs the copied one on stdin."""
+        code = shell_code(REMOTE, function="demo_credentials")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, base = root / "state", root / "base"
+            state.mkdir(mode=0o700)
+            base.mkdir()
+            shutil.copy2(ROOT / "dev/generate-certificates.sh", base)
+            script = (
+                "set -euo pipefail\n"
+                f"state={shlex.quote(str(state))}\nbase={shlex.quote(str(base))}\n"
+                "prod_host=proxy.test\n"
+                'as_product() { (cd "$state" && "$@"); }\n'
+                'sudo() { shift; "$@"; }\n'
+                + code
+                + "demo_credentials identity\ndemo_credentials gateway\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((state / "PKI/private/ca.crt").is_file())
+            self.assertTrue(
+                (state / "identity/credentials/identity/identity.crt").is_file()
+            )
+            # gateway reuses the platform recipe, then the result is moved.
+            self.assertTrue((state / "gateway/credentials/web/web.crt").is_file())
+            self.assertFalse((state / "platform").exists())
+
     def test_bundle_argument_accepts_any_component_id_only(self):
         self.assertIn(
             "[[ $bundle =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || exit 2", REMOTE
@@ -408,8 +443,10 @@ class ScenarioTests(unittest.TestCase):
         )
         harness.transfer(bundle="gateway", tree="renamed")
         sources = [call.args[0][-2] for call in harness.command.call_args_list]
+        # Demo provisioning travels separately; product bundles do not carry it.
+        self.assertTrue(sources[0].endswith("/dev/generate-certificates.sh"))
         self.assertTrue(
-            sources[0].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
+            sources[1].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
         )
         harness.guest.assert_called_once_with(
             "PROD", "unpack", "0.4.7", bundle="gateway"

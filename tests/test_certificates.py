@@ -17,11 +17,11 @@ class CertificateTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.project = self.root / "project"
-        scripts = self.project / "scripts"
+        scripts = self.project / "dev"
         scripts.mkdir(parents=True)
         self.script = scripts / "generate-certificates.sh"
         shutil.copyfile(
-            Path(__file__).resolve().parent.parent / "scripts/generate-certificates.sh",
+            Path(__file__).resolve().parent.parent / "dev/generate-certificates.sh",
             self.script,
         )
 

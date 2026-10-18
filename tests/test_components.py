@@ -72,6 +72,12 @@ class ComponentFixture(DeployFixture):
                 }
             ]
         }
+        if component in ("app1", "app2"):
+            # Matches the demo client.yaml, which names APP_ID and BASE_PATH.
+            spec["containers"][0]["env"] = [
+                {"name": "APP_ID", "value": component},
+                {"name": "BASE_PATH", "value": "/" + component},
+            ]
         accepts = DEMO.get(component, {}).get("accepts", {})
         if accepts:
             spec["volumes"] = [

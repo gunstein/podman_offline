@@ -15,5 +15,5 @@ print(urlsplit(settings["platform"]["PUBLIC_ORIGIN"]).hostname)
 DEMO_HOST
 )
 for component in platform identity app1 app2 help; do
-    bash ./scripts/generate-certificates.sh --root build/dev "$component" "$hostname"
+    bash ./dev/generate-certificates.sh --root build/dev "$component" "$hostname"
 done

@@ -168,6 +168,64 @@ class ProductNameTests(ProductFixture):
         self.assertFalse((common.HOME / "pending-operation.json").exists())
 
 
+class ClientIdentityTests(ProductFixture):
+    """client.yaml's id and base_path must match the app's variables and route."""
+
+    def product(self, variable_value=None, route_path=None, environment=True):
+        product = copy.deepcopy(RENAMED)
+        orders = product["orders"]
+        if environment:
+            orders["client"]["environment"] = {"id": "APP_ID", "base_path": "BASE_PATH"}
+        if variable_value is not None:
+            for document in orders["manifests"]:
+                for container in document.get("spec", {}).get("containers", []):
+                    for entry in container.get("env", []):
+                        if entry["name"] == "APP_ID":
+                            entry["value"] = variable_value
+        if route_path is not None:
+            orders["route"] = route("orders", route_path, "orders-web:8000")
+        self.write_product(product)
+        self.provide_credentials(product, common.BUILD / "dev")
+
+    def refused(self, pattern):
+        """prepare and validate report the same finding before any dev output."""
+        for action in (deploy.prepare, validation.validate):
+            with (
+                self.subTest(action=action.__name__),
+                self.assertRaisesRegex(common.DeployError, pattern),
+            ):
+                action()
+        self.assertFalse((common.BUILD / "install.yaml").exists())
+
+    def test_matching_declaration_passes(self):
+        self.product()
+        deploy.prepare()
+        self.assertTrue((common.BUILD / "install.yaml").exists())
+
+    def test_variable_that_differs_from_client_yaml_is_refused(self):
+        self.product(variable_value="orders")
+        self.refused(
+            "orders/client.yaml: id is 'orders-web', but the manifests set APP_ID "
+            "to 'orders'"
+        )
+
+    def test_route_without_the_base_path_is_refused(self):
+        self.product(route_path="/shop")
+        self.refused("orders/route.conf has no location for base_path /orders")
+
+    def test_variables_are_compared_only_when_declared(self):
+        """Products whose apps use other variables are not checked against them."""
+        self.product(variable_value="orders", environment=False)
+        deploy.prepare()
+
+    def test_invalid_environment_declaration_is_refused(self):
+        product = copy.deepcopy(RENAMED)
+        product["orders"]["client"]["environment"] = {"client": "APP_ID"}
+        self.write_product(product)
+        self.provide_credentials(product, common.BUILD / "dev")
+        self.refused("Invalid public client descriptor")
+
+
 class ServiceChangeTests(ProductFixture):
     """Add and remove a service by editing bundles.yaml and components/ only."""
 

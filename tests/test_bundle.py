@@ -46,7 +46,7 @@ class BundleTests(unittest.TestCase):
             "deployment/__main__.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",
             "config.defaults.yaml": "HTTPS_PORT: 8443\n",
-            "scripts/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
+            "dev/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
             "scripts/prepare-host.sh": "#!/bin/sh\nexit 0\n",
             "dev/dev.sh": "#!/bin/sh\nexit 0\n",
             "dev/build-images.sh": "#!/bin/sh\nexit 0\n",
@@ -123,7 +123,6 @@ class BundleTests(unittest.TestCase):
                     "deployment/__main__.py",
                     "README.md",
                     "config.defaults.yaml",
-                    "scripts/generate-certificates.sh",
                     "scripts/prepare-host.sh",
                     "quadlet/template.kube",
                     "quadlet/template.network",
@@ -142,11 +141,7 @@ class BundleTests(unittest.TestCase):
                     (member.uid, member.gid, member.uname, member.gname),
                     (0, 0, "root", "root"),
                 )
-            for name in (
-                "deploy",
-                "scripts/generate-certificates.sh",
-                "scripts/prepare-host.sh",
-            ):
+            for name in ("deploy", "scripts/prepare-host.sh"):
                 self.assertEqual(archive.getmember(prefix + name).mode, 0o755)
             self.assertEqual(archive.getmember(prefix + "credentials").mode, 0o700)
             self.assertTrue(archive.getmember(prefix + "build").isdir())

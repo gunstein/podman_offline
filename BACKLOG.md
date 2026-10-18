@@ -2861,8 +2861,23 @@ podman_test's acceptance results as evidence for this repository.
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 
-Status: planned. Found by the independent review of item 20 at `c00865f`;
-none blocks the shipped demo. Handle each separately and keep them small.
+Status: done on `main` (2026-10-18); lab run pending.
+
+- F7: uninstall of a component with metadata but no marker now says it is an
+  unfinished first install and that `./deploy install` from its bundle finishes
+  it (the only recovery: units may be partly written). Fresh-process
+  regression `test_unfinished_first_install_names_the_retry_for_uninstall`.
+- F8: `client.yaml` may declare `environment: {id: <VAR>, base_path: <VAR>}`;
+  `validate`, `prepare` and `install` (via `deploy.validate_component`) require
+  `route.conf` to have a location for `base_path` and, when declared, the named
+  variables to carry the `client.yaml` values. The demo apps declare
+  `APP_ID`/`BASE_PATH`; the tools learn no variable name. `ClientIdentityTests`.
+- F10: the demo certificate script moved to `dev/generate-certificates.sh`;
+  product bundles ship only `scripts/prepare-host.sh`. The harness copies the
+  script to the target and runs it on stdin; the README demo procedure does the
+  same.
+
+Original findings:
 
 - **F7, unfinished first install:** when a first install fails after its
   metadata is written but without pending owner work (for example at the

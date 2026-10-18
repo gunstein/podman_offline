@@ -83,7 +83,7 @@ Decisions read only these descriptors: `install_needed()` (upgrade policy),
 and clients), `registration_stage()` (which registrations exist and which owner
 imports them) and `restart_order()` (reverse dependency order). No module names
 a demo component. The demo's certificate and user provisioning is the explicit
-`dev/demo-credentials.sh` / `scripts/generate-certificates.sh`.
+`dev/demo-credentials.sh` / `dev/generate-certificates.sh`, which product bundles do not contain.
 
 ## Lifecycle
 
