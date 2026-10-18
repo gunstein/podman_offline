@@ -12,7 +12,7 @@ import yaml
 from product_fixture import RENAMED, ProductFixture
 from test_renamed_product import RenamedProductTests
 
-from deployment import common, deploy
+from deployment import common, deploy, registrations
 
 ROUTE = "routes/inventory.conf"
 CLIENT = "clients/inventory"
@@ -197,13 +197,13 @@ class OwnerlessRemovalTests(ProductFixture):
     def test_no_owner_is_never_recorded(self):
         owners = {"routes": None, "clients": "login-service"}
         self.assertEqual(
-            deploy.registration_changes(
+            registrations.registration_changes(
                 {}, owners, home=self.root, removals={"routes/inventory.conf"}
             ),
             set(),
         )
         self.assertEqual(
-            deploy.registration_changes(
+            registrations.registration_changes(
                 {},
                 owners,
                 home=self.root,

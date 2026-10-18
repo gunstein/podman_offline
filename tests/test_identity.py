@@ -8,7 +8,7 @@ import yaml
 from catalog_fixture import DEMO
 from test_components import ComponentFixture
 
-from deployment import common, deploy
+from deployment import catalog, common, deploy
 from deployment import render as rendering
 
 
@@ -87,7 +87,7 @@ class IdentityTests(ComponentFixture):
     def test_help_works_without_identity_and_has_no_identity_side_effects(self):
         (common.HOME / "installed/identity").unlink()
         shutil.rmtree(common.HOME / "identity")
-        for path in deploy.component_paths("identity")[2:]:
+        for path in catalog.component_paths("identity")[2:]:
             path.unlink()
         self.component_manifest("help")
         self.write(
@@ -192,7 +192,7 @@ class IdentityTests(ComponentFixture):
 
     def test_identity_delete_data_removes_only_its_declared_volumes_and_state(self):
         self.select("identity")
-        output = deploy.component_paths("identity")[2]
+        output = catalog.component_paths("identity")[2]
         volumes = ("identity-data", "identity-protection", "identity-signing")
         output.write_text(
             yaml.safe_dump_all(

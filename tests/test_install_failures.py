@@ -5,7 +5,7 @@ import subprocess
 import yaml
 from test_components import ComponentFixture
 
-from deployment import common, deploy
+from deployment import catalog, common, deploy
 
 
 class InstallFailureTests(ComponentFixture):
@@ -146,7 +146,7 @@ class InstallFailureTests(ComponentFixture):
                     ):
                         self.assertEqual(after[name], value, name)
                 self.assertIn(
-                    "app1-new-worker", deploy.component_paths("app1")[2].read_text()
+                    "app1-new-worker", catalog.component_paths("app1")[2].read_text()
                 )
                 self.assertNotEqual(
                     after["app1/files/app1-payload.tar"],

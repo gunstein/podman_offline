@@ -364,6 +364,38 @@ def metadata_path(home, name):
     return home / "metadata" / (name + ".json")
 
 
+def component_paths(component, home=None):
+    """Return one component's persistent config, archives and Quadlet paths."""
+    base = (home or common.HOME).resolve()
+    state = base / component
+    paths = [
+        state,
+        state / "files",
+        state / "config.yaml",
+        base / "installed" / component,
+        base / "metadata",
+        metadata_path(base, component),
+    ]
+    paths.extend((state / "files").glob("*.tar"))
+    if home is None:
+        paths.extend(
+            [
+                common.QUADLET_DIR / ("myproduct-" + component + suffix)
+                for suffix in (".yaml", ".kube")
+            ]
+        )
+    if any(path.is_symlink() for path in paths):
+        raise common.DeployError(
+            f"Refuse symlinked component state or output paths for {component}"
+        )
+    return (
+        state / "config.yaml",
+        state / "files",
+        common.QUADLET_DIR / ("myproduct-" + component + ".yaml"),
+        common.QUADLET_DIR / ("myproduct-" + component + ".kube"),
+    )
+
+
 def installed_version(home, name):
     """Return the completed install's version, or None while not installed."""
     marker = home / "installed" / name

@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 from test_components import ComponentFixture
 
-from deployment import common, deploy
+from deployment import catalog, common
 from deployment import render as rendering
 
 REAL_RUN = subprocess.run
@@ -135,7 +135,7 @@ class RetryTests(ComponentFixture):
         events = self.attempt()
         self.assert_finished(events, ["app1", "identity", "platform"])
         documents = list(
-            yaml.safe_load_all(deploy.component_paths("app1")[2].read_text())
+            yaml.safe_load_all(catalog.component_paths("app1")[2].read_text())
         )
         secret = next(
             doc for doc in documents if doc["metadata"]["name"] == "app1-signing"
@@ -148,7 +148,7 @@ class RetryTests(ComponentFixture):
             )
         self.assertFalse((common.HOME / "app1/files/app1-signing.tar").exists())
         self.assertEqual(
-            deploy.component_paths("app1")[2].stat().st_mode & 0o777, 0o600
+            catalog.component_paths("app1")[2].stat().st_mode & 0o777, 0o600
         )
 
     def test_actual_app_secret_uninstall_retry_retains_state_and_delete_data_is_scoped(
@@ -378,7 +378,7 @@ class RetryTests(ComponentFixture):
 
     def test_uninstall_owner_failure_resumes_without_yaml_and_preserves_data(self):
         self.attempt("uninstall", expected=1, failure=service("platform", "is-active"))
-        self.assertFalse(deploy.component_paths("app1")[2].exists())
+        self.assertFalse(catalog.component_paths("app1")[2].exists())
         self.assertTrue(self.pending()["stopped"])
         self.assertEqual(self.pending()["owners"], ["platform"])
         events = self.attempt("uninstall")
@@ -453,7 +453,7 @@ class RetryTests(ComponentFixture):
             failure=["podman", "volume", "rm", "app1-session"],
         )
         self.assertEqual(self.pending()["volumes"], volumes[:3])
-        self.assertFalse(deploy.component_paths("app1")[2].exists())
+        self.assertFalse(catalog.component_paths("app1")[2].exists())
         self.assertEqual(
             json.loads((self.root / "host-volumes.json").read_text()), volumes[2:]
         )

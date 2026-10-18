@@ -13,7 +13,7 @@ import yaml
 from product_fixture import RENAMED, ProductFixture
 from test_deploy import DeployFixture, document
 
-from deployment import common, deploy
+from deployment import catalog, common, deploy
 from deployment import render as rendering
 
 
@@ -99,7 +99,9 @@ class ProductValidationOrderTests(ProductFixture):
             self.install(releases["orders"])
         # One generation and render; the installed YAML is exactly that render.
         self.assertEqual(len(results), 1)
-        self.assertEqual(deploy.component_paths("orders")[2].read_text(), results[0][0])
+        self.assertEqual(
+            catalog.component_paths("orders")[2].read_text(), results[0][0]
+        )
         self.assertTrue(
             (common.HOME / "orders/credentials/database/password").is_file()
         )

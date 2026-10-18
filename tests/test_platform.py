@@ -8,7 +8,7 @@ from unittest import mock
 import yaml
 from test_components import ComponentFixture
 
-from deployment import cli, common, deploy
+from deployment import catalog, cli, common, deploy
 
 
 class PlatformSafetyTests(ComponentFixture):
@@ -151,7 +151,7 @@ class PlatformSafetyTests(ComponentFixture):
 
     def test_invalid_mounted_config_map_refuses_before_uninstall_side_effects(self):
         deploy.install()
-        output = deploy.component_paths("app1")[2]
+        output = catalog.component_paths("app1")[2]
         documents = list(yaml.safe_load_all(output.read_text()))
         pod = next(doc for doc in documents if doc.get("kind") == "Pod")
         for source in (None, {"name": []}, {"name": "app2-private"}):

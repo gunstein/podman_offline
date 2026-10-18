@@ -3231,7 +3231,14 @@ so the two components can declare the same Podman volume or Secret, and
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its
 mandatory understandability review.
 
-Status: planned. Suggested by the independent reviews of items 21 and 23.
+Status: done on `main` (2026-10-18), without behaviour change.
+`deployment/registrations.py` holds staging, client registrations, comparison,
+writing, `apply_registration_updates` and the pending record (`pending_path`
+through `acknowledge_owner`); it imports catalog, common and render, never
+deploy. `component_paths`, which staging needs, moved to `catalog.py` beside
+`metadata_path`. deploy.py (about 1030 lines) calls both modules by name, so
+tests and `tests/retry_driver.py` patch them there. ARCHITECTURE's module table
+and install sequence diagram (PNG re-rendered) show the new module.
 
 `deployment/deploy.py` holds about 1400 lines. The registration and pending
 code (about 400 lines: `registration_stage`, `client_registration`,

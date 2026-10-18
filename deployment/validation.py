@@ -2,7 +2,7 @@
 
 The command reuses the lifecycle's checks so the two cannot disagree:
 deploy.validate_component (manifests and PostgreSQL layout), deploy.install_checks
-and deploy.install_preconditions (bundle), and deploy.registration_stage in a
+and deploy.install_preconditions (bundle), and registrations.registration_stage in a
 temporary directory. The only checks that run here earlier than in the
 lifecycle are marked "lifecycle:" below with the place install or prepare
 does the same. Credentials are never read; config, metadata, public
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from . import common, deploy
+from . import common, deploy, registrations
 from . import render as rendering
 
 ERRORS = (common.DeployError, OSError, yaml.YAMLError)
@@ -74,7 +74,7 @@ def validate_catalog():
             findings.append((component, str(error)))
     try:
         with tempfile.TemporaryDirectory(prefix="myproduct-validate-") as directory:
-            deploy.registration_stage(
+            registrations.registration_stage(
                 list(known), Path(directory), known, home=state, configs=settings
             )
     except ERRORS as error:
@@ -94,7 +94,7 @@ def validate_bundle():
     findings = []
     try:
         with tempfile.TemporaryDirectory(prefix="myproduct-validate-") as directory:
-            deploy.registration_stage([name], Path(directory), known)
+            registrations.registration_stage([name], Path(directory), known)
     except ERRORS as error:
         findings.append(("registrations", str(error)))
     imported = descriptor["accepts"].values()

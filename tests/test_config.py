@@ -9,7 +9,7 @@ import yaml
 from catalog_fixture import DEMO_COMPONENTS
 from test_components import ComponentFixture
 
-from deployment import common, deploy
+from deployment import common, deploy, registrations
 from deployment import render as rendering
 
 
@@ -354,7 +354,7 @@ class ConfigTests(ComponentFixture):
         )
         # Other components generate once; app1 reuses its existing credential.
         with mock.patch.object(
-            deploy, "registration_stage", return_value=({}, {}, set())
+            registrations, "registration_stage", return_value=({}, {}, set())
         ):
             deploy.prepare()
         self.assertEqual(rendering.load_config(output)["CHOICE"], "developer")
@@ -364,7 +364,7 @@ class ConfigTests(ComponentFixture):
             "CHOICE: changed\n",
         )
         with mock.patch.object(
-            deploy, "registration_stage", return_value=({}, {}, set())
+            registrations, "registration_stage", return_value=({}, {}, set())
         ):
             deploy.prepare()
         self.assertEqual(rendering.load_config(output)["CHOICE"], "changed")

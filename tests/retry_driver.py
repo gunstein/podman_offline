@@ -16,6 +16,8 @@ def main():
     common = importlib.import_module("deployment.common")
     rendering = importlib.import_module("deployment.render")
     state = vars(lifecycle)
+    # deploy.py calls these through the registrations module, so patch them there.
+    registration_state = vars(importlib.import_module("deployment.registrations"))
     # An unpacked release may live outside the persistent home it installs into.
     home = Path(parameters.get("home", str(root / "home")))
     vars(common).update(
@@ -88,15 +90,15 @@ def main():
         return replace(source, destination)
 
     os.replace = replace_record
-    clear = state["clear_pending"]
+    clear = registration_state["clear_pending"]
 
     def clear_pending():
         if parameters.get("clear_failure"):
             raise OSError("Injected completion cleanup failure")
         return clear()
 
-    state["clear_pending"] = clear_pending
-    registrations = state["write_registrations"]
+    registration_state["clear_pending"] = clear_pending
+    registrations = registration_state["write_registrations"]
 
     def write_registrations(updates, home=None, removals=()):
         # Die after deleting only the first removal, as a crash mid-removal would.
@@ -105,7 +107,7 @@ def main():
             os._exit(99)
         return registrations(updates, home, removals)
 
-    state["write_registrations"] = write_registrations
+    registration_state["write_registrations"] = write_registrations
     try:
         if parameters["action"] == "install":
             state["install"]()

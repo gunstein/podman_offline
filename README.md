@@ -636,7 +636,7 @@ flowchart TD
     PUBLIC["`Register only the public client certificate
     Client metadata and certificate stored under clients/
     Imported into Identity through its clients PVC
-    deployment/deploy.py: registration_stage()`"]
+    deployment/registrations.py: registration_stage()`"]
 
     HTTPS["`Proxy uses certificate and key for HTTPS
     Browser checks the server certificate

@@ -13,9 +13,10 @@ build entrypoint and also uses `-B`.
 | `deployment/__main__.py` | Minimal CLI delegation |
 | `deployment/cli.py` | Arguments, exit codes and concise errors |
 | `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
-| `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order and role owners |
+| `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
-| `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, registrations, retry state, Quadlet/systemd and component lifecycle |
+| `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
+| `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
 
 `common.ROOT` is the directory above the package, both in source and unpacked
 bundles. `common.HOME` follows the service account's user-database home. There
@@ -161,6 +162,7 @@ sequenceDiagram
     participant D as deploy.install_components
     participant C as catalog
     participant R as render.py
+    participant G as registrations.py
     participant P as deploy.install_component_plan
     participant H as Podman / systemd
     participant S as Service home
@@ -169,13 +171,13 @@ sequenceDiagram
     CLI->>D: install()
     Note over D: install_checks (no writes, no host commands)
     D->>C: load_bundle_descriptor (bundle.yaml)
-    D->>S: check_pending (pending-operation.json)
+    D->>G: check_pending (pending-operation.json)
     D->>C: load_installed_metadata, check_id_prefixes, check_owners
     D->>C: installed_version / dependents
     Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
     D->>R: load_config, validate_component_config
     D->>D: check_public_settings (public_from)
-    D->>D: registration_stage (temp dir): imports, updates, removals
+    D->>G: registration_stage (temp dir): imports, updates, removals
     D->>R: effective_config, effective_documents
     Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links - no writes
     D->>H: database_preflight: podman volume exists (configured name)
@@ -184,10 +186,10 @@ sequenceDiagram
     P->>R: materialize: generate missing secrets, read files, render YAML
     P->>H: podman load + podman image exists
     P->>S: write metadata/ID.json
-    P->>S: save_pending, then write/delete routes/ and clients/
+    P->>G: apply_registration_updates: save_pending,<br/>then write/delete routes/ and clients/
     P->>S: write rendered YAML, import archives, Quadlet .kube, owner imports
     P->>H: daemon-reload, restart component then owners (restart_order)
-    P->>S: acknowledge each owner, clear_pending
+    P->>G: acknowledge_owner for each owner, clear_pending
     P->>S: write installed/ID (completion)
 ```
 
