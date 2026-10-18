@@ -2962,8 +2962,12 @@ the review guide's contracts, `docs/COMPONENTS.md` and the release version.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented on `main` (2026-10-18), prioritized by the operator; lab
-runs pending. `product:` in `bundles.yaml` (required, Linux user name rule) is
+Status: done on `main` (2026-10-18), prioritized by the operator. The full lab
+matrix on `8806016` (after the review fixes below) was CLEAN PASS:
+`pn-app1-first`, `pn-app2-first`, `pn-help-only`, `pn-identity`,
+`pn-platform-help` and `pn-renamed`, the last one installed as product `shop`
+(service user, units, archives); fapolicyd showed 0 early evictions in every
+run. `product:` in `bundles.yaml` (required, Linux user name rule) is
 compiled into `bundle.yaml` and installed metadata. `catalog.product_name()` /
 `unit_name()` name units, Quadlet files, the network, temporary directories and
 archives; the Quadlet files are filled from `quadlet/template.kube` and
