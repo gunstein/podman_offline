@@ -1517,5 +1517,24 @@ class ImageTests(unittest.TestCase):
             rendering.find_images([{"kind": "Pod", "spec": {"containers": ["x"]}}])
 
 
+class ExampleFailureTests(unittest.TestCase):
+    def test_failure_examples_still_fail_for_their_documented_reason(self):
+        """Run the lab's failures example; it needs no Podman, so drift shows here."""
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                ["bash", str(root / "examples/run.sh"), "failures"],
+                env=dict(os.environ, TMPDIR=directory),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for case in sorted((root / "examples/failures").iterdir()):
+            if case.is_dir():
+                self.assertIn("PASS: " + case.name + "\n", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

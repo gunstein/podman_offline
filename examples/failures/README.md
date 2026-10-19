@@ -7,7 +7,7 @@ or the local test image. Each sub-case has its own config and manifest.
 | --- | --- |
 | `unused-id` | The VOLUME_FILES id “is not used by any manifest” |
 | `unknown-claim` | PersistentVolumeClaim “does not exist” |
-| `partial-placeholder` | “Unreplaced @@...@@” |
+| `partial-placeholder` | “Unreplaced @@...@@” for an inline placeholder in a container env value (ConfigMap data and `SECRET_TEMPLATES` accept inline placeholders) |
 | `large-secret` | The SECRET_FILES id “is too large” |
 
 The large file is generated as 400,000 bytes in the temporary area. For each variant,

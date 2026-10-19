@@ -3720,6 +3720,15 @@ Python 3.6 was not executed. Understandability and Secret templates/Validation/
 Credential retention contracts were reviewed. Real Podman/systemd, the lab
 probe and six-scenario CLEAN PASS remain outstanding; item 41 is not complete.
 
+Lab run `templates-app1` on `603d626` (2026-10-19) was NOT CLEAN at
+`03-example-failures`: `examples/failures/partial-placeholder` used an inline
+placeholder in ConfigMap data, which item 41 now supports, so `prepare`
+succeeded. The case now uses a container env value, which stays refused, and
+`ExampleFailureTests` runs `examples/run.sh failures` in the product suite (it
+needs no Podman). The `templates-identity` run stopped in `00-readiness` without
+a message before touching the VMs (consistent with an interrupted run); the
+other scenarios were not reported. The six-scenario matrix must be rerun.
+
 ### Background and decision
 
 The organisation's real .NET apps read one complete `ConnectionStrings__Default`
