@@ -281,8 +281,9 @@ class RemoteActionTests(unittest.TestCase):
     def test_unit_tests_run_without_the_lab_signing_key(self):
         """DEV exports the lab key for builds; product tests must not inherit it."""
         self.assertIn(
-            "env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m unittest",
-            shell_code(REMOTE, action="unit"),
+            'unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m '
+            "unittest discover -s tests;;",
+            REMOTE,
         )
 
     def test_bundle_argument_accepts_any_component_id_only(self):
