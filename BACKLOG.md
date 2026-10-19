@@ -73,7 +73,13 @@ The order for an offline production deployment of an organisation's own apps:
    one mutation-testing round before the larger DR change.
 20. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-21. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+21. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+   demo extension with PostgreSQL logs, maintained collection and a basic
+   Grafana view; full SQL logging is opt-in. Does not block DR or core work.
+22. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+   low-priority follow-up to item 51: container/pod CPU and memory plus backend
+   request rates, latency and errors; GraphQL details require app instrumentation.
+23. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -91,7 +97,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 48, 49, 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 5, 7, 6, and
+Open: 46 (top priority), 48, 49, 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4806,3 +4812,155 @@ address and surrounding controls. The shipped default binds only 127.0.0.1.
 4. No new WAF, online service, custom proxy image or mandatory security framework
    is required. Run relevant product/harness/static checks and report actual
    nginx/.NET verification separately from template assertions.
+
+
+## 51. Add an optional Grafana and Loki logging demo
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve declarative
+components, independent images, isolated offline bundles, credential retention,
+scoped lifecycle and compatibility. Coordinate log privacy with items 37 and 49.
+
+Status: planned; low priority, requested on 2026-10-19. Medium-sized demo
+extension, not a prerequisite for core deployment, backup or DR. This task is
+planning only; no Grafana/Loki integration or rootless collection is verified.
+
+### First delivery
+
+Add optional self-hosted Grafana OSS and Loki OSS, with a maintained collector
+(for example Grafana Alloy), to demonstrate searchable PostgreSQL logs. Start
+with errors and slow queries; make full statement logging an explicit diagnostic
+choice. Keep ordinary deployment fully usable without the logging components.
+Application-wide instrumentation, OIDC login, advanced dashboards, metrics and
+traces are separate later scope, not prerequisites for this delivery. Item 52
+is the planned metrics follow-up and reuses this Grafana instance.
+
+### Task
+
+1. First prove a minimal collection path from the actual rootless Podman setup:
+   determine the log driver, journal/file locations, permissions and restart
+   behavior. Compare service-user journal ingestion with a suitably scoped file
+   path before choosing the collector configuration. Do not require a rootful
+   daemon, expose a writable container-engine socket, or grant access to unrelated
+   host/users' logs. Record any required narrowly scoped host preparation.
+2. Use existing component/catalog/bundle declarations, stock version-pinned OSS
+   images, persistent volumes and config/Secret delivery. Provision Loki as a
+   Grafana data source and one useful saved view/dashboard automatically.
+   Aim to leave generic deployment Python/Bash unchanged; justify any concrete
+   platform gap rather than embedding Grafana/Loki names in deploy code.
+3. Define PostgreSQL logging modes declaratively. Default to errors and a
+   documented slow-query threshold; provide opt-in full statement logging for
+   demo/troubleshooting. Explain that statement logging does not record result
+   sets or guarantee an audit trail of every attempted statement. Preserve
+   database data/passwords when changing logging settings.
+4. Keep SQL text and parameter values out of Loki labels. Use bounded labels
+   such as component/database, with SQL in log content or structured metadata.
+   Avoid user IDs, request IDs and arbitrary query text as indexed stream labels.
+   Document that SQL literals/bind values can disclose personal data or secrets;
+   parameter-log suppression does not redact literals written into SQL text.
+   Use synthetic data for examples and test evidence. Logging failures must not
+   become a prerequisite for the application's database operations.
+5. Configure Grafana authentication through existing private credential handling;
+   do not enable anonymous public log access or use committed/default passwords.
+   Keep Loki ingestion/query endpoints internal unless explicitly secured.
+   Integrate the UI with the reverse-proxy contract from item 48; define the
+   supported base path or host route and verify it in the browser. OIDC is not
+   required in this first delivery.
+6. Bound retention/disk use in both local source logs and Loki. Define rotation,
+   collector checkpoints, persistence, behavior when Loki is unavailable and
+   recovery after restart, plus scoped uninstall/data-retention behavior. Do not
+   claim exactly-once/lossless delivery without evidence. Keep database volumes
+   and unrelated component state untouched during cleanup.
+7. Package all required images, configuration and any required plugins for
+   offline installation; prefer built-in functionality without extra plugins.
+   Select the OSS editions and record their licences/distribution requirements.
+   Ensure operation does not require Grafana Cloud, online plugin downloads or
+   update/usage-reporting connectivity. Do not add new host Python dependencies.
+
+### Verification and delivery
+
+Add appropriate product/config tests and runnable real Podman/systemd acceptance
+checks: install without logging; enable it; emit synthetic error, slow and opt-in
+full-SQL events; find them through Loki/Grafana with correct source labels; check
+authentication; restart collector/Loki; verify persistence and bounded retention;
+uninstall logging without touching application/database data. Verify the offline
+bundle and rootless/SELinux/fapolicyd permissions rather than relying on a Docker
+quickstart. Report template/unit, harness and real-runtime evidence separately.
+Run relevant existing static checks and complete the understandability review.
+Document setup, logging modes, resource requirements, privacy limits and the
+optional nature of the demo. Do not introduce a general observability framework.
+
+
+## 52. Add optional Prometheus metrics after the logging demo
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve declarative
+components, independent external images, offline delivery, scoped lifecycle and
+rootless/SELinux/fapolicyd compatibility. Build on item 51's optional Grafana UI.
+
+Status: planned; low priority, requested on 2026-10-19. Schedule immediately
+following item 51 in the observability work, without blocking core deployment,
+backup or DR. No exporter, application instrumentation or real metric collection
+has been verified in this repository.
+
+### Scope
+
+Use Prometheus OSS for numeric time series, Loki for logs and the same Grafana
+instance for visualization. Demonstrate CPU/memory per container and aggregated
+by pod/component, plus backend HTTP request count/rate, duration and errors.
+Provide an explicit extension path for GraphQL-specific operation/error metrics.
+No Grafana Cloud or paid product is required; record licences for the selected
+stock images and exporter. Distributed tracing and a general observability
+framework are out of scope.
+
+### Task
+
+1. Prove a collection path on the supported rootless Podman/cgroup setup using a
+   maintained Podman exporter (evaluate containers/prometheus-podman-exporter)
+   or another narrow source. Verify actual CPU/memory availability, permissions,
+   container identity and restart behavior before selecting the delivery model.
+   Prefer collection without a container-engine socket where supported. A
+   read-only bind mount of a Podman socket does not make its API read-only;
+   assess the privileges of the actual interface. Do not enable a rootful daemon,
+   privileged collector or access to other service accounts as a shortcut.
+2. Add optional declarative Prometheus/exporter components and persistent storage
+   using the existing bundle/config model. Reuse Grafana and provision the data
+   source plus a small dashboard. Keep scrape/query endpoints internal or
+   explicitly authenticated, bound retention/disk usage and support fully
+   offline image/config delivery. Avoid new host Python dependencies or hardcoded
+   component lists in generic deployment code; justify any needed host integration.
+3. Display container CPU rate and memory bytes with stable pod/component labels.
+   Define CPU percentage denominators, memory semantics and aggregation clearly;
+   handle multiple containers and the infra container without double-counting.
+   Do not sum percentages with incompatible denominators or show missing metrics
+   as healthy zeroes. Document which measurements are unavailable on a host.
+4. Export HTTP metrics from a representative backend using supported application
+   instrumentation (for .NET, evaluate built-in HTTP meters/OpenTelemetry), or
+   explicit proxy metrics if appropriate. Show requests per second, cumulative
+   count, latency and HTTP error rates. Adding Prometheus alone does not
+   instrument apps; document exactly what external images must expose and how
+   scraping/authentication is configured. Avoid counting the same hop twice.
+5. Distinguish HTTP requests to a GraphQL endpoint from GraphQL operation counts
+   and execution errors. HTTP 200 does not imply GraphQL success; batching and
+   subscriptions also need explicit counting semantics if supported. For detailed
+   GraphQL metrics, document/instrument the actual framework or use a focused
+   representative fixture; do not add an unrelated GraphQL API to the Todo demo.
+   Bound any operation-name labels; never label metrics with raw queries,
+   variables, user/request IDs, tokens or other unbounded/sensitive input.
+6. Make instrumentation and collection optional. Missing telemetry must not
+   prevent application startup, database operations or ordinary install/uninstall.
+   Preserve existing data/credentials and item 51's log behavior. Document counter
+   resets and sampling gaps; operational monitoring is not an exact billing or
+   security-audit ledger.
+
+### Verification and delivery
+
+Add focused product/config tests and runnable lab checks: metrics-disabled
+installation; enable collection; apply controlled CPU/memory load and locate the
+correct container/pod series; emit synthetic requests and inspect counts/rates,
+latency and error classifications; exercise GraphQL HTTP-200 execution errors
+where that integration is implemented; restart apps/exporter/Prometheus and
+verify identity, reset handling and persistence; uninstall metrics without
+removing app data or breaking logging. Verify rootless permissions and actual
+Podman/systemd/SELinux/fapolicyd behavior, not only dashboard JSON. Run relevant
+harness/static checks, complete the understandability review and report unit,
+harness and real-runtime evidence separately. Document integration steps,
+resource cost and the remaining external-app instrumentation requirements.
