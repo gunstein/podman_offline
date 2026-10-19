@@ -3959,6 +3959,30 @@ also unclear why identity-clients needs no VOLUME_FILES entry in config.defaults
 5. Check every arrow against current code, validate Mermaid syntax and any
    rendered diagram artifacts using the existing documentation workflow, and
    run git diff --check. Do not change runtime code or configuration contracts.
+6. Cover the failure, retry and removal path, as the route/client trace in
+   docs/REVIEW_GUIDE.md section 3 requires (declaration -> planned change ->
+   pending state -> persistent registration -> import -> owner restart/check ->
+   acknowledgement). Show that registration_changes() decides the owners and
+   save_pending() records pending-operation.json before registrations and import
+   archives are written; what a new process does after a failed Identity restart
+   or health check; and that removing client.yaml (backlog 21) rebuilds the
+   owner's archive and restarts it.
+7. Routes use the same mechanism: accepts.routes (platform-routes) receives
+   route.conf from components with routes:. State this in one or two sentences,
+   or mark it explicitly out of scope, so clients do not read as a special case.
+8. Name the actual durable locations below the service user's home: persistent
+   registrations, import archives in FILES_DIR and the pending record. Say which
+   of them are rebuilt from registrations and which an operator must keep, so
+   item 3 (backup and recovery) can refer to this text.
+9. Runtime claims need evidence. deployment/common.py says Podman imports the
+   archives "on every start"; cite existing lab evidence for that and for the
+   annotation's behaviour on an existing volume, or mark the statement as
+   unverified. Do not describe Podman behaviour that no evidence covers.
+10. dev/render-diagrams.sh renders a fixed list of diagrams selected by
+    ARCHITECTURE.md headings. Add the new diagram to that list, commit its PNG in
+    docs/diagrams/ and link it beside the existing install/build images. If
+    rendering is not possible in the agent's environment, say so and leave the
+    exact command; do not commit a stale or hand-made image.
 
 Done when a reader can follow the source declarations to the running Identity
 container and explain who builds the files, who imports the volume and why no
@@ -4007,6 +4031,44 @@ that the platform test suite can run without the demo files.
 6. Document the minimal files and dependencies an organisation should transfer
    to run platform tests offline, without venv being required. Distinguish these
    tests from organisation-specific integration tests of its own images/manifests.
+
+### Known dependencies at `e419a2a`
+
+Recheck with grep when starting; this list is a starting point, not a complete
+inventory.
+
+- Eight test modules read apps/: test_bundle, test_credential_delivery,
+  test_database, test_health, test_images, test_init_database,
+  test_product_changes and test_renamed_product.
+- Eighteen test files read the shipped bundles.yaml or components/<demo id>,
+  including the shared fixtures catalog_fixture.py and product_fixture.py.
+  Replacing the shipped catalog with declarative fixtures is the main work.
+- Fifteen modules import from other test modules. product_fixture.py imports
+  DeployFixture from test_deploy.py, so a shared fixture lives in a test module.
+  Move shared fixtures into helper modules first; a helper must not import a test
+  module, and discovery must not run inherited tests twice.
+- Item 41's tests are mixed: SecretTemplateTests, the worker lifecycle and the
+  ConfigMap tests are platform tests; Identity connection-string coverage is demo.
+
+### Additional requirements
+
+- There is no hosted CI (no .github/workflows). The gates are the commands in
+  tests/README.md and the unit step in acceptance/remote.sh (`unit`, run as
+  `03-unit` in every lab run). Update those; do not add a hosted CI workflow as
+  part of this item.
+- acceptance/renamed_product.py copies tracked files (`git ls-files`) and
+  rewrites names for the renamed product `shop`. After moving or splitting test
+  files, check that the renamed copy still contains and runs the intended
+  groups, with the same test counts as the original checkout.
+- List the platform suite's runtime requirements: Python 3.6+ and PyYAML (the
+  host already needs them), gpg/gpgv and a writable temporary directory for the
+  signing tests. A missing requirement fails with a clear message naming it; it
+  is never a silent skip. ruff and pyright are contributor checks, not
+  requirements on the offline target.
+- Coordinate with item 40 (per-component VERSION files): fixtures reading the
+  root IDENTITY_VERSION/PLATFORM_VERSION change there too. Do whichever item
+  comes first fully; the other updates the fixtures, without supporting both
+  layouts.
 
 ### Verification and boundaries
 
