@@ -11,29 +11,33 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (agreed 2026-10-19)
 
-Items 33 and 34 from the best-practice review at `689156b` are done. The order
+Items 33 and 34 from the best-practice review at `689156b` are done. Item 41 was
+put first on 2026-10-19 at the operator's request. The order
 for an offline production deployment of an organisation's own apps:
 
-1. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+1. [Item 41](#41-build-secret-values-from-templates-at-install-time): Secret
+   values (connection strings) built from templates at install time. First:
+   the organisation's own apps need it now.
+2. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (implemented; lab run pending).
-2. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+3. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-3. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+4. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
-4. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+5. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-5. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-6. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+6. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+7. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-7. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+8. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-8. [Item 36](#36-harden-the-demo-application-containers): container hardening
+9. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-9. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+10. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-10. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+11. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-11. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+12. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -50,7 +54,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 38 (lab run pending), 39, 40, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 41 (top priority), 38 (lab run pending), 39, 40, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -3649,3 +3653,183 @@ and two teams releasing different components touch the same directory.
    migration is needed: installed metadata already holds each component's own
    version, and the change affects only the source checkout.
 5. Run the full lab matrix (the upgrade scenarios change).
+
+## 41. Build Secret values from templates at install time
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; top priority, requested by the operator on 2026-10-19.
+
+### Background and decision
+
+The organisation's real .NET apps read one complete `ConnectionStrings__Default`
+(password included) from the environment. They cannot change the app code and
+cannot build derived images, so neither Identity's in-app
+`DatabaseEnvironment.cs` nor item 6's launcher is available to them. Today they
+build the string by hand at install time; deploy should do it for them.
+
+This deliberately changes item 6's rule "do not render credentials into YAML or
+write connection strings to disk". It is accepted because the rendered install
+YAML already holds every Secret (base64, mode 0600, owned by the service user),
+so a composed value is the same exposure class. Rules that stay:
+
+- a credential never goes into a ConfigMap, a plain `env: value:`, a log, an
+  error message, `validate` output or any file other than the existing 0600
+  install YAML;
+- the password file stays the only source of truth: the template is rendered
+  from it on every install and upgrade and is never stored or edited separately.
+
+Accepted, documented risk: an env value is visible to the service user and root
+through `podman inspect`, `/proc/<pid>/environ` and child processes. A Secret
+mounted as a file (supported by the same templates) avoids that for apps that
+can read files.
+
+### Agent task
+
+#### 1. Probe Podman first (lab, before building)
+
+`env[].valueFrom.secretKeyRef` is validated today (`render.check_secret_keys`)
+but no shipped manifest uses it. On a lab VM (rootless Podman 5.8.2, SELinux,
+fapolicyd), with a hand-written kube YAML holding a `Secret` document and a pod
+that reads it, verify and record:
+
+1. `podman kube play` and the Quadlet `.kube` unit both set the env value from
+   `secretKeyRef` correctly;
+2. a changed Secret value reaches the container after the normal upgrade path
+   (`kube play --replace` through the unit restart);
+3. whether `podman inspect` shows the value (expected: yes; document it);
+4. the same Secret also works as a mounted file through `volumes[].secret.items`.
+
+If 1 or 2 fails, stop and report before writing code.
+
+#### 2. Config format
+
+```yaml
+# components/<id>/config.defaults.yaml or the operator's config.yaml
+SECRET_TEMPLATES:
+  identity-database:
+    ConnectionStrings__Default: "Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:identity-database-password/password@@"
+```
+
+- The ID follows the same naming, length and component-prefix rules as
+  `SECRET_FILES` IDs (`check_component_config_names`). It must not collide with a
+  `SECRET_FILES` or `VOLUME_FILES` ID. Keys match `common.SECRET_KEY`.
+- A value is a string. Placeholders **inside** text are allowed only here:
+  - `@@NAME@@` is an effective config value of the same component, shared
+    settings included. Only strings and integers are allowed; a missing key, a
+    list, a dict, a boolean or null is refused.
+  - `@@secret:<id>/<file>@@` is the content of `<file>` in this component's
+    `SECRET_FILES.<id>`, generated files included. Strip trailing LF exactly like
+    postgres `file_env` and `DatabaseEnvironment.cs` (`TrimEnd('\n')`).
+- No templates inside templates and no nested placeholders. Text left over that
+  still looks like `@@...@@` is refused.
+- Placeholders in manifests stay whole-value only (`common.PH`); the existing
+  "Unreplaced @@...@@" check must keep working.
+- **Characters.** The template does not know the connection-string syntax, so
+  deploy does not escape. Every substituted value (config or secret) that
+  contains `;`, `"`, `'`, a control character, or leading/trailing whitespace is
+  refused. The message names the template, the key and the source
+  (`SECRET_FILES.identity-database-password/password`), never the value.
+  Generated passwords (letters and digits) always pass. Document this, and how to
+  replace an operator-supplied password that fails.
+- An unknown placeholder, a missing group or file, or an empty secret file gives
+  a `DeployError` naming the template and key, without the value.
+
+#### 3. Rendering and validation
+
+- **Static checks (no secret contents read).** Schema, IDs, placeholder syntax,
+  config keys exist, referenced secret groups and files are declared (existing
+  or `generate:`). These run in `validate_component_config` / `validation.check_sources`
+  and `./deploy validate`, like `check_file_sources` today.
+- **Content checks and rendering.** In `render.materialize`, after
+  `generate_secrets` and `load_file_group(SECRET_FILES)`, render each template
+  into an `Opaque` Secret document beside `secret_documents()`, with the same
+  size limit.
+- **Validation.** `declared_volume_names` / `effective_documents` count template
+  IDs as declared Secrets, so `check_links` accepts `secretName`/`secretKeyRef`
+  to them. `secret_keys()` includes template keys, so `check_secret_keys`
+  catches a wrong key.
+- **Upgrades.** A changed password or config value changes the rendered YAML and
+  must follow the existing upgrade/restart path; prove it with a test.
+- Nothing is printed and nothing new is written.
+- A new module (`deployment/templates.py` or similar) is fine if `render.py`
+  grows too much; remember `git add` (the renamed-product generator uses
+  `git ls-files`).
+
+#### 4. Use it in the demo: Identity
+
+Identity becomes the reference for "the app reads a ready connection string",
+which is how the organisation's own apps work:
+
+- `components/identity/config.defaults.yaml`: add `SECRET_TEMPLATES.identity-database`
+  with `ConnectionStrings__Default` (`Timeout=5;Include Error Detail=false`,
+  matching today's builder settings).
+- `components/identity/manifests/50-identity.yaml`: set `ConnectionStrings__Default`
+  from `secretKeyRef`. Remove `DB_*` env and the `password` volume from
+  identity-server. The postgres pod keeps its password file unchanged.
+- `apps/identity`: remove `DatabaseEnvironment.cs`. `Program.cs` reads
+  `ConnectionStrings__Default`; if it is empty it prints "Missing
+  ConnectionStrings__Default" and exits 1. `--database-check` keeps exit codes
+  0/2/3 and its messages. Bump the Identity image and component version.
+- app1/app2 (Python) are unchanged and keep showing the file-secret pattern.
+  Document both patterns and when to use which.
+
+#### 5. Tests
+
+- **Unit tests** (`tests/test_secret_templates.py`):
+  - rendering and LF stripping;
+  - integer config values;
+  - unknown, list, bool and missing placeholders;
+  - missing group or file;
+  - each refused character;
+  - ID collisions;
+  - `secretKeyRef` key checks;
+  - size limit;
+  - `validate` reads no secret contents;
+  - a changed password changes the rendered YAML;
+  - every error message is free of the secret value (assert the value string is
+    absent).
+- **`acceptance/database_test.py`:** pass `ConnectionStrings__Default` to the
+  Identity image directly. Keep the correct password, wrong password (exit 2)
+  and missing value (exit 1) cases. Remove the `DB_*` permutations that no
+  longer apply.
+- **`acceptance/remote.sh`.** Keep the `--database-check` check (around line
+  1379). Add:
+  - no ConfigMap in the rendered YAML contains the database password;
+  - the password is absent from `./deploy` output and from the user journal of
+    the Identity units;
+  - the rendered YAML is still mode 0600.
+- **Identity upgrade scenario** (old in-app build to the template build): the
+  password file is byte-for-byte unchanged, the same database and users work,
+  and login passes.
+- **All six scenarios** must pass, the renamed product `shop` included
+  (template IDs follow component IDs, not the product name).
+
+#### 6. Documentation
+
+- **docs/COMPONENTS.md:** a "Secret templates" section with the example, the
+  character rule, env vs mounted file, and the accepted exposure.
+- **README:** the config reference.
+- **docs/REVIEW_GUIDE.md:**
+  - update the "Credential retention" contract;
+  - add a "Secret templates" row;
+  - add an accepted gap: env values visible to the service user and root.
+- **ARCHITECTURE.md:** the "Manifest values" flow; re-render diagrams if changed.
+- **BACKLOG:**
+  - item 6: Identity no longer demonstrates an in-app builder, and templates
+    cover unchanged images that read a complete string;
+  - item 37: template Secrets are one more copy at rest;
+  - item 2: rotation must re-render templates.
+
+#### Out of scope
+
+- Docker Compose; the organisation's compose setup is not touched.
+- Format-specific escaping (Npgsql quoting) and templates in ConfigMaps or
+  manifests.
+
+#### Done when
+
+`ruff`, `pyright` and the unit tests are clean; the Podman probe results are in
+this item; the six-scenario lab matrix is CLEAN PASS and recorded here. Work on
+`main`, as agreed for this repository.
