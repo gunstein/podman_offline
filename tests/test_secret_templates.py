@@ -116,6 +116,24 @@ class SecretTemplateTests(DeployFixture):
         self.assertEqual(self.mode(self.password), 0o600)
         self.assertNotIn(self.password.read_text(), text)
 
+    def test_missing_operator_file_stops_before_template_materialization(self):
+        self.config["SECRET_FILES"]["app-password"] = [
+            {"path": "credentials/db/password"}
+        ]
+        self.password.unlink()
+        documents = self.checked()
+        failure = self.assertRaisesRegex(
+            common.DeployError, r"Missing .*SECRET_FILES.app-password"
+        )
+        with mock.patch.object(templates, "documents") as compose, failure as error:
+            rendering.materialize(
+                self.config, self.path, documents, self.root / "files"
+            )
+        compose.assert_not_called()
+        self.assertNotIn("PrivatePassword", str(error.exception))
+        self.assertFalse(self.password.exists())
+        self.process.assert_not_called()
+
     def test_invalid_recipes_fail_before_generation_and_do_not_echo_input(self):
         bad = [
             "@@MISSING@@",
@@ -224,6 +242,113 @@ class SecretTemplateTests(DeployFixture):
 
 
 class TemplateLifecycleTests(ProductFixture):
+    def operator_product(self):
+        product = copy.deepcopy(WORKER)
+        product["worker"]["defaults"] = {
+            "SECRET_FILES": {"worker-token": [{"path": "credentials/api/token"}]},
+            "SECRET_TEMPLATES": {
+                "worker-settings": {"URL": "Token=@@secret:worker-token/token@@"}
+            },
+        }
+        product["worker"]["manifests"][0]["spec"]["containers"][0]["env"] = [
+            {
+                "name": "URL",
+                "valueFrom": {
+                    "secretKeyRef": {"name": "worker-settings", "key": "URL"}
+                },
+            }
+        ]
+        return product
+
+    def operator_release(self, product=None):
+        self.write_product(self.operator_product() if product is None else product)
+        release = self.build_and_unpack()["worker"]
+        self.use_root(release)
+        self.process.reset_mock()
+        return release
+
+    def test_init_config_allows_declared_operator_source_before_delivery(self):
+        self.operator_release()
+        deploy.init_config("worker")
+        config = common.HOME / "worker/config.yaml"
+        self.assertEqual(self.mode(config), 0o600)
+        self.assertEqual(
+            yaml.safe_load(config.read_text()),
+            self.operator_product()["worker"]["defaults"],
+        )
+        self.assertFalse((config.parent / "credentials").exists())
+        self.process.assert_not_called()
+
+    def test_validate_missing_operator_source_reports_file_without_writes(self):
+        self.operator_release()
+        # Model the persistent config independently of init-config so this
+        # regression also reaches validate on the pre-fix implementation.
+        config = common.HOME / "worker/config.yaml"
+        config.parent.mkdir(parents=True)
+        config.write_text(yaml.safe_dump(self.operator_product()["worker"]["defaults"]))
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        with self.assertRaisesRegex(
+            common.DeployError,
+            r"Missing .*credentials/api/token \(SECRET_FILES.worker-token\)",
+        ) as error:
+            validation.validate()
+        self.assertNotIn("missing declared source", str(error.exception))
+        self.assertNotIn("OperatorToken", str(error.exception))
+        self.assertEqual(
+            before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        )
+        self.process.assert_not_called()
+
+    def test_install_uses_delivered_operator_source_and_retains_bytes(self):
+        release = self.operator_release()
+
+        def provide(directory):
+            source = directory / "credentials/api/token"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"OperatorToken\n\n")
+            source.chmod(0o600)
+
+        self.install(release, configure=provide)
+        output = catalog.component_paths("worker")[2]
+        docs = list(yaml.safe_load_all(output.read_text()))
+        secret = next(d for d in docs if d["metadata"]["name"] == "worker-settings")
+        self.assertEqual(
+            base64.b64decode(secret["data"]["URL"]), b"Token=OperatorToken"
+        )
+        self.assertEqual(self.mode(output), 0o600)
+        self.assertEqual(
+            (common.HOME / "worker/credentials/api/token").read_bytes(),
+            b"OperatorToken\n\n",
+        )
+        self.assertNotIn("OperatorToken", self.stdout.getvalue())
+
+    def test_init_config_refuses_unknown_operator_group_before_writing(self):
+        product = self.operator_product()
+        product["worker"]["defaults"]["SECRET_FILES"] = {}
+        self.operator_release(product)
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "missing declared source SECRET_FILES.worker-token/token",
+        ) as error:
+            deploy.init_config("worker")
+        self.assertNotIn("OperatorToken", str(error.exception))
+        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.process.assert_not_called()
+
+    def test_init_config_refuses_known_directory_without_referenced_key(self):
+        self.operator_release()
+        directory = common.HOME / "worker/credentials/api/token"
+        directory.mkdir(parents=True)
+        (directory / "other").write_text("OperatorToken")
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "missing declared source SECRET_FILES.worker-token/token",
+        ) as error:
+            deploy.init_config("worker")
+        self.assertNotIn("OperatorToken", str(error.exception))
+        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.process.assert_not_called()
+
     def test_install_upgrade_failure_retry_and_retention(self):
         product = copy.deepcopy(WORKER)
         worker = product["worker"]

@@ -230,8 +230,11 @@ Secret templates and ConfigMap `data` values accept placeholders inside strings.
 In Secret templates, `@@NAME@@` reads this
 component's effective string/integer config (including shared settings).
 `@@secret:<id>/<file>@@` reads a file key delivered by this component's
-`SECRET_FILES`, including a declared generated file. References to other templates,
-recursive expansion, expressions and commands are unsupported. Other manifest
+`SECRET_FILES`, including a declared generated file. A declared source without
+`generate` may be supplied by the operator after `init-config`; it must exist
+before install. `validate` and `install` report a missing source file without
+reading or printing its contents during declaration validation. References to
+other templates, recursive expansion, expressions and commands are unsupported. Other manifest
 fields still replace whole values only.
 
 The renderer removes trailing LF bytes from a secret input, matching PostgreSQL's

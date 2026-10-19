@@ -3,6 +3,10 @@
 `test_secret_templates.py` tests schema, config/file-key references, rejected
 characters and redaction, LF handling, deterministic private rendering, key/size
 checks, missing generated sources, install/config/password changes and retry.
+Operator-supplied sources may be absent at init-config: tests check private config
+creation without host commands, write-free validate diagnostics, delivery before
+install with LF removal/byte retention, unknown groups and known missing keys,
+and missing-file rejection before template materialization.
 ConfigMap tests cover multiple placeholders, multi-line text, whole-value type
 compatibility, preserved dollar/backslash syntax, forbidden Secret references,
 invalid/non-recursive markers, non-scalar inputs and unchanged scopes elsewhere.

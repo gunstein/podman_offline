@@ -386,7 +386,9 @@ selects (`secret.items[].key`, `secretKeyRef.key`) must be one of them, or
 the keys that exist. Only names are read, never contents.
 `SECRET_TEMPLATES` maps Secret IDs to key/text recipes and composes complete
 private values from `@@NAME@@` config inputs and
-`@@secret:<secret-files-id>/<file-key>@@` file inputs. Results are recomputed
+`@@secret:<secret-files-id>/<file-key>@@` file inputs. Operators may supply a
+declared `SECRET_FILES` source after `init-config`; it must exist before install,
+and `validate`/`install` report a missing file. Results are recomputed
 when the component renders, with no separate persistent derived file, and are
 encoded in the same 0600 YAML. Use `secretKeyRef` for unchanged apps reading a
 complete environment value or a Secret mount for file-aware apps. Environment

@@ -125,8 +125,11 @@ def validate(config, source_keys):
                     value = config_value(config, field, where)
                     check_text(value, where, field)
                     return value
-                if group not in config.get(common.SECRET_FILES, {}) or field not in (
-                    source_keys.get(group) or set()
+                available = source_keys.get(group)
+                # As in render.secret_keys/check_secret_keys, None means unknown
+                # keys until the operator supplies the declared file source.
+                if group not in config.get(common.SECRET_FILES, {}) or (
+                    available is not None and field not in available
                 ):
                     raise common.DeployError(
                         f"{where}: missing declared source SECRET_FILES.{group}/{field}"

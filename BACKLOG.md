@@ -3688,6 +3688,14 @@ use `templates.substitute()` with separate source policies. Platform 0.4.12 adds
 `PUBLIC_ENDPOINT`; every lab health check verifies it inside its actual consumer,
 including the renamed gateway. The lab matrix remains unexecuted here.
 
+Review finding 1 fixed (2026-10-19): declared operator-supplied Secret sources
+may be absent at init-config; unknown groups/known missing keys still fail early.
+Three new regressions failed before the fix and pass after it. The 395-test
+product run had 392 passes and 3 existing GnuPG setup errors (`/tmp` absent).
+The acceptance harness passed 193/193 on rerun; its first run had one renamed
+credential-fixture failure. Ruff/Pyright/static Python 3.6/shell/diff gates checked.
+Real Podman/systemd, the lab probe and six-scenario CLEAN PASS remain outstanding.
+
 ### Background and decision
 
 The organisation's real .NET apps read one complete `ConnectionStrings__Default`
