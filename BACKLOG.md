@@ -11,42 +11,45 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (agreed 2026-10-19)
 
-Items 33 and 34 from the best-practice review at `689156b` are done. Item 41 was
-put first on 2026-10-19 at the operator's request; item 43 was placed second the
-same day, also at the operator's request. The order
-for an offline production deployment of an organisation's own apps:
+Items 33 and 34 from the best-practice review at `689156b` are done. Item 44
+is now first at the operator's request (2026-10-19): the organisation's Identity
+image needs a PFX file to start in dev. Item 41 remains pending lab verification;
+item 43 follows it, and item 42 remains before item 3 as previously agreed.
+The order for an offline production deployment of an organisation's own apps:
 
-1. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+1. [Item 44](#44-generate-optional-pfx-signing-credentials-for-dev-applications):
+   opt-in PFX generation from retained signing credentials, including password
+   delivery and the container mount; unblocks the organisation's Identity dev run.
+2. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
-   placeholders at install time. First:
-   the organisation's own apps need it now.
-2. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+   placeholders at install time (implemented; lab verification pending).
+3. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once.
-3. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+4. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (implemented; lab run pending).
-4. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+5. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-5. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+6. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
-6. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+7. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-7. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+8. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-8. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-9. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+9. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+10. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-10. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+11. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-11. [Item 36](#36-harden-the-demo-application-containers): container hardening
+12. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-12. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+13. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-13. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+14. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-14. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+15. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -63,7 +66,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 41 (top priority), 43, 38 (lab run pending), 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 44 (top priority), 41 (lab run pending), 43, 38 (lab run pending), 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4090,3 +4093,97 @@ acceptance-harness and actual runtime evidence separately.
 Done when an organisation using only external images can run a meaningful,
 documented platform suite without apps/ or demo component files, while the full
 repository still verifies all demo-specific behaviour.
+
+## 44. Generate optional PFX signing credentials for dev applications
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; high priority at the operator's request on 2026-10-19. The
+operator's external Duende image in components/my-identity repeatedly exits
+because /run/secrets/signing-cert.pfx is missing. No change is implemented here.
+
+### Analysis and recommended scope
+
+Confirmed in current code: dev/generate-certificates.sh issues PEM .crt/.key
+pairs, preserves existing complete pairs, refuses partial pairs, and sets umask
+077. Its component mode accepts fixed demo names; Identity's branch also creates
+demo user passwords. It does not export PKCS#12/PFX. The shipped Identity reads
+PEM, so its successful operation does not verify an external PFX-consuming image.
+SECRET_FILES can already deliver a PFX as ordinary binary file data; no new
+Secret type, renderer, template syntax or deploy lifecycle is needed.
+
+Recommended: add a small, explicit opt-in PFX export to the dev provisioning
+helper, reusing retained PEM material. Do not switch the demo to PFX or require
+PFX for all Identity servers/apps. This belongs to development credential
+provisioning; production continues to accept externally supplied certificates.
+Do not add automatic certificate issuance to prepare/install or validation.
+
+Not yet confirmed: the external application's PFX password setting, its required
+password policy, UID/file access and exact mount configuration. The reported
+file path establishes only that the file is missing; it does not establish that
+the resulting certificate or password will be accepted. Resolve these inputs
+before implementing the application-specific example. Do not infer them from
+the demo's Program.cs or add changes to the external C# image as a prerequisite.
+
+### Task
+
+1. Add an opt-in export step after successful signing PEM issuance/reuse. Use
+   OpenSSL's PKCS#12 export and verify compatibility with supported developer
+   OpenSSL versions and the consuming .NET runtime. Keep existing invocations,
+   PEM paths and certificate identities unchanged when PFX is not requested.
+2. Accept an explicit private password-file input; do not put the password in a
+   command-line argument, source file or logs. Prefer this bounded file interface
+   over an additional interactive/configuration system. Document how the same
+   password is supplied through existing Secret delivery to the application's
+   actual configuration setting. No silent password generation/change or fallback
+   to an empty password; make any supported empty-password mode an explicit,
+   separately justified development choice.
+3. Support the target component/output path explicitly so my-identity can receive
+   signing-cert.pfx directly without generating in identity/ and copying files.
+   Keep issuance purpose separate from the chosen component name; do not add a
+   hardcoded my-identity branch or rename the demo globally. Choose the smallest
+   backward-compatible CLI extension, with validated paths, not a new general
+   certificate configuration framework. PFX export must not implicitly create
+   demo users for an external application.
+4. Preserve existing credentials byte-for-byte on repeated runs. Produce new PFX
+   files with mode 0600 under private directories (0700), and prevent publishing
+   partially written exports or overwriting an existing output. Verify an
+   existing PFX can be opened with the supplied password and corresponds to the
+   source certificate/key before reporting success; refuse empty, corrupt,
+   mismatched or symlinked outputs safely. Never regenerate signing keys or
+   replace an existing PFX/password automatically to repair an error. A missing
+   PFX may be regenerated from the retained PEM pair and password; concurrent
+   invocations/failure cleanup must preserve existing files.
+5. Document a complete example: generation, SECRET_FILES source, explicit
+   secret.items key/path, password delivery and a mount that exposes
+   /run/secrets/signing-cert.pfx. Check existing /run/secrets mounts so the new
+   mount does not hide other credentials. Avoid delivering extra PEM private
+   keys or the CA private key when only PFX is needed. Document that PFX passwords
+   do not replace host file protection or remove at-rest credential copies.
+6. Keep the original dev CA/certificate workflow, offline operation, and host
+   Python compatibility intact. No changes to generic deployment modules,
+   Duende configuration models, rotation, automatic trust installation or
+   production PKI integration belong in this task.
+
+### Tests and completion
+
+Extend tests/test_certificates.py using the existing isolated fixtures and real
+OpenSSL where available: opt-in export, default PEM behavior unchanged, target
+component/output name independent of identity, PFX certificate/private-key
+readability, password-file handling, repeat-run byte retention, permissions,
+missing/partial inputs, incorrect password, corrupt/mismatched existing output,
+symlink refusal, interrupted export and redacted diagnostics. Add focused
+Secret-delivery coverage for binary PFX and the declared file mapping if existing
+coverage does not already establish it; do not add application names to generic
+platform assertions. Update the relevant dev/PKI instructions and harness tests
+only where their invocations change. Coordinate test placement with item 43.
+
+Run the applicable product and harness gates and inspect the end-to-end flow.
+Provide a runnable dev verification for the external app (or a clearly scoped
+PFX-loading container fixture) checking the exact mount and password consumption;
+record actual runtime results separately from certificate/unit tests. The user
+must verify their external Identity image, which is not available in this repo.
+Done when one documented provisioning invocation places a valid, retained PFX
+at the configured component path and the unchanged application can consume it
+through existing Secrets, without manual copying or exposed passwords.
