@@ -1,3 +1,14 @@
+# Signed bundles (backlog 38)
+
+Every DEV build after the source clone signs its bundles with a per-run lab key
+(`$base/gnupg`, ed25519, no passphrase); the 0.2.0 legacy build is signed
+afterwards. The runner copies each archive's `.asc` and the lab public key
+`bundle-signing.gpg` to PROD, and `prepare_release` runs `gpgv` against that
+keyring before the checksum and unpacking. Readiness now requires `gpg` and
+`gpgv` on both VMs (package gnupg2).
+
+---
+
 # Product name (backlog 27)
 
 `product:` in `bundles.yaml` now names the service user, units, network and

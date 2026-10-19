@@ -1,0 +1,108 @@
+"""Signed bundles: a detached OpenPGP signature the target checks with gpgv."""
+
+import contextlib
+import io
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import bundle
+
+
+@unittest.skipUnless(shutil.which("gpg") and shutil.which("gpgv"), "needs GnuPG")
+class SigningTests(unittest.TestCase):
+    def setUp(self):
+        # gpg-agent's socket path must stay short, so not under a deep TMPDIR.
+        directory = tempfile.TemporaryDirectory(dir="/tmp")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.home = self.root / "gnupg"
+        self.home.mkdir(mode=0o700)
+        environment = mock.patch.dict(os.environ, {"GNUPGHOME": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.addCleanup(
+            subprocess.run,
+            ["gpgconf", "--kill", "gpg-agent"],
+            check=False,
+            env=dict(os.environ, GNUPGHOME=str(self.home)),
+        )
+        self.gpg(
+            "--passphrase",
+            "",
+            "--quick-gen-key",
+            "Bundle test <bundle@invalid>",
+            "ed25519",
+            "sign",
+            "never",
+        )
+        listing = self.gpg("--list-secret-keys", "--with-colons").stdout
+        self.key = next(
+            line.split(":")[9]
+            for line in listing.splitlines()
+            if line.startswith("fpr")
+        )
+        self.keyring = self.root / "organisation.gpg"
+        self.keyring.write_bytes(self.gpg("--export", self.key, text=False).stdout)
+        self.archive = self.root / "myproduct-app1-1.0.0-offline.tar.gz"
+        self.archive.write_bytes(b"archive bytes")
+
+    def gpg(self, *arguments, text=True):
+        return subprocess.run(
+            ["gpg", "--batch", "--pinentry-mode", "loopback", *arguments],
+            check=True,
+            capture_output=True,
+            text=text,
+        )
+
+    def sign(self, key):
+        output = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {bundle.SIGNING_KEY: key}),
+            contextlib.redirect_stdout(output),
+        ):
+            signature = bundle.sign(self.archive)
+        return signature, output.getvalue()
+
+    def verify(self):
+        """The documented target check: gpgv against the organisation's key only."""
+        return subprocess.run(
+            [
+                "gpgv",
+                "--keyring",
+                str(self.keyring),
+                str(self.archive) + ".asc",
+                str(self.archive),
+            ],
+            capture_output=True,
+            check=False,
+        ).returncode
+
+    def test_signed_archive_verifies_and_a_changed_one_does_not(self):
+        signature, _ = self.sign(self.key)
+        self.assertEqual(signature, self.root / (self.archive.name + ".asc"))
+        self.assertEqual(self.verify(), 0)
+        self.archive.write_bytes(b"replaced archive bytes")
+        self.assertNotEqual(self.verify(), 0)
+
+    def test_unsigned_build_says_so_and_drops_an_old_signature(self):
+        self.sign(self.key)
+        signature, output = self.sign("")
+        self.assertIsNone(signature)
+        self.assertIn(
+            f"{self.archive.name} is unsigned; set BUNDLE_SIGNING_KEY", output
+        )
+        self.assertFalse((self.root / (self.archive.name + ".asc")).exists())
+
+    def test_unknown_key_fails_the_build(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.sign("0000000000000000000000000000000000000000")
+        self.assertFalse((self.root / (self.archive.name + ".asc")).exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

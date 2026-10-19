@@ -228,7 +228,7 @@ sequenceDiagram
         BR->>FS: write bundle.yaml (compiled descriptor) and VERSION
         BR->>H: podman pull --policy=always (registry images)
         BR->>H: podman save -m images.tar
-        BR->>FS: checksums.sha256, tar.gz + .sha256 in dist/
+        BR->>FS: checksums.sha256, tar.gz + .sha256 in dist/<br/>and .asc when BUNDLE_SIGNING_KEY is set (gpg)
     end
     B->>FS: dist/current-bundles.txt
 ```

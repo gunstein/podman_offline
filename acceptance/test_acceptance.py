@@ -699,6 +699,10 @@ wait_trust /new/deployment/ /old/deployment/
         remote = Path(__file__).with_name("remote.sh").read_text()
         code = shell_code(remote, function="prepare_release") + self.trust_helper()
         stubs = r"""
+gpgv() {
+    [[ $* == "--keyring $base/bundle-signing.gpg myproduct-app1-0.4.3-offline.tar.gz.asc myproduct-app1-0.4.3-offline.tar.gz" ]] || return 9
+    echo signature-check >> "$base/calls"
+}
 sha256sum() { echo archive-check >> "$base/calls"; }
 as_product() {
     mkdir -p "$product/deployment"
@@ -786,7 +790,13 @@ prepare_release
                 calls = (base / "calls").read_text().splitlines()
                 if failure == "checksum":
                     self.assertEqual(
-                        calls, ["archive-check", "extract", "release-check"]
+                        calls,
+                        [
+                            "signature-check",
+                            "archive-check",
+                            "extract",
+                            "release-check",
+                        ],
                     )
                 elif failure in ("add", "add-one", "add-nine"):
                     self.assertEqual(
@@ -808,7 +818,14 @@ prepare_release
                     self.assertNotIn("ERROR", retry.stdout + retry.stderr)
                     self.assertEqual(
                         (base / "calls").read_text().splitlines(),
-                        ["archive-check", "release-check", "add", "update", "wait"],
+                        [
+                            "signature-check",
+                            "archive-check",
+                            "release-check",
+                            "add",
+                            "update",
+                            "wait",
+                        ],
                     )
 
     def trust_procedure(self, source, install_status=0, health_status=0):
@@ -850,6 +867,7 @@ sudo() {
 timeout() { shift; "$@"; }
 # Simulate a passing checksum without reading a real archive.
 sha256sum() { :; }
+gpgv() { :; }
 # Simulate the health check after install.
 healthy() { echo health >> "$calls"; return "$health_status"; }
 # ./deploy validate is checked separately; it changes no trust state.

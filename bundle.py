@@ -5,6 +5,7 @@ dist/myproduct-<version>-offline.tar.gz (common.STANDALONE_PRODUCT).
 """
 
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,9 @@ from deployment import render as rendering
 ROOT = Path(__file__).resolve().parent
 STAGE = ROOT / "build" / "bundle"
 DIST = ROOT / "dist"
+# OpenPGP key (ID or fingerprint) that signs each archive (<archive>.asc). The
+# target verifies it with gpgv before unpacking; see README, "Signed bundles".
+SIGNING_KEY = "BUNDLE_SIGNING_KEY"
 
 
 class BundleError(Exception):
@@ -311,9 +315,40 @@ def build_release(version, descriptor=None):
         f"{sha256(archive)}  {archive.name}\n",
         encoding="utf-8",
     )
+    sign(archive)
 
     print(f"[OK] {archive}")
     return archive
+
+
+def sign(archive):
+    """Write a detached OpenPGP signature beside the archive, or say it is unsigned.
+
+    The checksum only detects corruption; whoever can replace the archive can
+    replace it too. The signature, checked with the organisation's public key on
+    the target, shows who built it. An old signature is removed first, so a
+    rebuilt archive is never left beside a signature of an earlier one.
+    """
+    signature = archive.with_name(archive.name + ".asc")
+    if signature.exists():
+        signature.unlink()
+    key = os.environ.get(SIGNING_KEY, "").strip()
+    if not key:
+        print(f"[WARN] {archive.name} is unsigned; set {SIGNING_KEY} to sign bundles")
+        return None
+    run(
+        "gpg",
+        "--batch",
+        "--yes",
+        "--local-user",
+        key,
+        "--armor",
+        "--output",
+        signature,
+        "--detach-sign",
+        archive,
+    )
+    return signature
 
 
 def build(selected=()):

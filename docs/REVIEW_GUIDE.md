@@ -53,7 +53,7 @@ this list; update entries with implementation/test evidence when resolved.
 | Demo apps connect to PostgreSQL as the image's superuser | Backlog 35 |
 | Demo containers run as container root without `securityContext` or resource limits | Backlog 36 |
 | Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
-| Bundles carry checksums but no signature | Backlog 38 |
+| ~~Bundles carry checksums but no signature~~ | Resolved by backlog 38: optional `.asc` (gpg), verified with `gpgv` on the target before unpacking |
 
 External image support does not by itself demonstrate arbitrary component support.
 The baseline review ran 66 existing database/config/bundle/Identity tests

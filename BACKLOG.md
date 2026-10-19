@@ -3550,7 +3550,16 @@ is required.
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 
-Status: planned. Found by the best-practice review at `689156b`.
+Status: done on `main` (2026-10-19); lab run pending. With
+`BUNDLE_SIGNING_KEY` set, `bundle.sign` writes `<archive>.asc` (gpg detached,
+armored) after the checksum; without it the build warns and writes none, and a
+stale `.asc` is always removed. The README documents exporting the public key
+once, delivering it separately, and `gpgv --keyring ./bundle-signing.gpg`
+before the checksum and unpacking (never a script from the unverified
+archive). The harness signs every DEV build with a per-run lab key and verifies
+with `gpgv` on PROD in `prepare_release`; readiness requires gpg and gpgv.
+Tests: tests/test_signing.py (real gpg/gpgv: valid, tampered, unsigned, unknown
+key) and the harness prepare-release sequence.
 
 `bundle.py` writes `.sha256` files and `checksums.sha256` inside each release.
 They detect corruption, but anyone who can replace the archive can replace its

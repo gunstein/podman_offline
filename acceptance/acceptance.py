@@ -377,25 +377,15 @@ class Run:
                 self.host("PROD") + ":" + base + "/generate-certificates.sh",
             ]
         )
-        for suffix in ("", ".sha256"):
-            local = self.folder / (archive + suffix)
-            self.command(
-                SCP
-                + [
-                    self.host("DEV")
-                    + ":"
-                    + base
-                    + "/"
-                    + tree
-                    + "/dist/"
-                    + archive
-                    + suffix,
-                    local,
-                ]
-            )
-            self.command(
-                SCP + [local, self.host("PROD") + ":" + base + "/" + archive + suffix]
-            )
+        # The archive, its checksum and its signature, then the lab build's
+        # public key: PROD trusts only that key (backlog 38).
+        for source, name in [
+            (base + "/" + tree + "/dist/" + archive + suffix, archive + suffix)
+            for suffix in ("", ".sha256", ".asc")
+        ] + [(base + "/bundle-signing.gpg", "bundle-signing.gpg")]:
+            local = self.folder / name
+            self.command(SCP + [self.host("DEV") + ":" + source, local])
+            self.command(SCP + [local, self.host("PROD") + ":" + base + "/" + name])
         with (self.folder / archive).open("rb") as stream:
             digest = hashlib.sha256()
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):

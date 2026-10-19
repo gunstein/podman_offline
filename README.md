@@ -299,6 +299,29 @@ public product payloads. Declarations in common/component defaults and local/mat
 secrets from being copied into bundles, including through symlink aliases. Keep
 private files out of shipped directories and retain their declarations.
 
+### Signed bundles
+
+`.sha256` files detect a damaged archive, but whoever can replace an archive can
+replace its checksum too. With `BUNDLE_SIGNING_KEY` set to an OpenPGP key ID or
+fingerprint in the build machine's GnuPG keyring, `./build-bundle.sh` also
+writes a detached signature `<archive>.asc` for every archive (gpg must be able
+to use the key without a prompt, for example through gpg-agent). Without it the
+build prints `[WARN] ... is unsigned` and writes no `.asc`; a rebuilt archive
+never keeps an older signature.
+
+```sh
+export BUNDLE_SIGNING_KEY=<fingerprint>
+./build-bundle.sh
+gpg --export "$BUNDLE_SIGNING_KEY" > bundle-signing.gpg   # once; give it to operators
+```
+
+Deliver `bundle-signing.gpg` to the target separately from the bundles (for
+example on a different medium) and keep it there. The target checks each
+archive with `gpgv`, which trusts only that keyring, before the checksum and
+before unpacking anything; see the installation steps below. Do not verify with
+a script taken from the unverified archive. An archive without `.asc` is
+unsigned: install it only if your organisation allows unsigned builds.
+
 ## Proxy from YAML
 
 Platform uses `docker.io/library/nginx:1.28-alpine` directly, the same nginx
@@ -734,6 +757,8 @@ product_name=myproduct  # product: in bundles.yaml; also the service user
 bundle=platform
 version=0.4.11
 archive="$product_name-$bundle-$version-offline.tar.gz"
+# Signed bundles: the organisation's public key, delivered separately.
+gpgv --keyring ./bundle-signing.gpg "$archive.asc" "$archive"
 sha256sum -c "$archive.sha256"
 stage=$(mktemp -d "/tmp/$product_name-install.XXXXXXXX")
 tar xzf "$archive" -C "$stage"
@@ -845,9 +870,12 @@ bundle; never trust the whole release, private keys, crun rules or memfd rules.
 The CLI expands that directory into individual trusted files. Wait for every
 package file to appear in the database; on upgrade also wait until all files
 beneath the old package path disappear. Do not trust the shell wrapper, config,
-credentials or other release directories. Repeat checksum/trust for each release:
+credentials or other release directories. Repeat signature, checksum and trust
+for each release:
 
 ```sh
+gpgv --keyring ./bundle-signing.gpg "$archive.asc" "$archive"
+sha256sum -c "$archive.sha256"
 release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
 as_product mkdir -p "/var/lib/$product_name/releases"
 as_product tar xzf - -C "/var/lib/$product_name/releases" < "$archive"

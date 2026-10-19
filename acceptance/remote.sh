@@ -66,11 +66,27 @@ def main():
 main()
 INSTALLED
 }
+# Lab bundle signing key on DEV (backlog 38): created once per run, used by every
+# build through BUNDLE_SIGNING_KEY; its public key goes to PROD as the trusted keyring.
+lab_signing_key() {
+    export GNUPGHOME="$base/gnupg"
+    if [[ ! -d $GNUPGHOME ]]; then
+        install -d -m 700 "$GNUPGHOME"
+        gpg --batch --pinentry-mode loopback --passphrase '' \
+            --quick-gen-key "Acceptance bundle signing $run <lab@invalid>" ed25519 sign never
+    fi
+    BUNDLE_SIGNING_KEY=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+    export BUNDLE_SIGNING_KEY
+    [[ -n $BUNDLE_SIGNING_KEY ]]
+    gpg --batch --export "$BUNDLE_SIGNING_KEY" > "$base/bundle-signing.gpg"
+}
 # Verify and trust only this bundle's release, reusing an already prepared release.
 prepare_release() {
     local trust_status=0 trust_output
     cd "$base"
     archive="$product_name-$bundle-$version-offline.tar.gz"
+    # The signature first, against the build's public key only (README, "Signed bundles").
+    gpgv --keyring "$base/bundle-signing.gpg" "$archive.asc" "$archive"
     sha256sum -c "$archive.sha256"
     if ! sudo -n test -d "$product"; then
         # shellcheck disable=SC2024
@@ -582,10 +598,12 @@ wait_backend() {
     echo 'FAIL: backend did not become ready through HTTPS proxy'
     return 1
 }
+# Every DEV build after the source clone signs its bundles with the lab key.
+if [[ $role == DEV && -d $src/.git ]]; then lab_signing_key; fi
 case "$action" in
 readiness)
     profile
-    for command in bash podman python3 openssl curl tar sha256sum timeout; do command -v "$command"; done
+    for command in bash podman python3 openssl curl tar sha256sum timeout gpg gpgv; do command -v "$command"; done
     sudo -n true
     python3 -c 'import yaml'
     test -d "${XDG_RUNTIME_DIR:?}"
@@ -911,6 +929,10 @@ legacy-build)
     ./build-bundle.sh
     (cd dist && sha256sum -c ./*.sha256)
     mkdir -p "$src/dist"
+    # The 0.2.0 build predates signing; sign its archives with the lab key.
+    for archive in dist/myproduct-*-0.2.0-offline.tar.gz; do
+        gpg --batch --yes --local-user "$BUNDLE_SIGNING_KEY" --armor --detach-sign "$archive"
+    done
     cp dist/myproduct-*-0.2.0-offline.tar.gz* "$src/dist/"
     ;;
 legacy-install)
