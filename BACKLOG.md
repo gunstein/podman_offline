@@ -15,7 +15,7 @@ Item 46 from the 2026-10-19 security scan is first: prevent root host
 preparation from following service-user-controlled symlinks. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Items 48/49 follow item 46 for proxy ingress trust and logging; item 50 is
+Item 54 follows item 46 for release trust; items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
 verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
@@ -23,67 +23,70 @@ The order for an offline production deployment of an organisation's own apps:
 1. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
    protect the root/service-user boundary on repeated host preparation; high
    priority, conditional on an attacker controlling the service account.
-2. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+2. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
+   keep root checksum, fapolicyd trust and config edits off release/data paths
+   the service user can replace; after item 46.
+3. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-3. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+4. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-4. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+5. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-5. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+6. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-6. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+7. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-7. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+8. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-8. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+9. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-9. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+10. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-10. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+11. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-11. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+12. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-12. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+13. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-13. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-14. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+14. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+15. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-15. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+16. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-16. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+17. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-17. [Item 36](#36-harden-the-demo-application-containers): container hardening
+18. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-18. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+19. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-19. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+20. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-20. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+21. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-21. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+22. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-22. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+23. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-23. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+24. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-24. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+25. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -101,7 +104,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 5, 7, 6, and
+Open: 46 (top priority), 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4630,6 +4633,45 @@ Only disposable synthetic paths were used; no production paths were modified.
    fapolicyd in a disposable lab before calling the boundary verified. Keep
    sandbox probes and real-host results separate; update the operator recipe.
 
+### Review additions (2026-10-19)
+
+5. Preferred mechanism: create the service-home directories and the CNI lock as
+   the service user (for example `runuser -u "$user" -- install -d -m 0700 ...`
+   or `setpriv` with the user's UID/GID and cleared groups), so a symlink can at
+   most redirect writes to places the service user may already write. Keep root
+   only for operations that need it: `useradd`, subordinate IDs, `semanage`,
+   `restorecon`, linger and firewall. A root `openat`/`O_NOFOLLOW` walk from a
+   root-held directory descriptor is the alternative if a step must stay root;
+   choose one approach and document why it closes the check/use race.
+6. Verify `restorecon` semantics on Oracle Linux 9 before relying on it under a
+   service-writable tree: whether `-R` follows a symlinked final or intermediate
+   component, and what the `-e` exclusion does when `storage` is replaced by a
+   link. Relabeling a host path outside the home through a planted link is in
+   scope for this item even if ownership is unchanged.
+7. State the boundary precisely: `/var/lib/<user>` itself is created by root in
+   root-owned `/var/lib` and cannot be replaced by the service user; everything
+   beneath it can. The existing home-owner check is kept but is not a symlink
+   check for descendants.
+8. Malicious lab step on PROD after a normal installation: as the service user
+   replace `.config/cni` with a symlink to a disposable root-owned directory, and
+   separately plant a dangling symlink at `.config/cni/net.d/cni.lock`; rerun
+   `prepare-host.sh` as root. Require refusal (or a service-user-confined effect)
+   with the target's owner, mode, SELinux label and contents unchanged. Then
+   restore the home and confirm a normal repeat preparation keeps storage,
+   container/volume IDs and labels.
+9. Operator guidance in README: when a repeat preparation is expected (port
+   change, recovery after a failed preparation) and that it must not be rerun
+   before inspecting the home if the service account is suspected compromised.
+
+### Done when
+
+No root operation in `prepare-host.sh` follows a symlink or can be redirected
+through a service-replaceable path; regressions for static links and the
+replacement race pass; the malicious lab step and a normal repeat preparation are
+green on real hosts with SELinux Enforcing and fapolicyd. Out of scope: root
+operations on unpacked release trees (item 54), credential copies at rest
+(item 37) and retained secret permissions (item 47).
+
 ## 47. Refuse unsafe permissions on retained generated secrets
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply credential
@@ -5025,3 +5067,58 @@ those lab runs pass, record the scenario as implemented but unverified. This
 item covers a compatible application-image upgrade, not database schema
 migration, zero-downtime deployment or automatic rollback. Complete the
 understandability review of build, transfer, install and observable evidence.
+
+## 54. Keep root release verification and trust off service-writable paths
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply the
+signed-bundle, isolation and fapolicyd contracts to the operator's privileged
+release steps; coordinate with items 38 and 46.
+
+Status: planned; high priority after item 46. Found in the item 46 review on
+2026-10-19. No fix or real-host exploit verification yet.
+
+### Problem
+
+The README operator recipe unpacks a release as the service user into
+`/var/lib/<product>/releases`, then runs privileged steps on that
+service-writable tree: `sudo ... sha256sum -c checksums.sha256` and
+`sudo fapolicyd-cli --file add "$release/deployment/"`. A compromised service
+account can replace files between the checksum and the trust step (check/use
+race), so root may trust content that was never verified. It is unverified
+whether `fapolicyd-cli --file add` follows symlinks inside the directory, which
+could add host files outside the release to the trust database. With the
+fapolicyd default `integrity = none`, trust is by path, so a trusted file can
+also be modified after the trust step and still execute. `sudoedit` of
+`config.yaml` in the service-owned data directory runs its write-back as root
+and needs the same path review.
+
+### Task
+
+1. Trace every root operation on release and data paths in the README recipe,
+   `acceptance/remote.sh` and any helper, and classify which paths the service
+   user can write or replace.
+2. Choose a bounded design and document its assumptions, for example: unpack and
+   verify as root into a root-owned, service-readable release directory (so the
+   service user cannot alter trusted files), or verify and trust from a
+   root-held copy. Keep the service user able to run `deploy` from it, and keep
+   the signature/checksum verification before any trust.
+3. Verify on Oracle Linux 9 how `fapolicyd-cli --file add` treats symlinks and
+   special files, and refuse links/special files in `deployment/` before trust.
+4. Decide and document the recommended fapolicyd `integrity` setting (`size` or
+   `sha256`) versus the host baseline, including its effect on upgrades and the
+   existing `wait_trust` flow. Warn, as for `subj_cache_size`, if the host
+   setting is incompatible with the chosen design.
+5. Edit service-owned config as the service user (for example
+   `sudoedit -u "$product_name"`) or verify that root `sudoedit` cannot be
+   redirected; update the recipe consistently.
+6. Add regressions where the harness can prove them (release ownership/modes,
+   refusal of links in `deployment/`) and a malicious lab step: as the service
+   user, swap a package file after verification or plant a symlink in
+   `deployment/`, and require that it is neither trusted nor executable.
+
+### Done when
+
+No root verification, trust or edit step operates on a path the service user can
+replace; the recipe, acceptance helper and README agree; regressions and the
+malicious lab step pass on real hosts with SELinux Enforcing and fapolicyd, and a
+normal install and upgrade remain green in the six-scenario matrix.
