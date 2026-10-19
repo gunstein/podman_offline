@@ -79,7 +79,10 @@ The order for an offline production deployment of an organisation's own apps:
 22. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-23. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+23. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+   focused acceptance coverage of an app1-only release with a rebuilt application
+   image; schedule with acceptance improvements, independently of observability.
+24. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -97,7 +100,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 48, 49, 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 5, 7, 6, and
+Open: 46 (top priority), 48, 49, 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4964,3 +4967,53 @@ Podman/systemd/SELinux/fapolicyd behavior, not only dashboard JSON. Run relevant
 harness/static checks, complete the understandability review and report unit,
 harness and real-runtime evidence separately. Document integration steps,
 resource cost and the remaining external-app instrumentation requirements.
+
+
+## 53. Upgrade app1 with an actually changed application image
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve isolated
+offline bundles, independent images, credential retention, database safety and
+scoped lifecycle.
+
+Status: planned; requested on 2026-10-19. A focused extension of the existing
+acceptance flow. The current app1 upgrade changes `components/app1/VERSION` and
+rebuilds its bundle using unchanged application images. Help and Identity have
+separate upgrade scenarios with changed content/code and rebuilt images; they
+provide an existing pattern to reuse, but do not prove this app1 path.
+
+### Task
+
+1. Extend the existing app1 upgrade in both full acceptance scenarios (app1-first
+   and app2-first), rather than adding another complete VM installation. In an
+   isolated build checkout, make a small deterministic change to an observable
+   app1 backend response, build a new image with a distinct release tag, update
+   the relevant manifest image references and bump `components/app1/VERSION`.
+   Do not overwrite published image tags or modify the operator's checkout.
+2. Build and transfer only the app1 offline bundle and its required verification
+   files to the already installed PROD host. Include the new image in the
+   archive; do not preload it on PROD or transfer sibling bundles as a shortcut.
+   Keep network image pulls disabled. Reuse the established help/Identity build
+   helpers where that keeps the flow simple and avoids duplicate shell logic.
+3. After installation, assert both the new backend response through the existing
+   public route and the running backend's expected image ID. Bundle version and
+   health alone are insufficient evidence that the new application is running.
+4. Retain existing E2E and persistence assertions: previously created application
+   data remains readable, config/credentials/certificates remain unchanged and
+   app1 stays functional. Keep route/client declarations unchanged in this
+   scenario, so platform, Identity, app2 and help must retain their running
+   processes, versions, state, trust entries and shared network identity using
+   the existing sibling checks. App1 itself is expected to restart.
+5. Add focused harness regression coverage for the changed-image build/transfer
+   wiring and assertions. Demonstrate that the checks reject an old backend
+   response or wrong running image; avoid assertions that only repeat a new tag
+   string. Update acceptance documentation and keep added build time modest.
+
+### Verification and delivery
+
+Run relevant acceptance-harness and static checks, then the real app1-first and
+app2-first scenarios on supported rootless Podman/systemd with SELinux and
+fapolicyd. Report harness results separately from real-runtime results; until
+those lab runs pass, record the scenario as implemented but unverified. This
+item covers a compatible application-image upgrade, not database schema
+migration, zero-downtime deployment or automatic rollback. Complete the
+understandability review of build, transfer, install and observable evidence.
