@@ -207,24 +207,35 @@ def validate_component_config(config, component, path, check_placeholders=True):
     generated_secret_paths(config, path.parent)
     check_templates(config, path)
     if configmaps:
-        effective = dict(config)
-        if "PUBLIC_ORIGIN" in config:
-            effective["PUBLIC_HOSTNAME"] = public_origin(
-                config["PUBLIC_ORIGIN"], path
-            ).hostname
+        effective = with_derived(config, path)
         for document in configmaps:
             check_kinds([document], path)
             configmap_data(document, replace(document, effective), effective)
 
 
 def check_templates(config, path):
-    """Validate recipes from declarations and names only, including derived config."""
+    """Validate recipes without reading credentials.
+
+    Config validation checks before init-config writes; effective_documents also
+    checks because standalone prepare/install/validate bypass effective_config.
+    Component paths deliberately repeat this declaration-only check rather than
+    carrying a validation flag/cache between independently usable entry points.
+    """
+    templates.validate(with_derived(config, path), secret_keys(config, path, []))
+
+
+def with_derived(config, path):
+    """Copy config with PUBLIC_HOSTNAME derived from PUBLIC_ORIGIN.
+
+    PUBLIC_HOSTNAME cannot be stored in config: a second authoritative value
+    could disagree with PUBLIC_ORIGIN. validate_component_config rejects it.
+    """
     effective = dict(config)
     if "PUBLIC_ORIGIN" in config:
         effective["PUBLIC_HOSTNAME"] = public_origin(
             config["PUBLIC_ORIGIN"], path
         ).hostname
-    templates.validate(effective, secret_keys(config, path, []))
+    return effective
 
 
 def public_origin(value, path):
@@ -831,12 +842,7 @@ def check_component_config_names(config, component, path):
 def effective_config(config, path, component):
     """Validate a component's config and add the derived PUBLIC_HOSTNAME; no writes."""
     validate_component_config(config, component, path)
-    config = dict(config)
-    if "PUBLIC_ORIGIN" in config:
-        config["PUBLIC_HOSTNAME"] = public_origin(
-            config["PUBLIC_ORIGIN"], path
-        ).hostname
-    return config
+    return with_derived(config, path)
 
 
 def declared_volume_names(config, path, imported):
@@ -882,6 +888,8 @@ def effective_documents(config, path, manifests, component=None, imported=()):
     substitution), pull policies, mounts, duplicates and the links between
     manifests, config and imported registration volumes (by name).
     """
+    # Standalone prepare/install/validate load_config directly, without going
+    # through effective_config; do not rely on prior component config validation.
     check_templates(config, path)
     documents, sources = [], []
     for manifest in sorted(manifests.glob("*.yaml")):

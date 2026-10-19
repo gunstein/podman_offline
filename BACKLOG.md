@@ -3696,6 +3696,17 @@ The acceptance harness passed 193/193 on rerun; its first run had one renamed
 credential-fixture failure. Ruff/Pyright/static Python 3.6/shell/diff gates checked.
 Real Podman/systemd, the lab probe and six-scenario CLEAN PASS remain outstanding.
 
+Review finding 2 checked (2026-10-19): `render.with_derived` centralizes
+PUBLIC_HOSTNAME derivation. Template checks deliberately remain before init
+writes and in effective_documents for standalone prepare/install/validate,
+with an explanation and standalone regression. Final verification: 396 product
+tests, 393 passed and 3 GnuPG setup errors (`/tmp` absent); all 26 template tests
+and all 193 acceptance-harness tests passed. Ruff check/format, Pyright (0
+errors/warnings), shell/diff checks and static deployment Python 3.6 passed;
+Python 3.6 was not executed. Understandability and Secret templates/Validation/
+Credential retention contracts were reviewed. Real Podman/systemd, the lab
+probe and six-scenario CLEAN PASS remain outstanding; item 41 is not complete.
+
 ### Background and decision
 
 The organisation's real .NET apps read one complete `ConnectionStrings__Default`

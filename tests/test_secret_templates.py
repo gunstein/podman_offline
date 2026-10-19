@@ -134,6 +134,20 @@ class SecretTemplateTests(DeployFixture):
         self.assertFalse(self.password.exists())
         self.process.assert_not_called()
 
+    def test_standalone_prepare_and_validate_check_templates_before_side_effects(self):
+        self.config["SECRET_TEMPLATES"]["app-settings"]["connection"] = "@@MISSING@@"
+        self.write_config()
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        for operation in (deploy.prepare, validation.validate):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaisesRegex(common.DeployError, "MISSING") as error:
+                    operation()
+                self.assertNotIn("PrivatePassword", str(error.exception))
+        self.assertEqual(
+            before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        )
+        self.process.assert_not_called()
+
     def test_invalid_recipes_fail_before_generation_and_do_not_echo_input(self):
         bad = [
             "@@MISSING@@",
