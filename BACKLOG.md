@@ -3365,7 +3365,9 @@ next scheduled matrix covers it.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: done on `main` (2026-10-18); lab run pending. `render.secret_keys`
+Status: done on `main` (2026-10-18); the full lab matrix on `77b27cd` (`b34-app1-first`, `b34-app2-first`,
+`b34-help-only`, `b34-identity`, `b34-platform-help`, `b34-renamed`) was CLEAN
+PASS. `render.secret_keys`
 decides each Secret's keys from file names, `generate` names and inline
 `data`/`stringData` (no contents read; a missing source stays unknown and is
 reported by the source check). `render.check_secret_keys` refuses a missing
@@ -3412,7 +3414,11 @@ that claim is corrected there.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: done on `main` (2026-10-18); lab run pending. `deployment/health.py`
+Status: done on `main` (2026-10-18); the full lab matrix on `77b27cd` (`b34-app1-first`, `b34-app2-first`,
+`b34-help-only`, `b34-identity`, `b34-platform-help`, `b34-renamed`) was CLEAN
+PASS; the app1 install log shows
+`[OK] myproduct-app1.service: 3 containers running and healthy` and the same
+for the restarted owners identity and platform. `deployment/health.py`
 waits after every `restart_service` (component, install owners and uninstall
 owners) and after the standalone restart: every app container of the unit's
 installed YAML (`<pod>-<container>`, init containers excluded) must be running
