@@ -15,55 +15,65 @@ Item 46 from the 2026-10-19 security scan is first: prevent root host
 preparation from following service-user-controlled symlinks. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 42 remains before item 3 as previously agreed; implementation and
+Items 48/49 follow item 46 for proxy ingress trust and logging; item 50 is
+lower-priority production hardening. Item 42 remains before item 3; implementation and
 verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
 1. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
    protect the root/service-user boundary on repeated host preparation; high
    priority, conditional on an attacker controlling the service account.
-2. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+2. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+   reject unexpected hosts and prevent client-supplied forwarded headers from
+   controlling Identity's request host; before wider production exposure.
+3. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+   verify and address sensitive URL parameters in access/error logs, including
+   upstream failures; preserve useful operational diagnostics.
+4. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-3. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+5. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-4. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+6. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once.
-5. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+7. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44). 45b (delivery to targets) and 45c (renewal and
    expiry, after item 39) are planned separately.
-6. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+8. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-7. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+9. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-8. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+10. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Implemented on main; independent review green, full lab matrix pending.
-9. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+11. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-10. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+12. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-11. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-12. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+13. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+14. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-13. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+15. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-14. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+16. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-15. [Item 36](#36-harden-the-demo-application-containers): container hardening
+17. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-16. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+18. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+   lower-priority production hardening: bounded request rates/connections and
+   compatible response-header policy, with explicit proxy/application ownership.
+19. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-17. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+20. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-18. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+21. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -81,7 +91,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 22, 24, 5, 7, 6, and
+Open: 46 (top priority), 48, 49, 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4642,3 +4652,157 @@ more accessible directories. Do not report 0644 alone as demonstrated disclosure
 4. Keep public certificates and ordinary non-generated VOLUME_FILES outside a
    blanket private-secret policy. This item adds no backup engine or encryption
    dependency. Run focused product tests and the relevant existing checks.
+
+
+## 48. Validate public hosts and proxy-header trust
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve declarative
+components, independent images, shared public settings, offline delivery and
+credential-retention contracts; complete the understandability review.
+
+Status: planned; medium severity, high implementation priority after item 46.
+Found in the reverse-proxy security assessment of main at `593de60` on
+2026-10-19. Static configuration/source evidence; no demonstrated authentication
+bypass or end-to-end exploit. Must be addressed before wider production exposure.
+
+### Finding
+
+The sole server in `components/platform/manifests/20-proxy-config.yaml` has
+`server_name _`, which does not reject unexpected Host headers. The shipped
+Identity and Todo backend routes pass `$http_host` upstream. Identity's route
+sets X-Forwarded-Proto and X-Forwarded-For, but does not clear/replace a supplied
+X-Forwarded-Host. Nginx normally forwards other request headers unchanged.
+
+`apps/identity/Program.cs` enables XForwardedHost and clears KnownNetworks and
+KnownProxies without an allowed-host restriction. A supplied X-Forwarded-Host
+can therefore influence the request host used by the demo middleware. IssuerUri
+is pinned to PUBLIC_ORIGIN, but that alone is not proof that every generated URL
+or redirect is safe. A private shared container network and absence of host
+ports on backend pods do not establish that nginx is their only possible caller.
+The organisation's external Identity image has not been inspected or tested.
+
+### Task and verification
+
+1. Derive the permitted public authority from the existing PUBLIC_ORIGIN model;
+   reject unexpected Host values before proxying. Merely replacing `_` with a
+   configured server_name does not reject requests handled by the default server.
+   Define handling of ports, supported IP/IPv6 origins and missing/malformed Host
+   without hardcoding demo names. Keep the loopback health probe functional with
+   an intentional Host policy; do not add an unrestricted backend bypass.
+2. Define the minimal forwarded-header contract for each hop. Clear or replace
+   client-controlled X-Forwarded-Host, X-Forwarded-Proto, X-Forwarded-For and other
+   forwarded metadata actually consumed by supported apps. Audit all shipped
+   routes and the custom-route documentation. Preserve legitimate authentication
+   headers, cookies and external-app compatibility.
+3. Implement header rules in each relevant location or a shared include used
+   there: nginx does not inherit server-level proxy_set_header directives when
+   a location declares its own. Add a regression for this inheritance trap.
+4. Align the demo Identity middleware with that contract: consume only required
+   forwarded fields, restrict accepted hosts and avoid unrestricted proxy trust
+   justified solely by private networking. Choose a rootless-compatible trust
+   mechanism; do not hardcode transient pod IPs. Document external applications'
+   responsibilities and the limits of a shared network/origin trust boundary.
+5. Add focused config tests and actual nginx/backend lab probes using synthetic
+   Host and forwarded-header values. Check legitimate OIDC discovery/login,
+   callback and generated URL authorities; unexpected Host rejection; spoofed
+   X-Forwarded-Host and client-IP handling; renamed product; and health checks.
+   Verify the real app contract without claiming an unseen external image is
+   covered. Current five proxy tests exercise rendering/startup, not this boundary.
+6. Run relevant product/harness and static checks. Keep current TLS versions,
+   read-only mounts, credential privacy and scoped component lifecycle unchanged.
+
+References:
+- [nginx request processing](https://nginx.org/en/docs/http/request_processing.html)
+- [nginx proxy header handling and inheritance](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header)
+- [ASP.NET Core forwarded headers and allowed hosts](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-8.0)
+
+## 49. Define safe proxy logging for authentication and API requests
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Coordinate with
+credential retention and item 37; this is logging protection, not backup work.
+
+Status: planned; medium severity, after item 48. Identified by the 2026-10-19
+reverse-proxy assessment at `593de60`. No actual credential leak was reproduced
+in the product's nginx container; verify the deployed image/configuration first.
+
+### Finding
+
+Shipped Identity/auth routes disable access_log, which reduces normal-path
+exposure. Other routes inherit the image's access-log configuration and have no
+explicit safe log format. Nginx's standard combined access format includes the
+request line and Referer. Its HTTP error-log context can include the request
+line and upstream URL independently of access_log. An upstream failure during a
+callback can therefore expose sensitive query parameters despite access_log off.
+This does not establish that reusable tokens/passwords have actually leaked or
+that logged authorization codes are redeemable without PKCE/client credentials.
+
+### Task and verification
+
+1. Inspect the actual supported stock nginx image's nginx -T output, access/error
+   formats and stdout/stderr/journal routing. Reproduce with synthetic markers
+   only: normal callback, upstream unavailable/timeout, malformed request and
+   API query/Referer cases. Never put real codes, tokens or passwords in evidence.
+2. Define useful access logging that excludes sensitive query/Referer fields by
+   default, retaining safe path/status/timing information where appropriate.
+   Keep the public proxy generic across arbitrary component routes.
+3. Handle error logs separately: changing log_format or access_log does not
+   sanitize error_log. Choose a practical policy supported by the pinned nginx
+   version and delivery model; do not indiscriminately disable all error logging.
+   If residual sensitive error context cannot be removed without losing required
+   diagnostics, document it and bound log access, retention and export. Do not
+   claim unconditional secret-free logs while that exposure remains.
+4. Add actual nginx regression scenarios checking synthetic marker presence or
+   absence against the chosen policy, including failure paths and inherited
+   location configuration. Confirm safe diagnostics remain available. Run the
+   relevant product/harness checks and document unexecuted runtime scenarios.
+
+References:
+- [nginx access-log formats](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format)
+- [nginx development guide: HTTP error-log request context](https://nginx.org/en/docs/dev/development_guide.html)
+
+## 50. Define configurable production proxy limits and security headers
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve independent
+external applications and keep product policy declarative. Coordinate container
+user/capability/filesystem hardening with item 36 instead of duplicating it here.
+
+Status: planned; lower-priority production hardening, alongside item 36. Found
+in the 2026-10-19 assessment at `593de60`; exposure depends on the real bind
+address and surrounding controls. The shipped default binds only 127.0.0.1.
+
+### Scope and boundaries
+
+- The shipped proxy has no configured limit_req or limit_conn policy. The demo
+  Identity login has no implemented account lockout/throttling. This is not a
+  finding about the organisation's external Identity image. Determine which
+  controls that application already provides before duplicating them.
+- The proxy has no common HSTS, Referrer-Policy or nosniff policy; the Todo
+  backend sets nosniff itself, but the static frontends do not. Existing
+  application/framework response headers still need runtime inspection.
+- Retain the good defaults: TLS 1.2/1.3, 16k request-body limit, no implicit public
+  backend ports, read-only route/config/TLS mounts and private TLS-key delivery.
+  Absence of custom timeout directives does not mean nginx has no default timeouts.
+
+### Task and verification
+
+1. Define optional production request/connection limits, especially for login
+   and token endpoints. Account for legitimate OIDC flows, clients sharing an IP,
+   correct client-IP trust from item 48, and load-test/health traffic. Keep
+   per-account brute-force defenses and lockout under the application's control;
+   rate limiting alone is not an authentication security guarantee. Avoid a
+   hardcoded Identity component/path dependency in generic deployment code.
+2. Provide a documented compatible response-header baseline: nosniff and an
+   appropriate Referrer-Policy; configurable HSTS for production HTTPS after
+   trust/deployment validation. Do not force HSTS preload or includeSubDomains
+   onto dev hosts or unrelated services. Evaluate CSP/frame protection per app;
+   a blanket policy must not silently break OIDC frames, inline scripts or
+   supported external applications. Check nginx header inheritance and error
+   responses, not just the successful root page.
+3. Add focused configuration tests and runnable lab checks for intended 429
+   behavior, legitimate login/client traffic, spoof-resistant limiting, headers
+   on representative success/error responses and unchanged health checks. Test
+   renamed components and document defaults, overrides and ownership of each
+   control. Real limits must be chosen from the product's exposure/load needs.
+4. No new WAF, online service, custom proxy image or mandatory security framework
+   is required. Run relevant product/harness/static checks and report actual
+   nginx/.NET verification separately from template assertions.
