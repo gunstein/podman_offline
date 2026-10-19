@@ -15,8 +15,9 @@ Items 33 and 34 from the best-practice review at `689156b` are done. Item 41 was
 put first on 2026-10-19 at the operator's request. The order
 for an offline production deployment of an organisation's own apps:
 
-1. [Item 41](#41-build-secret-values-from-templates-at-install-time): Secret
-   values (connection strings) built from templates at install time. First:
+1. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+   values (connection strings) and ConfigMap values built from several
+   placeholders at install time. First:
    the organisation's own apps need it now.
 2. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (implemented; lab run pending).
@@ -3654,12 +3655,13 @@ and two teams releasing different components touch the same directory.
    version, and the change affects only the source checkout.
 5. Run the full lab matrix (the upgrade scenarios change).
 
-## 41. Build Secret values from templates at install time
+## 41. Build Secret and ConfigMap values from templates at install time
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
 Status: planned; top priority, requested by the operator on 2026-10-19.
+Extended the same day with inline placeholders in ConfigMap data (section 2b).
 
 ### Background and decision
 
@@ -3736,6 +3738,35 @@ SECRET_TEMPLATES:
 - An unknown placeholder, a missing group or file, or an empty secret file gives
   a `DeployError` naming the template and key, without the value.
 
+#### 2b. Inline placeholders in ConfigMap data
+
+The same engine also fills ConfigMap `data` values, so non-secret strings can be
+built from several config values:
+
+```yaml
+data:
+  DB_HOST: "@@DB_HOST@@"                      # whole value, as today
+  API_URL: "http://@@API_HOST@@:@@API_PORT@@" # new: inline
+```
+
+- **Scope.** Inline placeholders are allowed only in ConfigMap `data` values,
+  multi-line file content included, and in `SECRET_TEMPLATES`. Everywhere else
+  in manifests (env `value:`, images, names, volumes) placeholders stay
+  whole-value only, and the existing "Unreplaced @@...@@" check applies.
+- **Allowed placeholders.** Only `@@NAME@@` is allowed in ConfigMaps.
+  `@@secret:...@@` in a ConfigMap is refused with a message that points to
+  `SECRET_TEMPLATES`, so a credential can never reach a ConfigMap.
+- **Value types.** A whole-value placeholder keeps today's behaviour (the
+  value's type, then the existing `str()` of ConfigMap data). With inline text
+  the result is always a string. Only strings and integers may be inserted; a
+  list, dict, boolean or null is refused.
+- **No escape syntax.** A literal `@@` in ConfigMap content stays refused, as
+  it is today; nobody has needed one.
+- **Demo and acceptance.** Add one inline value to a demo ConfigMap that an app
+  really reads or that the harness checks inside the running container (for
+  example `podman exec ... printenv`). Check it in all six scenarios, the
+  renamed product `shop` included.
+
 #### 3. Rendering and validation
 
 - **Static checks (no secret contents read).** Schema, IDs, placeholder syntax,
@@ -3753,6 +3784,16 @@ SECRET_TEMPLATES:
 - **Upgrades.** A changed password or config value changes the rendered YAML and
   must follow the existing upgrade/restart path; prove it with a test.
 - Nothing is printed and nothing new is written.
+- **Implementation.** Write one small substitution function using the
+  standard library, `re.sub` with a replacement callback. Share it between
+  `SECRET_TEMPLATES` and ConfigMap data, and leave `replace()`'s whole-value
+  path as it is.
+  - Do not use `string.Template`: its `$NAME` syntax collides with the nginx
+    `${...}` templates in ConfigMaps, and bending it to `@@` means overriding
+    its regex.
+  - Do not add Jinja2: it is a new offline dependency for Python 3.6 hosts and
+    has far more features than needed.
+  - The callback raises `DeployError` naming the placeholder (never a value).
 - A new module (`deployment/templates.py` or similar) is fine if `render.py`
   grows too much; remember `git add` (the renamed-product generator uses
   `git ls-files`).
@@ -3789,7 +3830,11 @@ which is how the organisation's own apps work:
   - `validate` reads no secret contents;
   - a changed password changes the rendered YAML;
   - every error message is free of the secret value (assert the value string is
-    absent).
+    absent);
+  - ConfigMap inline values: several placeholders in one value, multi-line file
+    content, a whole value keeping today's behaviour, `@@secret:...@@` refused
+    in a ConfigMap, and an inline placeholder outside ConfigMap data still
+    refused.
 - **`acceptance/database_test.py`:** pass `ConnectionStrings__Default` to the
   Identity image directly. Keep the correct password, wrong password (exit 2)
   and missing value (exit 1) cases. Remove the `DB_*` permutations that no
@@ -3825,8 +3870,8 @@ which is how the organisation's own apps work:
 #### Out of scope
 
 - Docker Compose; the organisation's compose setup is not touched.
-- Format-specific escaping (Npgsql quoting) and templates in ConfigMaps or
-  manifests.
+- Format-specific escaping (Npgsql quoting); inline placeholders outside
+  ConfigMap data and `SECRET_TEMPLATES`; an escape syntax for a literal `@@`.
 
 #### Done when
 
