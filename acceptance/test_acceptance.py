@@ -872,6 +872,7 @@ gpgv() { :; }
 healthy() { echo health >> "$calls"; return "$health_status"; }
 # ./deploy validate is checked separately; it changes no trust state.
 validate_release() { :; }
+install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"; }
 """
         prefix = (
             "set -eu\nproduct_name=myproduct\nbase="
@@ -1280,16 +1281,17 @@ validate_release() { :; }
     def test_documented_install_enters_release_from_operator_directory(self):
         """Confirm that the README command switches from the operator's cwd to the release."""
         remote = Path(__file__).with_name("remote.sh").read_text()
+        # Check the public README command and the private-output lab runner separately.
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
         command = next(
             line.strip()
-            for line in remote.splitlines()
+            for line in readme.splitlines()
             if "exec bash ./deploy install" in line
         )
-        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
-        self.assertIn(
-            command.replace("sudo -n ", "sudo ").replace('"$product"', '"$release"'),
-            readme,
+        command = command.replace('"$release"', '"$product"').replace(
+            "sudo ", "sudo -n ", 1
         )
+        self.assertIn("cwd=str(release)", shell_code(remote, heredoc="PRIVATE_INSTALL"))
         release = self.root / "service home/releases/myproduct-test"
         release.mkdir(parents=True)
         (release / "deploy").write_text('#!/bin/bash\npwd\nprintf "%s\\n" "$1"\n')

@@ -12,14 +12,18 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Npgsql;
 
-try { DatabaseEnvironment.Initialize(); }
-catch (InvalidOperationException error) {
-    Console.Error.WriteLine("Database configuration error: " + error.Message);
+// The complete connection string is supplied by configuration, also in unchanged images.
+var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default");
+if (string.IsNullOrWhiteSpace(connectionString)) {
+    Console.Error.WriteLine("Missing ConnectionStrings__Default");
     return 1;
 }
-// This runtime environment value is the only connection interface used by Identity.
-var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default")!;
-var source = NpgsqlDataSource.Create(connectionString);
+NpgsqlDataSource source;
+try { source = NpgsqlDataSource.Create(connectionString); }
+catch (ArgumentException) {
+    Console.Error.WriteLine("Invalid ConnectionStrings__Default");
+    return 1;
+}
 // Focused container verification uses the exact same startup and environment path.
 if (args.Contains("--database-check")) {
     try {

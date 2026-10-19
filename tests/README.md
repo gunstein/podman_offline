@@ -1,3 +1,19 @@
+# Secret template coverage (backlog 41)
+
+`test_secret_templates.py` tests schema, config/file-key references, rejected
+characters and redaction, LF handling, deterministic private rendering, key/size
+checks, missing generated sources, install/config/password changes and retry.
+A minimal worker has no Identity, .NET, database, gateway or certificates; its
+sources can be consumed only by a template. Existing database/file-source tests
+still protect password retention and the existing-volume guard.
+
+The acceptance harness tests exercise the disposable env/file/restart probe,
+Identity's ready-string positive/negative/missing cases, explicit upgrade config
+addition and output redaction. These stub runtime commands and are not proof of
+Podman or systemd behavior. See [lab verification](../acceptance/SECRET-TEMPLATES.md).
+
+---
+
 # Validate command (backlog 23)
 
 `test_validate.py` runs `./deploy validate` on the renamed product in the source

@@ -127,7 +127,7 @@ class ImageHelperTests(unittest.TestCase):
             shutil.copy2(ROOT / name, self.root / name)
         recipes = (
             ("help", "localhost/demo-help:0.2.0"),
-            ("identity", "localhost/demo-identity:0.2.1"),
+            ("identity", "localhost/demo-identity:0.2.2"),
             ("todo-backend", "localhost/demo-todo-backend:0.2.2"),
             ("todo-frontend", "localhost/demo-todo-frontend:0.2.0"),
         )

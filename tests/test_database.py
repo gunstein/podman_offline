@@ -267,14 +267,35 @@ class DatabaseTests(DeployFixture):
                 e["name"]: e["value"] for e in server["spec"]["containers"][0]["env"]
             }
             client_env = {
-                e["name"]: e["value"] for e in client["spec"]["containers"][0]["env"]
+                e["name"]: e["value"]
+                for e in client["spec"]["containers"][0]["env"]
+                if "value" in e
             }
+            if component == "identity":
+                client_env = {
+                    "DB_USER": config["DB_USER"],
+                    "DB_NAME": config["DB_NAME"],
+                    "DB_PORT": config["DB_PORT"],
+                }
+                ref = client["spec"]["containers"][0]["env"][0]["valueFrom"][
+                    "secretKeyRef"
+                ]
+                self.assertEqual(
+                    ref,
+                    {"name": "identity-database", "key": "ConnectionStrings__Default"},
+                )
+                self.assertIn(
+                    "@@secret:identity-database-password/password@@",
+                    config["SECRET_TEMPLATES"]["identity-database"][
+                        "ConnectionStrings__Default"
+                    ],
+                )
             self.assertEqual(server_env["POSTGRES_USER"], client_env["DB_USER"])
             self.assertEqual(server_env["POSTGRES_DB"], client_env["DB_NAME"])
             self.assertEqual(server_env["PGPORT"], client_env["DB_PORT"])
             for value in client_env.values():
                 self.assertIsInstance(value, str)
-            for pod in (server, client):
+            for pod in (server,) if component == "identity" else (server, client):
                 volume = next(
                     v for v in pod["spec"]["volumes"] if v["name"] == "password"
                 )
@@ -295,7 +316,8 @@ class DatabaseTests(DeployFixture):
                 ],
             )
             serialized = yaml.safe_dump(docs)
-            self.assertNotIn("ConnectionStrings__Default", serialized)
+            if component != "identity":
+                self.assertNotIn("ConnectionStrings__Default", serialized)
             self.assertNotIn("DB_PASSWORD", config)
 
     def test_port_and_missing_parameters_fail_without_values(self):

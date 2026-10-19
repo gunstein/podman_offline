@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from . import common
+from . import common, templates
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -83,7 +83,7 @@ def validate_config(config, path):
                 f"{path}: use generate on a file source; GENERATED_SECRETS is not supported"
             )
 
-        if key in (common.SECRET_FILES, common.VOLUME_FILES):
+        if key in (common.SECRET_FILES, common.VOLUME_FILES, common.SECRET_TEMPLATES):
             continue  # File groups and generated paths validate their own structures.
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
@@ -198,6 +198,17 @@ def validate_component_config(config, component, path, check_placeholders=True):
         public_origin(config["PUBLIC_ORIGIN"], path)
     check_component_config_names(config, component, path)
     generated_secret_paths(config, path.parent)
+    check_templates(config, path)
+
+
+def check_templates(config, path):
+    """Validate recipes from declarations and names only, including derived config."""
+    effective = dict(config)
+    if "PUBLIC_ORIGIN" in config:
+        effective["PUBLIC_HOSTNAME"] = public_origin(
+            config["PUBLIC_ORIGIN"], path
+        ).hostname
+    templates.validate(effective, secret_keys(config, path, []))
 
 
 def public_origin(value, path):
@@ -470,6 +481,9 @@ def secret_keys(config, path, documents):
                 if isinstance(doc.get(field), dict):
                     data.update(doc[field])
             keys[name] = {str(key) for key in data}
+    keys.update(
+        {name: set(values) for name, values in templates.declarations(config).items()}
+    )
     return keys
 
 
@@ -635,7 +649,7 @@ def references(value, found):
     return found
 
 
-def check_links(docs, from_config, sources=None):
+def check_links(docs, from_config, sources=None, recipe_references=()):
     """Validate unique volume names and links between config and manifests."""
     defined = [
         (doc.get("kind"), (doc.get("metadata") or {}).get("name"))
@@ -652,7 +666,7 @@ def check_links(docs, from_config, sources=None):
         )
 
     defined = set(defined)
-    used = references(docs, set())
+    used = references(docs, set()) | set(recipe_references)
 
     for kind, name in sorted(used - set(defined)):
         source = ""
@@ -785,6 +799,7 @@ def check_component_config_names(config, component, path):
     """Validate every configured Secret/PVC prefix without generating any files."""
     for group, kind in (
         (common.SECRET_FILES, "Secret"),
+        (common.SECRET_TEMPLATES, "Secret"),
         (common.VOLUME_FILES, "PersistentVolumeClaim"),
     ):
         mapping = config.get(group, {})
@@ -811,7 +826,10 @@ def effective_config(config, path, component):
 def declared_volume_names(config, path, imported):
     """Return the Secret and PVC names that config and registration imports provide."""
     try:
-        secrets = sorted(file_group_sources(config, common.SECRET_FILES))
+        secrets = sorted(
+            set(file_group_sources(config, common.SECRET_FILES))
+            | set(templates.declarations(config))
+        )
         volumes = file_group_sources(config, common.VOLUME_FILES)
     except common.DeployError as error:
         raise common.DeployError(f"{path}: {error}") from None
@@ -826,6 +844,7 @@ def effective_documents(config, path, manifests, component=None, imported=()):
     substitution), pull policies, mounts, duplicates and the links between
     manifests, config and imported registration volumes (by name).
     """
+    check_templates(config, path)
     documents, sources = [], []
     for manifest in sorted(manifests.glob("*.yaml")):
         check_kinds(load_yaml_all(manifest), manifest)
@@ -872,7 +891,12 @@ def effective_documents(config, path, manifests, component=None, imported=()):
         }
     )
     try:
-        check_links(declared + documents, from_config, [None] * len(declared) + sources)
+        check_links(
+            declared + documents,
+            from_config,
+            [None] * len(declared) + sources,
+            templates.references(config),
+        )
     except common.DeployError as error:
         raise common.DeployError(f"{path}: {error}") from None
     return documents
@@ -898,7 +922,13 @@ def materialize(config, path, documents, files_dir, extra_volumes=None):
     }
     volumes = load_file_group(volume_config, common.VOLUME_FILES, path.parent)
     volumes.update(extra_volumes or {})
-    docs = secret_documents(secrets) + volume_claims(volumes, files_dir) + documents
+    file_secrets = secret_documents(secrets)
+    docs = (
+        file_secrets
+        + templates.documents(config, file_secrets)
+        + volume_claims(volumes, files_dir)
+        + documents
+    )
     return yaml.safe_dump_all(docs, sort_keys=False), volumes
 
 

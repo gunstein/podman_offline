@@ -769,6 +769,16 @@ class Run:
         if self.renamed_product:
             self.execute_renamed()
             return
+        if self.identity_only:
+            self.step("03-unit", lambda: self.guest("DEV", "unit"))
+            self.step(
+                "03-identity-template-baseline",
+                lambda: self.guest("DEV", "identity-template-baseline"),
+            )
+            self.meta["identity_version"] = "0.4.11"
+            self.meta["identity_template_baseline"] = (
+                "932c7f3a647a84fb5388144bc822f895cc40d959"
+            )
         actions = [
             "unit",
             "build-images",
@@ -780,6 +790,8 @@ class Run:
             "registry-test",
             "examples-setup",
         ]
+        if self.identity_only:
+            actions.remove("unit")
         actions += [
             "example-" + name
             for name in (

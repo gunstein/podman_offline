@@ -124,6 +124,45 @@ class RetryTests(ComponentFixture):
         self.before = self.protected()
         self.attempt()
 
+    def test_template_secret_survives_failure_and_retry_in_new_processes(self):
+        self.actual_app_credentials()
+        config_path = common.HOME / "app1/config.yaml"
+        config = yaml.safe_load(config_path.read_text())
+        config["SECRET_TEMPLATES"] = {
+            "app1-connection": {
+                "connection": "@@DB_HOST@@:@@secret:app1-database-password/password@@"
+            }
+        }
+        config_path.write_text(yaml.safe_dump(config))
+        manifest = self.root / "components/app1/manifests/60-todo.yaml"
+        pod = yaml.safe_load(manifest.read_text())
+        pod["spec"]["containers"][0]["env"].append(
+            {
+                "name": "COMPLETE_CONNECTION",
+                "valueFrom": {
+                    "secretKeyRef": {"name": "app1-connection", "key": "connection"}
+                },
+            }
+        )
+        manifest.write_text(yaml.safe_dump(pod))
+        self.before = self.protected()
+        self.attempt()
+        password = (common.HOME / "app1/credentials/database/password").read_bytes()
+        self.write("VERSION", "1.2.4\n")
+        self.changed()
+        self.attempt(expected=1, failure=service("app1"))
+        self.assertEqual(self.protected(), self.before)
+        self.attempt()
+        docs = list(yaml.safe_load_all(catalog.component_paths("app1")[2].read_text()))
+        derived = next(
+            doc for doc in docs if doc["metadata"]["name"] == "app1-connection"
+        )
+        self.assertEqual(
+            base64.b64decode(derived["data"]["connection"]),
+            config["DB_HOST"].encode() + b":" + password,
+        )
+        self.assertEqual(self.protected(), self.before)
+
     def test_actual_app_secret_bytes_survive_failed_upgrade_and_fresh_process_retry(
         self,
     ):

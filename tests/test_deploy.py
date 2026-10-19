@@ -939,7 +939,7 @@ class RenderTests(DeployFixture):
             docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]
         self.assertEqual(kinds.count("Pod"), 8)
-        self.assertEqual(kinds.count("Secret"), 8)
+        self.assertEqual(kinds.count("Secret"), 9)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 6)
         self.assertEqual(kinds.count("ConfigMap"), 5)
         self.assertEqual(len(rendering.find_images(docs)), 6)

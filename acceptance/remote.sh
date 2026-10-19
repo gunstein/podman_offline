@@ -39,6 +39,25 @@ as_product() {
 }
 # Control the product service in the service user's systemd instance.
 user_service() { sudo -n systemctl --user -M "$product_name@" "$@"; }
+# Capture deploy diagnostics before evidence; fail closed if a DB password leaks.
+install_checked() {
+    as_product python3 - "$product" <<'PRIVATE_INSTALL'
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+release = Path(sys.argv[1])
+result = subprocess.run(["bash", "./deploy", "install"], cwd=str(release),
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+credentials = [path.read_text().rstrip("\n") for path in Path.home().glob("*/credentials/*/password") if path.is_file()]
+if any(value and value in result.stdout + result.stderr for value in credentials):
+    raise SystemExit("FAIL: deploy output contains a database password (content withheld)")
+sys.stdout.write(result.stdout)
+sys.stderr.write(result.stderr)
+raise SystemExit(result.returncode)
+PRIVATE_INSTALL
+}
 # List only validated installed component markers, never their private state.
 installed_components() {
     as_product python3 - <<'INSTALLED'
@@ -690,8 +709,13 @@ clone)
     ;;
 # The product tests must not see the lab signing key exported above.
 unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m unittest discover -s tests;;
+identity-template-baseline) cd "$src"; python3 acceptance/identity_template_baseline.py;;
 build-images) cd "$src"; ./dev/build-images.sh;;
-database-runtime) cd "$src"; python3 acceptance/database_test.py;;
+database-runtime)
+    cd "$src"
+    python3 acceptance/secret_templates_test.py
+    if ! test -e apps/identity/DatabaseEnvironment.cs; then python3 acceptance/database_test.py; fi
+    ;;
 pull-images) cd "$src"; ./dev/pull-images.sh;;
 registry-test) cd "$src"; python3 acceptance/registry_test.py "$base" "$run";;
 dev-up)
@@ -724,6 +748,7 @@ examples-setup)
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
 renamed-generate)
+    (cd "$src" && python3 acceptance/secret_templates_test.py)
     # Only YAML, descriptors and runtime settings change; deploy code stays as checked out.
     python3 "$src/acceptance/renamed_product.py" generate "$src" "$renamed"
     for path in deployment bundle.py dev scripts quadlet deploy build-bundle.sh; do
@@ -1029,8 +1054,39 @@ HELP_BUILD
     ;;
 help-upgrade|platform-upgrade|identity-upgrade)
     prepare_release
+    if [[ $bundle == identity ]]; then
+        # Explicit operator config addition for the old in-app -> template scenario.
+        # Production deploy never merges new defaults into authoritative config.
+        as_product python3 - "$product" <<'IDENTITY_TEMPLATE_CONFIG'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import yaml
+
+root = Path.home()
+path = root / "identity/config.yaml"
+config = yaml.safe_load(path.read_text())
+if "SECRET_TEMPLATES" not in config:
+    snapshot = root / "identity-lifecycle.json"
+    before = json.loads(snapshot.read_text())
+    if hashlib.sha256(path.read_bytes()).hexdigest() != before["files"]["config.yaml"]["hash"]:
+        raise SystemExit("FAIL: Identity config changed before explicit template addition")
+    defaults = yaml.safe_load((Path(sys.argv[1]) / "components/identity/config.defaults.yaml").read_text())
+    config["SECRET_TEMPLATES"] = defaults["SECRET_TEMPLATES"]
+    fd = os.open(str(path), os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        yaml.safe_dump(config, stream, sort_keys=False)
+    before["files"]["config.yaml"]["hash"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    before["template_config_added"] = True
+    snapshot.write_text(json.dumps(before))
+    print("PASS: explicitly added template declaration; existing config settings retained")
+IDENTITY_TEMPLATE_CONFIG
+    fi
     validate_release
-    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
+    install_checked
     healthy
     wait_trust "$product/deployment/"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
@@ -1249,7 +1305,7 @@ upgrade)
     prepare_release
     old_release="$state/releases/$product_name-$bundle-$old_version"
     validate_release
-    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
+    install_checked
     healthy
     sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "$product_name-$bundle"
     sudo -n fapolicyd-cli --update
@@ -1319,7 +1375,7 @@ install)
     install_configuration
     validate_release
     date +%s > "$base/install-start-$bundle"
-    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"
+    install_checked
     as_product podman ps --all
     sudo -n -H -u "$product_name" cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
@@ -1329,6 +1385,9 @@ import json
 import pathlib
 import subprocess
 import sys
+import os
+import stat
+import yaml
 
 # Fixed code only; sibling credentials go over stdin, never argv or generated code.
 CHECK = """
@@ -1370,7 +1429,20 @@ def logs_safe(home):
         content = result.stdout + result.stderr
         if result.returncode or any(value in content for value in credentials) or ("password=" in content.lower() and "host=" in content.lower()):
             raise RuntimeError("Database log safety check failed (content withheld)")
-    print("PASS: database/client logs contain no database passwords")
+    product = os.environ["PRODUCT_NAME"]
+    for path in (home / ".config/containers/systemd").glob(product + "-*.yaml"):
+        if stat.S_IMODE(path.stat().st_mode) != 0o600:
+            raise RuntimeError("Rendered install YAML is not mode 0600")
+        for doc in yaml.safe_load_all(path.read_text()):
+            if doc and doc.get("kind") == "ConfigMap":
+                data = json.dumps(doc.get("data", {}))
+                if any(value in data for value in credentials):
+                    raise RuntimeError("ConfigMap contains database password (content withheld)")
+    result = subprocess.run(["journalctl", "--user", "-u", product + "-identity.service", "--no-pager"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+    if result.returncode or any(value in result.stdout + result.stderr for value in credentials):
+        raise RuntimeError("Identity journal credential check failed (content withheld)")
+    print("PASS: database/client logs and Identity journal contain no database passwords; YAML 0600; ConfigMaps safe")
 
 
 def main():

@@ -36,9 +36,12 @@ def resource_names(value, found):
                 found.add(item.get("name"))
             elif key in ("claimName", "secretName"):
                 found.add(item)
-            elif key in ("configMap", "configMapRef", "secretRef") and isinstance(
-                item, dict
-            ):
+            elif key in (
+                "configMap",
+                "configMapRef",
+                "secretRef",
+                "secretKeyRef",
+            ) and isinstance(item, dict):
                 found.add(item.get("name"))
             resource_names(item, found)
     elif isinstance(value, list):

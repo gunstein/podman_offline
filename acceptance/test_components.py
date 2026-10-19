@@ -798,6 +798,13 @@ class DatabaseHarnessTests(unittest.TestCase):
                 [
                     ["podman", "logs", "identity-server-app"],
                     ["podman", "logs", "identity-postgres-db"],
+                    [
+                        "journalctl",
+                        "--user",
+                        "-u",
+                        "myproduct-identity.service",
+                        "--no-pager",
+                    ],
                 ],
             )
 

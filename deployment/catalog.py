@@ -33,7 +33,7 @@ UPGRADES = ("always", "newer-only")
 # names below have built-in meaning and cannot be shared. See
 # docs/COMPONENTS.md, "Reserved configuration names".
 SETTING = re.compile(r"^[A-Z0-9_]+$")
-UNSHAREABLE = ("PUBLIC_HOSTNAME", "SECRET_FILES", "VOLUME_FILES")
+UNSHAREABLE = ("PUBLIC_HOSTNAME", "SECRET_FILES", "VOLUME_FILES", "SECRET_TEMPLATES")
 CATALOG_KEYS = (
     "requires",
     "version_file",

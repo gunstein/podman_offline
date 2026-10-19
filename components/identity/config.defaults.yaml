@@ -11,3 +11,6 @@ SECRET_FILES:
     - password
   identity-demo-users:
   - path: credentials/users
+SECRET_TEMPLATES:
+  identity-database:
+    ConnectionStrings__Default: "Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:identity-database-password/password@@;Timeout=5;Include Error Detail=false"

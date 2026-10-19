@@ -224,6 +224,77 @@ def database_documents(secret, claim, host, password):
     ]
 
 
+def identity_check(base, network, name, host, password, expected):
+    """Deliver the complete value through secretKeyRef; never put it in argv."""
+    secret = name + "-connection"
+    # Test-only .NET quoting keeps the existing special-password DB coverage.
+    # The product templates deliberately reject these characters instead.
+    connection = (
+        None
+        if password is None
+        else (
+            "Host="
+            + host
+            + ';Port=5544;Database=configured-database;Username=configured-user;Password="'
+            + password.replace('"', '""')
+            + '";Timeout=5;Include Error Detail=false'
+        )
+    )
+    container = {
+        "name": "app",
+        "image": image("identity", "app"),
+        "imagePullPolicy": "Never",
+        "args": ["--database-check"],
+    }
+    docs = []
+    if connection is not None:
+        docs.append(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": secret},
+                "data": {"connection": base64.b64encode(connection.encode()).decode()},
+            }
+        )
+        container["env"] = [
+            {
+                "name": "ConnectionStrings__Default",
+                "valueFrom": {"secretKeyRef": {"name": secret, "key": "connection"}},
+            }
+        ]
+    docs.append(
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": name},
+            "spec": {"restartPolicy": "Never", "containers": [container]},
+        }
+    )
+    manifest = base / "identity-client.yaml"
+    manifest.write_text(yaml.safe_dump_all(docs))
+    manifest.chmod(0o600)
+    try:
+        podman(["kube", "play", "--network", network, str(manifest)])
+        if podman(["wait", name + "-app"]).stdout.strip() != str(expected):
+            raise RuntimeError("Identity complete connection-string result mismatch")
+        result = podman(["logs", name + "-app"])
+        output = result.stdout + result.stderr
+        message = {
+            0: "verified via ConnectionStrings__Default",
+            1: "Missing ConnectionStrings__Default",
+            2: "28P01",
+        }[expected]
+        if (
+            message not in output
+            or (password and password in output)
+            or (connection and connection in output)
+        ):
+            raise RuntimeError("Identity connection-string diagnostics invalid")
+    finally:
+        podman(["kube", "down", str(manifest)])
+    print("PASS: Identity complete connection string; expected exit " + str(expected))
+
+
 def run():
     """Test quoting and LF semantics using kube Secrets, actual initdb and clients."""
     os.umask(0o077)
@@ -331,22 +402,16 @@ def run():
                         ],
                     },
                 }
-                client_manifest = base / "client.yaml"
-                client_manifest.write_text(yaml.safe_dump(client))
-                client_manifest.chmod(0o600)
-                podman(["kube", "play", "--network", network, str(client_manifest)])
-                status = podman(["wait", client_name + "-app"]).stdout.strip()
-                if status != "0":
-                    raise RuntimeError("Identity environment connection failed")
-                output = podman(["logs", client_name + "-app"]).stdout
-                if (
-                    "verified via ConnectionStrings__Default" not in output
-                    or password.rstrip("\n") in output
-                    or ("password=" in output.lower() and "host=" in output.lower())
-                ):
-                    raise RuntimeError("Identity runtime evidence invalid")
-                podman(["kube", "down", str(client_manifest)])
+                # The Python/init examples keep their file interface. Identity reads
+                # only a complete string from a kube Secret, like an unchanged image.
                 init_schema_check(base, network, client)
+                identity_check(
+                    base, network, client_name, host, password.rstrip("\n"), 0
+                )
+                identity_check(
+                    base, network, client_name, host, "deliberately-wrong-secret", 2
+                )
+                identity_check(base, network, client_name, host, None, 1)
                 client_dir = base / "client-input"
                 client_dir.mkdir(mode=0o700, exist_ok=True)
                 client_password = client_dir / "password"
@@ -382,13 +447,6 @@ def run():
                 # Change only disposable input; never an installed persistent password.
                 client_password.write_bytes(b"deliberately-wrong-secret")
                 negative = podman(
-                    common + [image("identity", "app"), "--database-check"], expected=2
-                )
-                if "28P01" not in negative.stderr:
-                    raise RuntimeError(
-                        "Expected Identity authentication error, not network failure"
-                    )
-                negative = podman(
                     common
                     + [
                         "--entrypoint",
@@ -403,56 +461,6 @@ def run():
                     raise RuntimeError(
                         "Expected Python authentication error, not network failure"
                     )
-                for invalid in ("0", "65536", "invalid"):
-                    result = podman(
-                        common
-                        + [
-                            "-e",
-                            "DB_PORT=" + invalid,
-                            image("identity", "app"),
-                            "--database-check",
-                        ],
-                        expected=1,
-                    )
-                    if (
-                        "Invalid DB_PORT" not in result.stderr
-                        or "deliberately-wrong-secret" in result.stderr
-                    ):
-                        raise RuntimeError("Unsafe invalid-parameter diagnostics")
-                if password == passwords[0]:
-                    for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
-                        result = podman(
-                            common
-                            + [
-                                "-e",
-                                key + "=",
-                                image("identity", "app"),
-                                "--database-check",
-                            ],
-                            expected=1,
-                        )
-                        if (
-                            key not in result.stderr
-                            or "deliberately-wrong-secret" in result.stderr
-                        ):
-                            raise RuntimeError("Unsafe missing-parameter diagnostics")
-                    for invalid_password in (
-                        b"",
-                        b"\n\n",
-                        b"invalid\r\n",
-                        b"\xff",
-                        b"invalid\x00value",
-                    ):
-                        client_password.write_bytes(invalid_password)
-                        result = podman(
-                            common + [image("identity", "app"), "--database-check"],
-                            expected=1,
-                        )
-                        if (
-                            "password file" not in result.stderr
-                            or "invalid\r" in result.stderr
-                        ):
-                            raise RuntimeError("Unsafe invalid-password diagnostics")
                 if password_path.read_bytes() != retained:
                     raise RuntimeError(
                         "Negative database checks changed original credentials"

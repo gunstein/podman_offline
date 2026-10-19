@@ -342,6 +342,9 @@ Status: planned; separate from the deploy refactor.
   password, persistent secret file and running clients for core/app1/app2.
 - Use the existing ownership, file paths, Secret keys and volume mapping in
   [README.md](README.md#postgresql-configuration-and-credentials).
+- After an explicit password change, re-render Secret templates and recreate
+  client containers; changing a source file or restarting systemd alone is not
+  database-role rotation. Preserve the `newer-only` render policy.
 - Define failure handling and verification before selecting a mechanism. Verify
   authentication after rotation and retention of database data.
 - Keep session keys, demo-user passwords, OIDC keys and certificates outside this
@@ -398,21 +401,14 @@ Source and existing evidence: [DATABASE-VERIFICATION.md](acceptance/DATABASE-VER
 
 ## 6. Runtime connection strings for existing .NET images
 
-Status: delivery scope decision required; Identity demonstrates the interface,
-but does not provide integration for unmodified application images.
-
-- Decide whether existing production images must run without application source
-  changes. The current `DatabaseEnvironment.cs` runs inside Identity and requires
-  application integration; it is not a reusable external launcher.
-- If required, provide a small in-image launcher or equivalent derived-image
-  integration that builds `ConnectionStrings__Default` at runtime using a proper
-  connection-string builder, then starts the unchanged application.
-- Preserve the existing config/Secret model, special-character handling, password
-  file semantics, offline packaging and signal/exit-code behavior. Do not render
-  credentials into YAML, write connection strings to disk or add host-trust rules.
-- Verify a real unchanged target application consumes the environment value and
-  connects with the correct secret, rejects an incorrect secret, and has no old
-  file-based fallback. Report actual tested image and Podman versions.
+Status: superseded by item 41's accepted Secret-template delivery for unchanged
+images reading a complete connection string. Identity 0.2.2 demonstrates
+`secretKeyRef`, replacing the in-app builder. A launcher or derived image is no
+longer required. The earlier prohibition on connection strings in private YAML
+is explicitly replaced: existing 0600 Secret YAML is the accepted storage path,
+and env inspection by service user/root is an accepted exposure. Runtime lab
+verification remains outstanding under item 41. File-consuming applications can
+continue using Secret mounts without environment copies.
 
 ## 7. PostgreSQL preflight manifest compatibility
 
@@ -3546,7 +3542,9 @@ a deliberate limitation today). Coordinate with items 2, 3 and 24.
 Private files are written 0600 from the first byte and existing credentials are
 kept, but nothing is encrypted at rest: source credentials, the rendered YAML
 (base64 Secrets, not encryption) and Podman's Secret volumes all hold the
-values, and removed keys can remain in volumes. Identity stores Data
+values, and removed keys can remain in volumes. `SECRET_TEMPLATES` adds composed
+values to the same YAML/Podman stores; there is no separate derived credential
+file to back up. Config recipes plus original passwords reconstruct them. Identity stores Data
 Protection keys with `PersistKeysToFileSystem` (apps/identity/Program.cs)
 without key encryption.
 
@@ -3660,8 +3658,25 @@ and two teams releasing different components touch the same directory.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; top priority, requested by the operator on 2026-10-19.
-Extended the same day with inline placeholders in ConfigMap data (section 2b).
+Status: Secret-template delivery implemented on `main`; real lab verification
+pending. The concurrent extension for inline ConfigMap placeholders (section 2b,
+added in `b6bf75c`) is not implemented by this change and remains planned, including
+its shared substitution callback and demo/lab coverage. On
+2026-10-19 the operator explicitly authorized implementation before the lab
+probe and will run it in the evening. No lab result is claimed. Local evidence
+and runnable lab commands are recorded in [Secret template verification](acceptance/SECRET-TEMPLATES.md).
+The initial lab probe requirement below is deferred by that operator decision.
+
+Local verification (2026-10-19, Python 3.12.14): 379 product tests collected,
+376 passed and 3 existing GnuPG tests explicitly skipped after the ordinary run
+failed in their environment setup (`/tmp` absent; redirected GnuPG key generation
+also unavailable). All 190 acceptance-harness tests passed. Ruff check/format,
+Pyright (0 errors/warnings), `bash -n acceptance/remote.sh` and `git diff --check`
+passed. Vermin reports Python 3.6 for `deployment/`, `bundle.py` and the new/changed
+template/retry product tests; no actual Python 3.6 or .NET/Podman execution here.
+Templates, Identity integration, the disposable env/file/replace/Quadlet probe,
+redaction/mode checks, and pinned 0.4.11 -> template Identity upgrade are ready.
+The six-scenario CLEAN PASS requirement remains outstanding, not waived.
 
 ### Background and decision
 

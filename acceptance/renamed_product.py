@@ -66,7 +66,7 @@ def rename_references(value):
         elif key in ("claimName", "secretName") and isinstance(item, str):
             result[key] = rename(item)
         elif (
-            key in ("configMap", "configMapRef", "secretRef")
+            key in ("configMap", "configMapRef", "secretRef", "secretKeyRef")
             and isinstance(item, dict)
             and "name" in item
         ):
@@ -106,9 +106,21 @@ def rename_route(text):
 def rename_defaults(config):
     """Rename prefixed file-source IDs and the database host."""
     result = dict(config)
-    for group in ("SECRET_FILES", "VOLUME_FILES"):
+    for group in ("SECRET_FILES", "VOLUME_FILES", "SECRET_TEMPLATES"):
         if group in result:
             result[group] = {rename(key): value for key, value in result[group].items()}
+    if "SECRET_TEMPLATES" in result:
+        result["SECRET_TEMPLATES"] = {
+            name: {
+                key: re.sub(
+                    r"@@secret:([^/]+)/",
+                    lambda match: "@@secret:" + rename(match[1]) + "/",
+                    text,
+                )
+                for key, text in values.items()
+            }
+            for name, values in result["SECRET_TEMPLATES"].items()
+        }
     if "DB_HOST" in result:
         result["DB_HOST"] = rename(result["DB_HOST"])
     return result

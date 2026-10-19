@@ -15,6 +15,7 @@ build entrypoint and also uses `-B`.
 | `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
 | `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners, the product name (`product_name`, `unit_name`) and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
+| `deployment/templates.py` | Secret recipe schema, safe input checks and composition from config and already loaded file Secrets; no writes or host commands |
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
@@ -39,7 +40,8 @@ writes nothing else. Then:
 3. `deploy.database_preflight()` reads those documents, so Podman is asked
    about the configured volume. It is the first host command.
 4. `render.materialize()` then creates allowed missing secrets, reads the file
-   groups (checks that need file bytes run here) and returns the YAML and
+   groups, composes `SECRET_TEMPLATES` using those loaded file bytes (checks that
+   need file bytes run here), and returns the YAML and
    import volumes.
 
 `deploy.check_manifests()` runs `deploy.validate_component()` (step 2 plus the
@@ -307,6 +309,32 @@ No config migration/fallback or eager credential creation is introduced.
 Persistent config precedence, mounts/names, images and the current component
 architecture remain unchanged. See
 [file-source verification](acceptance/FILE-SOURCES.md) for results and limits.
+
+## Derived Secret values (0.4.12 Identity)
+
+`SECRET_TEMPLATES` maps component-prefixed Secret IDs to key/text recipes.
+`templates.validate()` checks syntax and config inputs against file-key names;
+`render.check_templates()` is shared by config/manifest validation, including
+standalone fixtures. `templates.documents()` consumes the already loaded file
+Secret documents inside `materialize()`, after generation and database preflight.
+It returns Opaque Secrets without separate persistent files or logs. Names, links,
+key validation and uninstall inventory include these Secrets. File sources used
+only by templates count as consumed; template-to-template references are refused.
+
+The password file remains authoritative and byte-preserved. Derived values are
+recomputed only when rendering actually runs: an equal `newer-only` release and
+an ordinary systemd restart keep the installed YAML. Changing a file does not
+rotate a PostgreSQL role's password. Backup/restore pairs DB data with credentials
+and config; derived values can be recreated. Rendered YAML and Podman storage
+contain recoverable values, and env delivery exposes them to runtime inspection.
+
+Identity 0.2.2 receives `ConnectionStrings__Default` through `secretKeyRef` and
+no longer has an in-image builder or database-password mount. Its PostgreSQL
+pod still uses the original password file. Python apps retain file consumption.
+No new fapolicyd/SELinux rules or host/runtime dependencies are introduced.
+See [Secret templates](docs/COMPONENTS.md#secret-templates) and backlog 41 for
+input restrictions and the pending real lab verification. The operator explicitly
+deferred the prerequisite probe to the lab run after local implementation.
 
 ## Standard nginx proxy (0.4.7)
 

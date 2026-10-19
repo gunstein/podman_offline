@@ -380,6 +380,18 @@ A Secret's keys are its file names (and `generate` names); every key a pod
 selects (`secret.items[].key`, `secretKeyRef.key`) must be one of them, or
 `validate`, `prepare` and `install` refuse before generating anything, naming
 the keys that exist. Only names are read, never contents.
+`SECRET_TEMPLATES` maps Secret IDs to key/text recipes and composes complete
+private values from `@@NAME@@` config inputs and
+`@@secret:<secret-files-id>/<file-key>@@` file inputs. Results are recomputed
+when the component renders, with no separate persistent derived file, and are
+encoded in the same 0600 YAML. Use `secretKeyRef` for unchanged apps reading a
+complete environment value or a Secret mount for file-aware apps. Environment
+values remain visible to the service user and root in Podman inspection and
+process environments. See the [schema, example and input restrictions](docs/COMPONENTS.md#secret-templates).
+Only templates accept embedded placeholders; ordinary manifests keep whole-value
+replacement. `validate` never reads Secret contents. Equal `newer-only` installs
+and systemd restarts do not recompute templates.
+
 `VOLUME_FILES` creates private import tar archives and PVCs. Import archives
 normalize ownership, modes and timestamps (mtime 0), so identical imported
 content has a stable checksum across fresh staging directories. Podman imports at
@@ -557,16 +569,17 @@ or `build/dev/<component>/` in dev. Code paths are relative to the repository ro
 Production uses the existing component `config.yaml`; release defaults are used
 when initializing that file, not merged again during installation.
 
-All credentials shown have persistent source files, including passwords and
-session keys. A secret value is confidential information; a Kubernetes `Secret`
+Original credentials have persistent source files, including passwords and
+session keys. Derived connection strings are recreated from those sources and
+config. A secret value is confidential information; a Kubernetes `Secret`
 is one delivery mechanism. App session keys and private client keys are delivered
 through app-specific Secrets; public registration directories still use PVC imports.
 
 ```mermaid
 flowchart TD
-    CONFIG["`Config declares files and delivery
+    CONFIG["`Config declares files, delivery and Secret recipes
     SECRET_FILES / VOLUME_FILES sources with optional generate
-    components/*/config.defaults.yaml`"]
+    SECRET_TEMPLATES for composed private values`"]
 
     GENERATE["`Deploy creates missing secret files
     32 cryptographically random alphanumeric characters
@@ -593,10 +606,18 @@ flowchart TD
     Secret app1-signing or app2-signing
     Read-only mount with file mode 0400`"]
 
-    DATABASE["`Database and client use the same password file
+    DATABASE["`PostgreSQL and Python clients read the password file
     /run/secrets/database/password
     PostgreSQL: first database initialization
-    Clients: DatabaseEnvironment.cs and database.py`"]
+    Python clients: database.py`"]
+
+    TEMPLATE["`SECRET_TEMPLATES composes Identity configuration
+    Retained password plus DB_* config
+    Base64 Secret in existing private YAML`"]
+
+    IDENTITY["`Identity reads ConnectionStrings__Default
+    Delivered through secretKeyRef
+    Visible in runtime environment inspection`"]
 
     BACKEND["`Backend reads the session key at startup
     /certificates/session-key becomes Flask SECRET_KEY
@@ -612,6 +633,8 @@ flowchart TD
     GENERATE --> DBFILE
     GENERATE --> SESSIONFILE
     DBFILE --> SECRET --> DATABASE
+    DBFILE --> TEMPLATE --> IDENTITY
+    CONFIG --> TEMPLATE
     SESSIONFILE --> APPSECRET --> BACKEND
     BACKEND -->|Signed cookie in response| BROWSER
     BROWSER -->|Cookie on later requests| BACKEND
@@ -1112,15 +1135,15 @@ password is generated once by `generate: [password]` on its `SECRET_FILES` sourc
 and retained as persistent secret state. That same declaration delivers it as
 a Kubernetes Secret. PostgreSQL uses
 that Secret for first initialization, and its client uses the same password.
-Applications requiring a complete connection string build it at runtime and
-consume it as an environment variable.
+Applications requiring a complete connection string can use `SECRET_TEMPLATES`
+and consume the result through `secretKeyRef`, as Identity demonstrates.
 
 Each database-owning component has `DB_HOST`, `DB_PORT`, `DB_USER` and `DB_NAME`
 in its `config.defaults.yaml`. The port must be quoted text containing an integer
 from 1 through 65535. A top-level dev `DB_PORT` override applies to all database
 components; help can carry that unused value without requiring a database. Server `POSTGRES_USER`, `POSTGRES_DB` and `PGPORT`, and client
-`DB_*` environment values use whole-value placeholders; no password placeholder
-or complete connection string is rendered into YAML or written to disk.
+`DB_*` environment values use whole-value placeholders; password placeholders are confined to `SECRET_TEMPLATES`. Complete connection
+strings appear only as base64 Secret data in the existing private install YAML.
 
 | Owner | DB host | User / database | Persistent password below component directory | Secret / key | PostgreSQL volume | Client |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1134,31 +1157,29 @@ The table documents default identities; manifests/config remain the source of
 truth. The two Todo users have the same name in **different clusters** and have
 independently generated credentials.
 
-Identity's in-image `DatabaseEnvironment.cs` runs before ASP.NET startup. It reads
-ordinary `DB_*` environment values and `/run/secrets/database/password`, validates
-parameters, and uses [NpgsqlConnectionStringBuilder](https://www.npgsql.org/doc/connection-string-parameters.html) to set
-`ConnectionStrings__Default`. Identity then connects **only** through that environment
-value. The bootstrap and web application share the same process: there is no
-shell wrapper, child process, host executable or signal-forwarding problem.
-The existing entrypoint remains `dotnet Identity.dll`. Its `--database-check`
-mode performs a real connection and `SELECT 1` through the same environment path,
-with only a pass/fail result; it never prints the string. New code and its existing
-Npgsql dependency are built into the offline Identity image. There is no Podman
-`$(VAR)` expansion dependency, startup download, `eval` or secret in argv.
+Identity's `SECRET_TEMPLATES.identity-database` composes the retained password and
+ordinary `DB_*` config into `ConnectionStrings__Default`. The container receives
+it through `secretKeyRef` and uses only that complete environment value, matching
+unmodified .NET images. `--database-check` connects with the same value and emits
+only pass/fail diagnostics (exit 0/2/3; missing/invalid config exits 1).
+The former in-image `DatabaseEnvironment.cs` builder is removed in Identity 0.2.2.
+Add the declaration explicitly to an existing installation's authoritative config
+before upgrading; new defaults never replace persistent config automatically.
 
 The Todo examples keep an alternative application interface: `database.py` reads
 the same `DB_*` values and mounted Secret file, and passes separate keyword
 parameters to `psycopg`. It does not use .NET connection-string syntax. Dev and
 production use the same images, secret keys, parameter validation and startup code.
 
-Password files must contain nonempty UTF-8 text. Like the PostgreSQL image’s
+For the file-based Python clients, password files must contain nonempty UTF-8 text. Like the PostgreSQL image’s
 [`file_env`](https://github.com/docker-library/postgres/blob/master/17/bookworm/docker-entrypoint.sh)
 shell command substitution, clients remove **only trailing LF bytes**;
 spaces, tabs, dollar signs, semicolons, quotes and equals signs are preserved.
 Embedded LF, CR (including CRLF) and NUL are rejected because initdb's password-file
 interface cannot safely represent multiline credentials consistently. Existing
-files are never rewritten to normalize them. Npgsql handles connection-string
-quoting; psycopg receives keyword arguments. Passwords are not restricted to the
+files are never rewritten to normalize them. `SECRET_TEMPLATES` instead rejects semicolons, quotes, control characters and
+leading/trailing whitespace in substituted values; generated passwords satisfy
+this rule. Psycopg receives keyword arguments and retains its broader input support. Passwords are not restricted to the
 new generator's alphanumeric alphabet.
 
 Before component rendering or secret generation, deploy derives the server's

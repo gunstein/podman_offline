@@ -1,3 +1,25 @@
+# Secret templates (backlog 41)
+
+[SECRET-TEMPLATES.md](SECRET-TEMPLATES.md) records local verification and the
+pending lab commands. `database-runtime` now starts with a disposable direct
+`kube play` and Quadlet env/file/update probe. Renamed-product runs execute the
+same probe before generating `shop`, and validate renamed template references.
+
+`--identity-only` now starts Identity from the pinned old in-app builder release
+0.4.11, then upgrades to the current template implementation. Before the upgrade,
+the test explicitly adds only `SECRET_TEMPLATES` to persistent config, modelling
+the documented operator step. It retains old settings and all credential bytes;
+normal deploy still never merges new defaults. Database volumes, users, health,
+login and sibling checks remain required. Only this focused scenario skips the
+new-image disposable Identity checks while the old image is its baseline; after
+upgrade it verifies the new installed image using `--database-check`.
+
+The probe is implemented, not lab-verified yet. Its runtime diagnostics are
+captured privately; only pass/fail statements and the accepted env-inspection
+exposure are reported. No new trust rules are installed.
+
+---
+
 # Signed bundles (backlog 38)
 
 Every DEV build after the source clone signs its bundles with a per-run lab key
@@ -733,14 +755,15 @@ in [CONFIG-VERIFICATION.md](CONFIG-VERIFICATION.md).
 
 Full runs execute `database-runtime` after images are built and before dev startup.
 It creates and removes only UUID-scoped disposable resources on the dev VM. Kube
-Secrets initialize PostgreSQL and feed the .NET Identity verifier; the verifier
-builds and uses `ConnectionStrings__Default` at runtime with Npgsql. Python tests
+Secrets initialize PostgreSQL and supply a complete `ConnectionStrings__Default`
+to the unmodified-interface .NET Identity verifier. Test-only proper quoting
+preserves special-password coverage; product templates reject unsafe inputs. Python tests
 its file-secret/keyword-parameter interface. Non-standard DB identities and port,
 quotes, dollar signs, semicolons, spaces, equals, Unicode and legacy hexadecimal
 credentials with trailing LF are checked by real connections; wrong credentials must fail authentication rather
-than DNS/network setup. Missing/invalid parameter and empty/invalid password diagnostics must not reveal
-credentials. The lifecycle guard is also checked against an actually initialized
-disposable volume. Existing fixture password bytes survive GENERATED_SECRETS,
+than DNS/network setup. Missing connection string (exit 1) and wrong password (exit 2) diagnostics must
+not reveal credentials. The lifecycle guard is also checked against an actually initialized
+disposable volume. Existing fixture password bytes survive `generate`,
 and negative client input is a separate temporary copy.
 
 `database-auth` runs on the offline prod VM after initial installation, after
@@ -752,8 +775,10 @@ reply (handshake errors may have no SQLSTATE). Neither private diagnostic is
 dumped. This tests
 credential separation, **not network isolation** between applications. No persistent
 password is modified by negative checks. Installed database/client logs are
-checked privately for password or complete connection-string disclosure. Inputs remain in memory/stdin, never
-argv, full inspect/environment dumps or report output. Existing CRUD/e2e/persistent
+checked privately for password or complete connection-string disclosure. Identity's
+user journal and deploy output are also checked, and rendered YAML must be 0600
+with no passwords in ConfigMaps. Inputs remain in private kube YAML or memory,
+never argv, full inspect/environment dumps or report output. Existing CRUD/e2e/persistent
 hash and volume checks remain in the full run. Failed scenarios stop before later
 checks; the original audit and cleanup rules are unchanged.
 

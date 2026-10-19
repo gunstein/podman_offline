@@ -142,7 +142,7 @@ redirect URIs, so they cannot be renamed or shared freely:
 | `PUBLIC_ORIGIN` | Validated as an HTTPS origin; always shared with `public_from` dependents (copied at `init-config` and in dev, compared at install); OIDC redirect URIs are built from it |
 | `HTTPS_PORT` | Validated as a port 1-65535; always shared and compared like `PUBLIC_ORIGIN` |
 | `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error; cannot be shared |
-| `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values; cannot be shared |
+| `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES` | File-source and Secret-template declarations, not placeholder values; cannot be shared |
 | Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@`; each component keeps its own copy unless the `public_from` owner lists it in `shares` |
 
 A `PUBLIC_` prefix has no meaning of its own. `deploy.PUBLIC_KEYS` and
@@ -189,6 +189,77 @@ Restarts follow the changes: no change restarts no owner, a route change the
 route owner, a client change the client owner. The selected component restarts
 first and owners after it, so a gateway publishes a route only once the service
 behind it is back. Unrelated components never restart.
+
+## Secret templates
+
+`SECRET_TEMPLATES` builds complete private configuration values at render time,
+without changing an application's image or code:
+
+```yaml
+DB_HOST: database
+DB_PORT: '5432'
+DB_NAME: app
+DB_USER: app
+SECRET_FILES:
+  orders-database-password:
+    - path: credentials/database
+      generate: [password]
+SECRET_TEMPLATES:
+  orders-database:
+    ConnectionStrings__Default: "Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:orders-database-password/password@@"
+```
+
+The application container consumes the result with ordinary Kubernetes YAML:
+
+```yaml
+env:
+  - name: ConnectionStrings__Default
+    valueFrom:
+      secretKeyRef:
+        name: orders-database
+        key: ConnectionStrings__Default
+```
+
+An application that reads files can instead mount this Secret with
+`volumes[].secret.items`, selecting the same key. Secret IDs follow the component
+prefix/name rules and cannot collide with `SECRET_FILES`, `VOLUME_FILES` or
+manifest resources; keys follow the Secret file-name rule. Each ID has a nonempty
+mapping of keys to string templates. It is a reserved setting and cannot be shared.
+
+Only these templates accept placeholders inside strings. `@@NAME@@` reads this
+component's effective string/integer config (including shared settings).
+`@@secret:<id>/<file>@@` reads a file key delivered by this component's
+`SECRET_FILES`, including a declared generated file. References to other templates,
+recursive expansion, expressions and commands are unsupported. Ordinary manifest
+placeholders still replace whole values only.
+
+The renderer removes trailing LF bytes from a secret input, matching PostgreSQL's
+`file_env`; it never rewrites the source file. Inputs containing semicolons, single
+or double quotes, control characters, leading/trailing whitespace, or placeholder
+markers (`@@`) are refused without including their values in diagnostics.
+Generated alphanumeric passwords satisfy this rule. The renderer does not escape
+for connection strings, URLs or other target formats. Use a file-aware app or
+prepare the complete value externally for formats requiring other encodings.
+An existing database password failing the rule must be changed through a
+coordinated database-role/password-file/client rotation or recovery procedure
+(backlog 2/3), never by deleting the file and letting install regenerate it.
+
+`validate` checks recipe shape, public inputs and file-key declarations without
+reading credentials. Secret bytes are checked only during materialization after
+database preflight and permitted generation. Derived values have no separate
+persistent source: config plus the original password file are authoritative.
+Actual rendering recomputes values; `upgrade: newer-only` with an equal version
+still skips rendering, and a systemd restart uses the last installed YAML.
+Existing installations must explicitly add the new declaration to their persistent
+config before upgrading to a manifest that references it; `init-config` retains
+existing config rather than merging new defaults.
+
+The output is an Opaque Secret in the existing 0600 install YAML. Base64 is not
+encryption; protect YAML, source files, Podman storage and backups. Environment
+values are visible to the service user/root through `podman inspect`, process
+environments and child processes. File mounts avoid the extra environment copy
+but still require suitable container ownership/modes. No new credential files,
+network services, SELinux exceptions or fapolicyd trust rules are needed.
 
 ## Manifest resource kinds
 
