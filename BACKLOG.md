@@ -39,18 +39,19 @@ The order for an offline production deployment of an organisation's own apps:
 6. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
-   40, whose fixture changes it then only has to make once.
+   40, whose fixture changes it then only has to make once (done; lab-verified
+   with `t6-*` on `b3f3cf1`).
 7. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
-   (small; after item 44). 45b (delivery to targets) and 45c (renewal and
-   expiry, after item 39) are planned separately.
+   (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
+   targets) and 45c (renewal and expiry, after item 39) are planned separately.
 8. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
 9. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
 10. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
-   Implemented on main; independent review green, full lab matrix pending.
+   Done; lab-verified with `t6-*` on `b3f3cf1`.
 11. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
@@ -89,18 +90,18 @@ The order for an offline production deployment of an organisation's own apps:
 ## Status overview (2026-10-19)
 
 Done and verified on real VMs (rootless Podman 5.8.2, fapolicyd, SELinux
-Enforcing): items 1, 8, 9, 12, 14–21, 23, 25–29, 31–34, 38, 41. Their behaviour is
+Enforcing): items 1, 8, 9, 12, 14–21, 23, 25–29, 31–34, 38, 40, 41, 43, 45a. Their behaviour is
 exercised by every run of the six-scenario acceptance matrix (demo with app1 or
 app2 first, help only, Identity upgrade, platform with help, renamed product
-`shop`); the latest matrix (2026-10-19) was CLEAN PASS: `t3-app1`, `t3-app2`,
-`t3-help`, `t3-platform` on `7f23775` and `t5-identity`, `t5-shop` on `2c0ed76`. Item 30 (faster
+`shop`); the latest matrix, `t6-*` on `b3f3cf1` (2026-10-19), was CLEAN PASS in
+all six scenarios on a single commit. Item 30 (faster
 runs) is done up to its optional steps 3-4.
 
 Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 48, 49, 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 5, 7, 6, and
+Open: 46 (top priority), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -3675,8 +3676,8 @@ home by hand, for example
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented on main on 2026-10-19; independent review's ordinary and
-isolated platform runs are green. Full lab acceptance remains pending. Component-local version files replace source root
+Status: done and lab-verified: six-scenario matrix `t6-*` CLEAN PASS on `b3f3cf1` (2026-10-19; Oracle Linux 9.8, rootless Podman 5.8.2, SELinux Enforcing, fapolicyd on PROD). Earlier status: implemented on main
+on 2026-10-19; independent review's ordinary and isolated platform runs green. Component-local version files replace source root
 version files and the catalog override. Build descriptors and installed metadata
 keep their existing format. Acceptance upgrade builders and renamed products
 use the selected component's version. Local verification is recorded below;
@@ -3838,7 +3839,8 @@ Identity upgrade with unchanged password, keys and volumes, and the renamed
 product `shop`. Not covered: the probe under the hardened PROD account (manual
 command in [Secret template verification](acceptance/SECRET-TEMPLATES.md)), an
 Identity start with an invalid connection-string value such as `Port=abc`,
-actual Python 3.6 execution, and one full matrix on a single commit.
+and actual Python 3.6 execution. A full matrix on a single commit followed:
+`t6-*` on `b3f3cf1`, CLEAN PASS in all six scenarios.
 
 ### Background and decision
 
@@ -4127,8 +4129,8 @@ verification evidence or close the outstanding lab work in other items.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented on main (2026-10-19); current lab acceptance remains the
-operator's next step. `tests/run.py` provides platform,
+Status: done and lab-verified: six-scenario matrix `t6-*` CLEAN PASS on `b3f3cf1` (2026-10-19; Oracle Linux 9.8, rootless Podman 5.8.2, SELinux Enforcing, fapolicyd on PROD); `03-unit` ran
+`tests/run.py all` on DEV. Earlier status: implemented on main (2026-10-19). `tests/run.py` provides platform,
 demo and all groups plus isolated/offline export. Helpers no longer import test
 modules, and platform declarations are synthetic, independent of shipped apps
 and components. All 403 original declared test methods remain: prior discovery
@@ -4236,8 +4238,11 @@ repository still verifies all demo-specific behaviour.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented locally (2026-10-19); verification of the organisation's
-external Duende image and real Podman/systemd is still pending. Do not close this
+Status: implemented (2026-10-19). Matrix `t6-*` on `b3f3cf1` was CLEAN PASS,
+but no acceptance step runs the signing/PFX mode; it shows only that the shared
+CA path and the demo recipes still work. Verification of the signing mode on a
+lab host, of the organisation's external Duende image and of its mount path is
+still pending. Do not close this
 item until that evidence is recorded. The missing /run/secrets/signing-cert.pfx
 reported by the operator motivated the explicit signing mode; the shipped demo
 keeps PEM and its existing commands.
@@ -4468,7 +4473,10 @@ only as demo provisioning (`demo_credentials` in `acceptance/remote.sh`).
 
 ### 45a. Configurable production CA (small; after item 44)
 
-Status: implemented on main (2026-10-19), awaiting the operator's lab run.
+Status: done and lab-verified: six-scenario matrix `t6-*` CLEAN PASS on `b3f3cf1` (2026-10-19; Oracle Linux 9.8, rootless Podman 5.8.2, SELinux Enforcing, fapolicyd on PROD). The demo recipes in every
+scenario create and reuse the CA through the shared `ensure_ca()` path with
+default settings; explicit CA options are covered by product tests only.
+Earlier status: implemented on main (2026-10-19).
 Prefix options `--ca-subject`, `--ca-days` and `--cert-days` are checked before
 writes. All modes share `ensure_ca()` in the stdin-compatible embedded tool;
 existing CA/credentials remain authoritative when settings change. Five new
