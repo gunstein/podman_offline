@@ -3555,7 +3555,9 @@ kept, but nothing is encrypted at rest: source credentials, the rendered YAML
 (base64 Secrets, not encryption) and Podman's Secret volumes all hold the
 values, and removed keys can remain in volumes. `SECRET_TEMPLATES` adds composed
 values to the same YAML/Podman stores; there is no separate derived credential
-file to back up. Config recipes plus original passwords reconstruct them. Identity stores Data
+file to back up. Config recipes plus original passwords reconstruct them. An
+item 44 PFX is another copy of a signing key at rest; its password does not
+protect against anyone who can read both the PFX and the password file. Identity stores Data
 Protection keys with `PersistKeysToFileSystem` (apps/identity/Program.cs)
 without key encryption.
 
@@ -4165,6 +4167,53 @@ the demo's Program.cs or add changes to the external C# image as a prerequisite.
    Python compatibility intact. No changes to generic deployment modules,
    Duende configuration models, rotation, automatic trust installation or
    production PKI integration belong in this task.
+
+### Review additions (2026-10-19)
+
+Decisions and facts from the review of this item; they refine the task above.
+
+- **Export command.** Use `openssl pkcs12 -export ... -passout file:<path>
+  -keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256`. OpenSSL 1.1.1 and
+  3.x have different defaults (3DES/RC2 versus AES/PBKDF2); explicit algorithms
+  give the same format on every supported developer host. Do not use `-legacy`.
+  `file:` keeps the password out of argv and reads only the first line, so the
+  password file must hold a single line; refuse anything else. Checked locally
+  with OpenSSL 3.0.13: the certificate fingerprint inside the PFX matched the
+  PEM, a wrong password gave exit 1 and `umask 077` produced mode 0600.
+- **Re-export is not byte-identical.** Exporting the same key and password
+  twice gives different bytes (random salt and IV). "Byte-for-byte" retention
+  applies to an existing PFX; a regenerated PFX is only equivalent. It changes
+  the rendered YAML, so it reaches the container through the normal upgrade
+  path; an equal `newer-only` version does not apply it. Document this.
+- **Verifying an existing PFX.** Open it with `-passin file:`, compare the
+  certificate's SHA-256 fingerprint with the PEM certificate, and compare the
+  public key with the PEM key (`openssl pkey -pubout`). Any mismatch, wrong
+  password or unreadable file refuses without changing files.
+- **Atomic, no-clobber publish.** Write the export to a temporary file in the
+  target directory, publish it with `ln` (fails if the target exists) and remove
+  the temporary file; a `trap` removes it on failure. Do not use `mv`, which
+  overwrites, or rely on `mv -n`, whose behaviour differs between versions.
+- **Purpose versus component name.** `generate-certificates.sh` accepts only
+  `platform|identity|app1|app2|help`, and the purpose (signing, web, client)
+  follows the name. `acceptance/remote.sh` (`demo_credentials`) works around this
+  for the renamed product by moving directories. Add the explicit component and
+  purpose without changing that workaround in this item; note a possible
+  simplification in the backlog. Validate the component name with the deploy ID
+  rule (`common.ID`) so it cannot form an unexpected path. `dev/demo-credentials.sh`
+  keeps its demo list; the organisation's component calls the script directly.
+- **Stdin execution on targets.** The script also runs as the product user via
+  `bash -s -- --root DIR ... < generate-certificates.sh` in the lab and on
+  targets. Password and PFX paths are relative to `--root` and must not depend
+  on the source checkout.
+- **No silent skips.** `tests/test_certificates.py` uses `skipUnless(openssl)`.
+  Item 43 requires a missing requirement to fail clearly. Treat OpenSSL as a
+  required tool for these tests, at least in the lab's `03-unit` step, and do
+  not add new tests that skip silently.
+- **.NET verification.** Verify with the organisation's image that the app
+  loads the PFX with its private key and the supplied password, as the app's
+  UID, from a read-only mount, with the container's actual `HOME` (.NET may try
+  to write key material; relates to item 36). Record this under pending real
+  evidence; it cannot be verified in this repository.
 
 ### Tests and completion
 
