@@ -15,21 +15,25 @@ Items 33 and 34 from the best-practice review at `689156b` are done. The order
 for an offline production deployment of an organisation's own apps:
 
 1. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
-   bundles, beside the existing checksums.
-2. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+   bundles, beside the existing checksums (implemented; lab run pending).
+2. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+   `./deploy status` shows each installed component, version and unit state.
+3. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+   `components/<id>/VERSION` per component; the root version files go.
+4. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-3. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-4. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+5. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+6. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-5. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+7. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-6. [Item 36](#36-harden-the-demo-application-containers): container hardening
+8. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-7. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+9. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-8. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+10. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-9. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+11. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -46,7 +50,8 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 38 (next), 2, 3, 37, 35, 36, 22, 24, 5, 7, 6, and item 30 steps 3-4.
+Open: 38 (lab run pending), 39, 40, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
 [retry](acceptance/RETRY-SAFETY.md),
@@ -3569,3 +3574,78 @@ organisation controls on the build machine), a documented verification step on
 the offline target before `prepare-host.sh` and unpacking, and harness support
 for a lab key. Keep unsigned builds possible for development; the README states
 which one an operator has.
+
+## 39. Show the installed components and versions on the target
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; requested by the operator on 2026-10-19. In a real product
+every component can have a different version, and operators must be able to
+see on the target which versions are installed.
+
+### Problem
+
+The target already records everything: `installed/<id>` holds the completed
+version, `metadata/<id>.json` the installed descriptor (product, version,
+dependencies, roles), and `pending-operation.json` unfinished work. But there is
+no command that shows it; an operator has to read private files in the service
+home by hand, for example
+`sudo -u <user> sh -c 'cd /var/lib/<user>/installed && grep -H . *'`.
+
+### Task
+
+1. Add `./deploy status`, run as the service user from any unpacked bundle of
+   the product (the bundle only supplies the code; status reads the service
+   home). Output, one line per installed component in dependency order:
+   component, installed version, unit name and `systemctl --user is-active`
+   state; then the product name and any pending operation (operation,
+   component, owners). Show an unfinished first install (metadata without
+   marker) explicitly.
+2. Read-only: no writes, no pending record, no Podman calls beyond reading
+   unit state; it must work while another component's install is pending and
+   when a unit is failed. Refuse a bundle of another product the same way
+   install does, or print the installed product and say the bundle differs.
+3. Optional `--json` with the same fields for collection by other tools.
+4. Exit 0 when everything listed is installed and active, non-zero otherwise,
+   so scripts can use it as a check.
+5. Tests: several components with different versions, an unfinished install,
+   a pending operation, a failed unit, an empty home; the harness runs it on
+   PROD after installs and checks the versions it expects. Document it in
+   README (operations) and COMPONENTS (installed state).
+
+## 40. One version file per component in its own directory
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; requested by the operator on 2026-10-19. Do after or with
+item 39.
+
+### Problem
+
+Versions live in root files chosen by `version_file:` in `bundles.yaml`
+(default `VERSION`): the demo apps share `VERSION`, platform and Identity use
+`PLATFORM_VERSION` and `IDENTITY_VERSION`, and the renamed product adds
+`INVENTORY_VERSION`. In a real product every component has its own version, so
+the root would collect one file per component, far from the component's code,
+and two teams releasing different components touch the same directory.
+
+### Task
+
+1. Make `components/<id>/VERSION` (one `major.minor.patch`) the only source of a
+   catalog component's version. Remove `version_file` from the catalog schema;
+   a missing or invalid file is refused with a message naming the file.
+   Components that should share a version simply hold the same number.
+2. Remove the root `VERSION`, `PLATFORM_VERSION` and `IDENTITY_VERSION` from the
+   product repository. A standalone manifest fixture (no `bundles.yaml`) keeps
+   its root `VERSION` unchanged; each built bundle keeps its informational
+   `VERSION` file with that component's version.
+3. Update the acceptance harness: upgrade, help, platform and Identity release
+   builds bump the component's own file instead of a root file; the renamed
+   product generator writes `components/<id>/VERSION` (no `INVENTORY_VERSION`);
+   version reads in acceptance.py and remote.sh follow.
+4. Update tests, README, docs/COMPONENTS.md and bundles.yaml comments. No
+   migration is needed: installed metadata already holds each component's own
+   version, and the change affects only the source checkout.
+5. Run the full lab matrix (the upgrade scenarios change).
