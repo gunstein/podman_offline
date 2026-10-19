@@ -11,51 +11,59 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (agreed 2026-10-19)
 
-Items 33 and 34 from the best-practice review at `689156b` are done. Item 44
-is now first at the operator's request (2026-10-19): the organisation's Identity
-image needs a PFX file to start in dev. Item 41 remains pending lab verification;
-item 43 follows it, and item 42 remains before item 3 as previously agreed.
+Item 46 from the 2026-10-19 security scan is first: prevent root host
+preparation from following service-user-controlled symlinks. Items 33 and 34
+from the earlier best-practice review are done. Item 44 remains the leading
+runtime-verification priority for the organisation's PFX-based Identity image.
+Item 42 remains before item 3 as previously agreed; implementation and
+verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
-1. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+1. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
+   protect the root/service-user boundary on repeated host preparation; high
+   priority, conditional on an attacker controlling the service account.
+2. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-2. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+3. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-3. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+4. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once.
-4. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+5. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44). 45b (delivery to targets) and 45c (renewal and
    expiry, after item 39) are planned separately.
-5. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+6. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-6. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+7. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-7. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+8. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Implemented on main; independent review green, full lab matrix pending.
-8. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+9. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-9. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+10. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-10. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-11. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+11. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+12. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-12. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+13. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+   reject unsafe retained generated-secret permissions; low-priority hardening,
+   coordinated with item 37 rather than blocking the status command or lab run.
+14. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-13. [Item 36](#36-harden-the-demo-application-containers): container hardening
+15. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-14. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+16. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-15. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+17. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-16. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+18. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -73,7 +81,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 44 (top priority), 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 46 (top priority), 44, 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 47, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4540,3 +4548,97 @@ Done when (all three parts): production installs can issue, retain, renew and
 back up their certificates from a documented per-environment CA with the same
 tool, external certificates still override it, and the lab verifies the flow on
 PROD.
+
+
+## 46. Prevent root host preparation from following service-user symlinks
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its
+credential-retention, isolation and compatibility contracts and understandability
+review to the privileged host-setup boundary.
+
+Status: planned; high priority. Found in the quick Python/Bash security scan of
+main at `b3f3cf161999ab83be5d596d4ce222bf81712c7d` on 2026-10-19. Implement
+before other new functionality. No fix or real-host exploit verification yet.
+
+### Finding and evidence
+
+`scripts/prepare-host.sh` runs as root and permits repeated preparation of an
+existing service account. Its directory loop runs `install -d -m 0700 -o "$user"`
+under that account's writable home (`.local`, `.config` and descendants), without
+rejecting symlink components. The subsequent CNI lock creation and SELinux
+operations must also be included in the path review.
+
+A compromised service account can prepare a symlink before an administrator
+reruns the trusted helper. Privileged directory operations can then follow it
+outside the intended tree, potentially handing ownership of a host directory
+to the service account. This is a conditional local privilege-escalation risk,
+not evidence of unauthenticated remote exploitation.
+
+An isolated probe using the same `install -d` operation confirmed that a symlink
+under a synthetic service home redirected a 0755-to-0700 permission change to a
+sibling directory. Cross-user ownership change/full privilege escalation was
+not reproduced: the sandbox rejected the attempted alternate numeric UID.
+Only disposable synthetic paths were used; no production paths were modified.
+
+### Task and verification
+
+1. Trace every privileged write, ownership/mode change and labeling operation
+   involving the service home. Refuse symlinks in the affected path components
+   before touching their targets, including dangling links and the CNI lock.
+   Preserve valid existing rootless storage, user identity and subordinate IDs.
+2. Address check/use replacement races as well as static symlinks: a path check
+   followed by a root command on a still service-writable pathname is not a
+   sufficient boundary. Select a bounded, understandable approach that prevents
+   traversal/replacement across privileged operations; document its assumptions.
+   Do not recursively chown existing application data or alter targets outside
+   the intended service tree as a repair step.
+3. Add regressions for a valid fresh setup and repeat, symlinked `.config`,
+   `.local`, nested directories and CNI lock. Assert the outside target's
+   ownership, mode and contents remain unchanged on refusal, and that later
+   privileged commands do not run. Use disposable targets, never real system
+   directories. Include a controlled replacement-race regression for the chosen
+   mechanism; command stubs alone do not prove filesystem safety.
+4. Run relevant product and harness tests plus existing static checks. Verify
+   real repeat preparation with separate root/service identities, SELinux and
+   fapolicyd in a disposable lab before calling the boundary verified. Keep
+   sandbox probes and real-host results separate; update the operator recipe.
+
+## 47. Refuse unsafe permissions on retained generated secrets
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply credential
+retention and validation-before-side-effects; coordinate with item 37.
+
+Status: planned; low-priority hardening. Found by the same 2026-10-19 scan at
+`b3f3cf1`. Separate from encryption at rest and backup implementation.
+
+### Finding and evidence
+
+`deployment/render.py:generate_secrets` accepts an existing declared generated
+file when it is regular and nonempty, then skips the private-mode creation path.
+An isolated call retained a synthetic password with mode 0644 beneath a 0755
+credential directory. New generated files already use 0600 and new credential
+directories use 0700; this finding concerns retained/restored material only.
+
+This is not proof of disclosure in the normal production layout: the service
+home's 0700 blocks other local users. Exposure depends on the complete ancestor
+permissions and becomes relevant when credentials are restored or staged under
+more accessible directories. Do not report 0644 alone as demonstrated disclosure.
+
+### Task and verification
+
+1. Define and enforce an explicit permission/ownership policy for existing
+   files declared with `generate`. At minimum refuse group/other access to
+   retained generated secrets; specify accepted private modes and ownership.
+   Assess ancestor access and document which checks apply to dev, standalone
+   fixtures and production. Preserve bytes and valid existing credentials.
+2. Fail with a safe, actionable message before install side effects; do not
+   regenerate or rotate the secret, print its contents, or silently repair
+   ownership. Keep declaration-only `validate` free of credential-content reads
+   and host commands; document where permission checks occur in the lifecycle.
+3. Add focused tests for safe reuse, 0644/group-readable retained files, the
+   selected ownership policy and restored credential directories. Confirm
+   refusal preserves bytes and performs no Podman/systemd calls. Include the
+   existing-file branch after a competing create where relevant.
+4. Keep public certificates and ordinary non-generated VOLUME_FILES outside a
+   blanket private-secret policy. This item adds no backup engine or encryption
+   dependency. Run focused product tests and the relevant existing checks.
