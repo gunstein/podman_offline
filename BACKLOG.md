@@ -28,9 +28,10 @@ The order for an offline production deployment of an organisation's own apps:
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once.
-4. [Item 45](#45-production-pki-from-the-certificate-provisioning-tool):
-   make the certificate script a supported production PKI tool (configurable
-   CA, lifetime and renewal, delivery, CA key protection). After item 44.
+4. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+   configurable production CA name and lifetimes in the certificate script
+   (small; after item 44). 45b (delivery to targets) and 45c (renewal and
+   expiry, after item 39) are planned separately.
 5. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
 6. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
@@ -71,7 +72,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 44 (top priority), 43, 45, 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 44 (top priority), 43, 45a, 39, 45b, 45c, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4345,9 +4346,11 @@ through existing Secrets, without manual copying or exposed passwords.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; requested by the operator on 2026-10-19. Production usually
-issues certificates from the organisation's own PKI in the same way as dev, with
-external certificates as a rare override (item 44's precedence rules).
+Status: planned; requested by the operator on 2026-10-19 and split into 45a,
+45b and 45c the same day. Production usually issues certificates from the
+organisation's own PKI in the same way as dev, with external certificates as a
+rare override (item 44's precedence rules). Each part is a separate task with
+its own verification; do them in order.
 
 ### Problem
 
@@ -4356,24 +4359,60 @@ certificates last 365 days, the script is not in bundles, and README/ARCHITECTUR
 state that organisations bring their own certificates. The lab runs it on PROD
 only as demo provisioning (`demo_credentials` in `acceptance/remote.sh`).
 
-### Task
+### 45a. Configurable production CA (small; after item 44)
 
-1. Decide and document the supported production model: one CA per environment
-   (dev and production never share a CA), its name and lifetimes configurable,
-   and where the CA key lives on the target.
-2. Deliver the tool to targets in a supported way (for example in the platform
-   bundle or as a signed tool archive) that works with fapolicyd and the
-   offline/stdin execution used today; no network or package installs.
-3. Add renewal before expiry for issued certificates without replacing keys or
-   CAs silently; report expiry in a way item 39 (`./deploy status`) can show.
-4. Protect and back up the CA key (with items 3 and 37); never print it or put
-   it in bundles, logs or rendered YAML.
-5. Keep external files winning (item 44) and keep demo provisioning available
-   for the shipped demo without making demo names part of the production tool.
+Already true and to be kept: the CA lives in `<root>/PKI/private/`, and `--root`
+differs per environment (`build/dev` in dev, `/var/lib/<product>` on targets), so
+dev and production already have separate CAs. An existing complete CA is kept
+and a partial one is refused. Demo component names select issued certificates
+only (item 44), not the CA.
 
-Out of scope: an online CA, ACME, HSM integration, and rotation of database
-passwords (item 2).
+1. Make the CA subject and lifetime configurable. Today `/CN=Demo Development CA`
+   and `-days 3650` are hardcoded twice (component mode and full mode); create
+   the CA in one shared function. Keep the current values as the demo default.
+2. Make the issued certificate lifetime configurable (hardcoded `-days 365`
+   twice today).
+3. Validate values before any file is written (subject syntax, positive integer
+   days); invalid values fail without creating or changing files.
+4. Tests in `tests/test_certificates.py` with real OpenSSL: the configured
+   subject and lifetimes are used for a new CA and certificates; an existing CA
+   is never modified or recreated when settings change; invalid values write
+   nothing; existing invocations without settings behave as before.
+5. Document where the CA key lives (mode 0600, `PKI/private/`), that it must be
+   backed up and protected (items 3 and 37), and that new settings apply only to
+   CAs created afterwards. Replacing an existing CA means reissuing every
+   certificate and distributing the new CA; that is a separate operation and
+   not part of 45a.
 
-Done when production installs can issue, retain, renew and back up their
-certificates from a documented per-environment CA with the same tool, external
-certificates still override it, and the lab verifies the flow on PROD.
+Keep the current stdin delivery; no deploy, bundle or lab-scenario changes.
+
+### 45b. Delivery to targets (medium)
+
+1. Deliver the tool in a supported way, for example signed inside the platform
+   bundle (item 38) or as a signed tool archive, that works with fapolicyd and
+   offline execution; no network or package installs.
+2. Update the lab to use the delivered tool instead of copying the script, and
+   remove the renamed-product directory workaround in `demo_credentials` if the
+   tool supports arbitrary component names (item 44).
+3. Keep demo provisioning available for the shipped demo without making demo
+   names part of the production tool.
+
+### 45c. Renewal and expiry (medium; after item 39)
+
+1. Renew issued certificates before expiry without silently replacing keys or
+   the CA; define when renewal is allowed and how consumers (nginx, Identity,
+   app clients) pick up the new certificate through the normal upgrade/restart
+   path.
+2. Report certificate expiry in `./deploy status` (item 39).
+3. Test expiry and renewal with short-lived fixtures, and verify on PROD in the
+   lab. Plan it well before the first production certificates expire.
+
+### Out of scope
+
+An online CA, ACME, HSM integration, replacing an existing CA, and rotation of
+database passwords (item 2).
+
+Done when (all three parts): production installs can issue, retain, renew and
+back up their certificates from a documented per-environment CA with the same
+tool, external certificates still override it, and the lab verifies the flow on
+PROD.
