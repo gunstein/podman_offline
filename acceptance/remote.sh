@@ -505,6 +505,7 @@ import subprocess
 import sys
 import time
 import yaml
+from urllib.parse import urlsplit
 
 
 def podman(arguments):
@@ -566,6 +567,33 @@ def states(expected, init):
     return found
 
 
+def check_configmap_inline(paths):
+    """Verify the demo's public inline value inside its actual consumer container."""
+    checked = 0
+    for path in paths:
+        docs = list(yaml.safe_load_all(path.read_text()))
+        maps = {doc["metadata"]["name"]: doc.get("data", {}) for doc in docs if doc and doc.get("kind") == "ConfigMap"}
+        for doc in docs:
+            if not doc or doc.get("kind") != "Pod":
+                continue
+            for container in doc["spec"].get("containers", []):
+                for source in container.get("envFrom", []):
+                    data = maps.get(source.get("configMapRef", {}).get("name"), {})
+                    if "PUBLIC_ENDPOINT" not in data:
+                        continue
+                    expected = "https://" + urlsplit(data["PUBLIC_ORIGIN"]).hostname + ":" + data["HTTPS_PORT"]
+                    if data["PUBLIC_ENDPOINT"] != expected:
+                        raise RuntimeError("Inline ConfigMap endpoint was rendered incorrectly")
+                    name = doc["metadata"]["name"] + "-" + container["name"]
+                    actual = podman(["exec", name, "printenv", "PUBLIC_ENDPOINT"])
+                    if actual.strip() != expected:
+                        raise RuntimeError("Inline ConfigMap endpoint did not reach its container")
+                    checked += 1
+    if not checked:
+        raise RuntimeError("Missing inline ConfigMap runtime coverage")
+    print("PASS: inline ConfigMap PUBLIC_ENDPOINT matches its running consumer")
+
+
 def main():
     """Wait up to 150 seconds for healthy; reject inventory, command and parse errors at once."""
     folder = pathlib.Path.home() / ".config/containers/systemd"
@@ -587,6 +615,7 @@ def main():
             if running != "running" or health == "unhealthy":
                 raise RuntimeError("Container is not healthy: " + name)
         if all(health == "healthy" for _, health in current.values()):
+            check_configmap_inline(paths)
             print("PASS: all {} app containers are running and healthy".format(len(expected)))
             return
         if time.monotonic() >= deadline:

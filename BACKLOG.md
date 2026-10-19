@@ -3658,10 +3658,10 @@ and two teams releasing different components touch the same directory.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: Secret-template delivery implemented on `main`; real lab verification
-pending. The concurrent extension for inline ConfigMap placeholders (section 2b,
-added in `b6bf75c`) is not implemented by this change and remains planned, including
-its shared substitution callback and demo/lab coverage. On
+Status: Secret-template delivery is on `main`; the ConfigMap inline extension
+(section 2b, added in `b6bf75c`) is now implemented with a shared regex
+substitution callback, public-only resolver, demo value and runtime assertions
+for all six scenarios. Real lab verification remains pending for both parts. On
 2026-10-19 the operator explicitly authorized implementation before the lab
 probe and will run it in the evening. No lab result is claimed. Local evidence
 and runnable lab commands are recorded in [Secret template verification](acceptance/SECRET-TEMPLATES.md).
@@ -3677,6 +3677,16 @@ template/retry product tests; no actual Python 3.6 or .NET/Podman execution here
 Templates, Identity integration, the disposable env/file/replace/Quadlet probe,
 redaction/mode checks, and pinned 0.4.11 -> template Identity upgrade are ready.
 The six-scenario CLEAN PASS requirement remains outstanding, not waived.
+
+ConfigMap extension verification (2026-10-19): 389 product tests collected,
+386 passed and the same 3 environment-blocked GnuPG tests skipped. All 193
+acceptance-harness tests passed. Targeted reruns cover preserved regex/backslash
+input and invalid ConfigMap metadata during initialization. Ruff check/format,
+Pyright (0 errors/warnings), static Python 3.6 compatibility, shell syntax and
+whitespace checks pass. `replace()` remains unchanged; Secret and ConfigMap text
+use `templates.substitute()` with separate source policies. Platform 0.4.12 adds
+`PUBLIC_ENDPOINT`; every lab health check verifies it inside its actual consumer,
+including the renamed gateway. The lab matrix remains unexecuted here.
 
 ### Background and decision
 
@@ -3732,7 +3742,7 @@ SECRET_TEMPLATES:
 - The ID follows the same naming, length and component-prefix rules as
   `SECRET_FILES` IDs (`check_component_config_names`). It must not collide with a
   `SECRET_FILES` or `VOLUME_FILES` ID. Keys match `common.SECRET_KEY`.
-- A value is a string. Placeholders **inside** text are allowed only here:
+- A value is a string. Within `SECRET_TEMPLATES`, the allowed placeholders are:
   - `@@NAME@@` is an effective config value of the same component, shared
     settings included. Only strings and integers are allowed; a missing key, a
     list, a dict, a boolean or null is refused.
@@ -3741,7 +3751,8 @@ SECRET_TEMPLATES:
     postgres `file_env` and `DatabaseEnvironment.cs` (`TrimEnd('\n')`).
 - No templates inside templates and no nested placeholders. Text left over that
   still looks like `@@...@@` is refused.
-- Placeholders in manifests stay whole-value only (`common.PH`); the existing
+- Outside ConfigMap `data`, placeholders in manifests stay whole-value only
+  (`common.PH`); the existing
   "Unreplaced @@...@@" check must keep working.
 - **Characters.** The template does not know the connection-string syntax, so
   deploy does not escape. Every substituted value (config or secret) that

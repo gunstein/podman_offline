@@ -1,4 +1,4 @@
-# Secret templates (backlog 41)
+# Secret templates and ConfigMap inline values (backlog 41)
 
 [SECRET-TEMPLATES.md](SECRET-TEMPLATES.md) records local verification and the
 pending lab commands. `database-runtime` now starts with a disposable direct
@@ -13,6 +13,12 @@ normal deploy still never merges new defaults. Database volumes, users, health,
 login and sibling checks remain required. Only this focused scenario skips the
 new-image disposable Identity checks while the old image is its baseline; after
 upgrade it verifies the new installed image using `--database-check`.
+
+The platform ConfigMap also composes `PUBLIC_ENDPOINT` from the public hostname
+and HTTPS port. Every successful `healthy()` check requires this value to match
+both the ConfigMap inputs and `printenv` in its actual proxy consumer, so all six
+scenarios cover it (the renamed product uses gateway references). A missing,
+unrendered or stale runtime value fails the scenario before success is recorded.
 
 The probe is implemented, not lab-verified yet. Its runtime diagnostics are
 captured privately; only pass/fail statements and the accepted env-inspection

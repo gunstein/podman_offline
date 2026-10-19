@@ -5,3 +5,4 @@ metadata:
 data:
   PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
   HTTPS_PORT: '@@HTTPS_PORT@@'
+  PUBLIC_ENDPOINT: 'https://@@PUBLIC_HOSTNAME@@:@@HTTPS_PORT@@'

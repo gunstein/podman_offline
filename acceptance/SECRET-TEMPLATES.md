@@ -1,6 +1,7 @@
-# Secret templates: verification and lab handoff
+# Secret templates and ConfigMap inline values: verification and lab handoff
 
-Implementation: backlog 41, Identity component 0.4.12 / image 0.2.2.
+Implementation: backlog 41, Identity component 0.4.12 / image 0.2.2 and platform
+component 0.4.12 (unchanged stock nginx image).
 The operator authorized local implementation before the prerequisite lab probe
 on 2026-10-19 and will perform real verification separately. No real Podman,
 systemd, SELinux or fapolicyd result is claimed by this report.
@@ -10,7 +11,9 @@ systemd, SELinux or fapolicyd result is claimed by this report.
 - The retained file is authoritative. Existing credentials are not overwritten;
   templates read the same loaded file Secret bytes used for delivery.
 - Recipes accept config string/integer inputs and same-component `SECRET_FILES`
-  keys; no recursive/derived references or general manifest interpolation.
+  keys; no recursive/derived references. Public ConfigMap `data` can compose
+  string/integer config through the same single-pass callback, with Secret
+  references refused. Other manifest fields retain whole-value replacement.
 - Declarations, names, references and public inputs validate before generation;
   `validate` never reads credential contents or runs host commands.
 - After DB preflight and permitted generation, derived data is composed in memory
@@ -24,7 +27,10 @@ systemd, SELinux or fapolicyd result is claimed by this report.
 - No SELinux/fapolicyd rules or external runtime dependencies are added.
 
 `deployment/templates.py` owns recipe shape, parsing, public/reference checks and
-private composition. `render.py` supplies names for validation and loaded file
+private composition. `config_text()` is the public-only resolver, and
+`substitute()` is shared with both private validation and materialization.
+`render.configmap_data()` preserves original whole-value semantics and ensures
+inserted values are not interpreted recursively. `render.py` supplies names for validation and loaded file
 Secret documents during materialization. It integrates links/key checks and the
 existing uninstall resource inventory. Only original `SECRET_FILES` may serve as
 a database password source. `catalog.py` reserves the new setting from sharing.
@@ -43,8 +49,8 @@ backlog 41 after the final run:
 
 | Check | Result |
 | --- | --- |
-| Product suite | 379 collected: 376 passed, 3 environment-blocked GnuPG tests skipped explicitly in the verification invocation |
-| Acceptance harness | 190 passed; host commands stubbed |
+| Product suite with ConfigMap extension | 389 collected: 386 passed, 3 environment-blocked GnuPG tests skipped explicitly in the verification invocation |
+| Acceptance harness | 193 passed; host commands stubbed |
 | Ruff check and format | Passed |
 | Pyright | 0 errors, 0 warnings |
 | Host compatibility | Vermin: Python 3.6 for deployment, bundle and new/changed template/retry product tests |
@@ -63,11 +69,22 @@ restart failure followed by retry in a fresh interpreter. A minimal worker has
 no .NET, Identity, DB, gateway or certificates. The renamed `shop` product must
 render renamed template IDs and `secretKeyRef` references without code changes.
 
+ConfigMap extension: product tests cover multiple/public integer placeholders,
+multi-line and literal dollar/backslash text, forbidden Secret references, invalid
+markers/types and unchanged scopes. Worker install/config-change and missing-key
+init cases exercise the real lifecycle. Three harness tests verify demo and `shop`
+consumer selection, stale/unrendered/missing values and failure before health
+success. Every lab `healthy()` call requires the demo value in its running proxy.
+
 The understandability review traced successful install and failed restart/retry:
 `validate_component` -> `check_templates` -> database preflight -> `materialize`
 -> file Secret documents -> `templates.documents` -> existing publication and
 restart -> completion marker. No additional durable state is needed; retry
-recomputes derived values from retained config/passwords. Existing file-write
+recomputes derived values from retained config/passwords. ConfigMap success and
+failure were traced through the same `configmap_data()` helper at initialization
+and effective-document validation, before any generated output. Source strings
+remain distinct from already replaced values to prevent recursive expansion.
+Existing file-write
 atomicity and credential rotation are not expanded in this task.
 
 ## Disposable runtime probe
@@ -121,6 +138,11 @@ python3 acceptance/acceptance.py --run templates-platform --platform-help-only r
 python3 acceptance/acceptance.py --run templates-identity --identity-only run
 python3 acceptance/acceptance.py --run templates-shop --renamed-product run
 ```
+
+All six scenarios run the shared `healthy()` check, which verifies the public
+`PUBLIC_ENDPOINT` ConfigMap value against hostname/port inputs and `printenv`
+in the proxy container; renamed products are found by their ConfigMap reference.
+A missing sample or an incorrectly rendered/runtime value fails the check.
 
 `database-runtime` starts with the disposable env/file/restart probe, and renamed
 runs also execute it. Installed `database-auth` checks correct credentials and

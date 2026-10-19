@@ -193,9 +193,12 @@ Initialization writes path references only; credentials must be prepared separat
 Manifests are rendered before Podman sees them. Whole-value placeholders such as
 `Clients__0__AllowedCorsOrigins__0: '@@ALLOWED_CORS_ORIGIN@@'` require a complete
 config value, for example `ALLOWED_CORS_ORIGIN: "https://example.test"`.
-They preserve YAML types; ConfigMap data is converted to text. Partial string
-interpolation and `envsubst` are not supported. Missing values identify their key
-and config file without exposing secret values.
+They preserve YAML types; ConfigMap data is converted to text. ConfigMap `data`
+values also accept inline `@@NAME@@` placeholders, including in multi-line files.
+Other manifest fields still require whole values. Dollar-style nginx/shell
+variables are preserved. Missing inputs identify their key without exposing values;
+Secret references are allowed only in `SECRET_TEMPLATES`. See
+[ConfigMap inline values](docs/COMPONENTS.md#configmap-inline-values).
 
 The examples in `examples/` and the registry acceptance test still use one
 explicit `config.yaml` (and `~/config.yaml` when installed). The product itself
@@ -369,7 +372,8 @@ Prod reads `~/platform/config.yaml`, `~/identity/config.yaml`, `~/app1/config.ya
 `~/help/config.yaml`. Relative `SECRET_FILES`/`VOLUME_FILES` paths are resolved
 from that config's directory; absolute paths and `~` are supported. Config keys
 are strings, ordinary values are text/integers and `HTTPS_PORT` is an integer.
-Duplicate YAML keys, partial placeholders, unresolved references, missing mounts
+Duplicate YAML keys, inline placeholders outside the allowed fields, unresolved
+references, missing mounts
 and colliding Secret/PVC/ConfigMap names are rejected. Whole `@@NAME@@` values
 preserve int/string types; ConfigMap data becomes text.
 
@@ -388,8 +392,9 @@ encoded in the same 0600 YAML. Use `secretKeyRef` for unchanged apps reading a
 complete environment value or a Secret mount for file-aware apps. Environment
 values remain visible to the service user and root in Podman inspection and
 process environments. See the [schema, example and input restrictions](docs/COMPONENTS.md#secret-templates).
-Only templates accept embedded placeholders; ordinary manifests keep whole-value
-replacement. `validate` never reads Secret contents. Equal `newer-only` installs
+Only Secret templates and ConfigMap `data` accept embedded placeholders; other
+manifest fields keep whole-value replacement. ConfigMaps accept only ordinary
+string/integer config inputs and refuse `@@secret:...@@`. `validate` never reads Secret contents. Equal `newer-only` installs
 and systemd restarts do not recompute templates.
 
 `VOLUME_FILES` creates private import tar archives and PVCs. Import archives

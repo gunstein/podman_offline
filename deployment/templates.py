@@ -1,4 +1,4 @@
-"""Declared Secret text recipes; never expand ordinary manifest values.
+"""Scoped text substitution for Secret recipes and public ConfigMap data.
 
 Validation only needs names and config, not credential bytes. Materialization
 uses the already loaded file Secrets, so no derived credential has its own file.
@@ -46,21 +46,58 @@ def declarations(config):
     return recipes
 
 
+def reference(match, where):
+    """Classify one placeholder without including arbitrary text in diagnostics."""
+    name = match[1]
+    secret = SECRET_REF.fullmatch(name)
+    if secret:
+        return secret[1], secret[2]
+    if CONFIG_NAME.fullmatch(name):
+        return None, name
+    raise common.DeployError(f"{where}: unknown or nested placeholder")
+
+
 def tokens(text, where):
-    """Parse placeholders once; never include untrusted template text in errors."""
+    """Check syntax and expose names for declaration-only dependency checks."""
     if "@@" in TOKEN.sub("", text):
         raise common.DeployError(f"{where}: malformed placeholder")
-    found = []
-    for token in TOKEN.finditer(text):
-        name = token[1]
-        secret = SECRET_REF.fullmatch(name)
-        if secret:
-            found.append((token, secret[1], secret[2]))
-        elif CONFIG_NAME.fullmatch(name):
-            found.append((token, None, name))
-        else:
-            raise common.DeployError(f"{where}: unknown or nested placeholder")
-    return found
+    return [(match,) + reference(match, where) for match in TOKEN.finditer(text)]
+
+
+def substitute(text, resolve, where):
+    """One non-recursive pass; the caller supplies the allowed sources/policy."""
+    tokens(text, where)
+
+    def replacement(match):
+        return resolve(*reference(match, where))
+
+    result = TOKEN.sub(replacement, text)
+    if "@@" in result:
+        raise common.DeployError(f"{where}: unresolved placeholder marker")
+    return result
+
+
+def config_value(config, name, where):
+    """Only string/integer inputs can participate in composed text."""
+    value = config.get(name)
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise common.DeployError(
+            f"{where}: Missing {name} or non-text/integer config input"
+        )
+    return str(value)
+
+
+def config_text(text, config, where):
+    """Compose public text without access to file contents or Secret values."""
+
+    def resolve(group, field):
+        if group is not None:
+            raise common.DeployError(
+                f"{where}: secret placeholder is forbidden in ConfigMap data; use SECRET_TEMPLATES"
+            )
+        return config_value(config, field, where)
+
+    return substitute(text, resolve, where)
 
 
 def check_text(value, where, source):
@@ -78,24 +115,25 @@ def check_text(value, where, source):
 
 
 def validate(config, source_keys):
-    """Check references and public input values; source_keys contains names only."""
+    """Check recipes using names and config only, never credential bytes."""
     for name, values in declarations(config).items():
         for key, text in values.items():
             where = f"SECRET_TEMPLATES.{name}.{key}"
-            for _, group, field in tokens(text, where):
+
+            def resolve(group, field, where=where):
                 if group is None:
-                    value = config.get(field)
-                    if isinstance(value, bool) or not isinstance(value, (str, int)):
-                        raise common.DeployError(
-                            f"{where}: Missing {field} or non-text/integer config input"
-                        )
-                    check_text(str(value), where, field)
-                elif group not in config.get(common.SECRET_FILES, {}) or field not in (
+                    value = config_value(config, field, where)
+                    check_text(value, where, field)
+                    return value
+                if group not in config.get(common.SECRET_FILES, {}) or field not in (
                     source_keys.get(group) or set()
                 ):
                     raise common.DeployError(
                         f"{where}: missing declared source SECRET_FILES.{group}/{field}"
                     )
+                return "declared"  # Check the actual bytes only after materialization.
+
+            substitute(text, resolve, where)
 
 
 def references(config):
@@ -117,11 +155,11 @@ def documents(config, file_documents):
         data = {}
         for key, text in values.items():
             where = f"SECRET_TEMPLATES.{name}.{key}"
-            parts, end = [], 0
-            for token, group, field in tokens(text, where):
+
+            def resolve(group, field, where=where):
                 source = field if group is None else f"SECRET_FILES.{group}/{field}"
                 if group is None:
-                    value = str(config[field])
+                    value = config_value(config, field, where)
                 else:
                     try:
                         value = (
@@ -136,10 +174,10 @@ def documents(config, file_documents):
                     if not value:
                         raise common.DeployError(f"{where}: empty source {source}")
                 check_text(value, where, source)
-                parts.extend((text[end : token.start()], value))
-                end = token.end()
-            parts.append(text[end:])
-            data[key] = base64.b64encode("".join(parts).encode("utf-8")).decode("ascii")
+                return value
+
+            value = substitute(text, resolve, where)
+            data[key] = base64.b64encode(value.encode("utf-8")).decode("ascii")
         doc = {
             "apiVersion": "v1",
             "kind": "Secret",

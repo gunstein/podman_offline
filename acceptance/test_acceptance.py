@@ -1382,6 +1382,8 @@ class HealthTests(unittest.TestCase):
     def run_health(self, rows, exit_code=0):
         """Run the wait loop with stubbed inventory, stdout and stderr."""
         self.namespace["expected_containers"] = lambda path: ({"pod-app"}, set())
+        # ConfigMap runtime delivery has separate focused assertions.
+        self.namespace["check_configmap_inline"] = lambda paths: None
 
         def run(arguments, **kwargs):
             """Return only controlled inspect data or container IDs."""

@@ -293,3 +293,215 @@ class TemplateLifecycleTests(ProductFixture):
         self.assertEqual(kept, output.read_bytes())
         deploy.uninstall("worker")
         self.assertTrue(password.exists())
+
+
+class ConfigMapTemplateTests(DeployFixture):
+    def setUp(self):
+        super().setUp()
+        self.config.update(HOST="api.test", PORT=8080)
+        self.path = common.CONFIG
+
+    def write_map(self, data, **extra):
+        doc = document("ConfigMap", "settings", data=data, **extra)
+        self.write("manifests/settings.yaml", yaml.safe_dump(doc))
+
+    def checked(self):
+        return deploy.validate_component(self.config, self.path, common.MANIFESTS)
+
+    def test_inline_multiline_and_nginx_dollars_are_preserved(self):
+        self.write_map(
+            {
+                "endpoint": "http://@@HOST@@:@@PORT@@/v1",
+                "file.conf": "server {\n  listen @@PORT@@;\n  server_name @@HOST@@;\n  set $upstream ${UPSTREAM};\n}\n",
+                "literal": "${HTTPS_PORT} ${DNS_SERVER} $host",
+                "whole": "@@PORT@@",
+            }
+        )
+        data = self.checked()[0]["data"]
+        self.assertEqual(data["endpoint"], "http://api.test:8080/v1")
+        self.assertEqual(
+            data["file.conf"],
+            "server {\n  listen 8080;\n  server_name api.test;\n  set $upstream ${UPSTREAM};\n}\n",
+        )
+        self.assertEqual(data["literal"], "${HTTPS_PORT} ${DNS_SERVER} $host")
+        self.assertEqual(data["whole"], "8080")
+
+    def test_public_values_are_not_subject_to_secret_character_rules(self):
+        self.config["TEXT"] = " leading;quotes\"'\ntrailing "
+        self.write_map({"file": "start\n@@TEXT@@\nend"})
+        self.assertEqual(
+            self.checked()[0]["data"]["file"], "start\n" + self.config["TEXT"] + "\nend"
+        )
+
+        self.config["PATH_TEXT"] = r"\g<1>\1\$host"
+        self.write_map({"path": "prefix-@@PATH_TEXT@@"})
+        self.assertEqual(
+            self.checked()[0]["data"]["path"], "prefix-" + self.config["PATH_TEXT"]
+        )
+
+    def test_whole_values_keep_existing_conversion_inline_requires_scalar(self):
+        for value in (False, None, ["public"], {"name": "public"}):
+            self.config["VALUE"] = value
+            self.write_map({"whole": "@@VALUE@@"})
+            self.assertEqual(self.checked()[0]["data"]["whole"], str(value))
+            self.write_map({"inline": "prefix-@@VALUE@@"})
+            with self.assertRaisesRegex(common.DeployError, "VALUE") as error:
+                self.checked()
+            self.assertNotIn("public", str(error.exception))
+
+    def test_secret_refs_rejected_before_generation_or_content_read(self):
+        self.config["SECRET_FILES"] = {
+            "private-password": [{"path": "credentials/db", "generate": ["password"]}]
+        }
+        for text in (
+            "@@secret:private-password/password@@",
+            "Password=@@secret:private-password/password@@",
+        ):
+            self.write_map({"connection": text})
+            reader = mock.patch.object(
+                Path, "read_bytes", side_effect=AssertionError("credential read")
+            )
+            failure = self.assertRaisesRegex(common.DeployError, "SECRET_TEMPLATES")
+            with reader, failure:
+                self.checked()
+            self.assertFalse((self.root / "credentials").exists())
+        self.process.assert_not_called()
+
+    def test_missing_unknown_nested_and_literal_markers_fail_without_values(self):
+        for text in (
+            "@@MISSING@@/v1",
+            "@@bad@@",
+            "@@outer:@@HOST@@@@",
+            "literal @@ marker",
+            "@@HOST@@ @@",
+        ):
+            self.write_map({"public-key": text})
+            with self.assertRaises(common.DeployError) as error:
+                self.checked()
+            self.assertNotIn("api.test", str(error.exception))
+
+    def test_substituted_markers_are_never_expanded_recursively(self):
+        self.config["HOST"] = "@@OTHER@@"
+        self.config["OTHER"] = "do-not-insert"
+        for text in ("http://@@HOST@@", "@@HOST@@"):
+            self.write_map({"endpoint": text})
+            with self.assertRaises(common.DeployError) as error:
+                self.checked()
+            self.assertNotIn("do-not-insert", str(error.exception))
+
+    def test_inline_outside_data_remains_refused(self):
+        pod = document(
+            "Pod",
+            "app",
+            spec={
+                "containers": [
+                    {
+                        "name": "web",
+                        "image": "localhost/app:1",
+                        "imagePullPolicy": "Never",
+                    }
+                ]
+            },
+        )
+        for field in ("metadata", "image", "env", "volume"):
+            current = copy.deepcopy(pod)
+            container = current["spec"]["containers"][0]
+            if field == "metadata":
+                current["metadata"]["name"] = "app-@@HOST@@"
+            elif field == "image":
+                container["image"] = "localhost/@@HOST@@:1"
+            elif field == "env":
+                container["env"] = [{"name": "URL", "value": "http://@@HOST@@"}]
+            else:
+                current["spec"]["volumes"] = [
+                    {
+                        "name": "data",
+                        "persistentVolumeClaim": {"claimName": "data-@@HOST@@"},
+                    }
+                ]
+            self.write("manifests/pod.yaml", yaml.safe_dump(current))
+            with self.assertRaisesRegex(common.DeployError, "Only whole values"):
+                self.checked()
+        (common.MANIFESTS / "pod.yaml").unlink()
+        self.write_map({"text": "public"}, metadata={"name": "settings-@@HOST@@"})
+        with self.assertRaisesRegex(common.DeployError, "Only whole values"):
+            self.checked()
+
+    def test_validate_is_write_free_and_reads_no_secret_contents(self):
+        self.write_map({"endpoint": "http://@@HOST@@:@@PORT@@"})
+        self.write("config.yaml", yaml.safe_dump(self.config))
+        before = {
+            path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()
+        }
+        with mock.patch.object(
+            Path, "read_bytes", side_effect=AssertionError("private read")
+        ):
+            validation.validate()
+        self.assertEqual(
+            before,
+            {
+                path: path.read_bytes()
+                for path in self.root.rglob("*")
+                if path.is_file()
+            },
+        )
+        self.process.assert_not_called()
+
+
+class ConfigMapLifecycleTests(ProductFixture):
+    def product(self):
+        product = copy.deepcopy(WORKER)
+        worker = product["worker"]
+        worker["defaults"] = {"API_HOST": "worker.test", "API_PORT": 8080}
+        worker["manifests"].insert(
+            0,
+            document(
+                "ConfigMap",
+                "worker-settings",
+                data={"API_URL": "http://@@API_HOST@@:@@API_PORT@@"},
+            ),
+        )
+        worker["manifests"][1]["spec"]["containers"][0]["envFrom"] = [
+            {"configMapRef": {"name": "worker-settings"}}
+        ]
+        return product
+
+    def test_worker_install_and_config_change_use_same_rendered_values(self):
+        self.write_product(self.product())
+        releases = self.build_and_unpack()
+        self.install(releases["worker"])
+        output = catalog.component_paths("worker")[2]
+
+        def endpoint():
+            docs = list(yaml.safe_load_all(output.read_text()))
+            return next(
+                doc["data"]["API_URL"] for doc in docs if doc["kind"] == "ConfigMap"
+            )
+
+        self.assertEqual(endpoint(), "http://worker.test:8080")
+        config_path = common.HOME / "worker/config.yaml"
+        config = yaml.safe_load(config_path.read_text())
+        config.update(API_HOST="changed.test", API_PORT=9090)
+        config_path.write_text(yaml.safe_dump(config))
+        self.install(releases["worker"])
+        self.assertEqual(endpoint(), "http://changed.test:9090")
+        self.assertEqual(self.mode(output), 0o600)
+        self.assertFalse((common.HOME / "worker/credentials").exists())
+
+    def test_init_config_refuses_missing_inline_key_before_writing(self):
+        product = self.product()
+        del product["worker"]["defaults"]["API_PORT"]
+        self.write_product(product)
+        releases = self.build_and_unpack()
+        self.use_root(releases["worker"])
+        self.process.reset_mock()
+        with self.assertRaisesRegex(common.DeployError, "API_PORT"):
+            deploy.init_config("worker")
+        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.process.assert_not_called()
+        product = self.product()
+        product["worker"]["manifests"][0]["metadata"] = None
+        self.write_product(product)
+        with self.assertRaisesRegex(common.DeployError, "metadata must be a map"):
+            rendering.component_defaults("worker")
+        self.assertFalse((common.HOME / "worker/config.yaml").exists())

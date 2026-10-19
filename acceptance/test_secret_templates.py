@@ -266,3 +266,102 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
             self.assertNotIn(
                 "private-fixture", output.getvalue() + str(error.exception)
             )
+
+
+class ConfigMapInlineHarnessTests(unittest.TestCase):
+    def fixture(self, directory, component="platform"):
+        docs = [
+            {
+                "kind": "ConfigMap",
+                "metadata": {"name": component + "-settings"},
+                "data": {
+                    "PUBLIC_ORIGIN": "https://gateway.test:8443",
+                    "HTTPS_PORT": "9443",
+                    "PUBLIC_ENDPOINT": "https://gateway.test:9443",
+                },
+            },
+            {
+                "kind": "Pod",
+                "metadata": {"name": component + "-proxy"},
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "nginx",
+                            "envFrom": [
+                                {"configMapRef": {"name": component + "-settings"}}
+                            ],
+                        }
+                    ]
+                },
+            },
+        ]
+        path = Path(directory) / ("myproduct-" + component + ".yaml")
+        path.write_text(yaml.safe_dump_all(docs))
+        return path, docs
+
+    def test_runtime_check_follows_configmap_consumers_for_demo_and_shop(self):
+        from test_components import guest_code
+
+        for component in ("platform", "gateway"):
+            code = guest_code("HEALTHY")
+            with tempfile.TemporaryDirectory() as directory:
+                path, _ = self.fixture(directory, component)
+                code["podman"] = mock.Mock(return_value="https://gateway.test:9443\n")
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    code["check_configmap_inline"]([path])
+                code["podman"].assert_called_once_with(
+                    ["exec", component + "-proxy-nginx", "printenv", "PUBLIC_ENDPOINT"]
+                )
+                self.assertIn("PASS: inline ConfigMap", output.getvalue())
+                self.assertNotIn("gateway.test", output.getvalue())
+
+    def test_wrong_rendered_or_running_value_and_missing_coverage_fail(self):
+        from test_components import guest_code
+
+        code = guest_code("HEALTHY")
+        with tempfile.TemporaryDirectory() as directory:
+            path, docs = self.fixture(directory)
+            code["podman"] = mock.Mock(return_value="stale endpoint")
+            with self.assertRaisesRegex(RuntimeError, "did not reach"):
+                code["check_configmap_inline"]([path])
+            docs[0]["data"]["PUBLIC_ENDPOINT"] = (
+                "https://@@PUBLIC_HOSTNAME@@:@@HTTPS_PORT@@"
+            )
+            path.write_text(yaml.safe_dump_all(docs))
+            with self.assertRaisesRegex(RuntimeError, "rendered incorrectly"):
+                code["check_configmap_inline"]([path])
+            path.write_text(yaml.safe_dump_all(docs[1:]))
+            with self.assertRaisesRegex(RuntimeError, "Missing inline"):
+                code["check_configmap_inline"]([path])
+
+    def test_healthy_main_requires_runtime_configmap_value_before_success(self):
+        from test_components import guest_code
+
+        code = guest_code("HEALTHY")
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            folder = home / ".config/containers/systemd"
+            folder.mkdir(parents=True)
+            self.fixture(folder)
+            row = {
+                "Name": "platform-proxy-nginx",
+                "IsInfra": False,
+                "IsService": False,
+                "State": {"Status": "running", "Health": {"Status": "healthy"}},
+            }
+
+            def podman(arguments):
+                if arguments[0] == "exec":
+                    return "wrong endpoint"
+                return (
+                    json.dumps([row]) if arguments[0] == "inspect" else "container-id\n"
+                )
+
+            code["podman"] = podman
+            with (
+                mock.patch.object(Path, "home", return_value=home),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                self.assertRaisesRegex(RuntimeError, "did not reach"),
+            ):
+                code["main"]()
+            self.assertNotIn("PASS: all", output.getvalue())

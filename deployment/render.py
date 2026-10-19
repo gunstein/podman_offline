@@ -157,12 +157,13 @@ def component_defaults(component, overrides=None, dev=False):
 
 
 def validate_component_config(config, component, path, check_placeholders=True):
-    """Require every whole-value manifest placeholder before writes.
+    """Validate whole-value and ConfigMap inline inputs before initialization writes.
 
     Shared public settings are required by the component's declared contract
     (deploy.check_public_settings), not here.
     """
     required = set()
+    configmaps = []
 
     def collect(value):
         if isinstance(value, dict):
@@ -180,7 +181,13 @@ def validate_component_config(config, component, path, check_placeholders=True):
         for manifest in sorted(
             (common.ROOT / "components" / component / "manifests").glob("*.yaml")
         ):
-            collect(load_yaml_all(manifest))
+            documents = load_yaml_all(manifest)
+            collect(documents)
+            configmaps.extend(
+                doc
+                for doc in documents
+                if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
+            )
     # PUBLIC_HOSTNAME is always derived from PUBLIC_ORIGIN, so it cannot disagree.
     if "PUBLIC_HOSTNAME" in config:
         raise common.DeployError(
@@ -199,6 +206,15 @@ def validate_component_config(config, component, path, check_placeholders=True):
     check_component_config_names(config, component, path)
     generated_secret_paths(config, path.parent)
     check_templates(config, path)
+    if configmaps:
+        effective = dict(config)
+        if "PUBLIC_ORIGIN" in config:
+            effective["PUBLIC_HOSTNAME"] = public_origin(
+                config["PUBLIC_ORIGIN"], path
+            ).hostname
+        for document in configmaps:
+            check_kinds([document], path)
+            configmap_data(document, replace(document, effective), effective)
 
 
 def check_templates(config, path):
@@ -836,6 +852,28 @@ def declared_volume_names(config, path, imported):
     return secrets, sorted(set(volumes) | set(imported))
 
 
+def configmap_data(original, rendered, config):
+    """Compose only original ConfigMap data strings; retain whole-value behavior.
+
+    Looking at the original prevents treating a config value inserted by replace()
+    as another recipe. Other manifest fields keep replace()'s existing semantics.
+    """
+    data = rendered.get("data") or {}
+    if not isinstance(data, dict):
+        raise common.DeployError("ConfigMap.data must be a map")
+    original_data = original.get("data")
+    result = {}
+    for key, value in data.items():
+        text = original_data.get(key) if isinstance(original_data, dict) else None
+        if isinstance(text, str) and not common.PH.fullmatch(text):
+            where = (
+                f"ConfigMap {rendered.get('metadata', {}).get('name')} data key {key}"
+            )
+            value = templates.config_text(text, config, where)
+        result[str(key)] = str(value)
+    return result
+
+
 def effective_documents(config, path, manifests, component=None, imported=()):
     """Return the manifests as they will be installed, fully validated, without writes.
 
@@ -847,20 +885,15 @@ def effective_documents(config, path, manifests, component=None, imported=()):
     check_templates(config, path)
     documents, sources = [], []
     for manifest in sorted(manifests.glob("*.yaml")):
-        check_kinds(load_yaml_all(manifest), manifest)
+        original = load_yaml_all(manifest)
+        check_kinds(original, manifest)
+        original = [document for document in original if document is not None]
         try:
-            rendered = [
-                replace(document, config)
-                for document in load_yaml_all(manifest)
-                if document is not None
-            ]
+            rendered = [replace(document, config) for document in original]
             check_pod_specs(rendered)
-            for doc in rendered:
+            for before, doc in zip(original, rendered):
                 if isinstance(doc, dict) and doc["kind"] == "ConfigMap":
-                    data = doc.get("data") or {}
-                    if not isinstance(data, dict):
-                        raise common.DeployError("ConfigMap.data must be a map")
-                    doc["data"] = {str(key): str(value) for key, value in data.items()}
+                    doc["data"] = configmap_data(before, doc, config)
             if "@@" in yaml.safe_dump_all(rendered, sort_keys=False):
                 raise common.DeployError(
                     'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'

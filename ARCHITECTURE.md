@@ -15,7 +15,7 @@ build entrypoint and also uses `-B`.
 | `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
 | `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners, the product name (`product_name`, `unit_name`) and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
-| `deployment/templates.py` | Secret recipe schema, safe input checks and composition from config and already loaded file Secrets; no writes or host commands |
+| `deployment/templates.py` | Shared single-pass substitution for ConfigMap data and Secret recipes, scoped input policies and private composition from loaded file Secrets; no writes or host commands |
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
@@ -33,7 +33,8 @@ writes nothing else. Then:
 1. `render.effective_config()` validates a component's config and adds the
    derived `PUBLIC_HOSTNAME`.
 2. `render.effective_documents()` returns the manifests as they will be
-   installed, with placeholders replaced, and checks everything decidable from
+   installed, with whole-value placeholders replaced and public ConfigMap `data`
+   composed by the shared substitution callback, and checks everything decidable from
    declarations: resource kinds, names after substitution, pull policy, mounts,
    duplicates and the links to config and imported registration volumes. It
    writes nothing.
@@ -335,6 +336,29 @@ No new fapolicyd/SELinux rules or host/runtime dependencies are introduced.
 See [Secret templates](docs/COMPONENTS.md#secret-templates) and backlog 41 for
 input restrictions and the pending real lab verification. The operator explicitly
 deferred the prerequisite probe to the lab run after local implementation.
+
+## Public ConfigMap composition (0.4.12 platform)
+
+`templates.substitute()` uses a standard-library regex replacement callback for
+both private recipes and ConfigMap `data` strings. `config_text()` resolves only
+ordinary string/integer config and explicitly refuses Secret references. Secret
+validation/materialization supply their own resolver and retain their input
+character rules. There are no expression, recursion or dollar-template semantics.
+
+`render.configmap_data()` inspects original values to distinguish inline text
+from whole-value placeholders. This prevents a value inserted by `replace()`
+from being interpreted as another recipe, preserves whole-value type/conversion
+behavior, and keeps `replace()` unchanged. `validate_component_config()` uses the
+same helper before init-config writes; `effective_documents()` uses it before
+lifecycle generation. The existing unresolved-marker check still rejects inline
+placeholders in every other field.
+
+The platform settings ConfigMap now carries public `PUBLIC_ENDPOINT`; its proxy
+receives it with the existing `envFrom`. Lab `healthy()` follows that reference
+and checks the rendered value against its public inputs and the running
+container's `printenv`, including the renamed gateway. No image, private file,
+trust policy or runtime dependency changes are needed. Real lab verification
+remains pending under backlog 41.
 
 ## Standard nginx proxy (0.4.7)
 

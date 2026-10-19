@@ -1,8 +1,11 @@
-# Secret template coverage (backlog 41)
+# Secret template and ConfigMap coverage (backlog 41)
 
 `test_secret_templates.py` tests schema, config/file-key references, rejected
 characters and redaction, LF handling, deterministic private rendering, key/size
 checks, missing generated sources, install/config/password changes and retry.
+ConfigMap tests cover multiple placeholders, multi-line text, whole-value type
+compatibility, preserved dollar/backslash syntax, forbidden Secret references,
+invalid/non-recursive markers, non-scalar inputs and unchanged scopes elsewhere.
 A minimal worker has no Identity, .NET, database, gateway or certificates; its
 sources can be consumed only by a template. Existing database/file-source tests
 still protect password retention and the existing-volume guard.

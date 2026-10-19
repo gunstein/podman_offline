@@ -226,12 +226,13 @@ prefix/name rules and cannot collide with `SECRET_FILES`, `VOLUME_FILES` or
 manifest resources; keys follow the Secret file-name rule. Each ID has a nonempty
 mapping of keys to string templates. It is a reserved setting and cannot be shared.
 
-Only these templates accept placeholders inside strings. `@@NAME@@` reads this
+Secret templates and ConfigMap `data` values accept placeholders inside strings.
+In Secret templates, `@@NAME@@` reads this
 component's effective string/integer config (including shared settings).
 `@@secret:<id>/<file>@@` reads a file key delivered by this component's
 `SECRET_FILES`, including a declared generated file. References to other templates,
-recursive expansion, expressions and commands are unsupported. Ordinary manifest
-placeholders still replace whole values only.
+recursive expansion, expressions and commands are unsupported. Other manifest
+fields still replace whole values only.
 
 The renderer removes trailing LF bytes from a secret input, matching PostgreSQL's
 `file_env`; it never rewrites the source file. Inputs containing semicolons, single
@@ -260,6 +261,50 @@ values are visible to the service user/root through `podman inspect`, process
 environments and child processes. File mounts avoid the extra environment copy
 but still require suitable container ownership/modes. No new credential files,
 network services, SELinux exceptions or fapolicyd trust rules are needed.
+
+## ConfigMap inline values
+
+A ConfigMap's `data` values can combine ordinary configuration values, including
+in multi-line file content:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orders-settings
+data:
+  DB_HOST: '@@DB_HOST@@'
+  API_URL: 'http://@@API_HOST@@:@@API_PORT@@/v1'
+  client.conf: |
+    server=@@API_HOST@@
+    port=@@API_PORT@@
+```
+
+Inline inputs must be strings or integers and the result is always text.
+Whole-value replacement retains its existing type behavior before ConfigMap data
+is converted with `str()`. The same single-pass substitution function serves
+Secret recipes and ConfigMaps, but ConfigMaps have no access to Secret contents:
+`@@secret:<id>/<file>@@` is refused with a pointer to `SECRET_TEMPLATES`.
+Keep private input in `SECRET_FILES`, not ordinary public config.
+
+ConfigMap public text does not use the Secret recipe's character restrictions:
+quotes, semicolons and multi-line text remain valid. There is no recursive
+expansion or escape syntax for `@@`; malformed markers or markers remaining in
+a substituted value are refused. Dollar syntax such as `${HTTPS_PORT}`, `$host`
+and shell/nginx templates is preserved verbatim.
+
+Outside ConfigMap `data` and `SECRET_TEMPLATES`, fields such as container
+`env.value`, images, names, volume bindings and ConfigMap metadata still require
+whole-value placeholders. Validation is shared by initialization, validate and
+rendering before generation or host commands. Config changes take effect when
+a component actually renders; the existing equal-version `newer-only` policy
+and ordinary restart behavior apply here too.
+
+The demo's platform ConfigMap supplies `PUBLIC_ENDPOINT` from
+`PUBLIC_HOSTNAME` and `HTTPS_PORT`. The acceptance health check verifies both the
+rendered value and `printenv PUBLIC_ENDPOINT` inside the consuming proxy. It
+follows the ConfigMap reference, so the same check covers the renamed `shop`
+gateway and all six scenarios without generic deploy-code changes.
 
 ## Manifest resource kinds
 
