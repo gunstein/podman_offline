@@ -18,6 +18,7 @@ import yaml
 from catalog_fixture import DEMO, DEMO_COMPONENTS, write_secret_fixtures
 from render_helper import materialize_and_render
 
+import bundle
 from deployment import cli, common, deploy, health
 from deployment import render as rendering
 
@@ -33,6 +34,9 @@ class DeployFixture(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        # Builds sign only when the operator asks; the caller's key is not ours.
+        self.stack.enter_context(mock.patch.dict(os.environ))
+        os.environ.pop(bundle.SIGNING_KEY, None)
         paths = {
             "HOME": self.root / "home",
             "ROOT": self.root,

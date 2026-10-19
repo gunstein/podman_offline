@@ -155,6 +155,7 @@ class WrapperTests(unittest.TestCase):
                 XDG_RUNTIME_DIR=str(root / "runtime"),
             )
             env.pop("PYTHONDONTWRITEBYTECODE", None)
+            env.pop("BUNDLE_SIGNING_KEY", None)  # Unsigned unless a test asks.
             # A tempting, invalid caller config must never be read or overwritten.
             (caller / "config.yaml").write_text("invalid: [\n")
             before = (caller / "config.yaml").read_bytes()

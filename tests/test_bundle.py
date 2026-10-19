@@ -3,6 +3,7 @@
 import contextlib
 import hashlib
 import io
+import os
 import shutil
 import subprocess
 import tarfile
@@ -22,6 +23,9 @@ class BundleTests(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        # Builds sign only when the operator asks; the caller's key is not ours.
+        self.stack.enter_context(mock.patch.dict(os.environ))
+        os.environ.pop(bundle.SIGNING_KEY, None)
         self.stack.enter_context(
             mock.patch.multiple(
                 bundle,

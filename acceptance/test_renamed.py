@@ -278,6 +278,13 @@ class RemoteActionTests(unittest.TestCase):
             self.assertTrue((state / "gateway/credentials/web/web.crt").is_file())
             self.assertFalse((state / "platform").exists())
 
+    def test_unit_tests_run_without_the_lab_signing_key(self):
+        """DEV exports the lab key for builds; product tests must not inherit it."""
+        self.assertIn(
+            "env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m unittest",
+            shell_code(REMOTE, action="unit"),
+        )
+
     def test_bundle_argument_accepts_any_component_id_only(self):
         self.assertIn(
             "[[ $bundle =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || exit 2", REMOTE

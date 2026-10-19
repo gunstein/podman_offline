@@ -688,7 +688,8 @@ clone)
     git rev-parse HEAD
     cat VERSION
     ;;
-unit) cd "$src"; python3 -m unittest discover -s tests;;
+# The product tests must not see the lab signing key exported above.
+unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m unittest discover -s tests;;
 build-images) cd "$src"; ./dev/build-images.sh;;
 database-runtime) cd "$src"; python3 acceptance/database_test.py;;
 pull-images) cd "$src"; ./dev/pull-images.sh;;
