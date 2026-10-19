@@ -22,13 +22,13 @@ The order for an offline production deployment of an organisation's own apps:
    delivery and the container mount; unblocks the organisation's Identity dev run.
 2. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
-   placeholders at install time (implemented; lab verification pending).
+   placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
 3. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once.
 4. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
-   bundles, beside the existing checksums (implemented; lab run pending).
+   bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
 5. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
 6. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
@@ -56,17 +56,18 @@ The order for an offline production deployment of an organisation's own apps:
 ## Status overview (2026-10-19)
 
 Done and verified on real VMs (rootless Podman 5.8.2, fapolicyd, SELinux
-Enforcing): items 1, 8, 9, 12, 14–21, 23, 25–29, 31–34. Their behaviour is
+Enforcing): items 1, 8, 9, 12, 14–21, 23, 25–29, 31–34, 38, 41. Their behaviour is
 exercised by every run of the six-scenario acceptance matrix (demo with app1 or
 app2 first, help only, Identity upgrade, platform with help, renamed product
-`shop`); the latest, `b34-*` on `77b27cd`, was CLEAN PASS. Item 30 (faster
+`shop`); the latest matrix (2026-10-19) was CLEAN PASS: `t3-app1`, `t3-app2`,
+`t3-help`, `t3-platform` on `7f23775` and `t5-identity`, `t5-shop` on `2c0ed76`. Item 30 (faster
 runs) is done up to its optional steps 3-4.
 
 Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 44 (top priority), 41 (lab run pending), 43, 38 (lab run pending), 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 44 (top priority), 43, 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -3571,7 +3572,9 @@ is required.
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 
-Status: done on `main` (2026-10-19); lab run pending. With
+Status: done and lab-verified (2026-10-19): every run of the `t3-*`/`t5-*`
+matrix signed its bundles on DEV and PROD verified each with `gpgv` (Good
+signature) before the checksum and unpacking. With
 `BUNDLE_SIGNING_KEY` set, `bundle.sign` writes `<archive>.asc` (gpg detached,
 armored) after the checksum; without it the build warns and writes none, and a
 stale `.asc` is always removed. The README documents exporting the public key
@@ -3671,7 +3674,8 @@ and two teams releasing different components touch the same directory.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: Secret-template delivery is on `main`; the ConfigMap inline extension
+Status: done and lab-verified (2026-10-19); see the final result below.
+Earlier status: Secret-template delivery is on `main`; the ConfigMap inline extension
 (section 2b, added in `b6bf75c`) is now implemented with a shared regex
 substitution callback, public-only resolver, demo value and runtime assertions
 for all six scenarios. Real lab verification remains pending for both parts. On
@@ -3754,6 +3758,22 @@ pre-upgrade hash although the scenario adds `SECRET_TEMPLATES` to it on purpose.
 That step now allows exactly this file to change (verified on PROD by the
 explicit addition and `identity-after`); every other file and the CA must stay
 identical. Identity and `shop` must be rerun.
+
+Final lab result (2026-10-19, Oracle Linux 9.8, rootless Podman 5.8.2, systemd
+252, SELinux Enforcing, fapolicyd active on PROD): six-scenario matrix CLEAN
+PASS. `t3-app1`, `t3-app2`, `t3-help` and `t3-platform` ran on `7f23775`;
+`t5-identity` and `t5-shop` on `2c0ed76`. The commits in between change only
+the acceptance harness (Identity baseline commit, upgrade builds checking out
+the tested revision, the allowed Identity config change), not product code.
+The runs cover the disposable env/file/`kube play --replace`/Quadlet probe
+(probe checks 1-4 of section 1, as the DEV lab user), Identity's complete
+connection string (exit 0/2/1), the inline `PUBLIC_ENDPOINT` in its consumers,
+database/journal/ConfigMap/0600 checks, the pinned 0.4.11 in-app -> template
+Identity upgrade with unchanged password, keys and volumes, and the renamed
+product `shop`. Not covered: the probe under the hardened PROD account (manual
+command in [Secret template verification](acceptance/SECRET-TEMPLATES.md)), an
+Identity start with an invalid connection-string value such as `Port=abc`,
+actual Python 3.6 execution, and one full matrix on a single commit.
 
 ### Background and decision
 

@@ -161,10 +161,19 @@ new image/content must pass before the old release trust is retired. Disposable
 new-image Identity checks are omitted while this scenario is intentionally
 running the old image; the upgraded installed image is checked afterwards.
 
+## Real evidence (2026-10-19)
+
+Six-scenario matrix CLEAN PASS on Oracle Linux 9.8, rootless Podman 5.8.2,
+SELinux Enforcing and fapolicyd on PROD: `t3-app1`, `t3-app2`, `t3-help`,
+`t3-platform` on `7f23775` and `t5-identity`, `t5-shop` on `2c0ed76` (harness-only
+changes in between). This covers the direct and Quadlet probe as the DEV lab
+user, .NET image build and runtime, the pinned in-app -> template Identity
+upgrade, mounts/modes, SELinux and fapolicyd. Details are in backlog 41.
+
 ## Pending real evidence
 
-- Direct and Quadlet probe on rootless Podman 5.8.2, including hardened PROD.
-- Six CLEAN PASS matrix results, including pinned in-app -> template Identity.
-- .NET image compilation/runtime, actual mounts/modes, SELinux and fapolicyd.
+- The probe under the hardened PROD service account (manual command above).
+- An Identity start with an invalid connection-string value (for example `Port=abc`).
+- One full matrix on a single commit.
 - Actual Python 3.6 execution (static compatibility check is not runtime proof).
 - The three existing GnuPG product tests in an environment supporting gpg-agent.
