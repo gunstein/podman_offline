@@ -12,33 +12,41 @@ items retain their individual scopes below; agree the next priority separately.
 ## Current priority (agreed 2026-10-19)
 
 Items 33 and 34 from the best-practice review at `689156b` are done. Item 41 was
-put first on 2026-10-19 at the operator's request. The order
+put first on 2026-10-19 at the operator's request; item 43 was placed second the
+same day, also at the operator's request. The order
 for an offline production deployment of an organisation's own apps:
 
 1. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time. First:
    the organisation's own apps need it now.
-2. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+2. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+   a platform test suite that runs without the demo apps, so an organisation
+   using only external images can verify the platform it deploys. Before item
+   40, whose fixture changes it then only has to make once.
+3. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (implemented; lab run pending).
-3. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+4. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-4. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+5. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
-5. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+6. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+   documentation of client registration and import volumes; before item 3,
+   which refers to its list of durable registration state.
+7. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-6. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-7. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+8. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+9. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-8. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+10. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-9. [Item 36](#36-harden-the-demo-application-containers): container hardening
+11. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-10. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+12. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-11. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+13. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-12. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+14. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -55,7 +63,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 41 (top priority), 38 (lab run pending), 39, 40, 42, 43, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 41 (top priority), 43, 38 (lab run pending), 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4066,9 +4074,9 @@ inventory.
   is never a silent skip. ruff and pyright are contributor checks, not
   requirements on the offline target.
 - Coordinate with item 40 (per-component VERSION files): fixtures reading the
-  root IDENTITY_VERSION/PLATFORM_VERSION change there too. Do whichever item
-  comes first fully; the other updates the fixtures, without supporting both
-  layouts.
+  root IDENTITY_VERSION/PLATFORM_VERSION change there too. Item 43 comes first
+  in the agreed priority: keep the root files in the new fixtures, and item 40
+  then updates them, without supporting both layouts.
 
 ### Verification and boundaries
 
