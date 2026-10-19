@@ -12,6 +12,9 @@ python3 -B tests/run.py platform --isolate
 `platform_tests/` exercises deployment, bundles, validation, templates, retry,
 database safety and external images with synthetic declarations in `fixtures/`.
 It does not read `apps/` or the shipped demo component declarations.
+The synthetic `fixtures/catalog` keeps `platform`, `identity`, `app1`, `app2`
+and `help` as fixture IDs; that separation alone does not prove arbitrary names.
+The renamed-product and minimal-worker fixtures provide that additional evidence.
 `demo_tests/` contains application-source assertions, shipped manifests, demo
 builds, demo credential recipes and their integration assumptions. Organisations
 using other images run their own integration tests in addition to the platform

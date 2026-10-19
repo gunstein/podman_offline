@@ -110,12 +110,29 @@ class CertificateTests(CertificateFixture):
         target, directory = self.signing_setup()
         (directory / "signing-cert.key").write_bytes(b"PrivateTestPassword")
         (directory / "signing-cert.key").chmod(0o600)
+        result = self.signing(target)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("remove only the orphan file and retry", result.stdout)
+        self.assertIn("never remove an in-use key or CA", result.stdout)
         self.assert_signing_failure(target, self.fingerprints(target))
         (directory / "signing-cert.key").unlink()
         ca = target / "PKI/private"
         ca.mkdir(parents=True)
         (ca / "ca.crt").write_bytes(b"incomplete")
+        result = self.signing(target)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Incomplete existing CA", result.stdout)
+        self.assertIn("remove only the orphan file and retry", result.stdout)
         self.assert_signing_failure(target, self.fingerprints(target))
+        (ca / "ca.crt").unlink()
+        (ca / "ca.key").write_bytes(b"unused interrupted CA key")
+        (ca / "ca.key").chmod(0o600)
+        before = self.fingerprints(target)
+        result = self.signing(target)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Incomplete existing CA", result.stdout)
+        self.assertIn("never remove an in-use key or CA", result.stdout)
+        self.assertEqual(self.fingerprints(target), before)
 
     def test_pfx_wrong_password_corruption_and_pem_mismatch_refused(self):
         target, directory = self.signing_setup()
@@ -303,7 +320,9 @@ class CASettingsTests(CertificateFixture):
         for line in lines:
             if line.startswith(("notBefore=", "notAfter=")):
                 name, value = line.split("=", 1)
-                dates[name] = datetime.datetime.strptime(value, "%b %d %H:%M:%S %Y %Z")
+                dates[name] = datetime.datetime.strptime(
+                    value, "%b %d %H:%M:%S %Y %Z"
+                ).replace(tzinfo=datetime.timezone.utc)
         return lines[0], (dates["notAfter"] - dates["notBefore"]).days
 
     def test_configured_ca_and_leaf_lifetimes_and_retention(self):
@@ -324,19 +343,27 @@ class CASettingsTests(CertificateFixture):
         self.assertEqual(days, 17)
         self.assertEqual(self.certificate_info(directory / "signing-cert.crt")[1], 3)
         before = self.fingerprints(target)
-        changed = (
-            "--ca-subject",
-            "/CN=Changed CA",
-            "--ca-days",
-            "30",
-            "--cert-days",
-            "5",
-        )
+        changed = ("--ca-days", "30", "--cert-days", "5")
         result = self.signing(target, settings=changed)
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("--ca-days applies only to newly created CAs", result.stdout)
         self.assertEqual(self.fingerprints(target), before)
         _, second = self.signing_setup(component="another-service")
-        result = self.signing(target, component="another-service", settings=changed)
+        before = self.fingerprints(target)
+        mismatch = ("--ca-subject", "/CN=Changed CA")
+        # Refuse even a retained PFX invocation and stdin issuance for a new component.
+        for component in ("my-identity", "another-service"):
+            result = self.signing(
+                target, component=component, stdin=True, settings=mismatch
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn(
+                "Explicit --ca-subject differs from the existing CA", result.stdout
+            )
+            self.assertEqual(self.fingerprints(target), before)
+        result = self.signing(
+            target, component="another-service", settings=settings[:2] + changed
+        )
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(
             all(
@@ -346,6 +373,18 @@ class CASettingsTests(CertificateFixture):
         )
         self.assertEqual(self.certificate_info(ca), (subject, 17))
         self.assertEqual(self.certificate_info(second / "signing-cert.crt")[1], 5)
+        # Demo issuance uses the same preflight and cannot silently use another CA.
+        before = self.fingerprints(target)
+        paths = sorted(str(path.relative_to(target)) for path in target.rglob("*"))
+        result = self.run_script(
+            "--root", str(target), *mismatch, "platform", "localhost"
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Explicit --ca-subject differs", result.stdout)
+        self.assertEqual(self.fingerprints(target), before)
+        self.assertEqual(
+            sorted(str(path.relative_to(target)) for path in target.rglob("*")), paths
+        )
 
     def test_invalid_ca_settings_write_nothing_in_all_modes(self):
         target = self.root / "must-not-exist"

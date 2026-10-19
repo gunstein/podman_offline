@@ -38,7 +38,7 @@ The order for an offline production deployment of an organisation's own apps:
    `./deploy status` shows each installed component, version and unit state.
 7. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
-   Implemented locally; full lab matrix pending.
+   Implemented on main; independent review green, full lab matrix pending.
 8. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
@@ -3648,8 +3648,8 @@ home by hand, for example
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented locally on 2026-10-19 at the operator's request before
-the next acceptance run. Component-local version files replace source root
+Status: implemented on main on 2026-10-19; independent review's ordinary and
+isolated platform runs are green. Full lab acceptance remains pending. Component-local version files replace source root
 version files and the catalog override. Build descriptors and installed metadata
 keep their existing format. Acceptance upgrade builders and renamed products
 use the selected component's version. Local verification is recorded below;
@@ -3661,15 +3661,15 @@ component/layout set passed 29 tests in a fresh offline export without demo
 files. A new regression checks independent component versions with no root
 VERSION; coverage also refuses missing/invalid/escaping version files and the
 removed catalog field. Renamed-generator coverage checks every copied version.
-The broad isolated run executed 347 tests: 343 passed, the help-upgrade test
-failed in both subcases (its old fixture bumped app1 instead of help), and three
-GPG tests failed at agent key generation in this environment. After fixing
-the help fixture, all 29 component/layout tests passed in a fresh offline
-export, covering that regression. Thus 344 distinct platform tests have passing
-evidence across the broad and focused runs; there was no subsequent single
-fully green platform run. The broad runner also reported a temporary-directory
-cleanup error; leftover test fixtures were removed afterwards. GPG runtime
-verification remains outstanding.
+Independent review reported on 2026-10-19 supersedes the earlier local
+verification gaps: both `tests/run.py platform` and `platform --isolate` ran
+347 tests successfully. Demo ran 64 tests successfully (one proxy test skipped
+when GNU envsubst was absent); `all --list` had 411 unique tests and no
+duplicates. Acceptance-harness tests, Pyright, bash syntax and diff checks
+passed. The review found two Ruff DTZ007 errors, corrected in the follow-up
+by making parsed OpenSSL GMT dates explicitly UTC. These are review-provided
+results for the reviewed main revision, not a full-suite run of the subsequent
+CA-option/recovery-message changes. Real lab, .NET and Python 3.6 remain unverified.
 
 Ruff lint/format, scoped Pyright, ShellCheck, bash syntax, diff checks and static
 Python 3.6 compatibility passed. Real Python 3.6 and the lab matrix were not run.
@@ -4106,20 +4106,17 @@ demo and all groups plus isolated/offline export. Helpers no longer import test
 modules, and platform declarations are synthetic, independent of shipped apps
 and components. All 403 original declared test methods remain: prior discovery
 executed seven imported inherited methods twice (410 executions). Current
-inventory is 346 platform + 64 demo = 410 unique tests, including seven new
-layout/CA regressions across 43/45a. Acceptance's `03-unit` uses the all group;
-a renamed-product harness regression compares the complete platform inventory.
-Local checks: the isolated copy ran 345 tests (342 passed, three GPG-agent
-key-generation failures); the later relative-root platform regression also
-passed. Demo: 63 passed together plus the later relative-root regression. All
-196 acceptance-harness tests passed. Ruff/format, pyright (zero errors/warnings),
-ShellCheck, bash syntax and diff checks passed. Vermin reports Python 3.6 minimum
-for deployment, bundle, platform runner/helpers/tests and embedded provisioning
-code (static only). The generated renamed product also ran all 346 platform
-tests: 343 passed, the same three GPG-agent failures remained. Both platform and
-demo inventories match the original checkout. GPG failures are explicit, never
-silently skipped. No current real Podman/systemd or Python 3.6 runtime verification
-has been performed.
+inventory is 347 platform + 64 demo = 411 unique tests, including the item 40
+version regression. Acceptance's `03-unit` uses the all group; a renamed-product
+harness regression compares the complete platform inventory. The synthetic
+fixture catalog keeps historical demo IDs; renamed-product and minimal-worker
+fixtures provide the arbitrary-name/no-demo evidence.
+Independent review reported on 2026-10-19: platform and isolated platform both
+347 tests OK; demo 64 tests OK (one envsubst-dependent proxy skip); inventory
+411 unique IDs, no duplicates; acceptance harness OK. Pyright, bash syntax and
+diff checks passed; two Ruff DTZ007 findings are fixed in the follow-up. Earlier
+local GPG setup failures no longer block the reviewed revision. These review
+results do not cover later changes or real Podman/systemd, .NET or Python 3.6.
 
 ### Problem
 
@@ -4454,6 +4451,31 @@ and all five new tests have passed locally with OpenSSL 3.0.13. Python 3.6 and
 OpenSSL 1.1.1 execution, real Duende/Podman/systemd, delivery (45b) and renewal
 (45c) remain unverified or separate work; old lab runs are not evidence here.
 
+Review follow-up (2026-10-19): explicit --ca-subject conflicting with a retained
+CA is refused before new credentials, including repeated PFX calls and demo
+modes. Omitted subject keeps reuse; explicit --ca-days reports that it affects
+only new CAs. Partial-pair messages now distinguish backup restoration from
+confirmed unused orphans after interrupted first issuance; no automatic deletion.
+Independent review's green product/harness runs apply to the reviewed revision;
+focused verification of this follow-up is recorded separately below.
+
+Follow-up verification (2026-10-19): all 21 platform/demo certificate tests
+passed together with real local OpenSSL after the final fixes. They cover
+subject mismatch through stdin and the demo entry point, same-subject reuse,
+omitted-subject reuse, CA-days notice, private-file retention and partial-pair
+recovery messages. The documented Ruff lint/format commands, explicit DTZ007
+check, scoped Pyright (zero errors/warnings), ShellCheck, bash syntax, diff
+check and static Python 3.6 compatibility passed. Full product/harness suites
+were not rerun for this follow-up; independent review's earlier green runs
+are recorded under items 40/43. No lab, .NET, Python 3.6 or OpenSSL 1.1.1 run.
+
+Understandability follow-up: check_retained_ca_subject owns the public DN
+comparison and runs in the existing preflight before writes. ensure_ca repeats
+the subject check before using a CA; provision/publish keep credential ownership
+and no-clobber semantics. Mismatch fails without new credentials; retry with
+the retained subject or without the option reuses existing material. The larger
+embedded-tool/demo issuance consolidation is explicitly assigned to 45b.
+
 Already true and to be kept: the CA lives in `<root>/PKI/private/`, and `--root`
 differs per environment (`build/dev` in dev, `/var/lib/<product>` on targets), so
 dev and production already have separate CAs. An existing complete CA is kept
@@ -4491,6 +4513,13 @@ Keep the current stdin delivery; no deploy, bundle or lab-scenario changes.
    tool supports arbitrary component names (item 44).
 3. Keep demo provisioning available for the shipped demo without making demo
    names part of the production tool.
+
+4. Resolve the understandability finding from the 2026-10-19 review: when the
+   tool is delivered in a bundle, extract the embedded Python into a dedicated
+   module and route demo leaf issuance through the same issuance function.
+   Preserve supported offline execution and document how standalone/stdin
+   delivery is replaced or retained. Avoid three independent issuance paths;
+   do not expand the production tool with hardcoded demo names.
 
 ### 45c. Renewal and expiry (medium; after item 39)
 

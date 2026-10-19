@@ -7,6 +7,8 @@ umask 077
 ca_subject='/CN=Demo Development CA'
 ca_days=3650
 cert_days=365
+ca_subject_explicit=no
+ca_days_explicit=no
 usage() {
     echo 'Usage: generate-certificates.sh [--root DIR] [--ca-subject /CN=Name] [--ca-days N] [--cert-days N] platform|identity|app1|app2|help [host]' >&2
     echo '   or: generate-certificates.sh [options] --component ID --purpose signing --pfx' >&2
@@ -18,8 +20,8 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 && -n $2 ]] || usage
             case "$1" in
                 --root) root=$2;;
-                --ca-subject) ca_subject=$2;;
-                --ca-days) ca_days=$2;;
+                --ca-subject) ca_subject=$2; ca_subject_explicit=yes;;
+                --ca-days) ca_days=$2; ca_days_explicit=yes;;
                 --cert-days) cert_days=$2;;
             esac
             shift 2;;
@@ -27,7 +29,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 certificate_tool() {
-    python3 - "$1" "$root" "$2" "$ca_subject" "$ca_days" "$cert_days" <<'CERTIFICATE_TOOL'
+    python3 - "$1" "$root" "$2" "$ca_subject" "$ca_days" "$cert_days" "$ca_subject_explicit" "$ca_days_explicit" <<'CERTIFICATE_TOOL'
 """Explicit credential provisioning only; never imported by deploy/validate."""
 
 import datetime
@@ -140,6 +142,39 @@ def publish(source, target):
         )
 
 
+def incomplete_pair(label):
+    refuse(
+        "Incomplete " + label + "; restore the missing file from backup. "
+        "If confirmed unused after interrupted first issuance, remove only the "
+        "orphan file and retry; never remove an in-use key or CA."
+    )
+
+
+def check_retained_ca_subject(ca_cert):
+    """Compare ordered DN fields without comma/Unicode escaping ambiguities."""
+    if explicit_subject != "yes":
+        return
+    output = openssl(
+        "x509",
+        "-in",
+        ca_cert,
+        "-noout",
+        "-subject",
+        "-nameopt",
+        "sep_multiline,utf8,-esc_msb,sname",
+    ).decode("utf-8")
+    actual = [line.strip().split("=", 1) for line in output.splitlines()[1:]]
+    expected = [
+        list(field)
+        for field in re.findall(r"/([A-Za-z][A-Za-z0-9]*)=([^/]+)", ca_subject)
+    ]
+    if actual != expected:
+        refuse(
+            "Explicit --ca-subject differs from the existing CA; retained it. "
+            "Use its subject, omit the option to reuse it, or choose a separate --root."
+        )
+
+
 def ensure_ca():
     """One CA issuance/reuse path for full, component and signing provisioning."""
     ca = root / "PKI/private"
@@ -148,7 +183,7 @@ def ensure_ca():
     has_ca_cert = file_exists(ca_cert)
     has_ca_key = file_exists(ca_key, private=True)
     if has_ca_cert != has_ca_key:
-        refuse("Incomplete existing CA; restore it instead of regenerating")
+        incomplete_pair("existing CA")
     if not has_ca_cert:
         ca.mkdir(mode=0o700, parents=True, exist_ok=True)
         ca.parent.chmod(0o700)
@@ -179,6 +214,7 @@ def ensure_ca():
         publish(new_key, ca_key)
         publish(new_cert, ca_cert)
     check_pair(ca_cert, ca_key)
+    check_retained_ca_subject(ca_cert)
     return ca_cert, ca_key
 
 
@@ -193,7 +229,7 @@ def provision():
         verify_pfx(pfx, cert if has_cert else None, key if has_key else None)
         return  # External/retained PFX wins; no CA or PEM generation.
     if has_cert != has_key:
-        refuse("Incomplete signing PEM pair; restore the missing file")
+        incomplete_pair("signing PEM pair")
     if not has_cert:
         ca_cert, ca_key = ensure_ca()
         new_key, new_cert, csr = (
@@ -323,11 +359,30 @@ def interrupted(_signum, _frame):
 signal.signal(signal.SIGTERM, interrupted)
 
 try:
-    mode, root_arg, component, subject, ca_lifetime, leaf_lifetime = sys.argv[1:]
+    (
+        mode,
+        root_arg,
+        component,
+        subject,
+        ca_lifetime,
+        leaf_lifetime,
+        explicit_subject,
+        explicit_ca_days,
+    ) = sys.argv[1:]
     ca_subject, ca_days, cert_days = options(subject, ca_lifetime, leaf_lifetime)
+    root = Path(os.path.abspath(root_arg))
+    retained_ca = root / "PKI/private/ca.crt"
+    if (explicit_subject == "yes" or explicit_ca_days == "yes") and file_exists(
+        retained_ca
+    ):
+        check_retained_ca_subject(retained_ca)
+        if explicit_ca_days == "yes" and mode != "check":
+            print(
+                "Existing CA retained; --ca-days applies only to newly created CAs",
+                file=sys.stderr,
+            )
     if mode == "check":
         sys.exit(0)
-    root = Path(os.path.abspath(root_arg))
     if mode == "ca":
         ca = root / "PKI/private"
         plain_path(ca)
@@ -408,7 +463,7 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
         chmod 700 "$dir"
         if [[ -e $dir/$name.key || -e $dir/$name.crt ]]; then
             [[ -s $dir/$name.key && -s $dir/$name.crt ]] || {
-                echo "ERROR: incomplete existing certificate pair: $dir/$name" >&2; exit 1;
+                echo "ERROR: incomplete existing certificate pair: $dir/$name; restore the missing file from backup, or remove only a confirmed unused orphan from interrupted first issuance and retry; never remove an in-use key" >&2; exit 1;
             }
             return
         fi

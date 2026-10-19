@@ -57,7 +57,7 @@ All signing inputs/outputs live under `<root>/<component>/credentials/signing/`:
 | `signing-cert.pfx` | Verify its password, private key and matching leaf certificate; retain its exact bytes. Any supplied PEM certificate/key must match it. No CA or PEM is generated. |
 | `signing-cert.crt` and `signing-cert.key`, no PFX | Verify the pair, then export the PFX. No CA is needed. |
 | Neither PFX nor PEM | Use the complete CA at `<root>/PKI/private/ca.crt` and `ca.key`, or create the current development CA there if absent; issue a signing pair and export the PFX. |
-| A partial PEM pair without PFX, partial CA needed for issuance, corrupt/mismatched credentials, or wrong password | Fail and retain existing inputs; restore the missing/correct files before retrying. |
+| A partial PEM pair without PFX, partial CA needed for issuance, corrupt/mismatched credentials, or wrong password | Fail and retain existing inputs; restore the missing/correct files from backup. Remove an orphan only if confirmed unused after interrupted first issuance, as described below. |
 
 Thus externally supplied files override issuance simply by being present before
 the same invocation. A retained PFX can exist alone. If just one optional PEM file
@@ -73,12 +73,15 @@ same no-clobber operation as `ln`) atomically refuses any existing destination.
 The PFX is verified before publication; an export failure leaves the source
 pair available for retry and does not publish an incomplete PFX. Publishing a
 new PEM/CA pair is not a multi-file transaction: if interrupted between files,
-restore the partial pair; never delete an existing key to trigger reissuance.
+restore the missing file from backup. If no backup exists and you confirm the
+remaining file belongs to an unused, interrupted first issuance, remove only
+that orphan and retry. Never remove an in-use signing key or CA to trigger
+reissuance; restore a valid pair or perform a separately planned replacement.
 
 Explicit signing invocations use `<root>/.signing-provision.lock` to serialize
 provisioning for that environment, including CA creation. A second invocation
 fails rather than interfering. After an uncatchable interruption such as SIGKILL,
-first confirm no provisioning process remains, inspect/restore any partial pair,
+first confirm no provisioning process remains, inspect/recover any partial pair,
 then remove the stale lock directory with `rmdir` before retrying. Remove only
 orphan `.pfx-*` scratch directories from that interrupted operation. Do not run
 the older demo provisioning commands concurrently with signing provisioning.
@@ -209,10 +212,14 @@ be nonempty without leading/trailing whitespace, controls, slash, backslash or
 plus. This deliberately small DN syntax does not support escaped separators or
 multi-valued RDNs. Invalid settings fail before any directory/file write.
 
-All modes use the same CA creation/reuse implementation. Settings apply only
-when creating new material: an existing complete CA and valid PFX/PEM are retained
-byte for byte. Changing flags does not renew certificates or replace the CA;
-a new component uses the retained CA and the requested new leaf lifetime.
+All modes use the same CA creation/reuse implementation. Existing complete
+CA and valid PFX/PEM files are retained byte for byte. Explicit `--ca-subject`
+must match the retained CA subject (ordered DN fields); a mismatch fails before
+new credentials, even if the requested component already has a PFX. Omit the
+option to reuse the existing CA without asserting its subject. Explicit
+`--ca-days` reports that it applies only to newly created CAs. Changing flags
+does not renew certificates or replace the CA; a new component uses the retained
+CA and the requested new leaf lifetime.
 The full-demo recipe still refuses an existing PKI, as before.
 
 Keep a separate `--root` for each environment. Back up and protect the CA pair in

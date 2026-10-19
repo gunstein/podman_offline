@@ -132,7 +132,7 @@ class DemoCertificateTests(CertificateFixture):
                     dates = [
                         datetime.datetime.strptime(
                             line.split("=", 1)[1], "%b %d %H:%M:%S %Y %Z"
-                        )
+                        ).replace(tzinfo=datetime.timezone.utc)
                         for line in result.stdout.splitlines()
                         if line.startswith(("notBefore=", "notAfter="))
                     ]
