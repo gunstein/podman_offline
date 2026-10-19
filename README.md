@@ -223,6 +223,11 @@ APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
 ./dev/dev.sh down
 ```
 
+For an external image that requires a signing PFX, use the explicit component
+mode documented in [PFX provisioning](docs/PFX-CREDENTIALS.md). It preserves
+external/retained credentials and uses the same relative paths in dev and
+production; it does not require an `apps/` directory or demo user generation.
+
 `dev/demo-credentials.sh` creates missing demo credentials under `build/dev/`
 and reuses them on later runs; it is demo provisioning, not part of the generic
 dev lifecycle. `./deploy validate` checks every catalog component with its dev
@@ -686,14 +691,18 @@ provisioning and is not part of the product bundles (which ship only
 `scripts/prepare-host.sh`); copy it from the source checkout to the target and
 run it on stdin. The script creates
 a shared demo CA under `PKI/private/` and missing component certificate/key pairs.
-`dev/dev.sh up` runs this preparation automatically for development. Real
-production certificates are issued externally and delivered to the persistent
-component paths. Deploy loads the prepared files; it does not issue certificates.
+Run credential provisioning explicitly before `dev/dev.sh up`; the generic dev
+launcher does not issue certificates. Production can deliver external files or
+invoke the explicit signing helper with its own persistent root/CA. Supported
+production PKI configuration and tool delivery remain backlog 45a/45b. Deploy
+loads the prepared files; it does not issue certificates.
 
-The script writes separate PEM files: `.crt` contains the public certificate and
-`.key` contains the private key. It does not generate `.pfx` files. Existing
-nonempty pairs are retained, incomplete pairs cause an error, and rerunning the
-script does not automatically renew certificates.
+The demo recipes write separate PEM files: `.crt` contains the public certificate
+and `.key` contains the private key. Optional named-component PFX export, password
+provisioning and external-file precedence are documented in
+[PFX credentials](docs/PFX-CREDENTIALS.md). Existing nonempty pairs are retained,
+incomplete pairs cause an error, and rerunning does not automatically renew
+certificates. The following diagram shows the demo PEM flow.
 
 ```mermaid
 flowchart TD

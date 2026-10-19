@@ -256,6 +256,65 @@ class SecretTemplateTests(DeployFixture):
 
 
 class TemplateLifecycleTests(ProductFixture):
+    def test_worker_delivers_only_binary_pfx_with_explicit_mapping(self):
+        product = copy.deepcopy(WORKER)
+        product["worker"]["defaults"] = {
+            "SECRET_FILES": {
+                "worker-signing": [{"path": "credentials/signing/signing-cert.pfx"}]
+            }
+        }
+        spec = product["worker"]["manifests"][0]["spec"]
+        spec["volumes"] = [
+            {
+                "name": "signing",
+                "secret": {
+                    "secretName": "worker-signing",
+                    "defaultMode": 0o400,
+                    "items": [{"key": "signing-cert.pfx", "path": "signing-cert.pfx"}],
+                },
+            }
+        ]
+        spec["containers"][0]["volumeMounts"] = [
+            {
+                "name": "signing",
+                "mountPath": "/run/secrets",
+                "readOnly": True,
+            }
+        ]
+        self.write_product(product)
+        release = self.build_and_unpack()["worker"]
+        binary = bytes(range(256)) + b"\x00\xff"
+
+        def provide(directory):
+            signing = directory / "credentials/signing"
+            signing.mkdir(parents=True)
+            for name, value in (
+                ("signing-cert.pfx", binary),
+                ("pfx-password", b"NeverDeliveredPassword"),
+                ("signing-cert.key", b"NeverDeliveredPEMKey"),
+            ):
+                path = signing / name
+                path.write_bytes(value)
+                path.chmod(0o600)
+
+        self.install(release, configure=provide)
+        output = catalog.component_paths("worker")[2]
+        docs = list(yaml.safe_load_all(output.read_text()))
+        secrets = [doc for doc in docs if doc["kind"] == "Secret"]
+        self.assertEqual(len(secrets), 1)
+        self.assertEqual(set(secrets[0]["data"]), {"signing-cert.pfx"})
+        self.assertEqual(
+            base64.b64decode(secrets[0]["data"]["signing-cert.pfx"]), binary
+        )
+        pod = next(doc for doc in docs if doc["kind"] == "Pod")
+        self.assertEqual(pod["spec"]["volumes"], spec["volumes"])
+        self.assertEqual(
+            pod["spec"]["containers"][0]["volumeMounts"],
+            spec["containers"][0]["volumeMounts"],
+        )
+        self.assertEqual(self.mode(output), 0o600)
+        self.assertNotIn("NeverDelivered", output.read_text() + self.stdout.getvalue())
+
     def operator_product(self):
         product = copy.deepcopy(WORKER)
         product["worker"]["defaults"] = {

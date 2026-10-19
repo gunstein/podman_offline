@@ -4165,16 +4165,52 @@ repository still verifies all demo-specific behaviour.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; high priority at the operator's request on 2026-10-19. The
-operator's external Duende image in components/my-identity repeatedly exits
-because /run/secrets/signing-cert.pfx is missing. No change is implemented here.
+Status: implemented locally (2026-10-19); verification of the organisation's
+external Duende image and real Podman/systemd is still pending. Do not close this
+item until that evidence is recorded. The missing /run/secrets/signing-cert.pfx
+reported by the operator motivated the explicit signing mode; the shipped demo
+keeps PEM and its existing commands.
+
+`dev/generate-certificates.sh --root DIR --component ID --purpose signing --pfx`
+now provisions any valid component ID without demo users or manual directory
+moves. The same standalone/stdin invocation supports dev and production roots.
+Private password-file validation precedes writes; external PFX/PEM wins over
+issuance; exports are verified in private scratch and hard-linked without
+clobbering existing files. Only an explicitly declared PFX is delivered through
+existing Secrets. No deployment/ code, image, bundle schema or CA renewal is
+changed. The helper embeds Python 3.6-compatible code to keep stdin execution
+self-contained; existing PEM/CA recipes remain separate for backward compatibility.
+See [PFX credentials](docs/PFX-CREDENTIALS.md) for input names, password creation,
+Secret/mount examples, failure recovery and the runnable external-image check.
+
+Understandability review: password/path/mode checks -> per-root lock ->
+provision (existing PFX, PEM, or issuance) -> verify_pfx -> publish. On an export
+failure, temporary files and the lock are removed, existing PEM/password remain,
+and retry reuses them. Uncatchable interruptions can leave a stale lock or
+partial PEM pair; recovery is explicit, never automatic key replacement.
+Deployment still loads a single binary source -> Opaque Secret in 0600 YAML ->
+explicit secret.items mapping. Actual UID/HOME/mount and .NET loading remain
+organisation-specific runtime checks, not established by local tests.
+
+Local verification (2026-10-19, Python 3.12.14/OpenSSL 3.0.13): final full
+product rerun collected 410 tests: 407 passed, 3 GnuPG tests explicitly skipped
+only in the invocation after the ordinary run confirmed missing `/tmp` setup
+errors. The ordinary run also had two failures in unchanged retry tests; both
+passed separately and in the final full rerun (cause not established). After the
+last SIGTERM-cleanup change, all 43 certificate/template tests passed, including
+16 certificate tests with real OpenSSL. All 195 acceptance-harness tests passed.
+Ruff check/format, Pyright (0 errors/warnings), ShellCheck, shell syntax, relative
+Markdown links and diff checks pass. Extracted embedded Python was included in
+lint/type/static Python 3.6 gates; Python 3.6 was not executed. Real .NET,
+Podman/systemd, service-user mount access, SELinux/fapolicyd and OpenSSL 1.1.1
+remain unverified for this change; historical lab results are not reused.
 
 ### Analysis and recommended scope
 
-Confirmed in current code: dev/generate-certificates.sh issues PEM .crt/.key
+Baseline before implementation: dev/generate-certificates.sh issued PEM .crt/.key
 pairs, preserves existing complete pairs, refuses partial pairs, and sets umask
 077. Its component mode accepts fixed demo names; Identity's branch also creates
-demo user passwords. It does not export PKCS#12/PFX. The shipped Identity reads
+demo user passwords. It did not export PKCS#12/PFX. The shipped Identity reads
 PEM, so its successful operation does not verify an external PFX-consuming image.
 SECRET_FILES can already deliver a PFX as ordinary binary file data; no new
 Secret type, renderer, template syntax or deploy lifecycle is needed.
@@ -4368,10 +4404,11 @@ and a partial one is refused. Demo component names select issued certificates
 only (item 44), not the CA.
 
 1. Make the CA subject and lifetime configurable. Today `/CN=Demo Development CA`
-   and `-days 3650` are hardcoded twice (component mode and full mode); create
-   the CA in one shared function. Keep the current values as the demo default.
-2. Make the issued certificate lifetime configurable (hardcoded `-days 365`
-   twice today).
+   and `-days 3650` are duplicated across provisioning modes; consolidate
+   CA creation while preserving standalone/stdin execution. Keep the current
+   values as the demo default.
+2. Make the issued certificate lifetime configurable (currently hardcoded `-days 365`
+   across provisioning modes).
 3. Validate values before any file is written (subject syntax, positive integer
    days); invalid values fail without creating or changing files.
 4. Tests in `tests/test_certificates.py` with real OpenSSL: the configured

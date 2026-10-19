@@ -278,6 +278,33 @@ There are no new images, automatic migration, credential cleanup or rotation.
 Real Podman permissions/isolation remain unverified; see
 [credential delivery verification](acceptance/CREDENTIAL-DELIVERY.md).
 
+## Explicit signing PFX provisioning (backlog 44)
+
+`dev/generate-certificates.sh --root DIR --component ID --purpose signing --pfx`
+is an explicit operator action, separate from deploy's generation/validation.
+It embeds the isolated signing implementation in the shell helper so stdin
+execution on offline targets needs no source checkout or additional module.
+Legacy demo recipes remain unchanged and the shipped Identity still reads PEM.
+
+The private `credentials/signing/pfx-password` is provisioned first. After path,
+mode and password checks, a per-root lock serializes explicit signing calls.
+`provision()` chooses retained/external PFX, then PEM, then existing/new local CA
+issuance. `verify_pfx()` checks private-key accessibility, the leaf certificate
+and any supplied PEM; `publish()` uses an atomic hard link without overwrite.
+Private scratch files are removed on ordinary success/failure. Export failure
+retains PEM/password for retry; interrupted pair publication fails closed until
+the operator restores the partial pair. No deploy state or completion marker is
+changed by provisioning. The source credentials stay outside disposable releases.
+
+An individual-file SECRET_FILES source delivers only the PFX through the existing
+binary Secret pipeline and 0600 install YAML; the mount/path is the application's
+contract. No source/password/CA delivery or application-specific branch is added
+to deployment/. The current helper can be invoked explicitly in dev/production,
+using separate roots, or consume external credentials; its local issuance still
+uses development CA defaults. Supported CA configuration, tool delivery and
+renewal are separate items 45a/45b/45c. See [PFX credentials](docs/PFX-CREDENTIALS.md)
+for commands, precedence, failure recovery and pending real runtime checks.
+
 ## Supported layout checks (0.4.5)
 
 Lifecycle commands, dev preparation and the certificate script no longer inspect

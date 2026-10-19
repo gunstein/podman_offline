@@ -1,3 +1,15 @@
+# PFX provisioning coverage (backlog 44)
+
+`test_certificates.py` requires OpenSSL (absence fails clearly, not a skip).
+It exercises the existing demo workflow and explicit named-component signing
+mode with real local OpenSSL: external PFX/PEM precedence, password validation,
+stdin execution, private modes, no-clobber publication, retention/re-export,
+corrupt/mismatched inputs, concurrency refusal and export failure cleanup.
+The worker Secret test checks that only the declared binary PFX reaches the
+0600 install YAML with its explicit file mapping; neither the password nor the
+PEM key is delivered. These are local product tests, not .NET/Podman proof.
+See [runtime verification](../docs/PFX-CREDENTIALS.md#dev-production-and-runtime-verification).
+
 # Secret template and ConfigMap coverage (backlog 41)
 
 `test_secret_templates.py` tests schema, config/file-key references, rejected
