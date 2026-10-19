@@ -1025,7 +1025,7 @@ upgrade-bundle)
 help-upgrade-bundle|platform-upgrade-bundle|identity-upgrade-bundle)
     cd "$src"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-    export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle"
+    export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle" SOURCE_REVISION="$revision"
     python3 - <<'HELP_BUILD'
 import os
 import re
@@ -1040,6 +1040,8 @@ source = Path.cwd()
 with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
     release = Path(directory) / "release"
     subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(source), str(release)], check=True)
+    # The tested revision, not HEAD: the Identity scenario commits an older baseline on top.
+    subprocess.run(["git", "-C", str(release), "checkout", "-q", "--detach", os.environ["SOURCE_REVISION"]], check=True)
     (release / "VERSION").write_text(version + "\n")
     kind = os.environ["RELEASE_KIND"]
     if kind == "help":

@@ -211,11 +211,18 @@ class IdentityEvidenceTests(unittest.TestCase):
                 path = source / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
-            builds = []
+            builds, checkouts = [], []
 
             def command(args, **kwargs):
                 if args[:2] == ["git", "clone"]:
                     shutil.copytree(source, Path(args[-1]))
+                elif args[:1] == ["git"] and args[3:] == [
+                    "checkout",
+                    "-q",
+                    "--detach",
+                    "f" * 40,
+                ]:
+                    checkouts.append(args[2])
                 elif args[:2] == ["podman", "build"]:
                     builds.append((args, (Path(args[-1]) / "Program.cs").read_text()))
                 elif args[:2] == ["podman", "save"]:
@@ -230,12 +237,16 @@ class IdentityEvidenceTests(unittest.TestCase):
                     bundle, ROOT=source, STAGE=source / "unused", DIST=source / "dist"
                 ),
                 mock.patch.dict(
-                    os.environ, HELP_RELEASE_VERSION="0.4.1", RELEASE_KIND="identity"
+                    os.environ,
+                    HELP_RELEASE_VERSION="0.4.1",
+                    RELEASE_KIND="identity",
+                    SOURCE_REVISION="f" * 40,
                 ),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 exec(compile(code, "HELP_BUILD", "exec"), {})  # noqa: S102 - repository action under test
             self.assertEqual(len(builds), 1)
+            self.assertEqual(len(checkouts), 1)
             self.assertIn("localhost/demo-identity:0.4.1", builds[0][0])
             self.assertIn('release = "0.4.1"', builds[0][1])
             with tarfile.open(

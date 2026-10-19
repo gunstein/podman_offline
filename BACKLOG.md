@@ -3738,6 +3738,14 @@ except the new Identity journal check: `journalctl --user` as the service user
 user's journal by `_UID` since run start, requires records and rejects any
 password without printing content; a harness test covers it. Matrix rerun pending.
 
+Matrix `t3-*` on `7f23775` (2026-10-19, Oracle Linux 9.8, rootless Podman 5.8.2,
+SELinux Enforcing, fapolicyd on PROD): app1, app2, help and platform CLEAN PASS.
+Identity NOT CLEAN at `04-bundle`: the pinned 0.4.11 baseline left uncommitted
+files in the DEV clone, so the clean-checkout check refused the build; `shop`
+was not run. The baseline is now a local commit in the disposable clone and the
+upgrade builder checks out the tested revision explicitly. Identity and `shop`
+must be rerun; item 41 is not complete until they are CLEAN PASS.
+
 ### Background and decision
 
 The organisation's real .NET apps read one complete `ConnectionStrings__Default`

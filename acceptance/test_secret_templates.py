@@ -185,10 +185,16 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 identity_template_baseline.prepare(root)
-            self.assertEqual(run.call_count, len(identity_template_baseline.FILES))
+            files = len(identity_template_baseline.FILES)
+            self.assertEqual(run.call_count, files + 2)
             self.assertTrue(
-                all(call.args[0][3] == "show" for call in run.call_args_list)
+                all(call.args[0][3] == "show" for call in run.call_args_list[:files])
             )
+            add, commit = (call.args[0] for call in run.call_args_list[files:])
+            self.assertEqual(
+                add[3:], ["add", "--"] + list(identity_template_baseline.FILES)
+            )
+            self.assertIn("commit", commit)
             self.assertEqual(
                 (root / "apps/identity/DatabaseEnvironment.cs").read_bytes(),
                 b"old fixture",

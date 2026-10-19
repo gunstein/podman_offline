@@ -2,7 +2,8 @@
 """Prepare only the disposable Identity lab baseline before a template upgrade.
 
 The --identity-only scenario builds this genuine old in-app implementation,
-then the ordinary upgrade builder clones current HEAD to test the new one.
+committed locally so the clean-checkout bundle check still applies; the upgrade
+builder checks out the tested revision to build the new one.
 Never run this against an operator's working checkout.
 """
 
@@ -35,7 +36,23 @@ def prepare(source):
         contents[name] = result.stdout
     for name, content in contents.items():
         (source / name).write_bytes(content)
-    print("PASS: prepared pinned in-app Identity baseline " + VERSION)
+    # A local commit in the disposable clone keeps every later build on a clean tree.
+    for command in (
+        ["add", "--"] + list(FILES),
+        [
+            "-c",
+            "user.name=acceptance",
+            "-c",
+            "user.email=lab@invalid",
+            "commit",
+            "-q",
+            "-m",
+            "Acceptance-only Identity baseline " + VERSION,
+        ],
+    ):
+        if subprocess.run(["git", "-C", str(source)] + command, check=False).returncode:
+            raise RuntimeError("Could not commit the pinned Identity baseline")
+    print("PASS: prepared and committed pinned in-app Identity baseline " + VERSION)
 
 
 if __name__ == "__main__":
