@@ -781,8 +781,8 @@ reply (handshake errors may have no SQLSTATE). Neither private diagnostic is
 dumped. This tests
 credential separation, **not network isolation** between applications. No persistent
 password is modified by negative checks. Installed database/client logs are
-checked privately for password or complete connection-string disclosure. Identity's
-user journal and deploy output are also checked, and rendered YAML must be 0600
+checked privately for password or complete connection-string disclosure. The service
+user's journal since run start (read by root, `_UID`, nonempty) and deploy output are also checked, and rendered YAML must be 0600
 with no passwords in ConfigMaps. Inputs remain in private kube YAML or memory,
 never argv, full inspect/environment dumps or report output. Existing CRUD/e2e/persistent
 hash and volume checks remain in the full run. Failed scenarios stop before later

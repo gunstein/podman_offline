@@ -3729,6 +3729,15 @@ needs no Podman). The `templates-identity` run stopped in `00-readiness` without
 a message before touching the VMs (consistent with an interrupted run); the
 other scenarios were not reported. The six-scenario matrix must be rerun.
 
+Lab run `t2-app1` on `b9612b5` passed through `07-check` (build, signing and
+`gpgv`, Secret env/file/restart probe, Identity connection string, install,
+health, inline `PUBLIC_ENDPOINT`, SELinux/fapolicyd) and failed at
+`07-database-auth`. A read-only diagnosis on PROD showed every check passing
+except the new Identity journal check: `journalctl --user` as the service user
+(UID 995) exits 1 with insufficient permissions. Root now reads the service
+user's journal by `_UID` since run start, requires records and rejects any
+password without printing content; a harness test covers it. Matrix rerun pending.
+
 ### Background and decision
 
 The organisation's real .NET apps read one complete `ConnectionStrings__Default`

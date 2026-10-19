@@ -4,6 +4,7 @@ import ast
 import contextlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import types
@@ -799,15 +800,66 @@ class DatabaseHarnessTests(unittest.TestCase):
                 [
                     ["podman", "logs", "identity-server-app"],
                     ["podman", "logs", "identity-postgres-db"],
-                    [
-                        "journalctl",
-                        "--user",
-                        "-u",
-                        "myproduct-identity.service",
-                        "--no-pager",
-                    ],
                 ],
             )
+
+    def test_journal_is_read_as_root_by_uid_without_echoing_content(self):
+        namespace = guest_code("DATABASE_JOURNAL")
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "installed").mkdir()
+            (home / "installed/identity").write_text("0.4.0\n")
+            password = home / "identity/credentials/identity-db/password"
+            password.parent.mkdir(parents=True)
+            password.write_text("private-password\n")
+            self.assertEqual(namespace["credentials"](home), ["private-password"])
+        values = mock.Mock(return_value=["private-password"])
+        namespace["credentials"] = values
+        cases = (
+            (
+                subprocess.CompletedProcess([], 1, "", "insufficient"),
+                "could not be read",
+            ),
+            (subprocess.CompletedProcess([], 0, "  \n", ""), "no records"),
+            (
+                subprocess.CompletedProcess([], 0, "x private-password", ""),
+                "content withheld",
+            ),
+        )
+        for result, message in cases:
+            with (
+                self.subTest(message=message),
+                mock.patch.object(subprocess, "run", return_value=result),
+                mock.patch.dict(os.environ, {"PRODUCT_NAME": "myproduct"}),
+                self.assertRaisesRegex(RuntimeError, message) as failure,
+            ):
+                namespace["main"]("995", "1792418529")
+            self.assertNotIn("private-password", str(failure.exception))
+        clean = subprocess.CompletedProcess([], 0, "started\nhealthy\n", "")
+        output = io.StringIO()
+        with (
+            mock.patch.object(subprocess, "run", return_value=clean) as process,
+            mock.patch.dict(os.environ, {"PRODUCT_NAME": "myproduct"}),
+            contextlib.redirect_stdout(output),
+        ):
+            namespace["main"]("995", "1792418529")
+        self.assertEqual(
+            process.call_args.args[0],
+            [
+                "journalctl",
+                "_UID=995",
+                "--since",
+                "@1792418529",
+                "--no-pager",
+                "--output=cat",
+            ],
+        )
+        self.assertIn("2 records", output.getvalue())
+        script = REMOTE
+        start = script.index("    # The service user cannot read the system journal")
+        self.assertTrue(
+            script[start:].splitlines()[1].lstrip().startswith("sudo -n env")
+        )
 
 
 if __name__ == "__main__":

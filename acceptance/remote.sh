@@ -1467,11 +1467,7 @@ def logs_safe(home):
                 data = json.dumps(doc.get("data", {}))
                 if any(value in data for value in credentials):
                     raise RuntimeError("ConfigMap contains database password (content withheld)")
-    result = subprocess.run(["journalctl", "--user", "-u", product + "-identity.service", "--no-pager"],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
-    if result.returncode or any(value in result.stdout + result.stderr for value in credentials):
-        raise RuntimeError("Identity journal credential check failed (content withheld)")
-    print("PASS: database/client logs and Identity journal contain no database passwords; YAML 0600; ConfigMaps safe")
+    print("PASS: database/client logs contain no database passwords; YAML 0600; ConfigMaps safe")
 
 
 def main():
@@ -1499,6 +1495,45 @@ try:
 except Exception:
     raise SystemExit("FAIL: installed database credentials (details withheld)") from None
 DATABASE_AUTH
+    # The service user cannot read the system journal; root reads its records only.
+    sudo -n env PRODUCT_NAME="$product_name" python3 - "$(id -u "$product_name")" "$run_started" <<'DATABASE_JOURNAL'
+import os
+import pathlib
+import subprocess
+import sys
+
+
+def credentials(home):
+    """Read retained database passwords of installed components without printing them."""
+    values = []
+    for component, relative in (("identity", "identity-db"), ("app1", "database"), ("app2", "database")):
+        if (home / "installed" / component).exists():
+            values.append((home / component / "credentials" / relative / "password").read_bytes().decode("utf-8").rstrip("\n"))
+    return [value for value in values if value]
+
+
+def main(uid, since):
+    """Require a readable, nonempty service-user journal without any database password."""
+    values = credentials(pathlib.Path("/var/lib", os.environ["PRODUCT_NAME"]))
+    result = subprocess.run(["journalctl", "_UID=" + uid, "--since", "@" + since, "--no-pager", "--output=cat"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                            check=False, timeout=60)
+    if result.returncode:
+        raise RuntimeError("Service user journal could not be read")
+    if not result.stdout.strip():
+        raise RuntimeError("Service user journal has no records since run start")
+    if any(value in result.stdout + result.stderr for value in values):
+        raise RuntimeError("Service user journal contains a database password (content withheld)")
+    print("PASS: service user journal ({} records since run start) contains no database passwords".format(
+        len(result.stdout.splitlines())))
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1], sys.argv[2])
+    except (OSError, UnicodeError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + (str(error) if isinstance(error, RuntimeError) else "journal check failed (details withheld)"))
+DATABASE_JOURNAL
     ;;
 health) healthy;;
 check)
