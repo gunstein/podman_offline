@@ -17,9 +17,10 @@ image needs a PFX file to start in dev. Item 41 remains pending lab verification
 item 43 follows it, and item 42 remains before item 3 as previously agreed.
 The order for an offline production deployment of an organisation's own apps:
 
-1. [Item 44](#44-generate-optional-pfx-signing-credentials-for-dev-applications):
-   opt-in PFX generation from retained signing credentials, including password
-   delivery and the container mount; unblocks the organisation's Identity dev run.
+1. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+   opt-in PFX generation from retained or own-PKI signing credentials in dev and
+   production, external files taking precedence; unblocks the organisation's
+   Identity image.
 2. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
@@ -27,29 +28,32 @@ The order for an offline production deployment of an organisation's own apps:
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once.
-4. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+4. [Item 45](#45-production-pki-from-the-certificate-provisioning-tool):
+   make the certificate script a supported production PKI tool (configurable
+   CA, lifetime and renewal, delivery, CA key protection). After item 44.
+5. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-5. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+6. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-6. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+7. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
-7. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+8. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-8. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+9. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-9. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-10. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+10. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+11. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-11. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+12. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-12. [Item 36](#36-harden-the-demo-application-containers): container hardening
+13. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-13. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+14. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-14. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+15. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-15. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+16. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -67,7 +71,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 44 (top priority), 43, 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 44 (top priority), 43, 45, 39, 40, 42, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -3558,7 +3562,11 @@ values, and removed keys can remain in volumes. `SECRET_TEMPLATES` adds composed
 values to the same YAML/Podman stores; there is no separate derived credential
 file to back up. Config recipes plus original passwords reconstruct them. An
 item 44 PFX is another copy of a signing key at rest; its password does not
-protect against anyone who can read both the PFX and the password file. Identity stores Data
+protect against anyone who can read both the PFX and the password file. The
+organisation's Identity image has the PFX password hardcoded as "password", so
+the PFX encryption gives no real protection there; file modes, Secret delivery
+and backups protect the key. A production CA key on the target (item 45) is
+another copy of key material that needs the same care. Identity stores Data
 Protection keys with `PersistKeysToFileSystem` (apps/identity/Program.cs)
 without key encryption.
 
@@ -4151,7 +4159,7 @@ Done when an organisation using only external images can run a meaningful,
 documented platform suite without apps/ or demo component files, while the full
 repository still verifies all demo-specific behaviour.
 
-## 44. Generate optional PFX signing credentials for dev applications
+## 44. Generate optional PFX signing credentials in dev and production
 
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
@@ -4223,6 +4231,46 @@ the demo's Program.cs or add changes to the external C# image as a prerequisite.
    Duende configuration models, rotation, automatic trust installation or
    production PKI integration belong in this task.
 
+### Operator decisions (2026-10-19)
+
+These decisions replace the dev-only scope and the open password question above.
+
+- **Dev and production.** Production usually issues credentials from the
+  organisation's own PKI in the same way as dev; an external certificate must be
+  able to override that, though rarely. The same invocation works in both.
+  Production keeps using the current script until item 45 makes it a supported
+  production tool.
+- **Precedence (external files always win).** In the component's
+  `credentials/signing/`, the script takes the first case that applies:
+  1. `signing-cert.pfx` exists (external or earlier): keep it unchanged; verify
+     only that it opens with the password and contains a private key, and, when
+     a PEM key/certificate is also present, that they match.
+  2. Only a PEM key and certificate exist (external or earlier): export the PFX
+     from them.
+  3. Nothing exists: issue a key and certificate from the configured CA, then
+     export the PFX.
+  Overriding means placing files before running the same command; there is no
+  separate mode or flag for it.
+- **Password.** The organisation's image has the PFX password hardcoded as
+  "password" and cannot be changed. The password is read from
+  `credentials/signing/pfx-password` (outside git, mode 0600, retained like other
+  credentials) in both dev (`build/dev/<component>/`) and production
+  (`/var/lib/<product>/<component>/`). It is created once per machine as part of
+  credential provisioning. It is not stored in `config/dev.yaml` or any config
+  file, and the script has no built-in default password. Missing or invalid
+  password files fail clearly.
+- **No password delivery to the container.** The application already knows the
+  password, so only the PFX is mounted; no `secretKeyRef` or extra Secret file.
+- **Delivery.** `SECRET_FILES` in `components/<id>/config.defaults.yaml` points to
+  `credentials/signing/...` relative to the component directory, so the same
+  entry works in dev and production.
+- **Mount path, still to confirm.** The operator believes a subdirectory such as
+  `/run/secrets/signing/signing-cert.pfx` is configurable. Confirm whether the
+  application's PFX path is also hardcoded. If it is, mount a Secret volume with
+  only that key at `/run/secrets`, verify in the lab that nothing else is needed
+  there and that host `mounts.conf` entries do not conflict.
+- Document that the hardcoded password gives no real protection (item 37).
+
 ### Review additions (2026-10-19)
 
 Decisions and facts from the review of this item; they refine the task above.
@@ -4291,3 +4339,41 @@ must verify their external Identity image, which is not available in this repo.
 Done when one documented provisioning invocation places a valid, retained PFX
 at the configured component path and the unchanged application can consume it
 through existing Secrets, without manual copying or exposed passwords.
+
+## 45. Production PKI from the certificate provisioning tool
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; requested by the operator on 2026-10-19. Production usually
+issues certificates from the organisation's own PKI in the same way as dev, with
+external certificates as a rare override (item 44's precedence rules).
+
+### Problem
+
+`dev/generate-certificates.sh` is a demo tool: the CA is "Demo Development CA",
+certificates last 365 days, the script is not in bundles, and README/ARCHITECTURE
+state that organisations bring their own certificates. The lab runs it on PROD
+only as demo provisioning (`demo_credentials` in `acceptance/remote.sh`).
+
+### Task
+
+1. Decide and document the supported production model: one CA per environment
+   (dev and production never share a CA), its name and lifetimes configurable,
+   and where the CA key lives on the target.
+2. Deliver the tool to targets in a supported way (for example in the platform
+   bundle or as a signed tool archive) that works with fapolicyd and the
+   offline/stdin execution used today; no network or package installs.
+3. Add renewal before expiry for issued certificates without replacing keys or
+   CAs silently; report expiry in a way item 39 (`./deploy status`) can show.
+4. Protect and back up the CA key (with items 3 and 37); never print it or put
+   it in bundles, logs or rendered YAML.
+5. Keep external files winning (item 44) and keep demo provisioning available
+   for the shipped demo without making demo names part of the production tool.
+
+Out of scope: an online CA, ACME, HSM integration, and rotation of database
+passwords (item 2).
+
+Done when production installs can issue, retain, renew and back up their
+certificates from a documented per-environment CA with the same tool, external
+certificates still override it, and the lab verifies the flow on PROD.
