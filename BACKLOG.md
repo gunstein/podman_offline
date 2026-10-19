@@ -3746,6 +3746,15 @@ was not run. The baseline is now a local commit in the disposable clone and the
 upgrade builder checks out the tested revision explicitly. Identity and `shop`
 must be rerun; item 41 is not complete until they are CLEAN PASS.
 
+Run `t4-identity` on `f5ae8d6` built and installed the 0.4.11 baseline, upgraded
+to the template build and passed `identity-after` (password, keys and volumes
+unchanged, new image and content running), then stopped at
+`10-identity-persistent`: the controller compared `identity/config.yaml` to its
+pre-upgrade hash although the scenario adds `SECRET_TEMPLATES` to it on purpose.
+That step now allows exactly this file to change (verified on PROD by the
+explicit addition and `identity-after`); every other file and the CA must stay
+identical. Identity and `shop` must be rerun.
+
 ### Background and decision
 
 The organisation's real .NET apps read one complete `ConnectionStrings__Default`

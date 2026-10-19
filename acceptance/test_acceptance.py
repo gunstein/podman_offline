@@ -421,6 +421,34 @@ installed_components() { echo platform; }
                     filename + (": same" if name.startswith("logs/") else ""), data
                 )
 
+    def test_only_named_files_may_change_after_upgrade(self):
+        """Allow a declared config change; any other file or the CA still fails."""
+        before = self.state_fixture()
+        names = sorted(before["files_sha256"])
+        allowed, other = names[0], names[1]
+        cases = (
+            ({allowed: "b" * 64}, None, None),
+            ({other: "b" * 64}, None, "changed during upgrade"),
+            ({}, "b" * 64, "changed during upgrade"),
+        )
+        for files, ca, failure in cases:
+            after = json.loads(json.dumps(before))
+            after["files_sha256"].update(files)
+            if ca:
+                after["ca_der_sha256"] = ca
+            with self.subTest(files=sorted(files), ca=bool(ca)):
+                outputs = iter([json.dumps(before), json.dumps(after)])
+                self.harness.guest = lambda *args, o=outputs, **kwargs: next(o)
+                self.harness.persistent_state("before")
+                if failure:
+                    with self.assertRaisesRegex(RuntimeError, failure):
+                        self.harness.persistent_state("after", (allowed,))
+                else:
+                    self.harness.persistent_state("after", (allowed,))
+                    self.assertEqual(
+                        self.harness.meta["persistent_after"][allowed], "changed"
+                    )
+
     def test_invalid_or_empty_json_and_nonzero_valid_json_fail(self):
         """Reject invalid stdout and a failing status even when the JSON is valid."""
         for status, output in (

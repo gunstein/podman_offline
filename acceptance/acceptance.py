@@ -20,6 +20,8 @@ from pve import Proxmox, env_file
 
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = Path.home() / "podman-offline-acceptance-runs"
+# Identity's persistent config, changed only by the explicit template addition.
+IDENTITY_CONFIG_CHANGE = ("identity/config.yaml",)
 # product: in bundles.yaml; acceptance/renamed_product.py declares RENAMED_PRODUCT.
 DEMO_PRODUCT = "myproduct"
 RENAMED_PRODUCT = "shop"
@@ -452,8 +454,12 @@ class Run:
             (folder / archive).read_bytes()
         ).hexdigest()
 
-    def persistent_state(self, phase):
-        """Compare private hash values and log only file names and same/changed."""
+    def persistent_state(self, phase, allowed_changes=()):
+        """Compare private hash values and log only file names and same/changed.
+
+        allowed_changes names files an earlier, separately verified step may
+        change on purpose; every other file and the CA must stay identical.
+        """
         try:
             state = json.loads(self.guest("PROD", "persistent-state", log_stdout=False))
         except (ValueError, TypeError):
@@ -492,7 +498,14 @@ class Run:
             comparisons[name] = "same" if same else "changed"
             self.write(name + ": " + comparisons[name] + "\n")
         self.meta["persistent_" + phase] = comparisons
-        if phase == "after" and state != before:
+        unexpected = [
+            name
+            for name, result in comparisons.items()
+            if result == "changed" and name not in allowed_changes
+        ]
+        if before["ca_der_sha256"] != state["ca_der_sha256"]:
+            unexpected.append("CA certificate")
+        if phase == "after" and unexpected:
             raise RuntimeError(
                 "Persistent config, certificates or CA changed during upgrade"
             )
@@ -622,7 +635,12 @@ class Run:
             "10-identity-siblings-after",
             lambda: self.guest("PROD", "identity-siblings-after", bundle="identity"),
         )
-        self.step("10-identity-persistent", lambda: self.persistent_state("after"))
+        # The explicit SECRET_TEMPLATES addition in identity-upgrade may change only
+        # Identity's config; identity-after verified the result on PROD.
+        self.step(
+            "10-identity-persistent",
+            lambda: self.persistent_state("after", IDENTITY_CONFIG_CHANGE),
+        )
         self.step("10-identity-e2e", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-identity-markers", lambda: self.guest("DEV", "markers-check"))
         self.step("10-identity-database", lambda: self.guest("PROD", "database-auth"))
