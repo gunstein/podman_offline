@@ -9,40 +9,55 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (agreed 2026-10-18)
+## Current priority (agreed 2026-10-19)
 
-From the best-practice review of manifests and secret handling at `689156b`:
+Items 33 and 34 from the best-practice review at `689156b` are done. The order
+for an offline production deployment of an organisation's own apps:
 
-1. [Item 33](#33-refuse-secret-item-keys-that-no-source-provides): refuse Secret
-   `items[].key` references that no source provides (functional bug).
-2. [Item 34](#34-wait-for-healthy-containers-after-install-and-upgrade): wait for
-   healthy containers after install and upgrade.
-3. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
-   demo apps use a database role that is not a superuser.
-4. [Item 36](#36-harden-the-demo-application-containers): container hardening
-   (user, capabilities, read-only root, resource limits) with secret file modes.
-5. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
-   copies at rest, Identity key protection; with items 2, 3 and 24.
-6. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+1. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums.
+2. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+   backup and recovery of databases and credentials.
+3. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+4. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+   copies at rest and Identity key protection (with items 2 and 3).
+5. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+   a database role that is not a superuser (a pattern for products too).
+6. [Item 36](#36-harden-the-demo-application-containers): container hardening
+   with secret file modes.
+7. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+   one mutation-testing round before the larger DR change.
+8. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+   optional DR, after 2, 3 and 37; on its own branch.
+9. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+   versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
+   scope decision first) and item 30 steps 3-4.
 
-Then the earlier open items (22, 24, 2, 3, 5, 6, 7) as agreed separately.
+## Status overview (2026-10-19)
 
-Implemented: test baseline (item 10, commit `511099e`) and rename/separate
-platform bundle (item 8), separate Identity bundle (item 9, 0.4.0), and credential
-path cleanup (item 12, 0.4.1; [verification](acceptance/CREDENTIAL-PATHS.md)), and
-retry-safe lifecycle operations (item 13, 0.4.2; [verification](acceptance/RETRY-SAFETY.md)),
-and deploy package refactor (item 1, 0.4.3; [verification](acceptance/DEPLOY-REFACTOR.md)),
-and app credential delivery cleanup (item 14, 0.4.4; [verification](acceptance/CREDENTIAL-DELIVERY.md)),
-and removal of obsolete layout checks (item 15, 0.4.5; [verification](acceptance/LEGACY-CHECK-CLEANUP.md)),
-and unified file-source declarations (item 16, 0.4.6; [verification](acceptance/FILE-SOURCES.md)),
-and stock nginx with YAML proxy config (item 18, 0.4.7; [verification](acceptance/NGINX-YAML.md)),
-and app1 database schema init (item 17, 0.4.8; [verification](acceptance/APP1-INIT.md)).
-Declarative components (item 20, 0.4.9; [verification](acceptance/DECLARATIVE-COMPONENTS.md))
-are implemented locally; real acceptance runs are pending.
-See [Identity verification](acceptance/IDENTITY-SPLIT.md). Lab verification remains pending; it does not
-block the next implementation step. Run the historical upgrade at `511099e` and
-current platform/lifecycle scenarios separately; see [platform verification](acceptance/PLATFORM-RENAME.md).
+Done and verified on real VMs (rootless Podman 5.8.2, fapolicyd, SELinux
+Enforcing): items 1, 8, 9, 12, 14–21, 23, 25–29, 31–34. Their behaviour is
+exercised by every run of the six-scenario acceptance matrix (demo with app1 or
+app2 first, help only, Identity upgrade, platform with help, renamed product
+`shop`); the latest, `b34-*` on `77b27cd`, was CLEAN PASS. Item 30 (faster
+runs) is done up to its optional steps 3-4.
+
+Partly verified: item 10 (the test baseline runs in every lab run as
+`03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
+lifecycle on real hosts; failure injection only in fresh local processes).
+
+Open: 38 (next), 2, 3, 37, 35, 36, 22, 24, 5, 7, 6, and item 30 steps 3-4.
+Earlier per-item verification reports stay linked from each item:
+[credential paths](acceptance/CREDENTIAL-PATHS.md),
+[retry](acceptance/RETRY-SAFETY.md),
+[deploy refactor](acceptance/DEPLOY-REFACTOR.md),
+[credential delivery](acceptance/CREDENTIAL-DELIVERY.md),
+[layout cleanup](acceptance/LEGACY-CHECK-CLEANUP.md),
+[file sources](acceptance/FILE-SOURCES.md),
+[proxy](acceptance/NGINX-YAML.md), [app1 init](acceptance/APP1-INIT.md),
+[declarative components](acceptance/DECLARATIVE-COMPONENTS.md),
+[Identity](acceptance/IDENTITY-SPLIT.md) and
+[platform](acceptance/PLATFORM-RENAME.md).
 
 Item 15 removes historical layout refusal checks; the earlier task descriptions
 and reports retain their original scope and are not current requirements.
@@ -60,7 +75,9 @@ restore core or merge Identity back into platform.
 
 ## 10. Supplement test coverage before structural changes
 
-Status: implemented locally at `511099e`; historical lab verification pending. Item 8 proceeded with explicit user authorization.
+Status: implemented at `511099e`; the test baseline runs in every lab run
+(`03-unit`). The historical 0.2.0 upgrade lab run was never done and is tracked
+in item 5. Item 8 proceeded with explicit user authorization.
 See [test baseline and lab command](acceptance/TEST-BASELINE.md) for coverage,
 results and the retained 0.2.0 upgrade gate. The original task is preserved below.
 This task includes the retained 0.2.0 upgrade scenario already tracked in item 5;
@@ -214,8 +231,9 @@ Foretrekk noen få sterke tester fremfor mange overlappende tester.
 
 ## 1. Deploy maintainability refactor
 
-Status: implemented in 0.4.3 after items 10, 8, 9, 12 and 13. Local checks passed;
-real directory trust remains unverified on the target. See [verification](acceptance/DEPLOY-REFACTOR.md).
+Status: done in 0.4.3 after items 10, 8, 9, 12 and 13; directory trust of each
+release's `deployment/` package (add, wait, retire) is verified on the target by
+the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS). See [verification](acceptance/DEPLOY-REFACTOR.md).
 No existing installation requires migration: this implementation adds no migration,
 old-module fallback or compatibility layer. The original task follows.
 
@@ -407,7 +425,8 @@ verification gaps, not evidence of completed runtime support.
 
 ## 8. Rename core to platform
 
-Status: implemented locally in 0.3.0; fresh platform/refusal lab verification pending.
+Status: done in 0.3.0; the separate platform bundle, its upgrade and the
+downgrade refusal (`10-platform-*`) are verified by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS).
 The user explicitly selected a separate platform bundle for this step. Platform
 still contains Identity until item 9. The original task below is retained;
 [PLATFORM-RENAME.md](acceptance/PLATFORM-RENAME.md) describes the delivered model,
@@ -625,7 +644,8 @@ Foretrekk enkel og konsekvent navngivning fremfor et generisk alias- eller kompa
 
 ## 9. Extract Identity into a separate component and bundle
 
-Status: implemented in 0.4.0; real lab verification pending. Platform and Identity are separate bundles with explicit dependencies. See [Identity verification](acceptance/IDENTITY-SPLIT.md). The original task follows.
+Status: done in 0.4.0; verified by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS), including the Identity upgrade
+scenario. Platform and Identity are separate bundles with explicit dependencies. See [Identity verification](acceptance/IDENTITY-SPLIT.md). The original task follows.
 
 Skill Identity ut av `platform` som en egen komponent med en egen separat offline-bundle i `gunstein/podman_offline`.
 
@@ -951,7 +971,8 @@ with item 9 before implementing a procedure.
 
 ## 12. Rename component credential paths
 
-Status: implemented in 0.4.1; fresh-install lab verification pending. See
+Status: done in 0.4.1; fresh installs with these paths are verified by
+the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS). See
 [credential-path verification](acceptance/CREDENTIAL-PATHS.md). The deploy
 refactor (item 1) is implemented; see its verification report.
 This task uses fresh state only and requires no migration or backward compatibility.
@@ -1144,8 +1165,9 @@ Foretrekk en enkel, konsekvent navneendring fremfor nye abstraksjoner.
 
 ## 13. Retry-safe install and uninstall
 
-Status: implemented in 0.4.2; local failure-injection verification passed, real
-Podman/systemd behavior remains unverified here. See [retry verification](acceptance/RETRY-SAFETY.md).
+Status: done in 0.4.2. Failure injection is verified in fresh local processes
+(`tests/test_retry.py`); on real hosts the normal lifecycle is verified by
+the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS), but no failure is injected there. See [retry verification](acceptance/RETRY-SAFETY.md).
 This is a bounded correctness fix for retrying failed operations, not a transaction
 framework or module refactor. The full agent message follows, with Markdown
 formatting adjusted for this document.
@@ -1424,9 +1446,9 @@ Foretrekk små, tydelige funksjoner og eksplisitte steg. Målet er at en middels
 
 ## 14. Tighten app credential delivery and remove unused API secret
 
-Status: implemented in 0.4.4; local checks and real target verification are
-reported in [credential delivery](acceptance/CREDENTIAL-DELIVERY.md). Target
-verification remains pending. The original agent message follows.
+Status: done in 0.4.4; delivery and modes are checked on the target
+(`08-credentials`) by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS); see
+[credential delivery](acceptance/CREDENTIAL-DELIVERY.md). The original agent message follows.
 
 Rett credential-håndteringen i `gunstein/podman_offline` med en liten, målrettet endring.
 Behold dagens komponentarkitektur og offline installasjonsmodell.
@@ -1541,8 +1563,8 @@ et bytte fra PVC til Secret alene gir kryptering eller en ny isolasjonsgrense.
 
 ## 15. Remove obsolete legacy layout refusal checks
 
-Status: implemented in 0.4.5; local checks and remaining target verification are
-reported in [layout cleanup](acceptance/LEGACY-CHECK-CLEANUP.md). The original
+Status: done in 0.4.5; fresh installs without the removed checks are verified by
+the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS); see [layout cleanup](acceptance/LEGACY-CHECK-CLEANUP.md). The original
 agent message follows. No existing installations require migration.
 
 Melding til agenten:
@@ -1578,8 +1600,9 @@ historiske referanser som er beholdt, testresultater og eventuelle labhull.
 
 ## 16. Combine secret generation and file delivery declarations
 
-Status: implemented in 0.4.6 after item 14; source-level generate is supported
-for both delivery groups. See [file sources](acceptance/FILE-SOURCES.md) for
+Status: done in 0.4.6 after item 14; source-level generate is supported
+for both delivery groups and verified (examples `03-example-*` and generated
+database passwords) by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS). See [file sources](acceptance/FILE-SOURCES.md) for
 verification and remaining lab work. The original agent message follows.
 
 Melding til agenten:
@@ -1643,8 +1666,9 @@ testresultater og hva som eventuelt gjenstår å verifisere i lab.
 
 ## 17. Use an init container for database preparation in one demo app
 
-Status: implemented in 0.4.8. App1 uses a real schema-preparation init container;
-app2 retains backend initialization. Local checks and remaining real target
+Status: done in 0.4.8. App1 uses a real schema-preparation init container;
+app2 retains backend initialization. Verified by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS) (database
+authentication steps; the renamed `orders` init container exits 0). Local checks and remaining real target
 verification are documented in [app1 init verification](acceptance/APP1-INIT.md).
 The original agent message follows.
 
@@ -1687,8 +1711,9 @@ testresultater og verifikasjonshull.
 
 ## 18. Move proxy configuration out of apps and use stock nginx from YAML
 
-Status: implemented in 0.4.7 with the revised scope: existing app image building
-is unchanged, standard nginx is configured through platform YAML. See
+Status: done in 0.4.7 with the revised scope: existing app image building
+is unchanged, standard nginx is configured through platform YAML. Verified by
+the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS) (HTTPS e2e through the proxy). See
 [proxy verification](acceptance/NGINX-YAML.md) for checks and remaining lab work.
 The original revised agent message follows.
 
@@ -2604,7 +2629,7 @@ time.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: implemented on `main` (plan below, approved 2026-10-17), revised after
+Status: done on `main` (plan below, approved 2026-10-17), revised after
 an independent review of `4023c6d`; the full lab matrix (`val-app1-first`,
 `val-app2-first`, `val-help-only`, `val-identity`, `val-platform-help`,
 `val-renamed`) was CLEAN PASS on `9dc0381`. `./deploy validate` in the source checkout, an unpacked bundle and a
