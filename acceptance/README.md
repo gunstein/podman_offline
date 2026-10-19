@@ -1,5 +1,10 @@
 # Secret templates and ConfigMap inline values (backlog 41)
 
+Source releases use one `components/<id>/VERSION` per component. The upgrade
+builders change only the selected component's file (including renamed products);
+unpacked bundles keep an informational root `VERSION`. After backlog 40, rerun
+the full six-scenario lab matrix: older lab results do not verify this change.
+
 [SECRET-TEMPLATES.md](SECRET-TEMPLATES.md) records local verification and the
 pending lab commands. `database-runtime` now starts with a disposable direct
 `kube play` and Quadlet env/file/update probe. Renamed-product runs execute the

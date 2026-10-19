@@ -188,3 +188,37 @@ or systemd behavior. These runtime checks are pending until actually run.
 
 OpenSSL references: [1.1.1 pkcs12](https://docs.openssl.org/1.1.1/man1/pkcs12/),
 [3.x pkcs12](https://docs.openssl.org/3.3/man1/openssl-pkcs12/).
+
+## CA subject and certificate lifetimes (backlog 45a)
+
+Set public issuance settings before the component arguments, for example:
+
+```sh
+bash dev/generate-certificates.sh --root /var/lib/myproduct \
+  --ca-subject '/C=NO/O=Example Organisation/CN=Production CA' \
+  --ca-days 3650 --cert-days 365 \
+  --component my-identity --purpose signing --pfx
+```
+
+The same prefix options work with the full-demo and named-demo recipes and stdin
+execution. Defaults remain `/CN=Demo Development CA`, 3650 CA days and 365 leaf
+days. Days must be positive decimal integers within the supported date range.
+Subject syntax is `/ATTRIBUTE=value` (UTF-8), using CN, C, ST, L, O, OU,
+emailAddress, serialNumber, DC or UID. C is two uppercase letters; values must
+be nonempty without leading/trailing whitespace, controls, slash, backslash or
+plus. This deliberately small DN syntax does not support escaped separators or
+multi-valued RDNs. Invalid settings fail before any directory/file write.
+
+All modes use the same CA creation/reuse implementation. Settings apply only
+when creating new material: an existing complete CA and valid PFX/PEM are retained
+byte for byte. Changing flags does not renew certificates or replace the CA;
+a new component uses the retained CA and the requested new leaf lifetime.
+The full-demo recipe still refuses an existing PKI, as before.
+
+Keep a separate `--root` for each environment. Back up and protect the CA pair in
+`<root>/PKI/private/` (directory 0700, CA key 0600), together with the retained
+component credentials and their private passwords, outside disposable releases.
+Restore complete matching pairs; a partial CA is refused. Loss of the CA key
+prevents further issuance from that CA. Replacing it requires reissuing all
+certificates and distributing the new trust anchor; replacement, expiry/renewal
+and signed offline tool delivery are separate operations (45b/45c, backlog 3/37).

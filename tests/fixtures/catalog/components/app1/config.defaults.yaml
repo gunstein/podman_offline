@@ -1,0 +1,11 @@
+DB_HOST: app1-postgres
+DB_NAME: app1
+DB_PORT: "5432"
+DB_USER: app1
+SECRET_FILES:
+  app1-database-password:
+  - generate:
+    - password
+    path: credentials/database
+  app1-signing:
+  - path: credentials/todo

@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-# Credential provisioning: explicit signing PFX mode plus the retained demo recipes.
-# See docs/PFX-CREDENTIALS.md; generation is never an automatic deploy action.
-# Not part of product bundles: use external inputs or the explicit helper. On a
-# target, pass it on stdin: bash -s -- --root DIR <component> <host> < generate-certificates.sh
+# Explicit signing provisioning and retained demo recipes. No automatic deploy action.
+# Self-contained for bash -s on offline targets; see docs/PFX-CREDENTIALS.md.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 umask 077
-if [[ ${1:-} == --root ]]; then
-    if [[ $# -lt 2 || -z $2 ]]; then
-        echo 'Usage: dev/generate-certificates.sh [--root DIR] [DNS hostname]' >&2
-        exit 2
-    fi
-    root=$2
-    shift 2
-fi
-# Explicit signing provisioning is independent of demo component names. Keep the
-# implementation embedded so bash -s on an offline target needs no checkout.
-if [[ ${1:-} == --component ]]; then
-    [[ $# == 5 && ${3:-} == --purpose && ${4:-} == signing && ${5:-} == --pfx ]] || {
-        echo 'Usage: generate-certificates.sh --root DIR --component ID --purpose signing --pfx' >&2; exit 2;
-    }
-    exec python3 - "$root" "$2" <<'SIGNING_PFX'
+ca_subject='/CN=Demo Development CA'
+ca_days=3650
+cert_days=365
+usage() {
+    echo 'Usage: generate-certificates.sh [--root DIR] [--ca-subject /CN=Name] [--ca-days N] [--cert-days N] platform|identity|app1|app2|help [host]' >&2
+    echo '   or: generate-certificates.sh [options] --component ID --purpose signing --pfx' >&2
+    exit 2
+}
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --root|--ca-subject|--ca-days|--cert-days)
+            [[ $# -ge 2 && -n $2 ]] || usage
+            case "$1" in
+                --root) root=$2;;
+                --ca-subject) ca_subject=$2;;
+                --ca-days) ca_days=$2;;
+                --cert-days) cert_days=$2;;
+            esac
+            shift 2;;
+        *) break;;
+    esac
+done
+certificate_tool() {
+    python3 - "$1" "$root" "$2" "$ca_subject" "$ca_days" "$cert_days" <<'CERTIFICATE_TOOL'
 """Explicit credential provisioning only; never imported by deploy/validate."""
 
+import datetime
 import os
 import re
 import signal
@@ -132,6 +140,48 @@ def publish(source, target):
         )
 
 
+def ensure_ca():
+    """One CA issuance/reuse path for full, component and signing provisioning."""
+    ca = root / "PKI/private"
+    plain_path(ca)
+    ca_cert, ca_key = ca / "ca.crt", ca / "ca.key"
+    has_ca_cert = file_exists(ca_cert)
+    has_ca_key = file_exists(ca_key, private=True)
+    if has_ca_cert != has_ca_key:
+        refuse("Incomplete existing CA; restore it instead of regenerating")
+    if not has_ca_cert:
+        ca.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ca.parent.chmod(0o700)
+        ca.chmod(0o700)
+        new_cert, new_key = work / "ca.crt", work / "ca.key"
+        openssl(
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:3072",
+            "-nodes",
+            "-sha256",
+            "-days",
+            str(ca_days),
+            "-keyout",
+            new_key,
+            "-out",
+            new_cert,
+            "-utf8",
+            "-subj",
+            ca_subject,
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+        )
+        check_pair(new_cert, new_key)
+        publish(new_key, ca_key)
+        publish(new_cert, ca_cert)
+    check_pair(ca_cert, ca_key)
+    return ca_cert, ca_key
+
+
 def provision():
     cert = signing / "signing-cert.crt"
     key = signing / "signing-cert.key"
@@ -145,42 +195,7 @@ def provision():
     if has_cert != has_key:
         refuse("Incomplete signing PEM pair; restore the missing file")
     if not has_cert:
-        ca = root / "PKI/private"
-        plain_path(ca)
-        ca_cert, ca_key = ca / "ca.crt", ca / "ca.key"
-        has_ca_cert = file_exists(ca_cert)
-        has_ca_key = file_exists(ca_key, private=True)
-        if has_ca_cert != has_ca_key:
-            refuse("Incomplete existing CA; restore it instead of regenerating")
-        if not has_ca_cert:
-            ca.mkdir(mode=0o700, parents=True, exist_ok=True)
-            ca.parent.chmod(0o700)
-            ca.chmod(0o700)
-            new_cert, new_key = work / "ca.crt", work / "ca.key"
-            openssl(
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:3072",
-                "-nodes",
-                "-sha256",
-                "-days",
-                "3650",
-                "-keyout",
-                new_key,
-                "-out",
-                new_cert,
-                "-subj",
-                "/CN=Demo Development CA",
-                "-addext",
-                "basicConstraints=critical,CA:TRUE",
-                "-addext",
-                "keyUsage=critical,keyCertSign,cRLSign",
-            )
-            check_pair(new_cert, new_key)
-            publish(new_key, ca_key)
-            publish(new_cert, ca_cert)
-        check_pair(ca_cert, ca_key)
+        ca_cert, ca_key = ensure_ca()
         new_key, new_cert, csr = (
             work / "signing.key",
             work / "signing.crt",
@@ -218,7 +233,7 @@ def provision():
             "-set_serial",
             "0x" + os.urandom(16).hex(),
             "-days",
-            "365",
+            str(cert_days),
             "-sha256",
             "-extfile",
             extensions,
@@ -254,6 +269,51 @@ def provision():
     publish(output, pfx)
 
 
+def options(subject, ca_lifetime, leaf_lifetime):
+    """Validate a documented DN subset and representable lifetimes before writes."""
+    fields = re.findall(r"/([A-Za-z][A-Za-z0-9]*)=([^/]+)", subject)
+    if (
+        not fields
+        or "".join("/" + key + "=" + value for key, value in fields) != subject
+    ):
+        refuse("CA subject must use /ATTRIBUTE=value fields")
+    limits = {
+        "CN": 64,
+        "C": 2,
+        "ST": 128,
+        "L": 128,
+        "O": 64,
+        "OU": 64,
+        "emailAddress": 128,
+        "serialNumber": 64,
+        "DC": 63,
+        "UID": 64,
+    }
+    for key, value in fields:
+        if (
+            key not in limits
+            or not value.strip()
+            or value != value.strip()
+            or len(value.encode("utf-8")) > limits.get(key, 0)
+            or any(ord(c) < 32 or ord(c) == 127 or c in "\\+" for c in value)
+            or (key == "C" and not re.fullmatch("[A-Z]{2}", value))
+        ):
+            refuse("Invalid CA subject attribute or value")
+    days = []
+    for name, value in (("CA days", ca_lifetime), ("Certificate days", leaf_lifetime)):
+        if not re.fullmatch(r"[1-9][0-9]{0,6}", value):
+            refuse(name + " must be a positive integer")
+        number = int(value)
+        try:
+            _ = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+                days=number
+            )
+        except OverflowError:
+            refuse(name + " exceeds the supported date range")
+        days.append(number)
+    return subject, days[0], days[1]
+
+
 def interrupted(_signum, _frame):
     raise ProvisionError(
         "Signing provisioning interrupted; existing credentials retained"
@@ -263,8 +323,19 @@ def interrupted(_signum, _frame):
 signal.signal(signal.SIGTERM, interrupted)
 
 try:
-    root = Path(os.path.abspath(sys.argv[1]))
-    component = sys.argv[2]
+    mode, root_arg, component, subject, ca_lifetime, leaf_lifetime = sys.argv[1:]
+    ca_subject, ca_days, cert_days = options(subject, ca_lifetime, leaf_lifetime)
+    if mode == "check":
+        sys.exit(0)
+    root = Path(os.path.abspath(root_arg))
+    if mode == "ca":
+        ca = root / "PKI/private"
+        plain_path(ca)
+        ca.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".ca-", dir=str(ca)) as directory:
+            work = Path(directory)
+            ensure_ca()
+        sys.exit(0)
     if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", component):
         refuse("Invalid component ID")  # Same rule as deployment.common.ID.
     signing = root / component / "credentials/signing"
@@ -308,7 +379,16 @@ except (ProvisionError, OSError) as error:
         file=sys.stderr,
     )
     sys.exit(1)
-SIGNING_PFX
+CERTIFICATE_TOOL
+}
+# Public option validation precedes every directory/key/certificate write.
+certificate_tool check ''
+# Legacy recipes cd into root before invoking the shared CA helper.
+[[ $root == /* ]] || root=$PWD/$root
+if [[ ${1:-} == --component ]]; then
+    [[ $# == 5 && ${3:-} == --purpose && ${4:-} == signing && ${5:-} == --pfx ]] || usage
+    certificate_tool signing "$2"
+    exit 0
 fi
 if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; then
     component=$1
@@ -320,16 +400,7 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
     mkdir -p "$root/PKI/private" "$root/$component/credentials"
     chmod 700 "$root/PKI" "$root/PKI/private" "$root/$component" "$root/$component/credentials"
     cd "$root"
-    if [[ -e PKI/private/ca.key || -e PKI/private/ca.crt ]]; then
-        [[ -s PKI/private/ca.key && -s PKI/private/ca.crt ]] || {
-            echo 'ERROR: incomplete existing CA; do not regenerate it' >&2; exit 1;
-        }
-    else
-        openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
-            -keyout PKI/private/ca.key -out PKI/private/ca.crt \
-            -subj '/CN=Demo Development CA' \
-            -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign'
-    fi
+    certificate_tool ca ''
     # Issue missing pairs once; a partial existing pair requires operator investigation.
     issue_component() {
         local name=$1 dir=$2 usage=$3 record="PKI/private/$component-$1"
@@ -345,7 +416,7 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
             -keyout "$dir/$name.key" -out "$record.csr" -subj "/CN=$component-$name"
         printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n%s\n' "$usage" > "$record.ext"
         openssl x509 -req -in "$record.csr" -CA PKI/private/ca.crt -CAkey PKI/private/ca.key \
-            -CAcreateserial -days 365 -sha256 -extfile "$record.ext" -out "$dir/$name.crt"
+            -CAcreateserial -days "$cert_days" -sha256 -extfile "$record.ext" -out "$dir/$name.crt"
     }
     # Preserve existing passwords and refuse empty files rather than rotating credentials.
     component_password() {
@@ -391,10 +462,7 @@ if [[ -e PKI/private/ca.key || -e credentials/identity/identity.key ]]; then
     exit 1
 fi
 mkdir -p PKI/private credentials/{identity,todo,web,users,client}
-openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
-    -keyout PKI/private/ca.key -out PKI/private/ca.crt \
-    -subj '/CN=Demo Development CA' \
-    -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign'
+certificate_tool ca ''
 # Issue a private key and a certificate signed by the demo CA.
 issue() {
     local name=$1 dir=$2 usage=$3
@@ -402,7 +470,7 @@ issue() {
         -keyout "$dir/$name.key" -out "PKI/private/$name.csr" -subj "/CN=$name"
     printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n%s\n' "$usage" > "PKI/private/$name.ext"
     openssl x509 -req -in "PKI/private/$name.csr" -CA PKI/private/ca.crt \
-        -CAkey PKI/private/ca.key -CAcreateserial -days 365 -sha256 \
+        -CAkey PKI/private/ca.key -CAcreateserial -days "$cert_days" -sha256 \
         -extfile "PKI/private/$name.ext" -out "$dir/$name.crt"
 }
 issue identity credentials/identity ''

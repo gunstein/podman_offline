@@ -27,7 +27,6 @@ product: <name>                  # required; names the whole installation
 components:
   <id>:
     requires: [<id>, ...]        # installed first; default []
-    version_file: VERSION        # release file with major.minor.patch; default VERSION
     upgrade: always              # or newer-only; default always
     public_from: <id>            # take PUBLIC_ORIGIN, HTTPS_PORT and its shares from this dependency
     shares: [<NAME>, ...]        # config names this component's public_from dependents take from it
@@ -96,8 +95,13 @@ Uninstall refuses while an installed component still requires it.
 
 ### Versions and upgrades
 
-`version_file` names a file in the source checkout, confined to it. Several
-components may share one file; the demo apps share `VERSION`.
+Each component must contain `components/<id>/VERSION` with one
+`major.minor.patch` version. This is its only source version; `version_file`
+is not accepted in `bundles.yaml`. Components released together keep the same
+number in their separate files. Missing, invalid or escaping version files are
+refused before building. Each bundle retains an informational root `VERSION`;
+installed metadata stores its compiled version, so existing installations need
+no migration. Standalone manifest fixtures without a catalog keep root `VERSION`.
 
 - `upgrade: always` renders and restarts the component on every install.
 - `upgrade: newer-only` installs a missing or newer version, keeps an equal

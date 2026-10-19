@@ -2,9 +2,9 @@
 # with its files in components/<id>/ and one offline bundle. Components that
 # are not listed here are not rendered, built, bundled or started.
 #
+# Each component owns components/<id>/VERSION (major.minor.patch).
 # Fields (all optional):
 #   requires:     component IDs that must be installed first
-#   version_file: release file holding the version (default VERSION)
 #   upgrade:      always (default) reinstalls on every install;
 #                 newer-only keeps an equal installed version and refuses downgrades
 #   public_from:  dependency whose PUBLIC_ORIGIN, HTTPS_PORT and shares this component must match
@@ -23,13 +23,11 @@
 product: myproduct
 components:
   platform:
-    version_file: PLATFORM_VERSION
     upgrade: newer-only
     accepts:
       routes: platform-routes
   identity:
     requires: [platform]
-    version_file: IDENTITY_VERSION
     upgrade: newer-only
     public_from: platform
     routes: platform

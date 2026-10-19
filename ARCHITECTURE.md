@@ -199,7 +199,10 @@ sequenceDiagram
 
 ### `./build-bundle.sh` in the source checkout
 
-This is the catalog path. Component names as arguments
+This is the catalog path. `catalog.source_descriptors()` reads each
+`components/<id>/VERSION`, validates its numeric version and compiles dependency
+ranges into bundle metadata. Installed metadata keeps this version independently
+of the source files. Component names as arguments
 (`./build-bundle.sh app1`) build only those releases after the same catalog
 validation and do not rewrite `dist/current-bundles.txt`. Without
 `bundles.yaml`, `bundle.build()` builds one
@@ -282,7 +285,7 @@ Real Podman permissions/isolation remain unverified; see
 
 `dev/generate-certificates.sh --root DIR --component ID --purpose signing --pfx`
 is an explicit operator action, separate from deploy's generation/validation.
-It embeds the isolated signing implementation in the shell helper so stdin
+It embeds the certificate implementation in the shell helper so stdin
 execution on offline targets needs no source checkout or additional module.
 Legacy demo recipes remain unchanged and the shipped Identity still reads PEM.
 
@@ -300,9 +303,11 @@ An individual-file SECRET_FILES source delivers only the PFX through the existin
 binary Secret pipeline and 0600 install YAML; the mount/path is the application's
 contract. No source/password/CA delivery or application-specific branch is added
 to deployment/. The current helper can be invoked explicitly in dev/production,
-using separate roots, or consume external credentials; its local issuance still
-uses development CA defaults. Supported CA configuration, tool delivery and
-renewal are separate items 45a/45b/45c. See [PFX credentials](docs/PFX-CREDENTIALS.md)
+using separate roots, or consume external credentials. `certificate_tool` validates
+CA subject and both lifetimes before writes. All issuance modes share `ensure_ca()`;
+settings affect only newly created material, while existing complete credentials
+remain unchanged. Demo CA defaults remain available. Tool delivery and renewal
+are separate items 45b/45c. See [PFX credentials](docs/PFX-CREDENTIALS.md)
 for commands, precedence, failure recovery and pending real runtime checks.
 
 ## Supported layout checks (0.4.5)

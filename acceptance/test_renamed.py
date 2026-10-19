@@ -81,6 +81,11 @@ class GeneratorTests(unittest.TestCase):
             ["gateway", "login-service", "orders", "inventory", "manual"],
         )
         self.assertEqual(tuple(descriptors), RENAMED_ORDER)
+        for old, new in renamed_product.NAMES.items():
+            self.assertEqual(
+                (self.target / "components" / new / "VERSION").read_bytes(),
+                (ROOT / "components" / old / "VERSION").read_bytes(),
+            )
         self.assertEqual(descriptors["orders"]["clients"], "login-service")
         self.assertEqual(
             descriptors["gateway"]["accepts"], {"routes": "gateway-routes"}
@@ -160,6 +165,27 @@ class GeneratorTests(unittest.TestCase):
             sorted(str(path.relative_to(target)) for path in target.rglob("*")),
             ["config", "config/common.defaults.yaml"],
         )
+
+    def test_platform_group_inventory_survives_renamed_generation(self):
+        def inventory(directory):
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(directory / "tests/run.py"),
+                    "platform",
+                    "--list",
+                ],
+                cwd=str(directory),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.splitlines()
+
+        expected = inventory(ROOT)
+        self.assertTrue(expected)
+        self.assertEqual(expected, inventory(self.target))
 
     def test_existing_target_is_never_overwritten(self):
         with self.assertRaisesRegex(SystemExit, "already exists"):
@@ -284,8 +310,8 @@ class RemoteActionTests(unittest.TestCase):
     def test_unit_tests_run_without_the_lab_signing_key(self):
         """DEV exports the lab key for builds; product tests must not inherit it."""
         self.assertIn(
-            'unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m '
-            "unittest discover -s tests;;",
+            'unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B '
+            "tests/run.py all;;",
             REMOTE,
         )
 

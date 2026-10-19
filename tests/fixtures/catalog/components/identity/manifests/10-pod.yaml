@@ -1,0 +1,8 @@
+kind: Pod
+metadata:
+  name: identity-worker
+spec:
+  containers:
+  - image: registry.example.test/team/worker:1
+    imagePullPolicy: Never
+    name: worker

@@ -109,10 +109,11 @@ class ComponentHarnessTests(unittest.TestCase):
         """Run the real upgrade action against scoped fixture archives and Git/build stubs."""
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
-            (source / "VERSION").write_text("0.2.0\n")
+            (source / "components/app1").mkdir(parents=True)
+            (source / "components/app1/VERSION").write_text("0.2.0\n")
             build = source / "build-bundle.sh"
             build.write_text(
-                '#!/usr/bin/env bash\n# Create only the three scoped upgrade artifacts for the test.\nset -euo pipefail\nversion=$(cat VERSION)\nfor bundle in app1 app2 help; do\n    mkdir -p dist "build/bundle/myproduct-$bundle-$version/images"\n    archive="myproduct-$bundle-$version-offline.tar.gz"\n    printf fixture > "dist/$archive"\n    (cd dist && sha256sum "$archive" > "$archive.sha256")\n    printf \'localhost/upgrade-fixture:1\\n\' > "build/bundle/myproduct-$bundle-$version/images/images.txt"\ndone\n'
+                '#!/usr/bin/env bash\n# Create only the three scoped upgrade artifacts for the test.\nset -euo pipefail\nversion=$(cat components/app1/VERSION)\nfor bundle in app1 app2 help; do\n    mkdir -p dist "build/bundle/myproduct-$bundle-$version/images"\n    archive="myproduct-$bundle-$version-offline.tar.gz"\n    printf fixture > "dist/$archive"\n    (cd dist && sha256sum "$archive" > "$archive.sha256")\n    printf \'localhost/upgrade-fixture:1\\n\' > "build/bundle/myproduct-$bundle-$version/images/images.txt"\ndone\n'
                 + (
                     "printf damaged >> dist/myproduct-app1-0.2.1-offline.tar.gz\n"
                     if corrupt
@@ -120,7 +121,7 @@ class ComponentHarnessTests(unittest.TestCase):
                 )
             )
             build.chmod(0o700)
-            stubs = 'git() { if [[ "$*" == "diff --name-only" ]]; then echo VERSION; fi; }\n'
+            stubs = 'git() { if [[ "$*" == "diff --name-only" ]]; then echo components/app1/VERSION; fi; }\n'
             code = base.shell_code(REMOTE, action="upgrade-bundle")
             result = subprocess.run(
                 ["bash", "-se"],
@@ -133,7 +134,9 @@ class ComponentHarnessTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            self.assertEqual((source / "VERSION").read_text(), "0.2.1\n")
+            self.assertEqual(
+                (source / "components/app1/VERSION").read_text(), "0.2.1\n"
+            )
             self.assertFalse(
                 (source / "dist/myproduct-0.2.1-offline.tar.gz.sha256").exists()
             )

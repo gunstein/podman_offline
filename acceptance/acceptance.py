@@ -263,9 +263,9 @@ class Run:
         self.meta.update(
             revision=self.revision,
             clean=clean,
-            version=(ROOT / "VERSION").read_text().strip(),
-            platform_version=(ROOT / "PLATFORM_VERSION").read_text().strip(),
-            identity_version=(ROOT / "IDENTITY_VERSION").read_text().strip(),
+            version=(ROOT / "components/app1/VERSION").read_text().strip(),
+            platform_version=(ROOT / "components/platform/VERSION").read_text().strip(),
+            identity_version=(ROOT / "components/identity/VERSION").read_text().strip(),
             first_app=self.first_app,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],

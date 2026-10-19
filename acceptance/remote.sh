@@ -734,10 +734,10 @@ clone)
     output=$(git status --porcelain)
     test -z "$output"
     git rev-parse HEAD
-    cat VERSION
+    cat components/app1/VERSION
     ;;
 # The product tests must not see the lab signing key exported above.
-unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -m unittest discover -s tests;;
+unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py all;;
 identity-template-baseline) cd "$src"; python3 acceptance/identity_template_baseline.py;;
 build-images) cd "$src"; ./dev/build-images.sh;;
 database-runtime)
@@ -871,15 +871,14 @@ with open("bundles.yaml") as stream:
 entry = catalog["components"]["inventory"]
 entry.pop("routes")
 entry.pop("clients")
-entry["version_file"] = "INVENTORY_VERSION"
 with open("bundles.yaml", "w") as stream:
     yaml.safe_dump(catalog, stream, sort_keys=False)
-major, minor, patch = pathlib.Path("VERSION").read_text().strip().split(".")
-pathlib.Path("INVENTORY_VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\n")
+major, minor, patch = pathlib.Path("components/inventory/VERSION").read_text().strip().split(".")
+pathlib.Path("components/inventory/VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\n")
 DROP_REGISTRATIONS
     rm components/inventory/route.conf components/inventory/client.yaml
     ./build-bundle.sh inventory >&2
-    name="$product_name-inventory-$(cat INVENTORY_VERSION)-offline.tar.gz"
+    name="$product_name-inventory-$(cat components/inventory/VERSION)-offline.tar.gz"
     (cd dist && sha256sum -c "$name.sha256" >&2)
     echo "$name"
     ;;
@@ -1013,10 +1012,10 @@ upgrade-bundle)
     output=$(git status --porcelain)
     test -z "$output"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-    printf '%s\n' "$requested_version" > VERSION
+    printf '%s\n' "$requested_version" > components/app1/VERSION
     changed=$(git diff --name-only)
-    test "$changed" = VERSION
-    git diff -- VERSION
+    test "$changed" = components/app1/VERSION
+    git diff -- components/app1/VERSION
     # Only app1 is transferred and upgraded; the catalog is still validated.
     ./build-bundle.sh app1
     (cd dist && sha256sum -c "$product_name-app1-$requested_version-offline.tar.gz.sha256")
@@ -1042,8 +1041,8 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
     subprocess.run(["git", "clone", "--local", "--no-hardlinks", str(source), str(release)], check=True)
     # The tested revision, not HEAD: the Identity scenario commits an older baseline on top.
     subprocess.run(["git", "-C", str(release), "checkout", "-q", "--detach", os.environ["SOURCE_REVISION"]], check=True)
-    (release / "VERSION").write_text(version + "\n")
     kind = os.environ["RELEASE_KIND"]
+    (release / "components" / kind / "VERSION").write_text(version + "\n")
     if kind == "help":
         manifest = next((release / "components/help/manifests").glob("*.yaml"))
         text, count = re.subn(r"localhost/demo-help:[0-9]+\.[0-9]+\.[0-9]+", "localhost/demo-help:" + version, manifest.read_text())
@@ -1057,7 +1056,6 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
         subprocess.run(["podman", "build", "-t", "localhost/demo-help:" + version,
                         "-f", str(release / "apps/help/Containerfile"), str(release / "apps/help")], check=True)
     elif kind == "identity":
-        (release / "IDENTITY_VERSION").write_text(version + "\n")
         program = release / "apps/identity/Program.cs"
         marker = 'new { status = "ok" }'
         if program.read_text().count(marker) != 1:
@@ -1070,8 +1068,6 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
         manifest.write_text(text)
         subprocess.run(["podman", "build", "-t", "localhost/demo-identity:" + version,
                         "-f", str(release / "apps/identity/Containerfile"), str(release / "apps/identity")], check=True)
-    else:
-        (release / "PLATFORM_VERSION").write_text(version + "\n")
     bundle.ROOT = release
     bundle.STAGE = source / "build/help-upgrade"
     bundle.DIST = source / "dist"

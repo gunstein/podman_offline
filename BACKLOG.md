@@ -38,6 +38,7 @@ The order for an offline production deployment of an organisation's own apps:
    `./deploy status` shows each installed component, version and unit state.
 7. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
+   Implemented locally; full lab matrix pending.
 8. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
@@ -3647,8 +3648,36 @@ home by hand, for example
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; requested by the operator on 2026-10-19. Do after or with
-item 39.
+Status: implemented locally on 2026-10-19 at the operator's request before
+the next acceptance run. Component-local version files replace source root
+version files and the catalog override. Build descriptors and installed metadata
+keep their existing format. Acceptance upgrade builders and renamed products
+use the selected component's version. Local verification is recorded below;
+the full real Podman/systemd lab matrix remains required.
+
+Verification (2026-10-19): 64 demo tests and 196 acceptance-harness tests
+passed. The focused catalog/bundle/wrapper set passed 42 tests; the final
+component/layout set passed 29 tests in a fresh offline export without demo
+files. A new regression checks independent component versions with no root
+VERSION; coverage also refuses missing/invalid/escaping version files and the
+removed catalog field. Renamed-generator coverage checks every copied version.
+The broad isolated run executed 347 tests: 343 passed, the help-upgrade test
+failed in both subcases (its old fixture bumped app1 instead of help), and three
+GPG tests failed at agent key generation in this environment. After fixing
+the help fixture, all 29 component/layout tests passed in a fresh offline
+export, covering that regression. Thus 344 distinct platform tests have passing
+evidence across the broad and focused runs; there was no subsequent single
+fully green platform run. The broad runner also reported a temporary-directory
+cleanup error; leftover test fixtures were removed afterwards. GPG runtime
+verification remains outstanding.
+
+Ruff lint/format, scoped Pyright, ShellCheck, bash syntax, diff checks and static
+Python 3.6 compatibility passed. Real Python 3.6 and the lab matrix were not run.
+Understandability review: source_descriptors reads and validates the component
+version before build side effects, then the existing descriptor flow carries it
+into bundle and installed metadata. A missing version stops before publication;
+a corrected file can be retried without changing installed state. No new
+migration, lifecycle branch or credential behavior is introduced.
 
 ### Problem
 
@@ -4071,8 +4100,26 @@ verification evidence or close the outstanding lab work in other items.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; requested by the operator on 2026-10-19. Organisations using
-external images must be able to run platform tests without the demo apps/ tree.
+Status: implemented on main (2026-10-19); current lab acceptance remains the
+operator's next step. `tests/run.py` provides platform,
+demo and all groups plus isolated/offline export. Helpers no longer import test
+modules, and platform declarations are synthetic, independent of shipped apps
+and components. All 403 original declared test methods remain: prior discovery
+executed seven imported inherited methods twice (410 executions). Current
+inventory is 346 platform + 64 demo = 410 unique tests, including seven new
+layout/CA regressions across 43/45a. Acceptance's `03-unit` uses the all group;
+a renamed-product harness regression compares the complete platform inventory.
+Local checks: the isolated copy ran 345 tests (342 passed, three GPG-agent
+key-generation failures); the later relative-root platform regression also
+passed. Demo: 63 passed together plus the later relative-root regression. All
+196 acceptance-harness tests passed. Ruff/format, pyright (zero errors/warnings),
+ShellCheck, bash syntax and diff checks passed. Vermin reports Python 3.6 minimum
+for deployment, bundle, platform runner/helpers/tests and embedded provisioning
+code (static only). The generated renamed product also ran all 346 platform
+tests: 343 passed, the same three GPG-agent failures remained. Both platform and
+demo inventories match the original checkout. GPG failures are explicit, never
+silently skipped. No current real Podman/systemd or Python 3.6 runtime verification
+has been performed.
 
 ### Problem
 
@@ -4397,6 +4444,16 @@ only as demo provisioning (`demo_credentials` in `acceptance/remote.sh`).
 
 ### 45a. Configurable production CA (small; after item 44)
 
+Status: implemented on main (2026-10-19), awaiting the operator's lab run.
+Prefix options `--ca-subject`, `--ca-days` and `--cert-days` are checked before
+writes. All modes share `ensure_ca()` in the stdin-compatible embedded tool;
+existing CA/credentials remain authoritative when settings change. Five new
+real-OpenSSL regressions cover settings/retention/invalid input and relative roots
+across explicit signing and both demo recipes. The 16 existing certificate tests
+and all five new tests have passed locally with OpenSSL 3.0.13. Python 3.6 and
+OpenSSL 1.1.1 execution, real Duende/Podman/systemd, delivery (45b) and renewal
+(45c) remain unverified or separate work; old lab runs are not evidence here.
+
 Already true and to be kept: the CA lives in `<root>/PKI/private/`, and `--root`
 differs per environment (`build/dev` in dev, `/var/lib/<product>` on targets), so
 dev and production already have separate CAs. An existing complete CA is kept
@@ -4411,7 +4468,8 @@ only (item 44), not the CA.
    across provisioning modes).
 3. Validate values before any file is written (subject syntax, positive integer
    days); invalid values fail without creating or changing files.
-4. Tests in `tests/test_certificates.py` with real OpenSSL: the configured
+4. Tests in `tests/platform_tests/test_certificates.py` and
+   `tests/demo_tests/test_certificates_demo.py` with real OpenSSL: the configured
    subject and lifetimes are used for a new CA and certificates; an existing CA
    is never modified or recreated when settings change; invalid values write
    nothing; existing invocations without settings behave as before.

@@ -13,12 +13,13 @@ The known gaps below explicitly identify outstanding work.
 
 | Contract | Required behavior |
 | --- | --- |
+| Component versions | Each catalog component reads only `components/<id>/VERSION` (`major.minor.patch`); no catalog override or root source version. Bundles retain their informational root `VERSION` and compiled descriptors; standalone fixtures keep root `VERSION`. |
 | Declarative components | Selected YAML declarations and component files define components, dependencies and roles; adding, renaming or removing components requires only component files and catalog YAML, with no generic Python/shell edits. |
 | Independent images | Externally built images work without application source in `apps/`; demo builds and demo credential provisioning are explicit. |
 | Isolated offline bundles | An unpacked bundle works without the original checkout or sibling source/release directories; target installation does not fetch dependencies or images. |
 | Authoritative production config | Explicit `init-config` creates persistent config; subsequent production operations use it. Automatic init-config is not existing functionality. |
 | Credential retention | Generate missing secrets only when allowed; preserve valid existing credentials byte-for-byte. Do not expose credentials or complete connection strings in logs. Secret-template values are recomputed from retained sources, never independently persisted. |
-| Signing provisioning | Explicit signing PFX provisioning is separate from deploy/validate, supports arbitrary component IDs and works via stdin offline. Retain external PFX/PEM before issuance; read the private password file without exposing its value. Publish private files without clobbering existing credentials; deliver only the declared PFX, never provisioning keys/passwords implicitly. |
+| Signing provisioning | Validate public CA subject/lifetimes before writes; share CA creation across modes and retain complete existing CA/credentials when settings change. Explicit signing PFX provisioning is separate from deploy/validate, supports arbitrary component IDs and works via stdin offline. Retain external PFX/PEM before issuance; read the private password file without exposing its value. Publish private files without clobbering existing credentials; deliver only the declared PFX, never provisioning keys/passwords implicitly. |
 | Secret templates | Only `SECRET_TEMPLATES` composes config and same-component file Secrets. Validate declarations before generation and read no secret bytes during validate. Reject unsafe input without values in errors; output only Opaque Secrets in existing 0600 install YAML, never plain env values or ConfigMaps. |
 | ConfigMap inline values | Compose only ConfigMap `data` using public string/integer config; refuse Secret references and recursive expansion without printing values. Keep whole-value behavior elsewhere and preserve shell/nginx dollar syntax. Init, validate and lifecycle share declaration checks; the lab checks the actual consuming container, including renamed products. |
 | Database safety | Missing password plus existing database volume is refused. Inspection failure is not evidence of absence. Server and client receive the same password. |
@@ -148,6 +149,10 @@ arguments and state transitions relevant to the contract, not just exit status.
 | Unit/product tests | Validation, planning, command arguments, file changes and injected failure/retry behavior |
 | Acceptance-harness tests | Scenario wiring, assertions and failure reporting |
 | Real acceptance runs | Actual Podman/systemd, mounts, init-containers, proxy, OIDC, database and persistence behavior |
+
+Run `python3 -B tests/run.py platform --isolate` for platform coverage without
+application source or shipped component declarations; `demo` covers shipped apps
+and `all` runs both groups. See tests/README.md for offline prerequisites.
 
 Use fresh isolated fixtures, and fresh processes for retry coverage. Add focused
 regressions for fixed defects. Component-model work also requires runnable real

@@ -70,9 +70,9 @@ With all components installed there are 8 pods and 10 app containers. The root
 path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 
 In `bundles.yaml`, platform accepts routes and Identity accepts OIDC clients;
-the apps and help register with them. `VERSION` versions app/help releases;
-`PLATFORM_VERSION` and `IDENTITY_VERSION` independently version the two shared
-components, which use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
+the apps and help register with them. Each component has its own
+`components/<id>/VERSION` containing `major.minor.patch`. Platform and Identity
+use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
 names must start with their component prefix; the renderer rejects other names
 before writes.
 
@@ -948,13 +948,13 @@ retried). `healthy` below additionally checks every installed component, and
 HTTPS/e2e checks the application itself.
 
 For app1/app2, after platform repeat checksum/unpack/trust with `bundle=identity`
-and `IDENTITY_VERSION`; initialize Identity, prepare its credentials and install.
-Then repeat with `bundle=app1` or `bundle=app2` and `VERSION`, in either order;
+and `components/identity/VERSION`; initialize Identity, prepare its credentials and install.
+Then repeat with `bundle=app1` or `bundle=app2` and that component's `components/<id>/VERSION`, in either order;
 initialize that app's config, prepare its credentials, edit its component-specific
 settings and install. Keep existing platform and Identity config.
 
 For help, including a platform/help-only setup, repeat after platform with
-`bundle=help` and `VERSION`; run
+`bundle=help` and `components/help/VERSION`; run
 `as_product bash "$release/deploy" init-config help` and install. Identity
 and the apps can be omitted. Help needs no new credentials. These installs update shared routing/client imports
 and restart their changed owners (platform for routes, Identity for clients),
@@ -1241,3 +1241,15 @@ Password rotation is a separate future task. For each row above it must coordina
 the database user's password, persistent password file and running clients. Session
 keys, demo-user passwords, OIDC keys and certificates have different lifecycles.
 This release implements no rotation command, dual credentials or rollback framework.
+
+### Certificate issuance settings
+
+`dev/generate-certificates.sh` accepts `--ca-subject '/CN=Organisation CA'`,
+`--ca-days 3650` and `--cert-days 365` before its component arguments. All modes
+share CA creation and validate settings before writes. Existing credentials and
+CAs are retained; changed settings apply only to new material. Use a separate
+`--root` per environment and protect/back up `PKI/private/ca.key` (0600).
+See [CA configuration and retention](docs/PFX-CREDENTIALS.md#ca-subject-and-certificate-lifetimes-backlog-45a).
+
+Platform tests without demo source: `python3 -B tests/run.py platform --isolate`.
+Use `demo` or `all` for the other groups; see [offline test instructions](tests/README.md).

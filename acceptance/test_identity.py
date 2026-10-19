@@ -193,14 +193,14 @@ class IdentityEvidenceTests(unittest.TestCase):
             source.mkdir()
             texts = {
                 "VERSION": "0.4.0\n",
-                "PLATFORM_VERSION": "0.4.0\n",
-                "IDENTITY_VERSION": "0.4.0\n",
+                "components/platform/VERSION": "0.4.0\n",
+                "components/identity/VERSION": "0.4.0\n",
                 "deploy": "#!/bin/sh\n",
                 "deployment/__init__.py": "# fixture\n",
                 "deployment/__main__.py": "# fixture\n",
                 "README.md": "fixture\n",
                 "config/common.defaults.yaml": "HTTPS_PORT: 8443\n",
-                "bundles.yaml": "product: myproduct\ncomponents:\n  platform:\n    version_file: PLATFORM_VERSION\n  identity:\n    requires: [platform]\n    version_file: IDENTITY_VERSION\n    upgrade: newer-only\n",
+                "bundles.yaml": "product: myproduct\ncomponents:\n  platform:\n  identity:\n    requires: [platform]\n    upgrade: newer-only\n",
                 "components/platform/manifests/10-proxy.yaml": "kind: Pod\n",
                 "components/identity/config.defaults.yaml": "{}\n",
                 "components/identity/manifests/50-identity.yaml": "kind: Pod\nspec:\n  containers:\n  - name: app\n    image: localhost/demo-identity:0.2.1\n    imagePullPolicy: Never\n",

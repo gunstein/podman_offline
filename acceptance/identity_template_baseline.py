@@ -13,7 +13,7 @@ from pathlib import Path
 BASELINE = "932c7f3a647a84fb5388144bc822f895cc40d959"
 VERSION = "0.4.11"
 FILES = (
-    "IDENTITY_VERSION",
+    "components/identity/VERSION",
     "components/identity/config.defaults.yaml",
     "components/identity/manifests/50-identity.yaml",
     "apps/identity/Program.cs",
@@ -26,8 +26,10 @@ def prepare(source):
     """Read pinned files from local git; no network or dependency on an old tree."""
     contents = {}
     for name in FILES:
+        # The pinned revision predates component-local version files.
+        original = "IDENTITY_VERSION" if name == "components/identity/VERSION" else name
         result = subprocess.run(
-            ["git", "-C", str(source), "show", BASELINE + ":" + name],
+            ["git", "-C", str(source), "show", BASELINE + ":" + original],
             capture_output=True,
             check=False,
         )

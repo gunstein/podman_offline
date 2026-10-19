@@ -1,0 +1,3 @@
+target-version = "py37"
+[lint]
+ignore = ["UP021", "UP022", "SIM117"]

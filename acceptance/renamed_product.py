@@ -192,6 +192,7 @@ def generate(source, target):
         new = rename(old)
         origin, destination = source / "components" / old, target / "components" / new
         (destination / "manifests").mkdir(parents=True)
+        shutil.copy2(str(origin / "VERSION"), str(destination / "VERSION"))
         for manifest in sorted((origin / "manifests").glob("*.yaml")):
             with manifest.open(encoding="utf-8") as stream:
                 documents = [

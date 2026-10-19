@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app1-worker
+spec:
+  containers:
+  - env:
+    - name: APP_ID
+      value: app1
+    - name: BASE_PATH
+      value: /app1
+    image: registry.example.test/worker:1
+    imagePullPolicy: Never
+    name: worker
+    volumeMounts:
+    - mountPath: /certificates
+      name: signing
+      readOnly: true
+  volumes:
+  - name: signing
+    secret:
+      items:
+      - key: session-key
+        path: session-key
+      - key: todo-client.key
+        path: todo-client.key
+      - key: todo-client.crt
+        path: todo-client.crt
+      - key: ca.crt
+        path: ca.crt
+      secretName: app1-signing

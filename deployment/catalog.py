@@ -36,7 +36,6 @@ SETTING = re.compile(r"^[A-Z0-9_]+$")
 UNSHAREABLE = ("PUBLIC_HOSTNAME", "SECRET_FILES", "VOLUME_FILES", "SECRET_TEMPLATES")
 CATALOG_KEYS = (
     "requires",
-    "version_file",
     "upgrade",
     "public_from",
     "shares",
@@ -155,7 +154,6 @@ def load_catalog(root):
             )
         catalog[name] = {
             "requires": entry.get("requires", []),
-            "version_file": entry.get("version_file", "VERSION"),
             "upgrade": entry.get("upgrade", "always"),
             "public_from": entry.get("public_from"),
             "shares": entry.get("shares", []),
@@ -346,18 +344,17 @@ def source_descriptors(root):
     product = catalog_document(root)[1]["product"]
     versions = {}
     for name, entry in catalog.items():
+        directory = component_directory(root, name)
         version_path = confined_file(
-            root, entry["version_file"], f"components.{name}.version_file"
+            root, "components/" + name + "/VERSION", "Component version"
         )
         try:
             versions[name] = version_path.read_text(encoding="utf-8").strip()
             version_number(versions[name])
         except (UnicodeError, common.DeployError):
             raise common.DeployError(
-                f"{version_path} (components.{name}.version_file) must hold "
-                "one major.minor.patch version"
+                f"{version_path} must hold one major.minor.patch version"
             ) from None
-        directory = component_directory(root, name)
         for role, filename in ROLE_FILES.items():
             declared = entry[role] is not None
             present = (directory / filename).is_file()

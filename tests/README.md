@@ -1,3 +1,67 @@
+# Platform and demo test groups (backlog 43)
+
+Use the standard-library unittest runner through these explicit entry points:
+
+```sh
+python3 -B tests/run.py platform
+python3 -B tests/run.py demo
+python3 -B tests/run.py all
+python3 -B tests/run.py platform --isolate
+```
+
+`platform_tests/` exercises deployment, bundles, validation, templates, retry,
+database safety and external images with synthetic declarations in `fixtures/`.
+It does not read `apps/` or the shipped demo component declarations.
+`demo_tests/` contains application-source assertions, shipped manifests, demo
+builds, demo credential recipes and their integration assumptions. Organisations
+using other images run their own integration tests in addition to the platform
+group. `helpers/` contains reusable fixtures without test methods or imports from
+test modules. Historical module names in the coverage notes below refer to files
+now located in one of these groups; mixed modules were split.
+
+The offline runtime prerequisites are Python 3.6+, PyYAML, bash, standard host
+utilities, OpenSSL, gpg/gpgv/gpgconf and a writable temporary directory supporting
+gpg-agent sockets (set a short `TMPDIR` if needed). Missing prerequisites fail
+clearly; tests do not silently disappear or skip because demo files are absent.
+A venv, network, Podman, systemd and root are not required. Ruff, pyright, vermin
+and ShellCheck are contributor checks, not offline runtime prerequisites.
+
+To transfer a self-contained platform suite to an offline organisation:
+
+```sh
+python3 -B tests/run.py platform --export /path/to/new/platform-suite
+# Transfer that whole directory, with executable permissions preserved.
+cd /path/to/new/platform-suite
+python3 -B tests/run.py platform
+```
+
+The export contains the runner, platform tests/helpers/declarative fixtures,
+`deployment/`, bundle/entry-point scripts, Quadlet/examples and the three dev
+helpers tested by the platform group. Its root catalog/components/version files
+come from synthetic fixtures. It contains neither `apps/`, `demo_tests/` nor the
+shipped demo component tree. `--isolate` builds and runs the same copy temporarily;
+`--list` prints exact test IDs for inventory comparison. Export refuses an
+existing destination. The renamed-product generator uses tracked files: stage
+new helpers before running its regression tests. Acceptance's `03-unit` step runs
+`all`; acceptance-harness tests remain a separate command below and do not prove
+real Podman/systemd behaviour. No hosted CI is added.
+
+Discovery previously counted seven imported `RenamedProductTests` methods twice:
+410 executions represented 403 distinct tests. Extracting fixtures removes that
+duplication while retaining every original test method. New suite-layout and
+renamed-inventory regressions protect the separation. Current inventory: 347
+platform tests and 64 demo tests (411 unique tests), plus 196 separate
+acceptance-harness tests. Inventory counts do not imply real runtime verification.
+
+# Configurable CA coverage (backlog 45a)
+
+Real OpenSSL tests check configured CA subject/lifetime and leaf lifetime in
+explicit signing, full-demo and component-demo modes, stdin execution, unchanged
+existing CA/credentials when settings change, issuance for a new component from
+the retained CA, and invalid settings rejected without writes. CA renewal,
+production tool delivery and actual application/runtime verification remain
+separate work.
+
 # PFX provisioning coverage (backlog 44)
 
 `test_certificates.py` requires OpenSSL (absence fails clearly, not a skip).
@@ -154,7 +218,7 @@ historical evidence, not verification of this change.
 Current local check entry points:
 
 ```sh
-python3 -B -m unittest discover -s tests
+python3 -B tests/run.py all
 python3 -B -m unittest discover -s acceptance -p 'test_*.py'
 ruff check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
 ruff format --check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
@@ -221,14 +285,14 @@ checks and lab commands. Host code and product tests retain Python 3.6 syntax/AP
 
 The coverage notes and runtime evidence below are retained from the earlier core
 layout. Their historical counts/results do not assert platform lab verification.
-The commands remain the current local test entry points.
+Use the current commands above; the commands below are historical.
 
 ---
 
 # Unit tests
 
 `test_deploy.py` and `test_bundle.py` use only the standard library
-and PyYAML. `test_certificates.py` also uses bash and OpenSSL when they exist,
+and PyYAML. `test_certificates.py` requires bash and OpenSSL,
 with all key material in a temporary directory. All paths point into `TemporaryDirectory`; Podman/systemd calls and the user check
 are stubbed. No network, Podman, systemd or root is required. The bundle tests write
 and read real tar archives and verify every SHA-256 line, but stub the image save.
