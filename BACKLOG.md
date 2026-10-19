@@ -55,7 +55,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 41 (top priority), 38 (lab run pending), 39, 40, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
+Open: 41 (top priority), 38 (lab run pending), 39, 40, 42, 43, 3, 2, 37, 35, 36, 22, 24, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -3923,3 +3923,100 @@ which is how the organisation's own apps work:
 `ruff`, `pyright` and the unit tests are clean; the Podman probe results are in
 this item; the six-scenario lab matrix is CLEAN PASS and recorded here. Work on
 `main`, as agreed for this repository.
+
+## 42. Explain client registration and import volumes in the architecture diagrams
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; requested by the operator on 2026-10-19. Documentation only.
+
+### Problem
+
+The install sequence diagram in ARCHITECTURE.md shows registration staging,
+materialization, import archives and owner restarts, but does not explain how
+an application's client.yaml becomes files in Identity's /clients mount. It is
+also unclear why identity-clients needs no VOLUME_FILES entry in config.defaults.yaml.
+
+### Task
+
+1. Add a focused sequence diagram and supporting text in ARCHITECTURE.md for
+   public client registration delivery. Keep the main install diagram readable;
+   link it to this detail rather than expanding every internal call there.
+2. Trace client.yaml and the public certificate through client_registration(),
+   registration_stage() (client.json, client.crt and installed.json),
+   component_imports(), materialize()/volume_claims() and write_file_archives().
+   Explain the PVC import annotation and Podman's import of the archive when
+   Quadlet starts the service, ending with Identity reading /clients at startup.
+3. Show that bundles.yaml accepts.clients selects the volume name, using
+   identity-clients as an example, not a hardcoded platform requirement. Explain
+   how this differs from an ordinary data PVC and operator-declared VOLUME_FILES.
+4. Cover an app install/update while Identity is already installed:
+   write_changed_owner_imports() rebuilds the owner's archive and
+   restart_component_services() restarts the affected owner when registration
+   data changes. Distinguish durable host registrations from temporary staging,
+   import archives and the container mount; private client keys stay with apps.
+5. Check every arrow against current code, validate Mermaid syntax and any
+   rendered diagram artifacts using the existing documentation workflow, and
+   run git diff --check. Do not change runtime code or configuration contracts.
+
+Done when a reader can follow the source declarations to the running Identity
+container and explain who builds the files, who imports the volume and why no
+config.defaults.yaml entry is needed. This task does not establish new runtime
+verification evidence or close the outstanding lab work in other items.
+
+## 43. Separate reusable platform tests from demo application tests
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
+contracts and mandatory understandability review alongside this task message.
+
+Status: planned; requested by the operator on 2026-10-19. Organisations using
+external images must be able to run platform tests without the demo apps/ tree.
+
+### Problem
+
+tests/ mixes generic deployment tests with tests reading demo application source
+and shipped component declarations. For example, test_credential_delivery.py,
+test_health.py, test_database.py and test_init_database.py read files under apps/.
+The acceptance harness also tests the demo's builds and scenarios. The minimal
+worker fixture demonstrates a deployment without apps/, but does not establish
+that the platform test suite can run without the demo files.
+
+### Task
+
+1. Inventory test dependencies, including module imports, inherited fixtures,
+   shared helpers and source-file reads. Split mixed modules where necessary;
+   do not classify a whole module solely from its filename or Secret names.
+2. Establish explicit platform and demo test groups using the existing unittest
+   conventions, with a documented command for each and one command for all tests.
+   Keep reusable fixture helpers independent of demo test modules and files.
+   Choose the smallest practical directory/module change; no new test framework.
+3. Platform tests must run from a self-contained copy with no apps/ and with the
+   shipped demo component tree replaced by declarative test fixtures. Exercise
+   the real platform code with external image references and mocked host actions;
+   do not silently skip tests when demo files are absent. Retain generic database,
+   Secret/template, validation, lifecycle, retry and isolation coverage.
+4. Keep application-source assertions, demo build tests and demo integration
+   scenarios in the demo group. Retain their coverage in the full repository
+   suite. Separate acceptance-harness tests from real Podman/systemd runs in
+   commands and reporting; classify harness tests by actual dependencies.
+5. Update CI and acceptance test-baseline commands, tests/README.md and relevant
+   contributor instructions for the chosen layout. Audit imports and subprocess
+   invocations so discovery runs every intended test exactly once and existing
+   renamed-product generation still includes all tracked helpers.
+6. Document the minimal files and dependencies an organisation should transfer
+   to run platform tests offline, without venv being required. Distinguish these
+   tests from organisation-specific integration tests of its own images/manifests.
+
+### Verification and boundaries
+
+Run the platform suite in isolation without demo files, the demo group in the
+complete checkout, and the combined suite; account for test counts so moving
+tests cannot hide lost coverage. Run the existing lint/type checks and preserve
+host Python 3.6 compatibility. This is test organisation work, not a deploy
+runtime refactor or a redesign of the acceptance lab. Report unit/product,
+acceptance-harness and actual runtime evidence separately.
+
+Done when an organisation using only external images can run a meaningful,
+documented platform suite without apps/ or demo component files, while the full
+repository still verifies all demo-specific behaviour.
