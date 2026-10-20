@@ -86,7 +86,10 @@ The order for an offline production deployment of an organisation's own apps:
 24. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-25. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+25. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+   `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
+   usability improvement, not automatic database recovery or a production blocker.
+26. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -104,7 +107,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 5, 7, 6, and
+Open: 46 (top priority), 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5146,3 +5149,71 @@ No root verification, trust or edit step operates on a path the service user can
 replace; the recipe, acceptance helper and README agree; regressions and the
 malicious lab step pass on real hosts with SELinux Enforcing and fapolicyd, and a
 normal install and upgrade remain green in the six-scenario matrix.
+
+
+## 55. Add an explicit component-scoped dev reset
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve database
+safety, declarative component names, scoped lifecycle, credential retention and
+offline/rootless operation. Coordinate recovery documentation with item 3.
+
+Status: planned; requested on 2026-10-20 after a real dev startup was refused
+because `sts-db-data` existed while its database password file was missing.
+Manual removal of that disposable volume allowed startup. The reset command
+below is proposed functionality, not implemented behavior.
+
+### Why
+
+An existing database volume may contain valuable data. Generating a replacement
+password file does not change the database's initialized password. Consequently,
+ordinary `dev/dev.sh up` must continue to refuse a missing-password/existing-volume
+combination, with recovery guidance; it must never silently delete or reinitialize
+the database. For disposable dev installations, provide an explicit alternative
+to manually discovering containers, volumes and retained credential copies.
+
+### Proposed command and task
+
+```sh
+./dev/dev.sh reset sts --delete-data
+```
+
+1. Require a catalog component ID and `--delete-data`; `sts` is an example, not
+   a special case. Limit the command to a source checkout's dev installation and
+   current rootless user. Do not operate on production state or require `apps/`,
+   network access, sudo or new host Python dependencies.
+2. Resolve the selected component's actual resources from effective declarations
+   and the last rendered dev state. Show what will be stopped/deleted, explicitly
+   warn that database data is lost and require confirmation before destruction.
+   Refuse unknown components, ambiguous ownership, shared/external volumes and
+   unsafe paths before destructive actions. Do not infer ownership solely from
+   a component-name prefix or accept arbitrary volume/path deletion arguments.
+3. Stop/remove only the selected component's containers/pods, then remove its
+   exclusively owned dev data volumes, including the database and relevant
+   retained Secret/import copies. Define the cleanup set explicitly so a later
+   prepare cannot reuse stale rendered credentials accidentally. Preserve
+   operator config, source manifests, external credential files, TLS/signing
+   certificates and CA material. Retain valid generated source passwords by
+   default; allow the normal generation path when a password is absent and its
+   database volume has actually been removed. Never print secret contents.
+4. Keep siblings, their data/credentials, shared network and shared owners intact.
+   Do not run aggregate `kube down` on `build/install.yaml` as a component reset.
+   Report resources still in use or other inspection/deletion failures without
+   forced removal of unrelated containers. Make partial cleanup safely repeatable;
+   inspection failure is not evidence that a resource is absent.
+5. Reset performs cleanup only and explains how to start again with the existing
+   `./dev/dev.sh up`. Document that this existing startup command applies the
+   whole dev catalog; reset itself must not restart siblings. Keep normal `up`
+   and `down` data-retention behavior unchanged.
+
+### Verification and delivery
+
+Add focused platform tests with arbitrary component IDs and no `apps/`: explicit
+flag/confirmation requirements, invalid/shared resource refusal before deletion,
+correct scoped commands, valid retained password preservation, missing-password
+recovery, partial-failure retry and unchanged siblings/certificates/config. Add a
+runnable real Podman check that reproduces the missing-password guard, resets a
+disposable component, starts again and verifies database initialization and
+sibling data/process retention across reset. Keep unit/harness and actual runtime
+evidence separate. Document the command, irreversible data loss and the backup
+recovery alternative; complete the understandability review of resource ownership
+and deletion order. No new general recovery framework is required.
