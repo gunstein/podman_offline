@@ -4387,6 +4387,30 @@ These decisions replace the dev-only scope and the open password question above.
   there and that host `mounts.conf` entries do not conflict.
 - Document that the hardcoded password gives no real protection (item 37).
 
+### Operator findings (2026-10-20)
+
+From the organisation's old docker-compose test file for `identity-server`:
+
+- The only secret is `signing-cert` (host file `./cert/signing-cert-for-test-pfx`)
+  with `target: signing-cert.pfx`, so the application reads
+  `/run/secrets/signing-cert.pfx`. No other secret has to share `/run/secrets`.
+  Whether the path is hardcoded or only a default is still unknown; the compose
+  file sets no path in `environment`.
+- The secret has `uid: '999'`, `gid: '999'`, `mode: 0400` and the service has no
+  `user:`, so the image runs as a non-root container user (expected 999).
+- Decision: the requirement is that it works and is secure enough, not a copy
+  of compose. Keep the application's non-root user and mount the PFX-only Secret
+  at `/run/secrets` with `defaultMode: 0444`. `kube play` has no per-file owner
+  or `fsGroup` for Secret volumes, so the earlier `0400` (container root) example
+  would be unreadable for UID 999. `0444` is readable only inside this single-app
+  container; host protection (service user's private storage) is unchanged, and
+  the hardcoded password already makes host file access the real boundary. Do not
+  use `runAsUser: 0`. [docs/PFX-CREDENTIALS.md](docs/PFX-CREDENTIALS.md) is updated.
+- Lab evidence still required: `id` in the container shows the non-root user,
+  `stat` of the mounted file shows its owner/mode, the host `mounts.conf` does not
+  conflict, and the application starts, loads the key and issues a real token.
+  Readability alone is not proof. Until then the mode choice is unverified.
+
 ### Review additions (2026-10-19)
 
 Decisions and facts from the review of this item; they refine the task above.

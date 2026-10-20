@@ -113,7 +113,7 @@ volumes:
   - name: signing
     secret:
       secretName: my-identity-signing
-      defaultMode: 0400
+      defaultMode: 0444
       items:
         - key: signing-cert.pfx
           path: signing-cert.pfx
@@ -126,13 +126,23 @@ volumeMounts:
     readOnly: true
 ```
 
-This exposes `/run/secrets/signing-cert.pfx`, matching the reported application
-path. Check all other mounts and the host's `mounts.conf` before mounting over
-`/run/secrets`; it must not hide required credentials. If the app supports a path
-under `/run/secrets/signing/`, prefer mounting there and configure that path in
-the app. Choose file ownership/mode for the actual application UID: mode 0400
-above assumes the container-root consumer used by the current demo. Do not
-change the image/user solely to make an unreadable mount appear to work.
+This exposes `/run/secrets/signing-cert.pfx`, the path the organisation's old
+docker-compose test setup used (`target: signing-cert.pfx`, its only secret for
+`identity-server`). Check all other mounts and the host's `mounts.conf` before
+mounting over `/run/secrets`; it must not hide required credentials. If the app
+supports a path under `/run/secrets/signing/`, prefer mounting there and
+configure that path in the app.
+
+Mode `0444` is deliberate. The organisation's image runs as a non-root container
+user (the compose file gave the secret `uid: '999'`, `gid: '999'`, `mode: 0400`),
+and `kube play` offers no per-file owner or `fsGroup` for a Secret volume, so a
+`0400` file owned by container root would be unreadable and the app would fail to
+load its key. `0444` makes the file readable only inside this one container,
+where the application is the only process; on the host the Secret data stays in
+the service user's private storage, and the hardcoded PFX password means host
+file access is the real protection anyway. Keep the application's own non-root
+user; do not set `runAsUser: 0` to make a mount readable. The demo's `0400` for a
+container-root consumer remains valid for that demo only.
 
 The CA key, PEM key and password file are not declared or delivered. PFX remains
 private key material even when password-protected. A known/hardcoded password
@@ -170,6 +180,8 @@ For the organisation's external Identity image, record a new real verification:
    `podman ps --all --pod` to identify the actual application container. Check
    `podman exec <container> id`, and, if its image has a shell,
    `podman exec <container> sh -c 'test -r /run/secrets/signing-cert.pfx'`.
+   Record `podman exec <container> stat -c '%u:%g %a' /run/secrets/signing-cert.pfx`
+   and confirm `id` shows the image's non-root user (expected 999), not 0.
    Do not print certificate/password contents or the full environment.
 3. Verify application startup, signing-key loading and a real token issuance;
    file readability alone does not prove that .NET loaded a private key. Use the
