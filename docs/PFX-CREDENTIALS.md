@@ -26,16 +26,12 @@ Dev, from the source root (`--root build/dev`):
 ```bash
 id=my-identity
 root=build/dev
-# 1. Password file, once: the password the application expects (see below).
-mkdir -p "$root/$id/credentials/signing"
-chmod 700 "$root/$id" "$root/$id/credentials" "$root/$id/credentials/signing"
-(
-  umask 077
-  set -o noclobber
-  IFS= read -r -s -p 'PFX password expected by the application: ' pfx_password || exit 1
-  printf '\n'
-  printf '%s\n' "$pfx_password" > "$root/$id/credentials/signing/pfx-password"
-)
+# 1. Password file, once: an empty private file you then edit by hand.
+d="$root/$id/credentials/signing"
+mkdir -p "$d"
+chmod 700 "$root/$id" "$root/$id/credentials" "$d"
+test -e "$d/pfx-password" || install -m 0600 /dev/null "$d/pfx-password"
+vi "$d/pfx-password"   # the password the application expects, on one line
 # 2. Proxy TLS pair; this first command creates the CA.
 bash dev/generate-certificates.sh --root "$root" \
   --ca-subject '/C=NO/O=Example Organisation/CN=Dev CA' --ca-days 3650 --cert-days 365 \
@@ -54,17 +50,13 @@ product=myproduct
 id=my-identity
 root=/var/lib/$product
 as_product() { sudo -n -H -u "$product" "$@"; }
-# 1. Password file, entered interactively as the service user.
-as_product bash -c '
-  set -e
-  d="$1/$2/credentials/signing"
-  mkdir -p "$d"
-  chmod 700 "$1/$2" "$1/$2/credentials" "$d"
-  umask 077
-  set -o noclobber
-  IFS= read -r -s -p "PFX password expected by the application: " pfx_password
-  printf "\n"
-  printf "%s\n" "$pfx_password" > "$d/pfx-password"' bash "$root" "$id"
+# 1. Password file, once: an empty private file owned by the service user,
+#    then edited by hand with sudoedit.
+d="$root/$id/credentials/signing"
+as_product mkdir -p "$d"
+as_product chmod 700 "$root/$id" "$root/$id/credentials" "$d"
+as_product test -e "$d/pfx-password" || as_product install -m 0600 /dev/null "$d/pfx-password"
+sudoedit -u "$product" "$d/pfx-password"   # the expected password, on one line
 # 2. Proxy TLS pair; this first command creates the production CA.
 as_product bash -s -- --root "$root" \
   --ca-subject '/C=NO/O=Example Organisation/CN=Production CA' --ca-days 3650 --cert-days 365 \
@@ -92,8 +84,10 @@ as_product bash -s -- --root "$root" --cert-days 365 \
 Checked locally (2026-10-20, OpenSSL 3, one disposable root): the dev sequence
 with a scripted password created one CA with the requested subject, the web pair
 and a PFX whose certificate that CA issued, all files mode 0600; repeating steps
-2 and 3 kept every file. The production commands (sudo, service user, stdin
-from a target copy) have not been run; record them with the item 44 lab check.
+2 and 3 kept every file. The hand-edited password file (empty 0600 file, then
+one line written) was checked the same way, including refusal of an empty file.
+The production commands (sudo, `sudoedit -u`, service user, stdin from a target
+copy) have not been run; record them with the item 44 lab check.
 
 ## Prepare the password once
 
@@ -108,22 +102,17 @@ nonempty line (optional final LF, no CR/NUL, at most 1023 password bytes). The
 component, credentials and signing directories must be mode 0700. No default
 password is built into the helper. A missing/invalid file fails before writes.
 
-For example, run this interactively from the source root to enter the password
-expected by the unchanged application. The exclusive redirect refuses an existing
-password file; do not delete that file to make the command work again.
-
-```bash
-mkdir -p build/dev/my-identity/credentials/signing
-chmod 700 build/dev/my-identity build/dev/my-identity/credentials \
-  build/dev/my-identity/credentials/signing
-(
-  umask 077
-  set -o noclobber
-  IFS= read -r -s -p 'PFX password expected by the application: ' pfx_password || exit 1
-  printf '\n'
-  printf '%s\n' "$pfx_password" > build/dev/my-identity/credentials/signing/pfx-password
-)
-```
+The file is an ordinary private text file that you create once and fill in by
+hand; the helper never prompts for the password, and later runs only read it.
+Create it empty with mode 0600 and edit it, as in step 1 of
+[Complete provisioning](#complete-provisioning-for-a-product-with-its-own-identity-image).
+The `test -e` guard keeps an existing file: `install` would otherwise replace it
+with an empty one. Write the password on a single line and save. Do not create
+the file with a Windows editor (CR line endings are refused). Copying it from a
+secure source with `install -m 0600 <source> <path>` is equivalent. An empty or
+otherwise invalid file fails clearly before any write, so a forgotten edit is
+reported, not silently accepted. Keep the file in backups with the other
+credentials.
 
 Use the application's existing password. One organisation's image hardcodes its
 password; the tool neither assumes nor configures that value. In that case no
