@@ -12,6 +12,89 @@ This mode requires Python 3.6+ and OpenSSL. It does not create demo users, chang
 an application, run Podman, or run automatically from deploy. Existing demo
 commands are unchanged; the shipped Identity continues to consume PEM.
 
+## Complete provisioning for a product with its own Identity image
+
+One environment needs the proxy TLS pair and the Identity signing PFX, both
+issued from the same CA under `<root>/PKI/private/`. The first issuing command
+creates that CA, so it carries the CA settings; later commands reuse it. Use a
+separate root, and therefore a separate CA, per environment. Replace
+`my-identity` with the Identity component ID from `bundles.yaml` and the host
+names with real ones. The details of each step are in the sections below.
+
+Dev, from the source root (`--root build/dev`):
+
+```bash
+id=my-identity
+root=build/dev
+# 1. Password file, once: the password the application expects (see below).
+mkdir -p "$root/$id/credentials/signing"
+chmod 700 "$root/$id" "$root/$id/credentials" "$root/$id/credentials/signing"
+(
+  umask 077
+  set -o noclobber
+  IFS= read -r -s -p 'PFX password expected by the application: ' pfx_password || exit 1
+  printf '\n'
+  printf '%s\n' "$pfx_password" > "$root/$id/credentials/signing/pfx-password"
+)
+# 2. Proxy TLS pair; this first command creates the CA.
+bash dev/generate-certificates.sh --root "$root" \
+  --ca-subject '/C=NO/O=Example Organisation/CN=Dev CA' --ca-days 3650 --cert-days 365 \
+  platform dev-host.example.test
+# 3. Identity signing PFX from the same CA.
+bash dev/generate-certificates.sh --root "$root" --cert-days 365 \
+  --component "$id" --purpose signing --pfx
+```
+
+Production, on the target after `init-config` for each component, as the service
+user with the helper copied from the source checkout and supplied on stdin
+(the bundles do not contain it):
+
+```bash
+product=myproduct
+id=my-identity
+root=/var/lib/$product
+as_product() { sudo -n -H -u "$product" "$@"; }
+# 1. Password file, entered interactively as the service user.
+as_product bash -c '
+  set -e
+  d="$1/$2/credentials/signing"
+  mkdir -p "$d"
+  chmod 700 "$1/$2" "$1/$2/credentials" "$d"
+  umask 077
+  set -o noclobber
+  IFS= read -r -s -p "PFX password expected by the application: " pfx_password
+  printf "\n"
+  printf "%s\n" "$pfx_password" > "$d/pfx-password"' bash "$root" "$id"
+# 2. Proxy TLS pair; this first command creates the production CA.
+as_product bash -s -- --root "$root" \
+  --ca-subject '/C=NO/O=Example Organisation/CN=Production CA' --ca-days 3650 --cert-days 365 \
+  platform public-host.example.test < generate-certificates.sh
+# 3. Identity signing PFX from the same CA.
+as_product bash -s -- --root "$root" --cert-days 365 \
+  --component "$id" --purpose signing --pfx < generate-certificates.sh
+```
+
+- External files win: place `signing-cert.pfx` (or the `.crt`/`.key` pair) in
+  `credentials/signing/` before step 3, or `web.crt`/`web.key` in
+  `platform/credentials/web/` before step 2, and they are retained or exported
+  instead of issued. Step 1 is still required for a supplied PFX.
+- Commands can be repeated; existing files are retained and nothing is renewed
+  (item 45c). `--ca-subject` applies when the CA is created; afterwards it must
+  match the retained CA or be omitted.
+- `platform <host>` is the retained demo TLS recipe. It writes
+  `platform/credentials/web/` with the host, `localhost` and `127.0.0.1` as
+  names, so it fits a platform component with the ID `platform`. The signing
+  mode accepts any component ID.
+- Back up `PKI/private/`, the password file and the component credentials.
+- Then run `./deploy validate` and install as usual. Delivery of the PFX is
+  described in [Deliver only the PFX](#deliver-only-the-pfx).
+
+Checked locally (2026-10-20, OpenSSL 3, one disposable root): the dev sequence
+with a scripted password created one CA with the requested subject, the web pair
+and a PFX whose certificate that CA issued, all files mode 0600; repeating steps
+2 and 3 kept every file. The production commands (sudo, service user, stdin
+from a target copy) have not been run; record them with the item 44 lab check.
+
 ## Prepare the password once
 
 The password file must exist before provisioning:
@@ -157,8 +240,9 @@ images and all other credentials are present.
 
 Production uses the same relative layout under `/var/lib/<product>/<component>/`.
 Replace `myproduct` below with the product name. After `init-config`, prepare
-the password/external material there as the service
-user, then the current explicit stdin delivery works without a checkout:
+the password/external material there as the service user (commands in
+[Complete provisioning](#complete-provisioning-for-a-product-with-its-own-identity-image)),
+then the current explicit stdin delivery works without a checkout:
 
 ```bash
 # Run as the product service user, with the script supplied on stdin:

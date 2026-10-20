@@ -700,7 +700,10 @@ loads the prepared files; it does not issue certificates.
 The demo recipes write separate PEM files: `.crt` contains the public certificate
 and `.key` contains the private key. Optional named-component PFX export, password
 provisioning and external-file precedence are documented in
-[PFX credentials](docs/PFX-CREDENTIALS.md). Existing nonempty pairs are retained,
+[PFX credentials](docs/PFX-CREDENTIALS.md); its
+[complete provisioning](docs/PFX-CREDENTIALS.md#complete-provisioning-for-a-product-with-its-own-identity-image)
+section gives the full order (password file, proxy TLS with CA settings, signing
+PFX) for dev and production. Existing nonempty pairs are retained,
 incomplete pairs cause an error, and rerunning does not automatically renew
 certificates. The following diagram shows the demo PEM flow.
 
