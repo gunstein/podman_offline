@@ -26,6 +26,19 @@ The offline runtime prerequisites are Python 3.6+, PyYAML, bash, standard host
 utilities, OpenSSL, gpg/gpgv/gpgconf and a writable temporary directory supporting
 gpg-agent sockets (set a short `TMPDIR` if needed). Missing prerequisites fail
 clearly; tests do not silently disappear or skip because demo files are absent.
+The temporary directory must also allow execution: tests run wrappers, Podman/
+OpenSSL stubs and copied `deploy` scripts from it. On hosts where `/tmp` is
+mounted `noexec`, this shows up as `PermissionError`, a failing OpenSSL wrapper
+test or a wrong-error failure in the failures example, not as a prerequisite
+message. Use an executable directory instead:
+
+```sh
+mkdir -p ~/t && TMPDIR=~/t python3 -B tests/run.py platform
+```
+
+Run the suite from one consistent copy of a single commit. A copy that mixes
+older `examples/` or `deployment/` files with newer tests can fail the example
+checks (for example `partial-placeholder unexpectedly succeeded`).
 A venv, network, Podman, systemd and root are not required. Ruff, pyright, vermin
 and ShellCheck are contributor checks, not offline runtime prerequisites.
 
