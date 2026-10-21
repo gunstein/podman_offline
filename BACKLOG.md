@@ -9,10 +9,13 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (agreed 2026-10-19)
+## Current priority (updated 2026-10-21)
 
-Item 46 from the 2026-10-19 security scan is first: prevent root host
-preparation from following service-user-controlled symlinks. Items 33 and 34
+Items 56 and 57 are first, explicitly prioritized by the operator on 2026-10-21:
+component-specific dev overrides, then portable references to bundled component
+files. They unblock the organisation's migration/seed setup without leaking
+component-specific declarations into global dev config. Item 46 follows: prevent
+root host preparation from following service-user-controlled symlinks. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
 Item 54 follows item 46 for release trust; items 48/49 then cover proxy ingress trust and logging; item 50 is
@@ -20,76 +23,81 @@ lower-priority production hardening. Item 42 remains before item 3; implementati
 verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
-1. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
+1. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
+   isolate each component's dev settings in its own optional `config.dev.yaml`.
+2. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
+   use one explicit file reference in source/dev and an isolated offline release,
+   without hand-editing release paths. Separate from the override-layer change.
+3. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
    protect the root/service-user boundary on repeated host preparation; high
    priority, conditional on an attacker controlling the service account.
-2. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
+4. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-3. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+5. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-4. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+6. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-5. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+7. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-6. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+8. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-7. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+9. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-8. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+10. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-9. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+11. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-10. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+12. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-11. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+13. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-12. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+14. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-13. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+15. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-14. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-15. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+16. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+17. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-16. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+18. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-17. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+19. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-18. [Item 36](#36-harden-the-demo-application-containers): container hardening
+20. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-19. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+21. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-20. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+22. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-21. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+23. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-22. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+24. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-23. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+25. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-24. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+26. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-25. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+27. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
    usability improvement, not automatic database recovery or a production blocker.
-26. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+28. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -107,7 +115,7 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 46 (top priority), 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 56 and 57 (top priority), 46, 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5217,3 +5225,132 @@ sibling data/process retention across reset. Keep unit/harness and actual runtim
 evidence separate. Document the command, irreversible data loss and the backup
 recovery alternative; complete the understandability review of resource ownership
 and deletion order. No new general recovery framework is required.
+
+
+## 56. Add component-specific dev configuration overrides
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve declarative
+components, authoritative production config, shared settings, credential retention,
+side-effect-free validation and host Python 3.6 compatibility. Coordinate with
+item 57, but keep the two changes independently reviewable.
+
+Status: planned; high priority, first in the implementation queue by explicit
+operator request on 2026-10-21. No component-local dev override file is read today.
+
+### Problem and intended behavior
+
+`config/dev.yaml` applies to every component. Placing Identity-specific
+`VOLUME_FILES`, `SECRET_FILES` or `SECRET_TEMPLATES` there contaminates other
+components' effective settings and can violate component resource-name rules.
+Whole-map replacement also discards declarations inherited from defaults. The
+organisation needs local SQL paths and dev-only seeding choices for its Identity
+migration init-container, independently of unrelated components and production.
+
+### Task
+
+1. Read optional `components/<id>/config.dev.yaml` only in source dev mode, with
+   precedence from lowest to highest: `config/common.defaults.yaml`, component
+   `config.defaults.yaml`, global `config/dev.yaml`, component `config.dev.yaml`.
+   Retain the existing authoritative inheritance/checks for `public_from` and
+   shared settings; a local override must not silently bypass those contracts.
+2. Use the existing top-level merge and validation rules. Do not introduce deep
+   merge: maps/lists, including complete file/Secret mappings, replace the earlier
+   value. Document this with an example that retains all required declarations.
+   Missing optional files keep current behavior; invalid YAML/duplicate keys fail
+   through the same readable, value-safe diagnostics as existing config layers.
+3. Apply the same effective dev config in validate, prepare/dev startup and
+   relevant source tooling that already reads dev settings (for example file
+   guards/build helpers). Trace those consumers explicitly; avoid a second merge
+   implementation with different precedence. Preserve generated credentials and
+   database-volume guards when overrides change.
+4. Never read this layer during production init-config, validate or install, and
+   never package it or its local content in release bundles. Keep generated
+   `build/dev/<id>/config.yaml` an output, not an additional input layer.
+5. Document the file, precedence, whole-map replacement and a renamed component
+   example. Relative file sources still resolve against `build/dev/<id>/` under
+   today's rules, not against the new override file. Clearly distinguish this
+   task from item 57; adding a layer alone does not make paths portable.
+
+### Verification and delivery
+
+Add focused platform tests for all precedence levels, absent/invalid files,
+unchanged authoritative shared settings, two arbitrary component IDs with
+independent file mappings, no `apps/`, validate/prepare agreement and preservation
+of production config. Check real bundle contents exclude the dev override file.
+Update offline export/fixtures and test instructions as necessary; run relevant
+platform/isolation/static checks. Complete the understandability review of config
+ownership and precedence; report any real-runtime verification separately.
+
+
+## 57. Add portable references to bundled component files
+
+Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Preserve isolated
+offline bundles, authoritative production config, scoped file access, credential
+retention, read-only validation and Python 3.6 compatibility. High-priority
+follow-up to item 56; a separate feature, not an implicit part of its merge rules.
+
+Status: planned; high priority, second in the implementation queue by explicit
+operator request on 2026-10-21. Component `files/` is already packaged, but there
+is no explicit portable component-file source reference today.
+
+### Problem and intended behavior
+
+An SQL source under `components/<id>/files/` currently needs a dev path such as
+`../../../components/<id>/files/permissions/9000_CreateUsers.sql`, resolved from
+`build/dev/<id>/`. Production resolves ordinary relative paths from the persistent
+component config directory instead; the file lives under an unpacked release.
+Operators must hand-edit production release paths, which can become stale after
+an upgrade or relocation. The same logical declaration should select the current
+component's shipped file in both source dev and an unpacked offline bundle.
+
+### Task
+
+1. Define and document a small explicit source syntax for referencing a path
+   under the selected component's `files/`. Choose the exact syntax during
+   implementation; examples in the task are conceptual, not supported settings.
+   Support non-generated sources in `VOLUME_FILES` and `SECRET_FILES` using a
+   shared resolver, with their existing type/size rules. Do not introduce general
+   shell/environment expansion, templating of arbitrary paths or app-specific SQL
+   logic. Never execute referenced files as part of resolving them.
+2. Resolve the reference against `components/<id>/files/` in the active source
+   checkout or selected unpacked bundle. Carry that explicit context through
+   config, validation and materialization; do not infer it from the caller's cwd,
+   require `apps/`, use sibling release directories or depend on original build
+   paths. Preserve ordinary relative, absolute and tilde path semantics.
+3. Keep logical references in initialized persistent config instead of converting
+   them to a versioned release's absolute paths. Later installs with that retained
+   config must read files from the selected new bundle, including changed SQL,
+   without rewriting operator config. Missing files must fail clearly; never
+   fall back silently to an old release or source checkout. A newly published
+   default still must not overwrite an existing authoritative config.
+4. Reject absolute/traversing component-file references and symlink escapes,
+   cross-component access and unsupported file types. Component-file sources are
+   immutable inputs, never generation targets: refuse `generate` for this source
+   kind before writes. Avoid exposing secret values in errors. Real secret inputs
+   should remain external/generated credentials; do not commit or bundle passwords
+   just because the file-reference mechanism can deliver a Secret.
+5. Keep file delivery through the existing Secret/import-archive/PVC mechanisms,
+   including init-container consumers and existing retention/uninstall behavior.
+   Do not bind-mount build-machine paths into production containers. Confirm that
+   current-release content actually reaches imported volumes after upgrade rather
+   than merely asserting archive paths. Document existing stale/unlisted-file
+   behavior and dev-seed inclusion explicitly; no automatic prod seeding toggle
+   or new SQL runner is part of this task.
+6. Document source/default config examples and relocated offline install/upgrade
+   commands, including how it combines with item 56. Update relevant contracts,
+   diagram text and tests only where affected; no general file-routing framework.
+
+### Verification and delivery
+
+Use renamed/minimal components without `apps/` to test identical declarations in
+source dev and an unpacked relocated bundle with the original checkout removed.
+Exercise config initialization, read-only validation, materialization and a new
+bundle version with changed file bytes while persistent config is unchanged.
+Cover missing sources, path/symlink escapes, generation refusal, ordinary paths,
+Secret redaction and preservation of credentials, config and sibling state.
+Add runnable real Podman acceptance coverage that reads an imported SQL/marker
+file in an init-container before and after the selected-component upgrade. No
+actual organisation SQL, passwords or Duende image is needed for the generic
+fixture. Run relevant platform/isolation, harness and static checks; distinguish
+these from real lab results. Complete the understandability review of reference
+resolution, config persistence and release selection.
