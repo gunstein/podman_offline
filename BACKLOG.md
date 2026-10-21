@@ -5457,6 +5457,16 @@ Code facts and decisions from the review; they refine the task above.
   delivery or execution. Document and test that distinction; only harmless demo
   content belongs there. Excluding `config.dev.yaml` does not exclude files it
   references under `files/`, and these items add no selective packaging mechanism.
+- **Sensitive dev-only seed data stays outside `files/`.** Because every file under
+  `files/` ships, dev seed content that must not reach production (test users,
+  test passwords, personal or customer-like data) belongs outside the component's
+  `files/`, referenced with an ordinary `path` from `config.dev.yaml` (relative
+  to `build/dev/<id>/` as today, or a local credential path). For the
+  organisation's `sts` migration init container, the shipped migrations use
+  `component_file` while such dev seeds use `path`. Document this rule with that
+  example in README/docs/COMPONENTS.md, and add a test showing that a dev-only
+  `path` source is neither packaged nor needed by production validate/install.
+  Secret test passwords still belong in `credentials/`, never in tracked files.
 - **Stale files.** Because Podman keeps unlisted files in an imported volume, a file
   removed from a later release still exists there. The demo makes every SQL file
   idempotent; document the limitation for the organisation's own migrations. No
