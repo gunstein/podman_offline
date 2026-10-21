@@ -151,6 +151,17 @@ class GeneratorTests(unittest.TestCase):
             (self.target / "components/orders/config.dev.yaml").read_text()
         )
         self.assertEqual(dev["DEMO_CONFIG_LAYER"], "component-dev")
+        self.assertEqual(
+            defaults["VOLUME_FILES"]["orders-seed"],
+            [{"component_file": "sql/010-reference.sql"}],
+        )
+        self.assertEqual(len(dev["VOLUME_FILES"]["orders-seed"]), 2)
+        self.assertEqual(
+            (
+                self.target / "components/orders/files/sql/010-reference.sql"
+            ).read_bytes(),
+            (ROOT / "components/app1/files/sql/010-reference.sql").read_bytes(),
+        )
         self.assertFalse(
             (self.target / "components/inventory/config.dev.yaml").exists()
         )

@@ -65,8 +65,8 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory: 354
-platform tests and 64 demo tests (418 unique tests), plus 200 separate
+renamed-inventory regressions protect the separation. Current inventory: 363
+platform tests and 65 demo tests (428 unique tests), plus 206 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
 
 # Component dev configuration (backlog 56)
@@ -83,6 +83,24 @@ The test module is included automatically in `--export` and `--isolate`.
 harness tests check running-value assertions, sibling isolation and renamed
 declarations with Podman stubbed. See [verification](../acceptance/COMPONENT-DEV.md)
 for actual results and the outstanding real runtime checks.
+
+# Portable bundled files (backlog 57)
+
+`test_component_files.py` uses a minimal renamed processor with no `apps/`:
+source dev, readonly validate, real bundle contents, source removal and release
+relocation, init-config retaining logical references, and newer bytes delivered
+to install archives with unchanged persistent config. It tests public Secret
+keys/size/redaction, directory delivery, private aliases, unsafe references,
+symlinked ancestors/descendants, FIFOs, generation/database-password/standalone
+refusal, and a sensitive external dev seed absent from production. Existing
+file-source tests retain ordinary path behavior. Export/isolation automatically
+include the new test and reusable context-aware render helper.
+
+Demo tests cover the actual two-init-container manifest and the sorted shell
+command's successful/failed exit and redaction with `psql` stubbed. Harness tests
+exercise real isolated Git upgrade builds, strict seed rows and the disposable
+SQL failure/repair/replay wiring with Podman stubbed. See
+[COMPONENT-FILES.md](../acceptance/COMPONENT-FILES.md) for results and lab commands.
 
 # Configurable CA coverage (backlog 45a)
 
@@ -455,7 +473,8 @@ unchanged siblings, immutable shared networking, core version comparisons, stage
 public route/client imports, current registration indexes, and scoped uninstall.
 Default uninstall retains private state and data volumes; explicit deletion targets
 only the selected component. Certificate tests verify component idempotence and the
-shared CA. The real app fixture has 8 pods, 10 containers and 6 distinct images.
+shared CA. The real app fixture has 8 pods, 10 app containers, 2 init containers
+and 6 distinct images; SQL seeding reuses the existing Postgres image.
 
 Component acceptance regressions cover both install orders, help-alone without
 state writes, all three archive transfers, app1-only upgrade, cross-file inventory

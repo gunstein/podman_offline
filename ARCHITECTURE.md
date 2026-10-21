@@ -342,13 +342,24 @@ historical references and current checks.
 `{path: credentials/database, generate: [password]}` creates the missing local
 password and delivers files from that directory. `{path: ../clients}` only reads
 prepared files. Multiple file/directory sources are supported by one model.
+`{component_file: sql/010-reference.sql}` instead selects immutable public content
+under the current component's `files/` in `common.ROOT`. `resolve_file_source`
+handles both source kinds, with explicit component context passed through config,
+validation, key discovery and materialization. It checks portable source ancestors
+and complete trees without reading bytes; config/lifecycle validation reuses the
+delivery type/key checks before generation. `init-config` retains logical references;
+later releases supply their own bytes. Ordinary `path` bases are unchanged.
 `file_group_sources()` validates the structure; `generated_secret_paths()` resolves
 and validates generation without creating or reading files. Generation still
 occurs at the same lifecycle boundary after database preflight. The obsolete
 separate top-level field and string-only source entries are rejected.
 
-Bundle protection follows every declared Secret source and generated file,
+Bundle protection follows every ordinary declared Secret source and generated file,
 including generation under VOLUME_FILES and symlink aliases outside credentials/.
+Explicit `component_file` Secret inputs are public bundle content; another private
+declaration protecting the same file still blocks bundling it. Reference resolution
+does not execute SQL. The demo's declared init container runs its delivered files;
+the generic lifecycle and its durable retry state do not change.
 No config migration/fallback or eager credential creation is introduced.
 Persistent config precedence, mounts/names, images and the current component
 architecture remain unchanged. See

@@ -253,7 +253,11 @@ def database_password_path(config, config_path, secret_name, key):
     )
     candidates = []
     for entry in entries:
-        source = rendering.resolve_path(entry["path"], config_path.parent)
+        if "component_file" in entry:
+            raise common.DeployError(
+                f"{config_path}: database passwords cannot use component_file; provide external/generated credentials"
+            )
+        source = rendering.resolve_file_source(entry, config_path.parent)
         directory = "generate" in entry or source.is_dir()
         candidates.append(
             source if source.name == key and not directory else source / key
@@ -444,6 +448,7 @@ def prepare_components():
                 component_documents,
                 files,
                 registrations.component_imports(component, imports, known),
+                component=component,
             )
             documents.extend(yaml.safe_load_all(text))
             archives.append((volumes, files))
@@ -709,6 +714,7 @@ def materialize_component_manifests(checked, imports, known):
             documents,
             files,
             registrations.component_imports(component, imports, known),
+            component=component,
         )
     return rendered
 

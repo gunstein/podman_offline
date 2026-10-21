@@ -10,6 +10,7 @@ import base64
 import os
 import re
 import secrets
+import stat
 import string
 import tarfile
 from pathlib import Path
@@ -208,7 +209,8 @@ def validate_component_config(config, component, path, check_placeholders=True):
         public_origin(config["PUBLIC_ORIGIN"], path)
     check_component_config_names(config, component, path)
     generated_secret_paths(config, path.parent)
-    check_templates(config, path)
+    check_component_file_sources(config, component)
+    check_templates(config, path, component)
     if configmaps:
         effective = with_derived(config, path)
         for document in configmaps:
@@ -216,7 +218,7 @@ def validate_component_config(config, component, path, check_placeholders=True):
             configmap_data(document, replace(document, effective), effective)
 
 
-def check_templates(config, path):
+def check_templates(config, path, component=None):
     """Validate recipes without reading credentials.
 
     Config validation checks before init-config writes; effective_documents also
@@ -224,7 +226,9 @@ def check_templates(config, path):
     Component paths deliberately repeat this declaration-only check rather than
     carrying a validation flag/cache between independently usable entry points.
     """
-    templates.validate(with_derived(config, path), secret_keys(config, path, []))
+    templates.validate(
+        with_derived(config, path), secret_keys(config, path, [], component)
+    )
 
 
 def with_derived(config, path):
@@ -282,13 +286,24 @@ def file_group_sources(config, group):
         if not isinstance(sources, list) or not sources:
             raise common.DeployError(f"{where} must be a nonempty list of file sources")
         for source in sources:
-            if not isinstance(source, dict) or set(source) - {"path", "generate"}:
+            if not isinstance(source, dict) or set(source) - {
+                "path",
+                "component_file",
+                "generate",
+            }:
                 raise common.DeployError(
-                    f"{where}: each source must contain path and optional generate"
+                    f"{where}: each source must contain exactly one of path or component_file, and optional generate for path"
                 )
-            path = source.get("path")
+            if ("path" in source) == ("component_file" in source):
+                raise common.DeployError(
+                    f"{where}: use exactly one of path or component_file"
+                )
+            kind = "component_file" if "component_file" in source else "path"
+            if kind == "component_file" and "generate" in source:
+                raise common.DeployError(f"{where}: component_file cannot use generate")
+            path = source[kind]
             if not isinstance(path, str) or not path or "\x00" in path:
-                raise common.DeployError(f"{where}: path must be nonempty text")
+                raise common.DeployError(f"{where}: {kind} must be nonempty text")
             names = source.get("generate", [])
             if not isinstance(names, list) or any(
                 not isinstance(value, str) or "\x00" in value for value in names
@@ -418,7 +433,67 @@ def resolve_path(value, base_dir=None):
     return path if path.is_absolute() else (base_dir or common.CONFIG.parent) / path
 
 
-def load_file_group(config, group, base_dir=None):
+def resolve_file_source(entry, base_dir=None, component=None, root=None):
+    """Resolve one validated source in its config or selected component context.
+
+    Shipped inputs are public immutable release content. Inspect names/types only;
+    never follow a link, read file bytes or create a generation target here.
+    """
+    if "component_file" not in entry:
+        return resolve_path(entry["path"], base_dir)
+    if not isinstance(component, str) or not common.ID.fullmatch(component):
+        raise common.DeployError(
+            "component_file requires an explicit component context"
+        )
+    value = entry["component_file"]
+    relative = Path(value)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not relative.parts
+        or value.startswith("~")
+    ):
+        raise common.DeployError(
+            "component_file must be a relative path below this component's files/"
+        )
+    release = root or common.ROOT
+    path = release
+    for part in ("components", component, "files") + relative.parts:
+        path = path / part
+        if path.is_symlink():
+            raise common.DeployError(f"Refuse symlink in component_file source: {path}")
+    check_component_file_tree(path)
+    return path
+
+
+def check_component_file_tree(path):
+    """Check the full selected tree before tar's dereference or any generation."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        raise common.DeployError(f"Missing component_file source: {path}") from None
+    if stat.S_ISDIR(mode):
+        for item in sorted(path.iterdir()):
+            check_component_file_tree(item)
+    elif not stat.S_ISREG(mode):
+        raise common.DeployError(
+            f"component_file must contain only regular files/directories, without symlinks: {path}"
+        )
+
+
+def check_component_file_sources(config, component):
+    """Validate portable declarations before writes, including standalone callers."""
+    for group in (common.SECRET_FILES, common.VOLUME_FILES):
+        selected = {}
+        for name, entries in file_group_sources(config, group).items():
+            portable = [entry for entry in entries if "component_file" in entry]
+            if portable:
+                selected[name] = portable
+        # Reuse delivery's key/type/duplicate checks, inspecting no file bytes.
+        load_file_group({group: selected}, group, component=component)
+
+
+def load_file_group(config, group, base_dir=None, component=None):
     """Read file groups and expand directory paths one level, relative to the config."""
     spec = file_group_sources(config, group)
     groups = {}
@@ -426,7 +501,9 @@ def load_file_group(config, group, base_dir=None):
         where = f"{group}.{group_id}"
         items = []
 
-        for path in (resolve_path(entry["path"], base_dir) for entry in entries):
+        for path in (
+            resolve_file_source(entry, base_dir, component) for entry in entries
+        ):
             if not path.exists():
                 raise common.DeployError(f"Missing {path} ({where})")
             items += sorted(path.iterdir()) if path.is_dir() else [path]
@@ -456,7 +533,7 @@ def load_file_group(config, group, base_dir=None):
     return groups
 
 
-def check_file_sources(config, path, imported=()):
+def check_file_sources(config, path, imported=(), component=None):
     """Check that declared file sources exist with the right type; read no contents.
 
     A source with generate may still be missing: generation creates it. Imported
@@ -473,14 +550,14 @@ def check_file_sources(config, path, imported=()):
                 entry
                 for entry in entries
                 if "generate" not in entry
-                or resolve_path(entry["path"], path.parent).exists()
+                or resolve_file_source(entry, path.parent, component).exists()
             ]
             if kept:
                 present[group_id] = kept
-        load_file_group({group: present}, group, path.parent)
+        load_file_group({group: present}, group, path.parent, component)
 
 
-def secret_keys(config, path, documents):
+def secret_keys(config, path, documents, component=None):
     """Return the keys each Secret provides, decided from declarations only.
 
     SECRET_FILES keys are the file names of its sources (a directory's entries
@@ -493,7 +570,7 @@ def secret_keys(config, path, documents):
     for name, entries in file_group_sources(config, common.SECRET_FILES).items():
         found = set()
         for entry in entries:
-            source = resolve_path(entry["path"], path.parent)
+            source = resolve_file_source(entry, path.parent, component)
             found.update(entry.get("generate", []))
             if source.is_dir():
                 found.update(item.name for item in source.iterdir())
@@ -517,13 +594,13 @@ def secret_keys(config, path, documents):
     return keys
 
 
-def check_secret_keys(config, path, documents):
+def check_secret_keys(config, path, documents, component=None):
     """Every Secret key a pod selects must exist; Podman would fail at start.
 
     Checks volumes[].secret.items[].key and env[].valueFrom.secretKeyRef.key
     against secret_keys(); references marked optional are skipped.
     """
-    keys = secret_keys(config, path, documents)
+    keys = secret_keys(config, path, documents, component)
 
     def check(name, key, where):
         available = keys.get(name)
@@ -893,7 +970,8 @@ def effective_documents(config, path, manifests, component=None, imported=()):
     """
     # Standalone prepare/install/validate load_config directly, without going
     # through effective_config; do not rely on prior component config validation.
-    check_templates(config, path)
+    check_component_file_sources(config, component)
+    check_templates(config, path, component)
     documents, sources = [], []
     for manifest in sorted(manifests.glob("*.yaml")):
         original = load_yaml_all(manifest)
@@ -946,7 +1024,7 @@ def effective_documents(config, path, manifests, component=None, imported=()):
     return documents
 
 
-def materialize(config, path, documents, files_dir, extra_volumes=None):
+def materialize(config, path, documents, files_dir, extra_volumes=None, component=None):
     """Create allowed missing secrets and return the install YAML and import volumes.
 
     Call only with effective_documents() output and after the database preflight.
@@ -954,9 +1032,10 @@ def materialize(config, path, documents, files_dir, extra_volumes=None):
     necessarily run here, after generation. Secret keys the pods select are
     checked first, from file names and generate declarations.
     """
-    check_secret_keys(config, path, documents)
+    check_component_file_sources(config, component)
+    check_secret_keys(config, path, documents, component)
     generate_secrets(config, path.parent)
-    secrets = load_file_group(config, common.SECRET_FILES, path.parent)
+    secrets = load_file_group(config, common.SECRET_FILES, path.parent, component)
     # Imported registration volumes replace a same-named VOLUME_FILES entry.
     volume_config = dict(config)
     volume_config[common.VOLUME_FILES] = {
@@ -964,7 +1043,9 @@ def materialize(config, path, documents, files_dir, extra_volumes=None):
         for key, entries in config.get(common.VOLUME_FILES, {}).items()
         if key not in (extra_volumes or {})
     }
-    volumes = load_file_group(volume_config, common.VOLUME_FILES, path.parent)
+    volumes = load_file_group(
+        volume_config, common.VOLUME_FILES, path.parent, component
+    )
     volumes.update(extra_volumes or {})
     file_secrets = secret_documents(secrets)
     docs = (

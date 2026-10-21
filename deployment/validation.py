@@ -69,7 +69,7 @@ def validate_catalog():
                 imported,
             )
             check_images(documents)
-            check_sources(config, path, documents, imported)
+            check_sources(config, path, documents, imported, component)
         except ERRORS as error:
             findings.append((component, str(error)))
     try:
@@ -116,7 +116,7 @@ def validate_bundle():
             checked[name] = (effective, documents)
         deploy.install_preconditions(name, checked)
         for effective, documents in checked.values():
-            check_sources(effective, config_path, documents, imported)
+            check_sources(effective, config_path, documents, imported, name)
     except ERRORS as error:
         findings.append((name, str(error)))
     return [name], findings
@@ -143,7 +143,7 @@ def check_images(documents):
         rendering.find_images(documents)
 
 
-def check_sources(config, config_path, documents, imported=()):
+def check_sources(config, config_path, documents, imported=(), component=None):
     """Declared files and the database password; reads no file contents.
 
     lifecycle: materialize (check_secret_keys, then load_file_group after
@@ -163,5 +163,5 @@ def check_sources(config, config_path, documents, imported=()):
                     "database volume already exists"
                 ) from None
     # Same order as materialize: selected Secret keys, then the sources.
-    rendering.check_secret_keys(config, config_path, documents)
-    rendering.check_file_sources(config, config_path, imported)
+    rendering.check_secret_keys(config, config_path, documents, component)
+    rendering.check_file_sources(config, config_path, imported, component)

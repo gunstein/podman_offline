@@ -1,3 +1,24 @@
+# Portable component files (backlog 57)
+
+The app1 demo ships idempotent SQL via `component_file` and an imported read-only
+PVC. After dev-up, normal and renamed scenarios require both public seed rows;
+PROD health requires only `reference` with the selected release's value, and
+refuses missing/stale rows or a dev row in production. An installed app missing
+its consumer is still rejected by the item 56 checks.
+
+`upgrade-bundle` now uses `seed_upgrade.py`: an isolated checkout changes exactly
+app1 VERSION plus reference SQL, builds/transfers only its bundle, and leaves the
+operator's checkout unchanged. Upgrade explicitly requires `release-v2` in the
+database. Persistent checks permit only the changed public seed import archive;
+config, credentials, Todo data and sibling assertions remain required. Item 53's
+changed-application-image work is still separate and should extend that builder.
+
+`database-runtime` also calls `seed_retry_check`: real declared SQL init fails
+after an earlier step commits, refuses consumer startup, then repairs/reimports
+and replays while checking retained Todo rows and no duplicate seed rows. Stubbed
+harness tests protect those assertions; the actual lab run is outstanding.
+See [COMPONENT-FILES.md](COMPONENT-FILES.md) for verification and runnable commands.
+
 # Component dev overrides (backlog 56)
 
 The demo now has a tracked `components/app1/config.dev.yaml` with a public

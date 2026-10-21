@@ -530,7 +530,13 @@ class Run:
         )
         self.step("10-siblings-after", lambda: self.guest("PROD", "siblings-after"))
         self.step("10-check-upgrade", lambda: self.guest("PROD", "check"))
-        self.step("10-persistent-after", lambda: self.persistent_state("after"))
+        # Public seed bytes intentionally change; config and credentials may not.
+        self.step(
+            "10-persistent-after",
+            lambda: self.persistent_state(
+                "after", allowed_changes=("app1/files/app1-seed.tar",)
+            ),
+        )
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
 

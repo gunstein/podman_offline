@@ -11,8 +11,8 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-21)
 
-Item 56 is implemented with local tests; its real runtime verification is pending.
-Item 57 is next for implementation, preserving the operator's 2026-10-21 order:
+Items 56 and 57 are implemented with local tests; real runtime verification is
+pending. They followed the operator's 2026-10-21 order:
 component-specific dev overrides, then portable references to bundled component
 files. They unblock the organisation's migration/seed setup without leaking
 component-specific declarations into global dev config. Item 46 follows: prevent
@@ -28,7 +28,8 @@ The order for an offline production deployment of an organisation's own apps:
    implemented; real runtime verification pending. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
 2. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
-   use one explicit file reference in source/dev and an isolated offline release,
+   implemented; real runtime verification pending. Use one explicit file reference
+   in source/dev and an isolated offline release,
    without hand-editing release paths. Separate from the override-layer change.
 3. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
    protect the root/service-user boundary on repeated host preparation; high
@@ -117,10 +118,12 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Update 2026-10-21: item 56 is implemented and locally tested; real runtime checks
-are pending ([evidence](acceptance/COMPONENT-DEV.md)).
+Update 2026-10-21: items 56 and 57 are implemented and locally tested; real runtime
+checks are pending ([56](acceptance/COMPONENT-DEV.md),
+[57](acceptance/COMPONENT-FILES.md)). Platform signing tests are blocked by the
+local environment's GPG socket restriction; see the verification reports.
 
-Open: 57 (top implementation priority), 46, 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 46 (next implementation priority), 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5066,8 +5069,10 @@ offline bundles, independent images, credential retention, database safety and
 scoped lifecycle.
 
 Status: planned; requested on 2026-10-19. A focused extension of the existing
-acceptance flow. The current app1 upgrade changes `components/app1/VERSION` and
-rebuilds its bundle using unchanged application images. Help and Identity have
+acceptance flow. After item 57, the app1 upgrade changes `components/app1/VERSION`
+and reference SQL in an isolated checkout (`acceptance/seed_upgrade.py`), then
+rebuilds its bundle using unchanged application images. Extend that builder and
+its exact changed-file check when implementing this item. Help and Identity have
 separate upgrade scenarios with changed content/code and rebuilt images; they
 provide an existing pattern to reuse, but do not prove this app1 path.
 
@@ -5360,9 +5365,13 @@ offline bundles, authoritative production config, scoped file access, credential
 retention, read-only validation and Python 3.6 compatibility. High-priority
 follow-up to item 56; a separate feature, not an implicit part of its merge rules.
 
-Status: planned; high priority, next in the implementation queue after item 56's
-implementation on 2026-10-21. Component `files/` is already packaged, but there
-is no explicit portable component-file source reference today.
+Status: implemented on 2026-10-21; real Podman/systemd/SELinux/fapolicyd verification
+pending. `component_file` resolves public inputs in the selected component/release,
+with shared validation/materialization, logical retained config and existing
+private-source guards. The app1 demo and isolated SQL upgrade/failure-retry
+acceptance checks are implemented. See [verification and understandability
+review](acceptance/COMPONENT-FILES.md) for actual results and outstanding checks.
+The review notes below describe the baseline and implementation requirements.
 
 The operator clarification in item 56 applies: no transition from pre-feature
 installations is required. Test upgrades between releases of the new model.

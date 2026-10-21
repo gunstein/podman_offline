@@ -120,31 +120,41 @@ def generated_secret_guard(config_dirs=None):
     # Standalone manifest fixtures keep explicit root-level config; products do not.
     if not (ROOT / "components").is_dir():
         sources.extend(
-            [(ROOT / "config.yaml", ROOT), (ROOT / "config.defaults.yaml", ROOT)]
+            [
+                (ROOT / "config.yaml", ROOT, None),
+                (ROOT / "config.defaults.yaml", ROOT, None),
+            ]
         )
     for directory in directories:
         if directory == ROOT:
             continue
         base = ROOT / "build/dev" / directory.name
-        sources.append((directory / "config.defaults.yaml", base))
-        sources.append((directory / "config.dev.yaml", base))
+        sources.append((directory / "config.defaults.yaml", base, directory.name))
+        sources.append((directory / "config.dev.yaml", base, directory.name))
         # A local complete config is private state, not a configuration layer.
-        sources.append((directory / "config.yaml", directory))
-        sources.append((base / "config.yaml", base))
-        sources.append((ROOT / "config/common.defaults.yaml", base))
-        sources.append((ROOT / "config/dev.yaml", base))
-    for path, base in sources:
+        sources.append((directory / "config.yaml", directory, directory.name))
+        sources.append((base / "config.yaml", base, directory.name))
+        sources.append((ROOT / "config/common.defaults.yaml", base, directory.name))
+        sources.append((ROOT / "config/dev.yaml", base, directory.name))
+    for path, base, component in sources:
         if path.exists():
             try:
                 config = rendering.config_layer(path)
                 secrets.update(rendering.generated_secret_paths(config, base))
-                for entries in rendering.file_group_sources(
-                    config, common.SECRET_FILES
-                ).values():
-                    secrets.update(
-                        rendering.resolve_path(entry["path"], base).resolve()
-                        for entry in entries
-                    )
+                for group in (common.SECRET_FILES, common.VOLUME_FILES):
+                    for entries in rendering.file_group_sources(config, group).values():
+                        for entry in entries:
+                            if "component_file" in entry:
+                                # Explicit public release content may be delivered as a
+                                # Secret. Ordinary private declarations still protect
+                                # that same file, even when an alias names it.
+                                rendering.resolve_file_source(
+                                    entry, base, component, ROOT
+                                )
+                            elif group == common.SECRET_FILES:
+                                secrets.add(
+                                    rendering.resolve_file_source(entry, base).resolve()
+                                )
             except (common.DeployError, yaml.YAMLError):
                 raise BundleError(
                     f"Cannot validate generated secret paths in {path}"

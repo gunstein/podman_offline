@@ -146,6 +146,118 @@ def init_schema_check(base, network, client):
     )
 
 
+def seed_retry_check(base, network, client):
+    """Fail the actual SQL init after a committed step, then repair/reimport/replay."""
+    source = rendering.load_yaml_all(ROOT / "components/app1/manifests/60-todo.yaml")[0]
+    probe = copy.deepcopy(client)
+    name = client["metadata"]["name"] + "-seed"
+    claim = name + "-input"
+    probe["metadata"] = {
+        "name": name,
+        "annotations": {"io.podman.annotations.init.container.type": "always"},
+    }
+    init = copy.deepcopy(
+        next(
+            item
+            for item in source["spec"]["initContainers"]
+            if item["name"] == "seed-database"
+        )
+    )
+    init["env"] = copy.deepcopy(client["spec"]["containers"][0]["env"])
+    probe["spec"]["initContainers"] = [init]
+    probe["spec"]["volumes"].append(
+        {"name": "seed", "persistentVolumeClaim": {"claimName": claim}}
+    )
+    check = probe["spec"]["containers"][0]
+    check.pop("args", None)
+    check["name"] = "check"
+    check["image"] = image("app1", "backend")
+    check["command"] = [
+        "python",
+        "-c",
+        'from database import connect; db=connect(); assert db.execute("SELECT name, value FROM demo_seed ORDER BY name").fetchall() == [{"name":"reference","value":"release-v1"}]; assert db.execute("SELECT title FROM todos WHERE owner=\'init-check\'").fetchall() == [{"title":"retained todo"}]; db.close()',
+    ]
+    inputs = base / "seed-input"
+    inputs.mkdir(exist_ok=True)
+    reference = inputs / "010-reference.sql"
+    reference.write_bytes(
+        (ROOT / "components/app1/files/sql/010-reference.sql").read_bytes()
+    )
+    broken = inputs / "050-failure.sql"
+    broken.write_text("SELECT 1 / 0;\n")
+    volumes = {claim: [reference, broken]}
+    archives = base / "seed-archives"
+    manifest = base / "seed-retry.yaml"
+    host = next(item["value"] for item in init["env"] if item["name"] == "DB_HOST")
+    try:
+        for attempt in range(3):
+            rendering.write_file_archives(volumes, archives)
+            docs = rendering.volume_claims(volumes, archives) + [probe]
+            manifest.write_text(yaml.safe_dump_all(docs))
+            manifest.chmod(0o600)
+            try:
+                play = subprocess.run(
+                    ["podman", "kube", "play", "--network", network, str(manifest)],
+                    capture_output=True,
+                    check=False,
+                    timeout=180,
+                )
+                code = podman(["wait", name + "-seed-database"]).stdout.strip()
+                if not code.isdigit() or not 0 <= int(code) <= 255:
+                    raise RuntimeError("Invalid SQL init exit status")
+                if attempt == 0:
+                    if code == "0":
+                        raise RuntimeError("Broken SQL init was reported successful")
+                    statuses = podman(
+                        [
+                            "ps",
+                            "-a",
+                            "--filter",
+                            "name=" + name + "-check",
+                            "--format",
+                            "{{.Status}}",
+                        ]
+                    )
+                    if any(
+                        not row.startswith(("Created", "Configured"))
+                        for row in statuses.stdout.splitlines()
+                    ):
+                        raise RuntimeError("Consumer started despite failed SQL init")
+                    query = 'export PGPASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"; exec psql -XAt -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT value FROM demo_seed WHERE name=\'reference\'"'
+                    if (
+                        podman(
+                            ["exec", host + "-db", "sh", "-ec", query]
+                        ).stdout.strip()
+                        != "release-v1"
+                    ):
+                        raise RuntimeError(
+                            "Expected earlier committed SQL step was not observed"
+                        )
+                    broken.write_text("SELECT 1;\n")
+                elif (
+                    play.returncode
+                    or code != "0"
+                    or podman(["wait", name + "-check"]).stdout.strip() != "0"
+                ):
+                    raise RuntimeError("SQL retry/replay or retained Todo check failed")
+            finally:
+                podman(["kube", "down", str(manifest)])
+    finally:
+        present = subprocess.run(
+            ["podman", "volume", "exists", claim],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        if present.returncode == 0:
+            podman(["volume", "rm", claim])
+        elif present.returncode != 1:
+            raise RuntimeError("Cannot inspect disposable seed volume for cleanup")
+    print(
+        "PASS: failed SQL init refused startup; repaired import and replay retained Todo data"
+    )
+
+
 def database_documents(secret, claim, host, password):
     """The disposable PostgreSQL Secret, volume and Pod in the supported layout."""
     return [
@@ -405,6 +517,7 @@ def run():
                 # The Python/init examples keep their file interface. Identity reads
                 # only a complete string from a kube Secret, like an unchanged image.
                 init_schema_check(base, network, client)
+                seed_retry_check(base, network, client)
                 identity_check(
                     base, network, client_name, host, password.rstrip("\n"), 0
                 )

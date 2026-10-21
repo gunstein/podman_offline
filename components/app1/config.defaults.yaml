@@ -3,6 +3,9 @@ DB_PORT: '5432'
 DB_USER: todo
 DB_NAME: todo
 DEMO_CONFIG_LAYER: defaults
+VOLUME_FILES:
+  app1-seed:
+  - component_file: sql/010-reference.sql
 SECRET_FILES:
   app1-database-password:
   - path: credentials/database

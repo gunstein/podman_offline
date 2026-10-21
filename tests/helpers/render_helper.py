@@ -39,7 +39,7 @@ def materialize_and_render(
         extra_volumes or {},
     )
     text, volumes = materialize(
-        config, config_path, documents, files_dir, extra_volumes
+        config, config_path, documents, files_dir, extra_volumes, component
     )
     if write_archives:
         write_file_archives(volumes, files_dir)

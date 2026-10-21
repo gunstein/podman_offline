@@ -66,7 +66,8 @@ IdentityServer, its PostgreSQL database, signing keys, API secret, demo users,
 Data Protection and public client registrations. Each Todo owns its PostgreSQL
 pod, frontend/backend pod, private client key and session material. Both apps
 share Identity users but have separate clients, database volumes and cookies.
-With all components installed there are 8 pods and 10 app containers. The root
+With all components installed there are 8 pods, 10 app containers and 2 app1 init
+containers (schema preparation, then SQL seeding). The root
 path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 
 In `bundles.yaml`, platform accepts routes and Identity accepts OIDC clients;
@@ -180,8 +181,8 @@ groups too. The same rule applies to `SECRET_FILES` and `SECRET_TEMPLATES`.
 Relative sources resolve from `build/dev/orders/`, so these example files must
 exist under `build/dev/orders/seed/`, not beside the override file. Generated
 `build/dev/<component>/config.yaml` is output and is never another input layer.
-Portable references to files shipped in a component are separate planned work
-in backlog item 57; adding a dev layer does not change path resolution.
+For shipped files, use `component_file` as described below. Adding a dev layer
+does not change ordinary `path` resolution.
 
 The demo's app1 ConfigMap supplies `DEMO_CONFIG_LAYER=component-dev` in dev and
 `defaults` in production; app2 has no such key. This public marker does not
@@ -431,8 +432,9 @@ references, missing mounts
 and colliding Secret/PVC/ConfigMap names are rejected. Whole `@@NAME@@` values
 preserve int/string types; ConfigMap data becomes text.
 
-`SECRET_FILES` maps resource IDs to lists of source mappings, each with a `path`
-and optional `generate`. It encodes file contents into Secrets (about 375 kB per id).
+`SECRET_FILES` maps resource IDs to lists of source mappings, each with exactly one
+of `path` or `component_file`; only `path` permits optional `generate`.
+It encodes file contents into Secrets (about 375 kB per id).
 Directories expand one level; nested directories are not allowed for Secrets.
 A Secret's keys are its file names (and `generate` names); every key a pod
 selects (`secret.items[].key`, `secretKeyRef.key`) must be one of them, or
@@ -538,6 +540,82 @@ separate cluster; each app creates/owns its tables, with no migration/GRANT role
 Duende needs an appropriate [production license](https://docs.duendesoftware.com/identityserver/overview/licensing/).
 Local Todo logout clears only that app's session; shared identity SSO remains.
 
+### Portable component files
+
+Both delivery maps support `component_file` for public files shipped under the
+selected component's `files/`. The same declaration works in source dev and an
+unpacked offline bundle:
+
+```yaml
+# components/sts/config.defaults.yaml
+VOLUME_FILES:
+  sts-migrations:
+  - component_file: sql/010-reference.sql
+```
+
+This selects `components/sts/files/sql/010-reference.sql` in the checkout or the
+bundle running `deploy`. It never uses the current working directory, another
+release, or the original build checkout. `init-config` retains this logical
+reference in persistent config. An upgrade reads the new selected bundle's bytes
+without editing config; changed defaults still never replace existing config.
+Keep referenced names stable, or explicitly edit persistent config when changing
+the declaration. Missing current-release files fail; there is no old-file fallback.
+
+For an organisation's `sts` migration container, shipped migrations can use the
+reference above while a sensitive dev-only seed stays outside `files/`:
+
+```yaml
+# components/sts/config.dev.yaml (tracked settings; contains no secret values)
+VOLUME_FILES:
+  sts-migrations:
+  - component_file: sql/010-reference.sql
+  - path: ~/dev-inputs/sts/900-dev-users.sql
+```
+
+The dev file repeats the full map because later maps replace earlier ones. The
+external seed is not collected into bundles and is not needed in production.
+Test passwords belong in external/generated `credentials/` inputs. Every file
+under the component's `files/` is packaged, even when production config does not
+select it, so never put private dev users, passwords or customer data there.
+
+`component_file` is an immutable input and cannot use `generate`. Absolute,
+tilde and traversing component references, missing component context, symlinks
+(including ancestors and nested children) and special files are refused before
+generation. Directories follow the existing delivery rules: Secrets allow only
+one level of files; volumes allow trees; delivered names and duplicate checks
+are unchanged. `SECRET_FILES` may also use `component_file`, for example a public
+CA certificate, with the same key/size limits. This explicitly declares public
+bundle content, even though delivery uses a Secret. Real credentials and database
+passwords must use external/generated sources. Ordinary `path` still supports
+relative/absolute paths and `~`, with its existing config-directory base.
+
+Deploy delivers bytes through the existing Secrets or import archives/PVCs; it
+does not template or execute SQL or bind-mount build-machine files. The migration
+container decides how to execute its inputs. Podman imports overwrite matching
+files but retain unlisted files: removing a source from a later config/release
+does not remove its old copy in the volume. Account for that in migration design.
+
+After the usual signature/checksum verification and unpacking, run as the service
+user (the release directories may be anywhere accessible):
+
+```sh
+~/releases/myproduct-sts-1.0.0/deploy init-config sts
+~/releases/myproduct-sts-1.0.0/deploy validate
+~/releases/myproduct-sts-1.0.0/deploy install
+# A later verified/unpacked release, with the same persistent config:
+~/releases/myproduct-sts-1.0.1/deploy validate
+~/releases/myproduct-sts-1.0.1/deploy install
+```
+
+The app1 demo runs a read-only seed PVC in `seed-database` after
+`prepare-database`, using the existing Postgres image and password Secret.
+Idempotent SQL upserts a public `reference` marker; dev adds a harmless
+`dev-sample`. Both files ship, but fresh production delivers only `reference`.
+`ON_ERROR_STOP` prevents successful startup after a SQL error; earlier committed
+statements are retained. Restart/retry replays the sorted SQL list. This example
+provides no migration history or automatic rollback. See
+[verification](acceptance/COMPONENT-FILES.md).
+
 ### From source YAML to container configuration
 
 Source manifests are templates, not the complete configuration Podman runs.
@@ -561,7 +639,7 @@ flowchart TD
 
     FILES["`Credential files and other inputs
     Passwords, private keys, certificates and payloads
-    Stored separately from source manifests
+    External paths or current component files/
     Config selects which files to deliver`"]
 
     RENDER["`Deploy reads and validates inputs

@@ -24,6 +24,38 @@ spec:
     - name: password
       mountPath: /run/secrets/database
       readOnly: true
+  - name: seed-database
+    image: localhost/demo-postgres:17.11
+    imagePullPolicy: Never
+    command:
+    - sh
+    - -ec
+    # Fold to one command scalar for Podman's YAML round trip.
+    - >-
+      export LC_ALL=C PGCONNECT_TIMEOUT=5;
+      export PGPASSWORD="$(cat /run/secrets/database/password)";
+      for sql in /seed/*.sql; do
+      test -f "$sql" || { echo 'Missing demo seed input' >&2; exit 1; };
+      psql --no-psqlrc --host "$DB_HOST" --port "$DB_PORT" --username "$DB_USER"
+      --dbname "$DB_NAME" --set=ON_ERROR_STOP=1 --file "$sql" >/dev/null 2>&1 || {
+      echo 'Demo seed SQL failed (details withheld)' >&2; exit 1; };
+      done
+    env:
+    - name: DB_HOST
+      value: '@@DB_HOST@@'
+    - name: DB_PORT
+      value: '@@DB_PORT@@'
+    - name: DB_USER
+      value: '@@DB_USER@@'
+    - name: DB_NAME
+      value: '@@DB_NAME@@'
+    volumeMounts:
+    - name: password
+      mountPath: /run/secrets/database
+      readOnly: true
+    - name: seed
+      mountPath: /seed
+      readOnly: true
   containers:
   - name: backend
     image: localhost/demo-todo-backend:0.2.2
@@ -82,6 +114,9 @@ spec:
       timeoutSeconds: 5
       failureThreshold: 6
   volumes:
+  - name: seed
+    persistentVolumeClaim:
+      claimName: app1-seed
   - name: certificates
     secret:
       secretName: app1-signing

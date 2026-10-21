@@ -1,6 +1,7 @@
 """Render actual component defaults and manifests without running containers."""
 
 import base64
+import shutil
 import stat
 from pathlib import Path
 
@@ -23,6 +24,11 @@ class CredentialDeliveryTests(DeployFixture):
     def test_apps_deliver_independent_private_files_only_to_backend_as_secrets(self):
         keys = {}
         for component in ("app1", "app2"):
+            source_files = REPO / "components" / component / "files"
+            if source_files.exists():
+                shutil.copytree(
+                    source_files, self.root / "components" / component / "files"
+                )
             config = self.defaults(component)
             prefix = "home/" + component + "/"
             path = self.write(prefix + "config.yaml", yaml.safe_dump(config), 0o600)
@@ -63,9 +69,13 @@ class CredentialDeliveryTests(DeployFixture):
                     for doc in documents
                     if doc["kind"] == "PersistentVolumeClaim"
                 },
-                {component + "-data"},
+                {component + "-data"}
+                | ({"app1-seed"} if component == "app1" else set()),
             )
-            self.assertFalse(list(files.glob("*.tar")))
+            self.assertEqual(
+                [item.name for item in files.glob("*.tar")],
+                ["app1-seed.tar"] if component == "app1" else [],
+            )
             pod = next(
                 doc
                 for doc in documents

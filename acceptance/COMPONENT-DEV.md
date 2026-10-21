@@ -3,7 +3,9 @@
 Implemented on 2026-10-21. Local product/harness verification is separate from
 real Podman/systemd evidence; no real lab run of this change has been performed.
 Existing installations may be discarded, as explicitly agreed by the operator.
-No migration or compatibility layer was added. Item 57 remains unimplemented.
+No migration or compatibility layer was added. Item 57 was unimplemented at this
+verification baseline; its later implementation/evidence is recorded separately
+in [COMPONENT-FILES.md](COMPONENT-FILES.md).
 
 ## Behavior and contracts
 

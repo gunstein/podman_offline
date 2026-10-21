@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import types
@@ -121,21 +122,66 @@ class ComponentHarnessTests(unittest.TestCase):
                 )
             )
             build.chmod(0o700)
-            stubs = 'git() { if [[ "$*" == "diff --name-only" ]]; then echo components/app1/VERSION; fi; }\n'
+            (source / "components/app1/files/sql").mkdir(parents=True)
+            sql = source / "components/app1/files/sql/010-reference.sql"
+            sql.write_text("SELECT 'release-v1';\n")
+            (source / "acceptance").mkdir()
+            shutil.copy2(
+                Path(__file__).with_name("seed_upgrade.py"),
+                source / "acceptance/seed_upgrade.py",
+            )
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@invalid",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                check=True,
+            )
+            revision = (
+                subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"])
+                .decode()
+                .strip()
+            )
             code = base.shell_code(REMOTE, action="upgrade-bundle")
             result = subprocess.run(
                 ["bash", "-se"],
                 input="set -euo pipefail\nproduct_name=myproduct\nsrc="
                 + str(source)
                 + "\nrequested_version=0.2.1\n"
-                + stubs
+                + "revision="
+                + revision
+                + "\n"
                 + code,
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self.assertEqual(
-                (source / "components/app1/VERSION").read_text(), "0.2.1\n"
+                (source / "components/app1/VERSION").read_text(), "0.2.0\n"
+            )
+            self.assertEqual(sql.read_text(), "SELECT 'release-v1';\n")
+            self.assertEqual(
+                subprocess.check_output(
+                    [
+                        "git",
+                        "-C",
+                        str(source),
+                        "status",
+                        "--porcelain",
+                        "--untracked-files=no",
+                    ]
+                ),
+                b"",
             )
             self.assertFalse(
                 (source / "dist/myproduct-0.2.1-offline.tar.gz.sha256").exists()

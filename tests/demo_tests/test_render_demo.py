@@ -1,5 +1,6 @@
 """Isolated renderer/installer tests; no Podman, systemd, root or network."""
 
+import shutil
 from pathlib import Path
 
 import yaml
@@ -16,6 +17,11 @@ class DemoRenderTests(DeployFixture):
         repo = Path(__file__).resolve().parents[2]
         docs = []
         for component in DEMO_COMPONENTS:
+            source_files = repo / "components" / component / "files"
+            if source_files.exists():
+                shutil.copytree(
+                    source_files, self.root / "components" / component / "files"
+                )
             config = rendering.merge_config(
                 repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",
@@ -24,6 +30,8 @@ class DemoRenderTests(DeployFixture):
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for paths in config.get(group, {}).values():
                     for source in paths:
+                        if "component_file" in source:
+                            continue
                         target = base / source["path"]
                         target.mkdir(parents=True, exist_ok=True)
                         (target / "dummy").write_bytes(b"dummy")
@@ -48,7 +56,7 @@ class DemoRenderTests(DeployFixture):
         kinds = [doc["kind"] for doc in docs]
         self.assertEqual(kinds.count("Pod"), 8)
         self.assertEqual(kinds.count("Secret"), 9)
-        self.assertEqual(kinds.count("PersistentVolumeClaim"), 6)
+        self.assertEqual(kinds.count("PersistentVolumeClaim"), 7)
         self.assertEqual(kinds.count("ConfigMap"), 5)
         self.assertEqual(len(rendering.find_images(docs)), 6)
         rendering.check_links(docs, {})

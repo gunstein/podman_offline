@@ -157,7 +157,38 @@ dependents alike, as production `init-config` also inherits from the owner
 Relative file sources still resolve from `build/dev/<id>/`; generated config
 there is output, never an input layer. See the [configuration examples and
 precedence](../README.md#configuration-and-initialization). Portable shipped-file
-references are separate planned work in backlog 57.
+references use `component_file` as described below.
+
+### Bundled component file references
+
+`SECRET_FILES` and `VOLUME_FILES` sources have exactly one of `path` or
+`component_file`. The latter is relative to `components/<id>/files/` in the source
+checkout or selected bundle (`common.ROOT`), with explicit current-component
+context. It is retained logically in initialized config, so a newer bundle can
+deliver changed bytes without config edits. Missing files fail; no source, sibling
+or old-release fallback exists. Stable reference names remain part of the
+operator's retained config contract.
+
+`component_file` cannot generate credentials or supply a database password.
+Symlinks and special files throughout selected trees, absolute/traversing paths
+and missing component context are refused before writes. Delivery remains the
+existing Secret/import-archive/PVC flow, with existing names, duplicate, type and
+size rules. Secret delivery of a component file explicitly selects public bundle
+content; external/generated credentials stay protected by the bundle guard.
+Validation inspects names/types without reading input bytes.
+
+For `sts`, use `component_file: sql/010-reference.sql` for shipped migrations in
+`config.defaults.yaml`. A `config.dev.yaml` map can repeat that reference and add
+`path: ~/dev-inputs/sts/900-dev-users.sql` for a sensitive local dev seed outside
+`files/`. Production needs only the shipped input; the local path is neither
+packaged nor read there. All of `files/` ships, including dev-only files stored
+there. Test passwords must stay in external/generated credentials. See the
+[complete sts example and offline upgrade commands](../README.md#portable-component-files).
+
+Input resolution never executes or templates SQL. The consuming image owns that
+behavior. Import volumes retain unlisted files, so removing a migration source
+does not remove its old imported copy. The demo uses idempotent SQL and documents
+partial commits/retry; it adds no migration framework or rollback guarantee.
 
 ### Reserved configuration names
 

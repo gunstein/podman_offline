@@ -1,5 +1,6 @@
 """Explicit config layers and authoritative production state, without host operations."""
 
+import shutil
 from pathlib import Path
 
 from deployment import common, deploy
@@ -19,6 +20,11 @@ class DemoConfigTests(ConfigFixture):
         )
         for component in DEMO_COMPONENTS:
             source = repo / "components" / component / "config.defaults.yaml"
+            if (source.parent / "files").exists():
+                shutil.copytree(
+                    source.parent / "files",
+                    self.root / "components" / component / "files",
+                )
             self.write(
                 "components/" + component + "/config.defaults.yaml", source.read_bytes()
             )
@@ -47,7 +53,7 @@ class DemoConfigTests(ConfigFixture):
                         paths.extend(
                             source["path"]
                             for source in entries
-                            if not source["path"].startswith("../")
+                            if "path" in source and not source["path"].startswith("../")
                         )
                 self.assertTrue(all(path.startswith("credentials/") for path in paths))
             self.assertEqual(production.get("SECRET_FILES"), dev.get("SECRET_FILES"))

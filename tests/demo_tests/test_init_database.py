@@ -92,6 +92,11 @@ class InitDatabaseTests(unittest.TestCase):
             )
             self.assertEqual(init["command"], ["python", "/app/schema.py"])
             self.assertEqual(init["image"], backend["image"])
+            seed = todo["spec"]["initContainers"][1]
+            self.assertEqual(seed["name"], "seed-database")
+            self.assertEqual(seed["image"], server["spec"]["containers"][0]["image"])
+            self.assertEqual(seed["env"], init["env"])
+            self.assertTrue(all(mount["readOnly"] for mount in seed["volumeMounts"]))
             self.assertEqual(init["imagePullPolicy"], "Never")
             self.assertEqual(
                 init["volumeMounts"],
@@ -140,6 +145,64 @@ class InitDatabaseTests(unittest.TestCase):
             self.assertEqual(
                 (base / "credentials/database/password").read_bytes(), before
             )
+
+    def test_seed_shell_orders_inputs_and_withholds_failed_sql_diagnostics(self):
+        document = rendering.load_yaml_all(
+            ROOT / "components/app1/manifests/60-todo.yaml"
+        )[0]
+        script = document["spec"]["initContainers"][1]["command"][-1]
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            inputs = base / "seed"
+            inputs.mkdir()
+            for filename in ("900-dev.sql", "010-reference.sql"):
+                (inputs / filename).write_text("SELECT 1;\n")
+            password = base / "password"
+            password.write_text("private-fixture\n")
+            calls = base / "calls"
+            stub = base / "psql"
+            stub.write_text(
+                '#!/bin/sh\ntest "$PGPASSWORD" = private-fixture || exit 77\nprintf "%s\\n" "$*" >> "$SEED_CALLS"\necho private-psql-diagnostic >&2\nexit "$PSQL_STATUS"\n'
+            )
+            stub.chmod(0o700)
+            command = script.replace("/seed/", str(inputs) + "/").replace(
+                "/run/secrets/database/password", str(password)
+            )
+            env = dict(
+                os.environ,
+                PATH=str(base) + os.pathsep + os.environ["PATH"],
+                SEED_CALLS=str(calls),
+                PSQL_STATUS="0",
+                DB_HOST="db",
+                DB_PORT="5432",
+                DB_USER="user",
+                DB_NAME="app",
+            )
+            result = subprocess.run(
+                ["sh", "-ec", command],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                [line.split("--file ")[1] for line in calls.read_text().splitlines()],
+                [str(inputs / "010-reference.sql"), str(inputs / "900-dev.sql")],
+            )
+            env["PSQL_STATUS"] = "2"
+            result = subprocess.run(
+                ["sh", "-ec", command],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Demo seed SQL failed", result.stderr)
+            self.assertNotIn("private-", result.stdout + result.stderr)
 
     def test_backend_dispatch_requires_schema_only_for_app1_and_app2_keeps_initialization(
         self,

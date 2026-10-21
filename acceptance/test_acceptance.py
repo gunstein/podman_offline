@@ -898,6 +898,7 @@ sha256sum() { :; }
 gpgv() { :; }
 # Simulate the health check after install.
 healthy() { echo health >> "$calls"; return "$health_status"; }
+seed_content() { :; }
 # ./deploy validate is checked separately; it changes no trust state.
 validate_release() { :; }
 install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"; }
@@ -1482,7 +1483,9 @@ class HealthTests(unittest.TestCase):
             names, init = self.namespace["expected_containers"](path)
         self.assertEqual(len(names), 11)
         self.assertIn("extra-app", names)
-        self.assertEqual(init, {"app1-todo-prepare-database"})
+        self.assertEqual(
+            init, {"app1-todo-prepare-database", "app1-todo-seed-database"}
+        )
         self.assertTrue(names.isdisjoint(init))
 
 

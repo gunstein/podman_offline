@@ -70,6 +70,8 @@ class DemoComponentTests(ComponentFixture):
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for entries in config.get(group, {}).values():
                     for source in entries:
+                        if "component_file" in source:
+                            continue
                         entry = source["path"]
                         if ".." not in Path(entry).parts:
                             self.write(

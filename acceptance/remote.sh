@@ -568,6 +568,65 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: component config layer check (details withheld)")
 CONFIG_LAYERS
 }
+seed_content() {
+    local mode=$1
+    local -a run_python=(python3)
+    if [[ $mode == prod ]]; then run_python=(as_product python3); fi
+    "${run_python[@]}" - "$mode" "${2:-}" <<'SEED_CONTENT'
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def check_rows(output, mode, expected):
+    rows = ["reference|" + expected]
+    if mode == "dev":
+        rows.insert(0, "dev-sample|dev-only")
+    if output.splitlines() != rows:
+        raise RuntimeError("Missing, stale or unexpected demo seed rows")
+    for row in rows:
+        print("SEED " + row)
+
+
+def main():
+    mode, forced = sys.argv[1:]
+    component = "orders" if os.environ["PRODUCT_NAME"] == "shop" else "app1"
+    if mode == "prod":
+        home = Path.home()
+        marker = home / "installed" / component
+        if not marker.exists():
+            return
+        version = marker.read_text().strip()
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            raise RuntimeError("Invalid installed seed component version")
+        root = home / "releases" / (os.environ["PRODUCT_NAME"] + "-" + component + "-" + version)
+    elif mode == "dev":
+        root = Path.cwd()
+    else:
+        raise RuntimeError("Invalid seed check mode")
+    text = (root / "components" / component / "files/sql/010-reference.sql").read_text()
+    values = re.findall(r"'reference', '(release-v[12])'", text)
+    if len(values) != 1 or (forced and values[0] != forced):
+        raise RuntimeError("Wrong selected release seed content")
+    script = 'export PGPASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"; exec psql -X -A -t -F "|" -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT name, value FROM demo_seed WHERE name IN (\'reference\', \'dev-sample\') ORDER BY name"'
+    result = subprocess.run(["podman", "exec", component + "-postgres-db", "sh", "-ec", script],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=15)
+    if result.returncode:
+        raise RuntimeError("Demo seed query failed")
+    check_rows(result.stdout, mode, values[0])
+    print("PASS: current release seed rows (" + mode + ")")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired):
+        raise SystemExit("FAIL: demo seed content check (details withheld)")
+SEED_CONTENT
+}
 # Wait for all manifest-defined app containers and their Podman health status.
 healthy() {
     local component components
@@ -706,6 +765,7 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: " + str(error))
 HEALTHY
     config_layers prod
+    seed_content prod
 }
 # Wait for the backend through the HTTPS proxy before authenticated marker checks.
 wait_backend() {
@@ -836,6 +896,7 @@ dev-up)
     [[ $output == *"[OK] validated platform, identity, app1, app2, help;"* ]]
     ./dev/dev.sh up
     config_layers dev
+    seed_content dev
     ;;
 venv)
     cd "$src"
@@ -882,6 +943,7 @@ RENAMED_HOST
     [[ $output == *"[OK] validated gateway, login-service, orders, inventory, manual;"* ]]
     ./dev/dev.sh up
     config_layers dev
+    seed_content dev
     pods=$(podman pod ps --format '{{.Name}}' | sort | tr '\n' ' ')
     test "$pods" = 'gateway-proxy inventory-postgres inventory-todo login-service-postgres login-service-server manual-web orders-postgres orders-todo '
     echo "PASS: renamed dev pods $pods"
@@ -1091,12 +1153,8 @@ upgrade-bundle)
     output=$(git status --porcelain)
     test -z "$output"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-    printf '%s\n' "$requested_version" > components/app1/VERSION
-    changed=$(git diff --name-only)
-    test "$changed" = components/app1/VERSION
-    git diff -- components/app1/VERSION
-    # Only app1 is transferred and upgraded; the catalog is still validated.
-    ./build-bundle.sh app1
+    # VERSION and the reference SQL change only inside the isolated build checkout.
+    python3 acceptance/seed_upgrade.py "$src" "$requested_version" "$revision" "$product_name"
     (cd dist && sha256sum -c "$product_name-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/$product_name-app1-$requested_version/images/images.txt"
     ;;
@@ -1413,6 +1471,7 @@ upgrade)
     validate_release
     install_checked
     healthy
+    if [[ $bundle == app1 ]]; then seed_content prod release-v2; fi
     sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "$product_name-$bundle"
     sudo -n fapolicyd-cli --update
     wait_trust "$product/deployment/" "$old_release/deployment/"

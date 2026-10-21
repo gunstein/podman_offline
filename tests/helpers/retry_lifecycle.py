@@ -100,6 +100,10 @@ class RetryFixture(ComponentFixture):
         manifests = self.root / "components/app1/manifests"
         shutil.rmtree(manifests)
         shutil.copytree(repo / "components/app1/manifests", manifests)
+        if (repo / "components/app1/files").exists():
+            shutil.copytree(
+                repo / "components/app1/files", self.root / "components/app1/files"
+            )
         config = rendering.merge_config(
             repo / "config/common.defaults.yaml",
             repo / "components/app1/config.defaults.yaml",
