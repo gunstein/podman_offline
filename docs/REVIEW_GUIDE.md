@@ -61,6 +61,8 @@ this list; update entries with implementation/test evidence when resolved.
 | Accepted exposure: Secret-derived env values are visible to the service user/root in runtime inspection and process environments; use file mounts when the app supports them | Backlog 41; [contract](COMPONENTS.md#secret-templates) |
 | Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
 | ~~Global dev values on a `public_from` dependent can be silently replaced by owner inheritance~~ | Resolved by backlog 58: analysis showed owner and dependents always receive the same effective value; the precedence is documented, no code change |
+| Root `prepare-host.sh` runs `install -d -o <user>` and `restorecon` through service-writable home paths; a planted symlink can hand a host directory to the service user on a repeat preparation | Backlog 46 |
+| Root checksum, fapolicyd trust and `sudoedit` operate on service-writable release/data paths (check/use race) | Backlog 54 |
 | ~~Bundles carry checksums but no signature~~ | Resolved by backlog 38: optional `.asc` (gpg), verified with `gpgv` on the target before unpacking |
 
 External image support does not by itself demonstrate arbitrary component support.

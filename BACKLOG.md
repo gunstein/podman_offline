@@ -4631,7 +4631,9 @@ review to the privileged host-setup boundary.
 
 Status: planned; high priority. Found in the quick Python/Bash security scan of
 main at `b3f3cf161999ab83be5d596d4ce222bf81712c7d` on 2026-10-19. Implement
-before other new functionality. No fix or real-host exploit verification yet.
+before other new functionality. No fix or real-host exploit verification yet;
+a sandbox probe with a separate UID confirmed the ownership takeover on
+2026-10-21 (see review additions below).
 
 ### Finding and evidence
 
@@ -4705,6 +4707,133 @@ Only disposable synthetic paths were used; no production paths were modified.
 9. Operator guidance in README: when a repeat preparation is expected (port
    change, recovery after a failed preparation) and that it must not be rerun
    before inspecting the home if the service account is suspected compromised.
+
+### Review additions (2026-10-21)
+
+Re-checked against main at `ba662ab`: `scripts/prepare-host.sh` is unchanged
+since the finding. These points refine the plan above; where they differ, these
+win.
+
+10. **Sandbox evidence (not a real-host result).** Disposable paths under
+    `/var/tmp`, a disposable system user `probe46`, no SELinux:
+    - As root, today's `install -d -m 0700 -o "$user"` on a planted
+      `.config -> <outside dir>` changed the root-owned 0755 outside directory to
+      `probe46` 0700. Cross-user ownership takeover is therefore reproduced, not
+      only the mode change from the first probe. With `/etc/systemd/system` or
+      `/etc/profile.d` as the target, this is a root escalation path.
+    - The same command run as the service user
+      (`setpriv --reuid --regid --clear-groups`) failed with
+      `Operation not permitted`, and the outside directory stayed root 0755.
+    - CNI lock: a dangling symlink as the final component is not followed. GNU
+      `install` unlinks the destination before creating it, so the link was
+      replaced by a regular file in the home. A symlinked intermediate directory
+      (`net.d -> <outside dir>`) did redirect: root created a `probe46`-owned
+      `cni.lock` in the root-owned outside directory. The lab step in point 8
+      should therefore plant both a final-component and an intermediate link, and
+      expect the final-component case to stay inside the home.
+    - A fresh and a repeated preparation run entirely as the service user created
+      the same tree, owners and modes as today.
+11. **Mechanism: run every operation below `$service_home` as the service user.**
+    Introduce one small helper, for example
+    `as_service_user() { setpriv --reuid="$user" --regid="$group" --clear-groups -- "$@"; }`,
+    and use it for the directory loop and the CNI lock. `--clear-groups` keeps
+    root's supplementary groups from being inherited. This removes the
+    check/use race instead of narrowing it: no privilege is held while the
+    pathname is resolved. `setpriv` (util-linux) is preferred over `runuser`
+    because it does not open a PAM session; check that it is present in the
+    command preflight. Both are RPM-installed, so fapolicyd trusts them.
+    `setpriv` keeps the caller's SELinux domain, and type transitions depend on
+    the domain, not the UID, so the pre-created directories get the same labels
+    as today. Keep the pre-creation itself. It exists so that Podman does not
+    create these directories and the lock with a runtime type (see the comments
+    in the script); removing it would reintroduce that labeling defect.
+12. **Intended behavior change on repeat.** Root's `install -d` today silently
+    repairs the owner and mode of existing subdirectories. As the service user it
+    cannot take ownership: an existing directory owned by another user fails
+    with `Operation not permitted`, as the probe showed. Turn that into an
+    explicit refusal that names the path and tells the operator to inspect it.
+    Never `chown` it as a repair (point 2). Document this in the README recipe
+    (point 9).
+13. **`restorecon` is the remaining root path operation; resolve it first.**
+    The remaining operations that take paths are `stat`/`chmod` on
+    `$service_home` itself (safe: root owns `/var/lib`, point 7) and the two
+    `restorecon` calls. Expected semantics, to be confirmed on Oracle Linux 9
+    with a short probe before implementation (point 6):
+    - `restorecon -R` walks with `FTS_PHYSICAL`, so links below the starting
+      directory are relabeled as links, not followed. The starting directory is
+      `$service_home`, which the user cannot replace.
+    - For an explicit path, `restorecon` resolves the parent components with
+      `realpath` and does not follow the final component. In
+      `restorecon "$container_home/storage"`, a symlinked `.local`, `share` or
+      `containers` would therefore relabel a host path outside the home, with
+      the default label for that host path.
+    - It is unknown whether `selinux_restorecon` uses full pathnames during the
+      recursive walk (`FTS_NOCHDIR`). If it does, swapping a directory for a link
+      during the walk could apply a home/container label to an outside file.
+      This is the replacement race in point 2 for labels.
+
+    Preferred resolution: run both `restorecon` calls through the same
+    `as_service_user` helper. Setting `security.selinux` requires owning the
+    file (or `CAP_FOWNER`), so a redirected relabel then cannot touch root-owned
+    host files, and the caller's unconfined domain keeps the relabel permission.
+    Probe on OL9:
+    1. that it relabels a normal home, including the storage directory itself,
+       as today;
+    2. that nothing outside `storage` is owned by subordinate IDs, since
+       relabeling such a file as the service user would fail;
+    3. that a planted `.local` link and a mid-walk replacement leave the outside
+       target's label unchanged.
+
+    If any of these fail, keep `restorecon` as root, but only after an
+    `O_NOFOLLOW`/`openat` component check that refuses non-directories or links
+    in `.local/share/containers/storage`. Document the residual race and why it
+    is acceptable, or choose the root `openat` walk from point 5.
+14. **Test placement.** The 8 tests in `tests/platform_tests/test_prepare_host.py`
+    use stubs and run without root. Keep them, and add a static stub test: with
+    `setpriv` and `install` stubbed, every command whose argument is under
+    `$service_home` must run through the helper, and no root `install`,
+    `chown`, `chmod` (except on the home) or `restorecon` may remain on such a
+    path. That is the regression for the mechanism.
+
+    The filesystem proof needs root and a second UID, which `tests/run.py`
+    (`03-unit`, no sudo) does not have. Add a disposable root probe in the style
+    of `acceptance/database_test.py`, for example
+    `acceptance/prepare_host_test.py`, run with `sudo -n` on DEV as an `03-*`
+    step. It creates a temporary system user and a temporary home under
+    `/var/tmp`, executes the real directory/lock block from the script (extract
+    it into a function to make this possible), and removes both afterwards.
+
+    Cases:
+    - fresh setup and repeat;
+    - `.config` link;
+    - `.local` link;
+    - nested `.config/cni` link;
+    - intermediate `net.d` link;
+    - final-component dangling lock link;
+    - a root-owned existing subdirectory (refusal).
+
+    For each refusal, assert the outside target's owner, mode and contents are
+    unchanged and that the later steps did not run.
+
+    Replacement-race regression: a PATH shim for `install` that, as the service
+    user, swaps the next directory for a link to the outside target and then
+    executes the real binary. It must leave the target unchanged. This makes the
+    race deterministic without timing loops. It must run on Python 3.6 and stay
+    within the 03 step's time budget.
+15. **Lab acceptance.** Add the malicious step from point 8 as a PROD step after
+    the normal installation (before `07-persistent-before`, or as a separate
+    focused scenario if it would disturb the persistent comparison). Afterwards
+    the existing restart, reboot, persistent-state and upgrade steps serve as the
+    normal-repeat check. Compare the outside target's SELinux label with
+    `stat -c %C` before and after.
+16. **Review guide.** Add items 46 and 54 to the known-gap table in
+    `docs/REVIEW_GUIDE.md` now. Mark 46 resolved there only with lab evidence
+    from the current change.
+
+Related, but owned by item 54 and out of scope here: the README's
+`sudoedit "/var/lib/$product_name/$bundle/config.yaml"`, and root `sha256sum` and
+`fapolicyd-cli` on the service-writable release tree. Prefer `sudoedit -u
+"$product_name"` there. Do not change these in item 46.
 
 ### Done when
 
