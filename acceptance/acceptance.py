@@ -379,6 +379,13 @@ class Run:
                 self.host("PROD") + ":" + base + "/generate-certificates.sh",
             ]
         )
+        self.command(
+            SCP
+            + [
+                str(ROOT / "acceptance/prepare_host_test.py"),
+                self.host("PROD") + ":" + base + "/prepare_host_test.py",
+            ]
+        )
         # The archive, its checksum and its signature, then the lab build's
         # public key: PROD trusts only that key (backlog 38).
         for source, name in [
@@ -797,6 +804,7 @@ class Run:
             self.step("01-reset-" + role.lower(), lambda r=role: self.reset(r))
         self.step("02-isolate-prod", lambda: self.guest("PROD", "isolate"))
         self.step("03-source", self.source)
+        self.step("03-host-path-safety", lambda: self.guest("DEV", "host-path-safety"))
         if self.renamed_product:
             self.execute_renamed()
             return
@@ -862,6 +870,11 @@ class Run:
                 lambda b=bundle: self.guest("PROD", "install", bundle=b),
             )
             self.step("06-healthy-" + bundle, lambda: self.guest("PROD", "health"))
+        self.step(
+            "07-host-path-safety",
+            lambda: self.guest("PROD", "host-path-safety", bundle="help"),
+        )
+        self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         if self.platform_help_only:
             self.step(
                 "07-proxy-help-without-identity",
@@ -954,6 +967,11 @@ class Run:
                 lambda n=name: self.guest("PROD", "install", bundle=n),
             )
             self.step("06-healthy-" + name, lambda: self.guest("PROD", "health"))
+        self.step(
+            "07-host-path-safety",
+            lambda: self.guest("PROD", "host-path-safety", bundle="gateway"),
+        )
+        self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         self.step("07-init-check", lambda: self.guest("PROD", "renamed-init-check"))
         self.step("08-credentials", lambda: self.credentials("login-service"))
         self.step("08-e2e", lambda: self.guest("DEV", "renamed-e2e"))

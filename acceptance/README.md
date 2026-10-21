@@ -489,6 +489,35 @@ pyright acceptance/ dev/smoke-test.py
 The 141 local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
 
+## Host preparation boundary (backlog 46)
+
+`03-host-path-safety` runs before product-specific scenarios on DEV. With
+`sudo -n`, the guest executes `prepare_host_test.py` on stdin. It creates a
+uniquely named temporary system account and home under `/var/tmp`, records the
+real service helper's UID/GID slots, groups, capabilities and SELinux context,
+requires deliberately wrong types on owned config/storage directories to be
+restored to their default types while a file inside storage keeps its label,
+and checks fresh/repeated preparation, planted directory/lock links, foreign
+ownership, deterministic directory replacement and relabel redirection against
+disposable root-owned targets. Both non-writable and writable root-owned file
+targets retain their bytes, modes, ownership and labels. Cleanup deletes only
+the created probe account and disposable fixture tree.
+
+`07-host-path-safety` on PROD runs after installation and before persistent
+baselines (also for renamed `shop`). It temporarily replaces managed CNI paths
+with disposable links as the service user, requires the complete host script to
+refuse them, restores each path, and runs a normal complete preparation. Container
+IDs, volume identities and selected storage/volume labels must remain unchanged;
+`07-healthy-host-repeat` then checks the real running consumers. The helper is
+transferred separately from product bundles. Normal restart/reboot/data/upgrade
+checks follow in the existing scenarios.
+
+These are malicious tests for the runner's resettable lab, not a production
+recovery command. The probe requires SELinux Enforcing and will not substitute
+mocked labels or silently skip a missing prerequisite. Current-change real lab
+results are pending; commands and evidence boundaries are in
+[PREPARE-HOST.md](PREPARE-HOST.md).
+
 ## Registry source acceptance
 
 `03-build-images` builds local demo images using their manifest tags;

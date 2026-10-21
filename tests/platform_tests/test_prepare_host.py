@@ -33,8 +33,7 @@ semanage() {
     correct=1
 }
 id() { echo myproduct; }
-install() { echo "install $*"; }
-restorecon() { echo "restorecon $*"; }
+prepare_service_home() { echo "prepare_service_home"; }
 """
         settings = f"old={int(old)}; correct={int(correct)}; conflict={int(conflict)}\n"
         return subprocess.run(
@@ -45,7 +44,7 @@ restorecon() { echo "restorecon $*"; }
             universal_newlines=True,
         )
 
-    def test_fresh_rule_added_once_before_restorecon(self):
+    def test_fresh_rule_added_once_before_home_preparation(self):
         result = self.run_labels()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout.count("semanage fcontext -a"), 1)
@@ -54,20 +53,10 @@ restorecon() { echo "restorecon $*"; }
             result.stdout,
         )
         self.assertLess(
-            result.stdout.index("install -d"), result.stdout.index("restorecon")
+            result.stdout.index("fcontext -a"),
+            result.stdout.index("prepare_service_home"),
         )
-        outside = "restorecon -R -e /var/lib/myproduct/.local/share/containers/storage /var/lib/myproduct"
-        storage = "restorecon /var/lib/myproduct/.local/share/containers/storage"
-        calls = [
-            line
-            for line in result.stdout.splitlines()
-            if line.startswith("restorecon ")
-        ]
-        self.assertEqual(calls, [outside, storage] * 2)
-        self.assertIn(
-            "install -d -m 0700 -o myproduct -g myproduct /var/lib/myproduct/.config/containers/systemd",
-            result.stdout,
-        )
+        self.assertEqual(result.stdout.count("prepare_service_home"), 2)
 
     def test_old_home_rule_requires_manual_removal(self):
         result = self.run_labels(old=True)
@@ -76,6 +65,7 @@ restorecon() { echo "restorecon $*"; }
         self.assertIn("Remove it manually", result.stdout)
         self.assertNotIn("fcontext -d", result.stdout)
         self.assertNotIn("restorecon", result.stdout)
+        self.assertNotIn("prepare_service_home", result.stdout)
 
     def test_existing_rule_is_not_added_again(self):
         result = self.run_labels(correct=True)
@@ -86,6 +76,115 @@ restorecon() { echo "restorecon $*"; }
         result = self.run_labels(conflict=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("restorecon", result.stdout)
+        self.assertNotIn("prepare_service_home", result.stdout)
+
+
+class HostBoundaryTests(unittest.TestCase):
+    """The real shell functions delegate every descendant mutation unprivileged."""
+
+    def run_home(self, failure=0):
+        script = Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            helper = Path(directory) / "helper.py"
+            helper.write_text("# trusted code supplied on stdin\n")
+            return subprocess.run(
+                [
+                    "bash",
+                    "-eu",
+                    "-c",
+                    r"""
+source "$1"
+service_uid=12345
+service_gid=12346
+service_home=/var/lib/svc-orders
+container_home=$service_home/.local/share/containers
+home_helper=$2
+calls=0
+failure=$3
+# The function's arguments are independent of this shell's positional args.
+setpriv() {
+    calls=$((calls + 1))
+    printf '%s\n' "setpriv $*"
+    [[ $calls != "$failure" ]]
+}
+prepare_service_home
+echo later-host-actions
+""",
+                    "probe",
+                    str(script),
+                    str(helper),
+                    str(failure),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                check=False,
+            )
+
+    def test_all_home_commands_drop_identity_groups_and_capabilities(self):
+        result = self.run_home()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        lines = result.stdout.splitlines()
+        prefix = (
+            "setpriv --reuid=12345 --regid=12346 --clear-groups "
+            "--inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- "
+        )
+        self.assertEqual(
+            lines,
+            [
+                prefix + "python3 -B - /var/lib/svc-orders",
+                prefix
+                + "restorecon -R -e /var/lib/svc-orders/.local/share/containers/storage /var/lib/svc-orders",
+                prefix
+                + "restorecon /var/lib/svc-orders/.local/share/containers/storage",
+                "later-host-actions",
+            ],
+        )
+
+    def test_each_failure_stops_without_root_retry_or_later_actions(self):
+        for failure in (1, 2, 3):
+            with self.subTest(failure=failure):
+                result = self.run_home(failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout.count("setpriv --"), failure)
+                self.assertIn("inspect /var/lib/svc-orders", result.stdout)
+                self.assertNotIn("later-host-actions", result.stdout)
+
+    def test_home_link_is_refused_before_root_chmod(self):
+        script = (
+            Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+        ).read_text()
+        block = script[
+            script.index("# /var/lib is the root-controlled anchor.") : script.index(
+                "# Keep ID mappings"
+            )
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            outside = base / "outside"
+            outside.mkdir(mode=0o755)
+            home = base / "home"
+            home.symlink_to(outside)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-eu",
+                    "-c",
+                    'service_home=$1\nservice_uid=$2\nuser=svc\ndie() { echo "ERROR: $*"; exit 1; }\nchmod() { echo privileged-chmod; }\n'
+                    + block,
+                    "probe",
+                    str(home),
+                    str(outside.stat().st_uid),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("symlink home", result.stdout)
+            self.assertNotIn("privileged-chmod", result.stdout)
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o755)
 
 
 class HostPortTests(unittest.TestCase):
@@ -98,6 +197,7 @@ class HostPortTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             release = Path(directory)
             (release / "scripts").mkdir()
+            (release / "scripts/prepare-home.py").write_text("# helper fixture\n")
             if product:
                 # Serialized like bundle.py, which quotes values such as 'on'.
                 (release / "bundle.yaml").write_text(

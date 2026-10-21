@@ -15,8 +15,10 @@ Items 56 and 57 are done: implemented with local tests and a clean real lab
 matrix (`t10`, `cda22e7`). They followed the operator's 2026-10-21 order:
 component-specific dev overrides, then portable references to bundled component
 files. They unblock the organisation's migration/seed setup without leaking
-component-specific declarations into global dev config. Item 46 follows: prevent
-root host preparation from following service-user-controlled symlinks. Items 33 and 34
+component-specific declarations into global dev config. Item 46 is implemented
+with local regressions; its separate-UID OL9/SELinux/fapolicyd gate remains open
+([verification](acceptance/PREPARE-HOST.md)). It prevents privileged host-home
+operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
 Item 54 follows item 46 for release trust; items 48/49 then cover proxy ingress trust and logging; item 50 is
@@ -32,8 +34,9 @@ The order for an offline production deployment of an organisation's own apps:
    in source/dev and an isolated offline release,
    without hand-editing release paths. Separate from the override-layer change.
 3. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
-   protect the root/service-user boundary on repeated host preparation; high
-   priority, conditional on an attacker controlling the service account.
+   implementation complete; real-host verification pending. Protect the
+   root/service-user boundary on repeated host preparation; high priority,
+   conditional on an attacker controlling the service account.
 4. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
@@ -123,7 +126,10 @@ checks are pending ([56](acceptance/COMPONENT-DEV.md),
 [57](acceptance/COMPONENT-FILES.md)). Platform signing tests are blocked by the
 local environment's GPG socket restriction; see the verification reports.
 
-Open: 46 (next implementation priority), 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Update for item 46 (2026-10-21): implemented with local tests; the current-change
+real-host gate is pending ([verification](acceptance/PREPARE-HOST.md)).
+
+Open: 46 (real-host verification), 54 (next implementation priority), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4629,11 +4635,37 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its
 credential-retention, isolation and compatibility contracts and understandability
 review to the privileged host-setup boundary.
 
-Status: planned; high priority. Found in the quick Python/Bash security scan of
-main at `b3f3cf161999ab83be5d596d4ce222bf81712c7d` on 2026-10-19. Implement
-before other new functionality. No fix or real-host exploit verification yet;
-a sandbox probe with a separate UID confirmed the ownership takeover on
-2026-10-21 (see review additions below).
+Status: implemented on 2026-10-21 from `5f720d1`, with local filesystem and shell
+regressions; current-change separate-UID OL9 Enforcing/fapolicyd verification
+remains pending. The safety gate is not closed. See
+[implementation, understandability review and verification](acceptance/PREPARE-HOST.md).
+Found in the quick Python/Bash security scan of main at
+`b3f3cf161999ab83be5d596d4ce222bf81712c7d` on 2026-10-19. A historical sandbox
+probe with a separate UID confirmed the ownership takeover on 2026-10-21
+(see review additions below); that is not proof of the current fix.
+
+Implementation: `as_service_user` drops numeric UID/GID, supplementary groups and
+all capability sets, enables no-new-privileges and wraps both relabel commands.
+`scripts/prepare-home.py` is passed on stdin under that boundary; it checks
+existing managed paths before creating directories through no-follow directory
+descriptors, changes modes through those descriptors and creates the CNI lock
+exclusively. Existing locks are never replaced/truncated, including at a
+creation race. A failure stops before linger/firewall; there is no root repair.
+The `/var/lib` anchor, final home entry, service identity and existing ID ranges
+are checked. No compatibility/migration layer was added.
+
+The automatic acceptance flow now runs a disposable separate-account proof on
+DEV and planted-link/full-repeat checks after installation on PROD, including
+the renamed product. Local harness tests do not replace these real runs. The
+earlier task/review text below records the analysis; the shipped mechanism uses
+descriptor-based Python preparation instead of GNU `install` and injects races
+at descriptor open/chmod boundaries. SELinux probes inject replacement at the
+relabel command boundary; they do not instrument an internal libselinux walk.
+Review follow-up: the ordinary PROD probe explicitly selects the transferred
+`help` bundle, including platform/help-only runs. Shared link-fixture cleanup
+covers partial setup failure after rename, retains unexpected replacements and
+reports the original backup. Regression coverage includes both findings; the
+acceptance harness now has 218 passing tests. The real-host gate remains pending.
 
 ### Finding and evidence
 

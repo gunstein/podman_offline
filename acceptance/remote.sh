@@ -875,6 +875,26 @@ clone)
     ;;
 # The product tests must not see the lab signing key exported above.
 unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py all;;
+host-path-safety)
+    if [[ $role == DEV ]]; then
+        # The operator reads probe code; only its execution needs root.
+        # shellcheck disable=SC2024
+        sudo -n python3 -B - "$src/scripts/prepare-host.sh" < "$src/acceptance/prepare_host_test.py"
+    else
+        cd "$base"
+        archive="$product_name-$bundle-$version-offline.tar.gz"
+        gpgv --keyring "$base/bundle-signing.gpg" "$archive.asc" "$archive"
+        sha256sum -c "$archive.sha256"
+        stage=$(mktemp -d "/tmp/$product_name-host-probe.XXXXXXXX")
+        trap 'rm -rf -- "$stage"' EXIT
+        tar xzf "$archive" -C "$stage"
+        # shellcheck disable=SC2024
+        sudo -n python3 -B - "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" \
+            --installed-user "$product_name" --port "$port" < "$base/prepare_host_test.py"
+        rm -rf -- "$stage"
+        trap - EXIT
+    fi
+    ;;
 identity-template-baseline) cd "$src"; python3 acceptance/identity_template_baseline.py;;
 build-images) cd "$src"; ./dev/build-images.sh;;
 database-runtime)

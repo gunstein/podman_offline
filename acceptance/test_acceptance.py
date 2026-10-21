@@ -1018,6 +1018,33 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
         self.assertEqual(self.harness.guest.call_count, 3)
         self.assertFalse(self.harness.finished)
 
+    def test_platform_help_host_probe_uses_a_transferred_bundle(self):
+        """A minimal run must not request the absent app1 archive for the probe."""
+        self.harness.platform_help_only = True
+        for name in (
+            "readiness",
+            "reset",
+            "source",
+            "record_bundles",
+            "registry_transfer",
+        ):
+            setattr(self.harness, name, mock.Mock())
+        self.harness.transfer = mock.Mock()
+        self.harness.guest = mock.Mock()
+        self.harness.execute()
+        transferred = {
+            call.kwargs["bundle"] for call in self.harness.transfer.call_args_list
+        }
+        self.assertEqual(transferred, {"platform", "help"})
+        probes = [
+            call
+            for call in self.harness.guest.call_args_list
+            if call.args[:2] == ("PROD", "host-path-safety")
+        ]
+        self.assertEqual(len(probes), 1)
+        self.assertIn(probes[0].kwargs.get("bundle", "app1"), transferred)
+        self.assertTrue(self.harness.finished)
+
     def test_full_run_rechecks_after_reboot_and_upgrade(self):
         """Confirm that prod checks are repeated after reboot and upgrade."""
         self.harness.meta["version"] = "0.1.0"
@@ -1108,11 +1135,14 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
         ]
         self.assertEqual(records[records.index("09-crash") :], expected)
         for step in (
+            "03-host-path-safety",
             "03-build-images",
             "03-pull-images",
             "03-registry-test",
             "05-registry-transfer",
             "07-registry-offline",
+            "07-host-path-safety",
+            "07-healthy-host-repeat",
         ):
             self.assertIn(step, records)
         self.assertLess(
@@ -1122,6 +1152,17 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
             records.index("06-install-help"), records.index("07-registry-offline")
         )
         self.assertLess(records.index("07-registry-offline"), records.index("07-check"))
+        self.assertLess(
+            records.index("03-host-path-safety"), records.index("03-build-images")
+        )
+        self.assertLess(
+            records.index("07-host-path-safety"),
+            records.index("07-healthy-host-repeat"),
+        )
+        self.assertLess(
+            records.index("07-healthy-host-repeat"),
+            records.index("07-persistent-before"),
+        )
         self.assertEqual(
             self.harness.guest.call_args_list.count(mock.call("PROD", "check")), 4
         )

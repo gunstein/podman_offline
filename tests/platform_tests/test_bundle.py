@@ -15,6 +15,23 @@ from helpers.catalog_fixture import DEMO
 
 
 class BundleTests(BundleFixture):
+    def test_host_preparation_ships_both_real_helpers_with_checksums(self):
+        source = Path(__file__).resolve().parents[2] / "scripts"
+        for name in ("prepare-host.sh", "prepare-home.py"):
+            (bundle.ROOT / "scripts" / name).write_bytes((source / name).read_bytes())
+        bundle.build()
+        with tarfile.open(
+            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+        ) as archive:
+            checksums = self.archive_bytes(archive, "checksums.sha256").decode()
+            for name in ("prepare-host.sh", "prepare-home.py"):
+                contents = self.archive_bytes(archive, "scripts/" + name)
+                self.assertEqual(contents, (source / name).read_bytes())
+                self.assertIn(
+                    hashlib.sha256(contents).hexdigest() + "  scripts/" + name,
+                    checksums,
+                )
+
     def test_build_contents_modes_ownership_and_all_checksums(self):
         bundle.build()
         path = bundle.DIST / "myproduct-1.2.3-offline.tar.gz"

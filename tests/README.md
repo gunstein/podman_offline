@@ -65,9 +65,26 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory: 363
-platform tests and 65 demo tests (428 unique tests), plus 206 separate
+renamed-inventory regressions protect the separation. Current inventory: 378
+platform tests and 65 demo tests (443 unique tests), plus 218 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
+
+# Host preparation boundary (backlog 46)
+
+`test_prepare_host.py` covers argument/product behavior, SELinux-rule ordering,
+the real shell helper's privilege-drop arguments, failure stopping and refusal
+of a symlink home before root chmod. `test_prepare_home.py` exercises the actual
+helper on disposable filesystem trees: all managed directory links, dangling
+links, special/wrong-owner objects, retained CNI lock bytes/inode, atomic lock
+creation races, directory replacement before open and after open, and retry.
+`test_bundle.py` checks that both actual runtime helpers ship with checksums.
+These tests need neither root nor SELinux. The CLI refuses root; unit tests call
+the filesystem function on trees owned by the current test identity.
+
+The separate acceptance probe records and checks real dropped identities,
+groups, capabilities and SELinux context, then tests malicious outside targets
+and repeat preparation on the resettable lab. See
+[verification and outstanding lab gates](../acceptance/PREPARE-HOST.md).
 
 # Component dev configuration (backlog 56)
 
@@ -269,10 +286,10 @@ Current local check entry points:
 ```sh
 python3 -B tests/run.py all
 python3 -B -m unittest discover -s acceptance -p 'test_*.py'
-ruff check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
-ruff format --check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
-pyright deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
-vermin -t=3.6- deployment/ bundle.py tests/
+ruff check deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/ dev/smoke-test.py
+ruff format --check deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/ dev/smoke-test.py
+pyright deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/ dev/smoke-test.py
+vermin -t=3.6- deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/prepare_host_test.py
 shellcheck deploy build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
 ```
 

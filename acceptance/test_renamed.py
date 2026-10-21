@@ -506,8 +506,9 @@ class ScenarioTests(unittest.TestCase):
         sources = [call.args[0][-2] for call in harness.command.call_args_list]
         # Demo provisioning travels separately; product bundles do not carry it.
         self.assertTrue(sources[0].endswith("/dev/generate-certificates.sh"))
+        self.assertTrue(sources[1].endswith("/acceptance/prepare_host_test.py"))
         self.assertTrue(
-            sources[1].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
+            sources[2].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
         )
         harness.guest.assert_called_once_with(
             "PROD", "unpack", "0.4.7", bundle="gateway"

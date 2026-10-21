@@ -4,6 +4,26 @@ set -euo pipefail
 umask 077
 # Show an explanatory host error and stop the preparation.
 die() { echo "ERROR: $*" >&2; exit 1; }
+# Below the home, path checks are diagnostics, not a root security boundary.
+# Drop all discretionary authority before resolving any user-replaceable path.
+as_service_user() {
+    setpriv --reuid="$service_uid" --regid="$service_gid" --clear-groups \
+        --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- "$@"
+}
+# Also used by the disposable acceptance probe; source this trusted script to
+# load the functions without running host-wide setup.
+prepare_service_home() {
+    # Read trusted helper code as root: a staged release may be in a 0700 folder.
+    # Python itself runs unprivileged and receives code on stdin (no new RPMs).
+    as_service_user python3 -B - "$service_home" < "$home_helper" \
+        || die "Service-home preparation failed; inspect $service_home before retrying"
+    # Never retry these operations as root. Preserve runtime labels in storage.
+    as_service_user restorecon -R -e "$container_home/storage" "$service_home" \
+        || die "Service-home relabeling failed; inspect $service_home before retrying"
+    as_service_user restorecon "$container_home/storage" \
+        || die "Storage-directory relabeling failed; inspect $service_home before retrying"
+}
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
 [[ $EUID == 0 ]] || die "Run sudo bash scripts/prepare-host.sh --port <1024-65535> [--user <service user>]"
 # Arguments: --port <1024-65535> [--user <service user>].
 usage="Use --port <integer 1024-65535> [--user <service user>]"
@@ -30,7 +50,9 @@ done
 [[ $port -ge 1024 && $port -le 65535 ]] || die "The port must be 1024-65535"
 # Same rule as the product name: a portable Linux user name.
 [[ $user =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]] || die "Invalid service user ${user@Q}; use lowercase letters, digits and inner hyphens, a letter first, at most 32 characters"
-for command in python3 useradd usermod semanage restorecon loginctl firewall-cmd newuidmap newgidmap install; do
+home_helper="$release/scripts/prepare-home.py"
+[[ -f $home_helper ]] || die "Missing service-home helper $home_helper"
+for command in python3 useradd usermod semanage restorecon loginctl firewall-cmd newuidmap newgidmap setpriv; do
     command -v "$command" >/dev/null || die "Missing $command"
 done
 [[ $(getenforce) == Enforcing ]] || die "SELinux must be Enforcing"
@@ -46,13 +68,22 @@ if [[ -r $fapolicyd_conf ]]; then
     fi
 fi
 service_home=/var/lib/$user
+# Check the trusted anchor before useradd can create anything beneath it.
+[[ ! -L /var/lib && -d /var/lib && $(stat -c %u /var/lib) == 0 && $(stat -c %a /var/lib) =~ ^[57][015][015]$ ]] \
+    || die "/var/lib must be a root-owned directory without group/other write access"
 if ! getent passwd "$user" >/dev/null; then
     useradd --system --create-home --home-dir "$service_home" --shell /sbin/nologin "$user"
 fi
 # An existing account is never redefined and its data is never moved.
 [[ $(getent passwd "$user" | cut -d: -f6) == "$service_home" ]] || die "$user must have home $service_home"
 [[ $(getent passwd "$user" | cut -d: -f7) == /sbin/nologin ]] || die "$user must have shell /sbin/nologin"
-[[ $(stat -c %u "$service_home") == "$(id -u "$user")" ]] || die "The home $service_home must be owned by $user"
+service_uid=$(id -u "$user")
+service_gid=$(id -g "$user")
+[[ $service_uid != 0 && $service_gid != 0 ]] || die "The service account must not use root UID or GID"
+# /var/lib is the root-controlled anchor. The service user cannot replace this
+# final home entry; descendants remain untrusted even after a successful check.
+[[ ! -L $service_home && -d $service_home ]] || die "Inspect non-directory or symlink home $service_home"
+[[ $(stat -c %u "$service_home") == "$service_uid" ]] || die "The home $service_home must be owned by $user"
 chmod 0700 "$service_home"
 # Keep ID mappings for existing volumes; users must not overlap.
 read -r uid_range gid_range < <(python3 - "$user" <<'PY'
@@ -101,19 +132,8 @@ done <<< "$equivalences"
 if ! grep -Fqx "$expected" <<< "$equivalences"; then
     semanage fcontext -a -e /var/lib/containers "$container_home"
 fi
-# Creating these first stops Podman from creating config directories with a runtime type.
-for directory in .local .local/share .local/share/containers .local/share/containers/storage \
-    .config .config/cni .config/cni/net.d .config/containers .config/containers/systemd; do
-    install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$service_home/$directory"
-done
-# The CNI lock is also opened during backend initialization. Create it first without
-# truncating an existing lock, so Podman does not create it with a runtime type.
-if [[ ! -e $service_home/.config/cni/net.d/cni.lock ]]; then
-    install -m 0600 -o "$user" -g "$(id -gn "$user")" /dev/null "$service_home/.config/cni/net.d/cni.lock"
-fi
-# Podman's runtime labels in populated storage must survive a repeated preparation.
-restorecon -R -e "$container_home/storage" "$service_home"
-restorecon "$container_home/storage"
+# Pre-create directories/lock so Podman does not create them with a runtime type.
+prepare_service_home
 loginctl enable-linger "$user"
 firewall-cmd --permanent --add-port="$port/tcp"
 firewall-cmd --reload

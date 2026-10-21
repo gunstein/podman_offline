@@ -821,8 +821,9 @@ remain subject to [target verification](acceptance/CREDENTIAL-DELIVERY.md).
 Certificate preparation is a separate operator step before `deploy install`.
 The demo uses `dev/generate-certificates.sh --root /var/lib/myproduct
 <component> <DNS-hostname>`; see the complete commands below. It is demo
-provisioning and is not part of the product bundles (which ship only
-`scripts/prepare-host.sh`); copy it from the source checkout to the target and
+provisioning and is not part of the product bundles (which ship the host setup
+helpers `scripts/prepare-host.sh` and `scripts/prepare-home.py`); copy it from
+the source checkout to the target and
 run it on stdin. The script creates
 a shared demo CA under `PKI/private/` and missing component certificate/key pairs.
 Run credential provisioning explicitly before `dev/dev.sh up`; the generic dev
@@ -950,6 +951,23 @@ the normal home uses Podman's [troubleshooting guide, point 11](https://github.c
 Unexpected existing equivalences fail instead of being deleted automatically.
 Recursive restorecon excludes storage; only the storage directory itself is
 restored nonrecursively. Never run recursive or force restorecon on filled storage.
+
+Host preparation can be repeated after an interrupted preparation or to open a
+new HTTPS port (it does not close previously opened ports). Keep both host setup
+helpers together in the verified release. Below the home, directory/lock creation
+and both `restorecon` operations run as the service UID/GID through RPM-provided
+`setpriv` (util-linux), with no supplementary groups or capabilities and with
+privilege acquisition disabled. Managed directory paths and the CNI lock refuse
+symbolic links, wrong object types and objects owned by another account. Existing
+regular CNI locks are preserved without replacement or truncation.
+
+If preparation refuses a path or cannot relabel it, inspect the named path before
+retrying. There is no automatic root ownership repair or root relabel fallback.
+Earlier valid steps can remain after failure; retry after correcting the unsafe
+condition. If the service account is suspected compromised, inspect its home
+before rerunning host preparation. This limits host-preparation authority; it is
+not recovery from a compromised account. The current change's OL9 Enforcing and
+fapolicyd checks are still pending; see [verification](acceptance/PREPARE-HOST.md).
 
 Use these helpers for subsequent commands:
 
