@@ -5237,6 +5237,13 @@ item 57, but keep the two changes independently reviewable.
 Status: planned; high priority, first in the implementation queue by explicit
 operator request on 2026-10-21. No component-local dev override file is read today.
 
+Operator clarification (2026-10-21), applying to items 56 and 57: existing
+installations may be discarded. Start verification with a fresh installation and
+newly initialized config; do not add migration code, compatibility fallbacks or
+manual config-transition steps for installations predating these features.
+Preservation and upgrade checks within the new model still apply, including
+item 57's newer-bundle test with unchanged persistent config.
+
 ### Problem and intended behavior
 
 `config/dev.yaml` applies to every component. Placing Identity-specific
@@ -5264,8 +5271,11 @@ migration init-container, independently of unrelated components and production.
    implementation with different precedence. Preserve generated credentials and
    database-volume guards when overrides change.
 4. Never read this layer during production init-config, validate or install, and
-   never package it or its local content in release bundles. Keep generated
-   `build/dev/<id>/config.yaml` an output, not an additional input layer.
+   never package the override file or collect external local files merely because
+   it references them. The component's existing `files/` packaging rule still
+   applies: non-secret demo files there ship even when only dev config selects
+   them (see item 57). Keep generated `build/dev/<id>/config.yaml` an output, not
+   an additional input layer.
 5. Document the file, precedence, whole-map replacement and a renamed component
    example. Relative file sources still resolve against `build/dev/<id>/` under
    today's rules, not against the new override file. Clearly distinguish this
@@ -5288,6 +5298,13 @@ Code facts and decisions from the review; they refine the task above.
   checkout, so the demo override must be tracked. It must never contain secret
   values; secrets stay in `credentials/` files. `config/dev.yaml` stays local
   and ignored.
+- **Local override consequence.** With the chosen precedence, the tracked
+  component dev file wins over the developer's ignored `config/dev.yaml`.
+  Document that a developer cannot change a key supplied there through the global
+  file; a machine-specific adjustment requires editing the tracked component
+  file. Avoid committing machine-specific absolute paths in shared examples;
+  use item 57's portable references for shipped files. Keep the specified order
+  and do not silently introduce another local layer.
 - **Shared settings are not silently ignored.** A `public_from` dependent must not
   set a shared key (`PUBLIC_ORIGIN`, `HTTPS_PORT`, the owner's `shares`) in its
   `config.dev.yaml`: the owner's value is applied afterwards, so the local value
@@ -5337,6 +5354,9 @@ follow-up to item 56; a separate feature, not an implicit part of its merge rule
 Status: planned; high priority, second in the implementation queue by explicit
 operator request on 2026-10-21. Component `files/` is already packaged, but there
 is no explicit portable component-file source reference today.
+
+The operator clarification in item 56 applies: no transition from pre-feature
+installations is required. Test upgrades between releases of the new model.
 
 ### Problem and intended behavior
 
@@ -5414,6 +5434,29 @@ Code facts and decisions from the review; they refine the task above.
   for validate and install alike. No release path is stored in config. Refuse the
   reference when there is no component context (standalone fixtures), and as a
   database password source or any generated credential.
+- **Bundle guard and Secret delivery.** `bundle.generated_secret_guard()` currently
+  excludes all declared `SECRET_FILES` sources from bundles, even without
+  `generate`. Merely using the new resolver there would therefore reject an
+  intentional bundled source. Define `component_file` in `SECRET_FILES` as an
+  explicit declaration of shipped, non-secret content delivered through a Secret;
+  it does not make the bundle a safe place for credentials. Permit this source
+  kind without weakening the guard for ordinary private paths, generated files,
+  credential directories or aliases. Test both successful archive inclusion and
+  continued refusal when a file is also protected by a private declaration.
+- **Recursive source checks.** If a component-file reference selects a directory,
+  inspect all descendants, not only its root. `write_file_archives()` currently
+  uses `dereference=True`, so an unchecked nested symlink could copy data outside
+  the component. Reject symlinks and unsupported special files throughout the
+  selected tree before generation or archive writes, using the same checks for
+  validate and materialization. Cover a deeply nested escaping link, a symlinked
+  ancestor and a special file without reading its contents. Preserve existing
+  ordinary `path` semantics; apply the new confinement rules to `component_file`.
+- **Dev selection versus bundle contents.** `bundle.py` copies the whole component
+  `files/` tree. Consequently `files/sql-dev/900-dev-sample.sql` is included in the
+  production bundle, even though production config does not select it for
+  delivery or execution. Document and test that distinction; only harmless demo
+  content belongs there. Excluding `config.dev.yaml` does not exclude files it
+  references under `files/`, and these items add no selective packaging mechanism.
 - **Stale files.** Because Podman keeps unlisted files in an imported volume, a file
   removed from a later release still exists there. The demo makes every SQL file
   idempotent; document the limitation for the organisation's own migrations. No
@@ -5431,6 +5474,15 @@ Code facts and decisions from the review; they refine the task above.
   from the mounted file into `PGPASSWORD` inside the container and is never
   printed. No new image or app rebuild; todo data, probes and app2 unchanged;
   update demo inventory counts intentionally.
+- **SQL failure and retry.** The app1 pod already declares init-container type
+  `always`; seeding must tolerate restart and repeated installation. Add a focused
+  runnable Podman check that fails a SQL step after an earlier step succeeds,
+  verifies startup is not reported as successful, then retries with corrected
+  input and verifies no lost Todo data or duplicate seed rows. Add harness
+  regressions for false success and report actual runtime execution separately.
+  `ON_ERROR_STOP` stops processing but does not roll back earlier committed
+  statements: use idempotent demo SQL and explain its transaction boundaries,
+  without promising automatic migration rollback or adding a migration engine.
 - **Acceptance.** DEV after dev-up: `demo_seed` has `reference` and `dev-sample`
   (query in the app1 postgres container, print only these rows). PROD after
   install: `reference` present, `dev-sample` absent. App1 upgrade in both app1-first
