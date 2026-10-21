@@ -888,9 +888,10 @@ host-path-safety)
         stage=$(mktemp -d "/tmp/$product_name-host-probe.XXXXXXXX")
         trap 'rm -rf -- "$stage"' EXIT
         tar xzf "$archive" -C "$stage"
-        # shellcheck disable=SC2024
-        sudo -n python3 -B - "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" \
-            --installed-user "$product_name" --port "$port" < "$base/prepare_host_test.py"
+        # A pipe, not a .py file: fapolicyd denies opening untrusted Python files.
+        gzip -dc "$base/prepare_host_test.py.gz" \
+            | sudo -n python3 -B - "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" \
+                --installed-user "$product_name" --port "$port"
         rm -rf -- "$stage"
         trap - EXIT
     fi

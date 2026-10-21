@@ -822,7 +822,7 @@ Certificate preparation is a separate operator step before `deploy install`.
 The demo uses `dev/generate-certificates.sh --root /var/lib/myproduct
 <component> <DNS-hostname>`; see the complete commands below. It is demo
 provisioning and is not part of the product bundles (which ship the host setup
-helpers `scripts/prepare-host.sh` and `scripts/prepare-home.py`); copy it from
+helper `scripts/prepare-host.sh`); copy it from
 the source checkout to the target and
 run it on stdin. The script creates
 a shared demo CA under `PKI/private/` and missing component certificate/key pairs.

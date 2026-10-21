@@ -181,8 +181,9 @@ class HostProbeTests(unittest.TestCase):
             probe.check_authority(self.authority(), 0, 456)
 
     def test_controlled_replacement_executes_real_helper_for_both_boundaries(self):
-        script = Path(__file__).resolve().parent.parent / "scripts/prepare-home.py"
-        code = probe.RACE.replace("__HELPER_SOURCE__", repr(script.read_text()))
+        script = Path(__file__).resolve().parent.parent / "scripts/prepare-host.sh"
+        source = probe.helper_source(script)
+        code = probe.RACE.replace("__HELPER_SOURCE__", repr(source))
         for phase in ("before-open", "after-open", "lock-file", "lock-link"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
                 base = Path(directory)
@@ -195,7 +196,7 @@ class HostProbeTests(unittest.TestCase):
                 # refuses root, while this harness may run under the current UID.
                 initialize = (
                     'namespace={"__name__":"fixture"}\nexec('
-                    + repr(script.read_text())
+                    + repr(source)
                     + ', namespace)\nnamespace["prepare"]('
                     + repr(str(home))
                     + ")\n"
@@ -287,7 +288,6 @@ class HostProbeTests(unittest.TestCase):
                 123,
                 456,
                 Path("/var/lib/svc-orders"),
-                Path("/trusted/scripts/prepare-home.py"),
                 "with space",
             ],
         )

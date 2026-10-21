@@ -3,6 +3,7 @@
 
 import argparse
 import datetime
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -379,12 +380,17 @@ class Run:
                 self.host("PROD") + ":" + base + "/generate-certificates.sh",
             ]
         )
+        # Compressed: PROD's fapolicyd denies every process opening an untrusted
+        # Python file (%languages), including scp overwriting it. remote.sh
+        # pipes the decompressed probe to python3 instead of opening a .py file.
+        probe = self.folder / "prepare_host_test.py.gz"
+        probe.write_bytes(
+            gzip.compress(
+                (ROOT / "acceptance/prepare_host_test.py").read_bytes(), mtime=0
+            )
+        )
         self.command(
-            SCP
-            + [
-                str(ROOT / "acceptance/prepare_host_test.py"),
-                self.host("PROD") + ":" + base + "/prepare_host_test.py",
-            ]
+            SCP + [probe, self.host("PROD") + ":" + base + "/prepare_host_test.py.gz"]
         )
         # The archive, its checksum and its signature, then the lab build's
         # public key: PROD trusts only that key (backlog 38).

@@ -19,7 +19,7 @@ build entrypoint and also uses `-B`.
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
-| `scripts/prepare-host.sh`, `scripts/prepare-home.py` | Explicit root host setup; drop to the service UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. The Python helper uses directory descriptors and exclusive lock creation; it does not inspect application data. |
+| `scripts/prepare-host.sh` | Explicit root host setup; drop to the service UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. Its embedded Python helper (a here-document, because fapolicyd denies reading untrusted Python files before trust) uses directory descriptors and exclusive lock creation; it does not inspect application data. |
 
 `common.ROOT` is the directory above the package, both in source and unpacked
 bundles. `common.HOME` follows the service account's user-database home. There

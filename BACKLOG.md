@@ -4646,7 +4646,9 @@ probe with a separate UID confirmed the ownership takeover on 2026-10-21
 
 Implementation: `as_service_user` drops numeric UID/GID, supplementary groups and
 all capability sets, enables no-new-privileges and wraps both relabel commands.
-`scripts/prepare-home.py` is passed on stdin under that boundary; it checks
+The Python helper is embedded in `prepare-host.sh` as a here-document and is
+passed on stdin under that boundary. A shipped `.py` file would be denied by
+fapolicyd before release trust (lab run `h46b-platform`). The helper checks
 existing managed paths before creating directories through no-follow directory
 descriptors, changes modes through those descriptors and creates the CNI lock
 exclusively. Existing locks are never replaced/truncated, including at a

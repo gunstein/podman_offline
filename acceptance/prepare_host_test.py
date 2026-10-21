@@ -111,6 +111,13 @@ def command(arguments, code=None, check=True):
     return result
 
 
+def helper_source(script):
+    """The Python helper embedded in prepare-host.sh as a quoted here-document."""
+    text = script.read_text()
+    start = text.index("<<'PREPARE_HOME'")
+    return text[text.index("\n", start) + 1 : text.index("\nPREPARE_HOME\n", start) + 1]
+
+
 def shell(script, uid, gid, home, body, code=None, arguments=(), check=True):
     """Load trusted shell functions, passing every runtime parameter explicitly."""
     program = (
@@ -119,8 +126,7 @@ service_uid=$2
 service_gid=$3
 service_home=$4
 container_home=$service_home/.local/share/containers
-home_helper=$5
-shift 5
+shift 4
 """
         + body
     )
@@ -135,7 +141,6 @@ shift 5
             uid,
             gid,
             home,
-            script.with_name("prepare-home.py"),
         ]
         + list(arguments),
         code,
@@ -379,7 +384,7 @@ def disposable(script, base):
         for phase in ("before-open", "after-open", "lock-file", "lock-link"):
             code = RACE.replace(
                 "__HELPER_SOURCE__",
-                repr(script.with_name("prepare-home.py").read_text()),
+                repr(helper_source(script)),
             )
             as_user(
                 script,
@@ -389,7 +394,7 @@ def disposable(script, base):
                     "python3",
                     "-B",
                     "-",
-                    script.with_name("prepare-home.py"),
+                    script,
                     home,
                     outside,
                     phase,
@@ -527,8 +532,7 @@ def main():
         else:
             stage = base / "scripts"
             stage.mkdir()
-            for name in ("prepare-host.sh", "prepare-home.py"):
-                shutil.copyfile(str(script.with_name(name)), str(stage / name))
+            shutil.copyfile(str(script), str(stage / "prepare-host.sh"))
             disposable(stage / "prepare-host.sh", base)
 
 

@@ -74,10 +74,15 @@ acceptance-harness tests. Inventory counts do not imply real runtime verificatio
 `test_prepare_host.py` covers argument/product behavior, SELinux-rule ordering,
 the real shell helper's privilege-drop arguments, failure stopping and refusal
 of a symlink home before root chmod. `test_prepare_home.py` exercises the actual
-helper on disposable filesystem trees: all managed directory links, dangling
+helper, extracted from its here-document in `prepare-host.sh`, on disposable
+filesystem trees: all managed directory links, dangling
 links, special/wrong-owner objects, retained CNI lock bytes/inode, atomic lock
 creation races, directory replacement before open and after open, and retry.
-`test_bundle.py` checks that both actual runtime helpers ship with checksums.
+It also guards fapolicyd delivery: host preparation references no `.py` file,
+`scripts/` ships only `prepare-host.sh`, and bash passes the embedded helper
+through a pipe (a large here-document would fall back to a temporary file that
+fapolicyd checks). `test_bundle.py` checks that the actual helper ships with its
+checksum.
 These tests need neither root nor SELinux. The CLI refuses root; unit tests call
 the filesystem function on trees owned by the current test identity.
 
@@ -286,10 +291,10 @@ Current local check entry points:
 ```sh
 python3 -B tests/run.py all
 python3 -B -m unittest discover -s acceptance -p 'test_*.py'
-ruff check deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/ dev/smoke-test.py
-ruff format --check deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/ dev/smoke-test.py
-pyright deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/ dev/smoke-test.py
-vermin -t=3.6- deployment/ bundle.py scripts/prepare-home.py tests/ acceptance/prepare_host_test.py
+ruff check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
+ruff format --check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
+pyright deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
+vermin -t=3.6- deployment/ bundle.py tests/ acceptance/prepare_host_test.py
 shellcheck deploy build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
 ```
 

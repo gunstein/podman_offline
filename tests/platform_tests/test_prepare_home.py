@@ -1,20 +1,29 @@
 """Real disposable filesystem tests; separate-UID/SELinux proof lives in acceptance."""
 
-import importlib.util
 import os
 import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts/prepare-home.py"
-SPEC = importlib.util.spec_from_file_location("prepare_home", str(SCRIPT))
-assert SPEC is not None and SPEC.loader is not None
-HOME = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(HOME)
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+# Upper bound for passing the here-document through a pipe on Linux bash builds.
+PIPE_LIMIT = 16384
+
+
+def helper_source():
+    """The Python helper embedded in prepare-host.sh as a quoted here-document."""
+    text = SCRIPT.read_text()
+    start = text.index("<<'PREPARE_HOME'")
+    return text[text.index("\n", start) + 1 : text.index("\nPREPARE_HOME\n", start) + 1]
+
+
+HOME = types.ModuleType("prepare_home")
+exec(compile(helper_source(), str(SCRIPT), "exec"), HOME.__dict__)  # noqa: S102 - trusted repository code
 
 
 class HomeFilesystemTests(unittest.TestCase):
@@ -188,9 +197,10 @@ class HomeFilesystemTests(unittest.TestCase):
                 HOME.main()
         self.assertFalse((self.home / ".config").exists())
 
-    def test_python_command_does_not_write_bytecode(self):
+    def test_python_command_on_stdin_does_not_write_bytecode(self):
         result = subprocess.run(
-            [sys.executable, "-B", str(SCRIPT)],
+            [sys.executable, "-B", "-"],
+            input=helper_source(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
@@ -198,3 +208,37 @@ class HomeFilesystemTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("non-root", result.stderr)
+
+
+class FapolicydDeliveryTests(unittest.TestCase):
+    """fapolicyd denies reading untrusted Python files before a release is trusted."""
+
+    def test_host_preparation_reads_no_shipped_python_file(self):
+        shell = SCRIPT.read_text().replace(helper_source(), "")
+        code = [
+            line for line in shell.splitlines() if not line.lstrip().startswith("#")
+        ]
+        self.assertEqual([line for line in code if ".py" in line], [])
+        self.assertEqual(
+            sorted(path.name for path in SCRIPT.parent.iterdir()), ["prepare-host.sh"]
+        )
+
+    def test_embedded_helper_fits_a_pipe(self):
+        """Larger here-documents fall back to a temporary file that fapolicyd checks."""
+        self.assertLess(len(helper_source().encode()), PIPE_LIMIT)
+
+    def test_bash_passes_the_here_document_through_a_pipe(self):
+        program = (
+            "python3 - <<'PREPARE_HOME'\n"
+            "import os\nprint(os.readlink('/proc/self/fd/0'))\n"
+            + helper_source().replace("if __name__", "if False and __name__")
+            + "PREPARE_HOME\n"
+        )
+        result = subprocess.run(
+            ["bash", "-c", program],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            check=True,
+        )
+        self.assertTrue(result.stdout.startswith("pipe:"), result.stdout)

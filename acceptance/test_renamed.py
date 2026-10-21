@@ -2,6 +2,7 @@
 
 import contextlib
 import filecmp
+import gzip
 import io
 import json
 import os
@@ -506,7 +507,15 @@ class ScenarioTests(unittest.TestCase):
         sources = [call.args[0][-2] for call in harness.command.call_args_list]
         # Demo provisioning travels separately; product bundles do not carry it.
         self.assertTrue(sources[0].endswith("/dev/generate-certificates.sh"))
-        self.assertTrue(sources[1].endswith("/acceptance/prepare_host_test.py"))
+        # PROD's fapolicyd denies opening untrusted Python files: the probe
+        # travels compressed and no .py file is written to PROD.
+        self.assertEqual(sources[1].name, "prepare_host_test.py.gz")
+        self.assertEqual(
+            gzip.decompress(sources[1].read_bytes()),
+            (runner.ROOT / "acceptance/prepare_host_test.py").read_bytes(),
+        )
+        targets = [str(call.args[0][-1]) for call in harness.command.call_args_list]
+        self.assertEqual([t for t in targets if t.endswith(".py")], [])
         self.assertTrue(
             sources[2].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
         )

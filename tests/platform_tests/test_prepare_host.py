@@ -84,23 +84,19 @@ class HostBoundaryTests(unittest.TestCase):
 
     def run_home(self, failure=0):
         script = Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
-        with tempfile.TemporaryDirectory() as directory:
-            helper = Path(directory) / "helper.py"
-            helper.write_text("# trusted code supplied on stdin\n")
-            return subprocess.run(
-                [
-                    "bash",
-                    "-eu",
-                    "-c",
-                    r"""
+        return subprocess.run(
+            [
+                "bash",
+                "-eu",
+                "-c",
+                r"""
 source "$1"
 service_uid=12345
 service_gid=12346
 service_home=/var/lib/svc-orders
 container_home=$service_home/.local/share/containers
-home_helper=$2
 calls=0
-failure=$3
+failure=$2
 # The function's arguments are independent of this shell's positional args.
 setpriv() {
     calls=$((calls + 1))
@@ -110,16 +106,15 @@ setpriv() {
 prepare_service_home
 echo later-host-actions
 """,
-                    "probe",
-                    str(script),
-                    str(helper),
-                    str(failure),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                check=False,
-            )
+                "probe",
+                str(script),
+                str(failure),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            check=False,
+        )
 
     def test_all_home_commands_drop_identity_groups_and_capabilities(self):
         result = self.run_home()
@@ -197,7 +192,6 @@ class HostPortTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             release = Path(directory)
             (release / "scripts").mkdir()
-            (release / "scripts/prepare-home.py").write_text("# helper fixture\n")
             if product:
                 # Serialized like bundle.py, which quotes values such as 'on'.
                 (release / "bundle.yaml").write_text(
