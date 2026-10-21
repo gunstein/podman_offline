@@ -94,11 +94,12 @@ elif not (home / ".config").is_symlink():
 """
 
 
-def command(arguments, code=None, check=True):
+def command(arguments, code=None, check=True, cwd=None):
     """Capture diagnostics; a failed command must never become absence/success."""
     result = subprocess.run(
         list(map(str, arguments)),
         input=code,
+        cwd=None if cwd is None else str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
@@ -154,7 +155,9 @@ def as_user(script, account, home, arguments, code=None, check=True):
         account.pw_uid,
         account.pw_gid,
         home,
-        'as_service_user env HOME="$service_home" XDG_RUNTIME_DIR="/run/user/$service_uid" "$@"',
+        # Root enters the home it cannot be denied; the operator's private
+        # working directory is not accessible to the service user.
+        'cd "$service_home"\nas_service_user env HOME="$service_home" XDG_RUNTIME_DIR="/run/user/$service_uid" "$@"',
         code=code,
         arguments=arguments,
         check=check,
@@ -434,20 +437,36 @@ def disposable(script, base):
         print("PASS: separate-UID links, replacement races, lock retention and retry")
 
 
+def podman(account, home, arguments):
+    """Run Podman as the service user like its own session, not via as_user.
+
+    as_service_user sets no-new-privileges, and SELinux then denies Podman's
+    unconfined_t -> container_runtime_t transition (nnp_transition AVC).
+    """
+    return command(
+        [
+            "runuser",
+            "-u",
+            account.pw_name,
+            "--",
+            "env",
+            "HOME=" + str(home),
+            "XDG_RUNTIME_DIR=/run/user/" + str(account.pw_uid),
+            "podman",
+        ]
+        + arguments,
+        cwd=home,
+    )
+
+
 def product_state(script, account, home):
     """Only identifiers and volume directory labels; never inspect container env."""
-    containers = as_user(
-        script, account, home, ["podman", "ps", "-aq", "--no-trunc"]
-    ).stdout.split()
-    names = as_user(
-        script, account, home, ["podman", "volume", "ls", "-q"]
-    ).stdout.split()
+    containers = podman(account, home, ["ps", "-aq", "--no-trunc"]).stdout.split()
+    names = podman(account, home, ["volume", "ls", "-q"]).stdout.split()
     volumes = []
     if names:
         for item in json.loads(
-            as_user(
-                script, account, home, ["podman", "volume", "inspect"] + names
-            ).stdout
+            podman(account, home, ["volume", "inspect"] + names).stdout
         ):
             path = Path(item["Mountpoint"])
             volumes.append(

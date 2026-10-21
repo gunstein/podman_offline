@@ -294,6 +294,29 @@ class HostProbeTests(unittest.TestCase):
         self.assertEqual(args[1:], ("fixture", False))
         self.assertFalse(kwargs)
 
+    def test_podman_state_runs_without_no_new_privileges(self):
+        """NNP blocks Podman's SELinux transition; the operator cwd is private."""
+        account = mock.Mock(pw_name="svc-orders", pw_uid=123)
+        home = Path("/var/lib/svc-orders")
+        empty = subprocess.CompletedProcess([], 0, "", "")
+        with (
+            mock.patch.object(probe, "command", return_value=empty) as execute,
+            mock.patch.object(probe, "as_user") as as_user,
+            mock.patch.object(probe, "label", return_value="fixture_t"),
+        ):
+            probe.product_state(Path("/trusted/prepare-host.sh"), account, home)
+        as_user.assert_not_called()
+        for call in execute.call_args_list:
+            self.assertEqual(call.args[0][:4], ["runuser", "-u", "svc-orders", "--"])
+            self.assertIn("podman", call.args[0])
+            self.assertEqual(call.kwargs["cwd"], home)
+
+    def test_service_user_commands_start_in_the_service_home(self):
+        with mock.patch.object(probe, "shell") as shell:
+            probe.as_user(None, mock.Mock(pw_uid=1, pw_gid=2), Path("/h"), ["true"])
+        body = shell.call_args.args[4]
+        self.assertTrue(body.startswith('cd "$service_home"\n'), body)
+
     def test_failed_command_is_not_silently_accepted(self):
         failure = subprocess.CompletedProcess(["probe"], 1, stdout="", stderr="refused")
         with mock.patch.object(probe.subprocess, "run", return_value=failure):
