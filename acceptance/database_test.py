@@ -184,7 +184,10 @@ def seed_retry_check(base, network, client):
         (ROOT / "components/app1/files/sql/010-reference.sql").read_bytes()
     )
     broken = inputs / "050-failure.sql"
-    broken.write_text("SELECT 1 / 0;\n")
+    # The failing file's earlier statement must roll back with it (--single-transaction).
+    broken.write_text(
+        "INSERT INTO demo_seed (name, value) VALUES ('partial', 'x');\nSELECT 1 / 0;\n"
+    )
     volumes = {claim: [reference, broken]}
     archives = base / "seed-archives"
     manifest = base / "seed-retry.yaml"
@@ -223,15 +226,15 @@ def seed_retry_check(base, network, client):
                         for row in statuses.stdout.splitlines()
                     ):
                         raise RuntimeError("Consumer started despite failed SQL init")
-                    query = 'export PGPASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"; exec psql -XAt -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT value FROM demo_seed WHERE name=\'reference\'"'
+                    query = 'export PGPASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"; exec psql -XAt -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT name || \'=\' || value FROM demo_seed ORDER BY name"'
                     if (
                         podman(
                             ["exec", host + "-db", "sh", "-ec", query]
                         ).stdout.strip()
-                        != "release-v1"
+                        != "reference=release-v1"
                     ):
                         raise RuntimeError(
-                            "Expected earlier committed SQL step was not observed"
+                            "Expected only the earlier file's committed rows; the failed file must roll back"
                         )
                     broken.write_text("SELECT 1;\n")
                 elif (

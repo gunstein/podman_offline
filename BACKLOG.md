@@ -5373,6 +5373,14 @@ acceptance checks are implemented. See [verification and understandability
 review](acceptance/COMPONENT-FILES.md) for actual results and outstanding checks.
 The review notes below describe the baseline and implementation requirements.
 
+Review follow-up (2026-10-21): the demo seed runs each SQL file with
+`--single-transaction`, so a failed file rolls back entirely while completed files
+stay committed; the real failure/retry probe now requires the failing file's
+earlier row to be absent. The `sts` README example uses a relative dev path under
+`build/dev/sts/` instead of a machine-specific path in a tracked file, and the docs
+recommend an explicit file list or history table for real migrations instead of
+executing every imported file. Real runtime verification is still pending.
+
 The operator clarification in item 56 applies: no transition from pre-feature
 installations is required. Test upgrades between releases of the new model.
 

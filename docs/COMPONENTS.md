@@ -187,8 +187,11 @@ there. Test passwords must stay in external/generated credentials. See the
 
 Input resolution never executes or templates SQL. The consuming image owns that
 behavior. Import volumes retain unlisted files, so removing a migration source
-does not remove its old imported copy. The demo uses idempotent SQL and documents
-partial commits/retry; it adds no migration framework or rollback guarantee.
+does not remove its old imported copy; run an explicit file list or keep a
+history table instead of executing everything in the volume. The demo runs each
+idempotent file in its own transaction (`--single-transaction`), so a failed file
+rolls back while completed files stay committed; it adds no migration framework
+or cross-file rollback guarantee.
 
 ### Reserved configuration names
 

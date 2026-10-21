@@ -49,7 +49,13 @@ class SeedRetryHarnessTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         return fixture.base, copy.deepcopy(fixture.client)
 
-    def run_probe(self, first_exit="1", consumer="", repaired_exit="0"):
+    def run_probe(
+        self,
+        first_exit="1",
+        consumer="",
+        repaired_exit="0",
+        rows="reference=release-v1\n",
+    ):
         base, client = self.client()
         commands = []
         attempts = [first_exit, repaired_exit, "0"]
@@ -63,7 +69,7 @@ class SeedRetryHarnessTests(unittest.TestCase):
             elif arguments[0] == "ps":
                 result = consumer
             elif arguments[0] == "exec":
-                result = "release-v1\n"
+                result = rows
             else:
                 result = ""
             return types.SimpleNamespace(stdout=result)
@@ -93,6 +99,9 @@ class SeedRetryHarnessTests(unittest.TestCase):
             {"consumer": "Exited (0)\n"},
             {"repaired_exit": "1"},
             {"first_exit": ""},
+            # A failed file's earlier statement was committed instead of rolled back.
+            {"rows": "partial=x\nreference=release-v1\n"},
+            {"rows": "\n"},
         ):
             with self.subTest(arguments=arguments), self.assertRaises(RuntimeError):
                 self.run_probe(**arguments)

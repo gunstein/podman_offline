@@ -569,11 +569,14 @@ reference above while a sensitive dev-only seed stays outside `files/`:
 VOLUME_FILES:
   sts-migrations:
   - component_file: sql/010-reference.sql
-  - path: ~/dev-inputs/sts/900-dev-users.sql
+  - path: dev-inputs/900-dev-users.sql
 ```
 
-The dev file repeats the full map because later maps replace earlier ones. The
-external seed is not collected into bundles and is not needed in production.
+The relative `path` resolves from `build/dev/sts/`, so each developer places the
+file at `build/dev/sts/dev-inputs/900-dev-users.sql`. `build/` is ignored by Git,
+and the tracked dev file contains no machine-specific path. The dev file repeats
+the full map because later maps replace earlier ones. The external seed is not
+collected into bundles and is not needed in production.
 Test passwords belong in external/generated `credentials/` inputs. Every file
 under the component's `files/` is packaged, even when production config does not
 select it, so never put private dev users, passwords or customer data there.
@@ -593,7 +596,10 @@ Deploy delivers bytes through the existing Secrets or import archives/PVCs; it
 does not template or execute SQL or bind-mount build-machine files. The migration
 container decides how to execute its inputs. Podman imports overwrite matching
 files but retain unlisted files: removing a source from a later config/release
-does not remove its old copy in the volume. Account for that in migration design.
+does not remove its old copy in the volume. Account for that in migration design:
+run an explicit list of expected files or record applied migrations in a history
+table, rather than executing every file found in the volume. The demo's wildcard
+is acceptable only because its files are idempotent.
 
 After the usual signature/checksum verification and unpacking, run as the service
 user (the release directories may be anywhere accessible):
@@ -611,8 +617,9 @@ The app1 demo runs a read-only seed PVC in `seed-database` after
 `prepare-database`, using the existing Postgres image and password Secret.
 Idempotent SQL upserts a public `reference` marker; dev adds a harmless
 `dev-sample`. Both files ship, but fresh production delivers only `reference`.
-`ON_ERROR_STOP` prevents successful startup after a SQL error; earlier committed
-statements are retained. Restart/retry replays the sorted SQL list. This example
+Each file runs with `ON_ERROR_STOP` and `--single-transaction`: a SQL error stops
+startup and rolls back that whole file, while files that already completed stay
+committed. Restart/retry replays the sorted SQL list. This example
 provides no migration history or automatic rollback. See
 [verification](acceptance/COMPONENT-FILES.md).
 

@@ -37,7 +37,7 @@ spec:
       for sql in /seed/*.sql; do
       test -f "$sql" || { echo 'Missing demo seed input' >&2; exit 1; };
       psql --no-psqlrc --host "$DB_HOST" --port "$DB_PORT" --username "$DB_USER"
-      --dbname "$DB_NAME" --set=ON_ERROR_STOP=1 --file "$sql" >/dev/null 2>&1 || {
+      --dbname "$DB_NAME" --set=ON_ERROR_STOP=1 --single-transaction --file "$sql" >/dev/null 2>&1 || {
       echo 'Demo seed SQL failed (details withheld)' >&2; exit 1; };
       done
     env:

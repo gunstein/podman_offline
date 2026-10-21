@@ -191,6 +191,9 @@ class InitDatabaseTests(unittest.TestCase):
                 [line.split("--file ")[1] for line in calls.read_text().splitlines()],
                 [str(inputs / "010-reference.sql"), str(inputs / "900-dev.sql")],
             )
+            # Each file is atomic and stops at its first error.
+            for line in calls.read_text().splitlines():
+                self.assertIn("--set=ON_ERROR_STOP=1 --single-transaction --file", line)
             env["PSQL_STATUS"] = "2"
             result = subprocess.run(
                 ["sh", "-ec", command],

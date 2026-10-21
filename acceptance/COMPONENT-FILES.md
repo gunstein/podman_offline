@@ -80,8 +80,11 @@ init success, a started consumer, failed repair and invalid exit status.
 
 Imports overwrite matching files but retain unlisted ones. Removing a declared
 file does not delete its old imported copy; wildcard SQL execution can encounter
-that old file. The demo uses idempotent upserts and demonstrates partial commits
-and retry, not migration tracking or automatic rollback. Do not reuse disposable
+that old file. The demo uses idempotent upserts, one transaction per file
+(`--single-transaction`) and retry, not migration tracking or cross-file
+rollback. The real probe's failing file inserts a row before its error and
+requires that row to be absent while the earlier file's row is committed
+(review follow-up 2026-10-21; real runtime result pending). Do not reuse disposable
 dev data volumes as fresh production volumes.
 
 ## Local verification
