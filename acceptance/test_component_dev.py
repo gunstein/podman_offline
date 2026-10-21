@@ -136,8 +136,39 @@ class ComponentDevHarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Missing dev layer consumer"):
                 code["check_layers"]([], "dev", "app1", "app2")
             with contextlib.redirect_stdout(io.StringIO()):
-                code["check_layers"]([], "prod", "app1", "app2")
+                code["check_layers"]([], "prod", "app1", "app2", {"platform", "help"})
             run.assert_not_called()
+
+    def test_installed_prod_app_without_consumer_fails_instead_of_passing(self):
+        """A missing or misnamed installed app must not make the check vacuous."""
+        code = guest_code("CONFIG_LAYERS")
+        for installed, missing in (({"app1"}, "app1"), ({"app1", "app2"}, "app2")):
+            with (
+                self.subTest(installed=sorted(installed)),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path, docs = self.fixture(directory, "app1", "app2", "defaults")
+                if missing == "app2":
+                    docs = [d for d in docs if d["metadata"]["name"] != "app2-todo"]
+                else:
+                    docs = []
+                path.write_text(yaml.safe_dump_all(docs))
+                run = mock.Mock(
+                    return_value=subprocess.CompletedProcess([], 0, "defaults\n", "")
+                )
+                with (
+                    mock.patch.object(subprocess, "run", run),
+                    contextlib.redirect_stdout(io.StringIO()) as output,
+                    self.assertRaisesRegex(
+                        RuntimeError, "Missing installed layer consumer: " + missing
+                    ),
+                ):
+                    code["check_layers"]([path], "prod", "app1", "app2", installed)
+                self.assertNotIn("PASS:", output.getvalue())
+
+    def test_production_check_reads_completion_markers(self):
+        self.assertIn('(Path.home() / "installed").glob("*")', REMOTE)
+        self.assertIn("check_layers(paths, mode, first, second, installed)", REMOTE)
 
     def test_runtime_assertions_are_wired_into_dev_and_production_steps(self):
         for action in ("dev-up", "renamed-dev-up"):

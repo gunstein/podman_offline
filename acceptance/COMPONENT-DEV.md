@@ -126,5 +126,8 @@ PROD health checks require `defaults` in app1/orders and no marker in its siblin
 when installed. Wrong rendered/runtime values, missing coverage and command
 failures stop the step; only the single public key is inspected, and runtime
 stdout/stderr are not included in failures. Help/owner-only installs require no
-app marker. Existing persistence, restart, upgrade and sibling checks still run.
+app marker. In PROD the check reads the service user's `installed/` completion
+markers: an installed app whose consumer is missing from the rendered Quadlet
+YAML fails instead of being skipped, so a misnamed or absent pod cannot pass
+unchecked (review follow-up, 2026-10-21; harness regression added). Existing persistence, restart, upgrade and sibling checks still run.
 No claim is made about actual Podman, systemd, SELinux or fapolicyd results.

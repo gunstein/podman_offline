@@ -505,8 +505,12 @@ import sys
 import yaml
 
 
-def check_layers(paths, mode, first, second):
-    """Check selected layer and sibling isolation in rendered and running containers."""
+def check_layers(paths, mode, first, second, installed=()):
+    """Check selected layer and sibling isolation in rendered and running containers.
+
+    In prod only components without a completion marker may lack a consumer, so a
+    missing or misnamed installed app cannot pass without being checked.
+    """
     docs = []
     for path in paths:
         docs.extend(doc for doc in yaml.safe_load_all(path.read_text()) if doc)
@@ -518,6 +522,8 @@ def check_layers(paths, mode, first, second):
         if pod is None:
             if mode == "dev":
                 raise RuntimeError("Missing dev layer consumer: " + component)
+            if component in installed:
+                raise RuntimeError("Missing installed layer consumer: " + component)
             continue  # PROD owner/help-only scenarios have no app containers.
         consumers = [item for item in pod["spec"]["containers"] if item["name"] == "backend"]
         if len(consumers) != 1:
@@ -551,7 +557,8 @@ def main():
     if not paths:
         raise RuntimeError("Missing rendered config layer inputs")
     first, second = (("orders", "inventory") if os.environ["PRODUCT_NAME"] == "shop" else ("app1", "app2"))
-    check_layers(paths, mode, first, second)
+    installed = ({path.name for path in (Path.home() / "installed").glob("*")} if mode == "prod" else ())
+    check_layers(paths, mode, first, second, installed)
 
 
 if __name__ == "__main__":
