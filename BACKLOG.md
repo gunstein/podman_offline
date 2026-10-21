@@ -11,7 +11,8 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-21)
 
-Items 56 and 57 are first, explicitly prioritized by the operator on 2026-10-21:
+Item 56 is implemented with local tests; its real runtime verification is pending.
+Item 57 is next for implementation, preserving the operator's 2026-10-21 order:
 component-specific dev overrides, then portable references to bundled component
 files. They unblock the organisation's migration/seed setup without leaking
 component-specific declarations into global dev config. Item 46 follows: prevent
@@ -24,7 +25,8 @@ verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
 1. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
-   isolate each component's dev settings in its own optional `config.dev.yaml`.
+   implemented; real runtime verification pending. Isolate each component's dev
+   settings in its own optional `config.dev.yaml`.
 2. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
    use one explicit file reference in source/dev and an isolated offline release,
    without hand-editing release paths. Separate from the override-layer change.
@@ -115,7 +117,10 @@ Partly verified: item 10 (the test baseline runs in every lab run as
 `03-unit`; the historical 0.2.0 upgrade lives in item 5) and item 13 (normal
 lifecycle on real hosts; failure injection only in fresh local processes).
 
-Open: 56 and 57 (top priority), 46, 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Update 2026-10-21: item 56 is implemented and locally tested; real runtime checks
+are pending ([evidence](acceptance/COMPONENT-DEV.md)).
+
+Open: 57 (top implementation priority), 46, 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 58, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5234,8 +5239,12 @@ components, authoritative production config, shared settings, credential retenti
 side-effect-free validation and host Python 3.6 compatibility. Coordinate with
 item 57, but keep the two changes independently reviewable.
 
-Status: planned; high priority, first in the implementation queue by explicit
-operator request on 2026-10-21. No component-local dev override file is read today.
+Status: implemented on 2026-10-21; real Podman/systemd verification pending.
+The optional component dev layer, shared-key refusal, private-source bundle guard,
+demo marker, renamed-product handling and runtime acceptance assertions are in
+place. Local verification and the understandability review are recorded in
+[acceptance/COMPONENT-DEV.md](acceptance/COMPONENT-DEV.md). Historical analysis
+below describes the implementation baseline; it is not a claim of lab results.
 
 Operator clarification (2026-10-21), applying to items 56 and 57: existing
 installations may be discarded. Start verification with a fresh installation and
@@ -5351,8 +5360,8 @@ offline bundles, authoritative production config, scoped file access, credential
 retention, read-only validation and Python 3.6 compatibility. High-priority
 follow-up to item 56; a separate feature, not an implicit part of its merge rules.
 
-Status: planned; high priority, second in the implementation queue by explicit
-operator request on 2026-10-21. Component `files/` is already packaged, but there
+Status: planned; high priority, next in the implementation queue after item 56's
+implementation on 2026-10-21. Component `files/` is already packaged, but there
 is no explicit portable component-file source reference today.
 
 The operator clarification in item 56 applies: no transition from pre-feature
@@ -5528,3 +5537,23 @@ actual organisation SQL, passwords or Duende image is needed for the generic
 fixture. Run relevant platform/isolation, harness and static checks; distinguish
 these from real lab results. Complete the understandability review of reference
 resolution, config persistence and release selection.
+
+
+## 58. Clarify global dev overrides of owner-shared settings
+
+Status: planned follow-up identified during item 56; not part of that item's
+implementation. Agree priority separately.
+
+`deploy.dev_settings()` applies a `public_from` owner's effective shared values
+after merging a dependent's layers. A global `config/dev.yaml` declaration on
+the dependent can therefore be silently replaced, for example when the owner's
+component dev file supplies another value. Item 56 refuses such declarations in
+the dependent's component dev file, but deliberately leaves the global layer's
+existing owner-wins behavior unchanged. Its inheritance regression covers this
+case; no global-layer refusal is claimed.
+
+Decide and document the intended global-layer diagnostics without rejecting
+ordinary global settings used by an owner and its dependents. Cover
+`PUBLIC_ORIGIN`, `HTTPS_PORT`, custom `shares`, owner-local precedence, readable
+value-safe errors and unchanged production config. Reuse the existing merge and
+shared-setting model; do not add another config layer or widen item 56.

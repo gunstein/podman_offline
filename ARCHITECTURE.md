@@ -25,6 +25,17 @@ bundles. `common.HOME` follows the service account's user-database home. There
 are no lifecycle actions during package import. Modules share these explicit
 paths without circular imports or a dependency framework.
 
+In source dev, `deploy.dev_settings()` walks the catalog in dependency order,
+refuses owner-shared keys in a dependent's `config.dev.yaml`, and calls
+`render.component_defaults(dev=True)`. Its sole merge implementation,
+`merge_config`, reads common defaults, component defaults, global dev overrides
+and component dev overrides in that order, then applies inherited owner values.
+Validate, prepare and demo credential preflight use this same flow. Bundle guards
+inspect each layer separately to protect private sources even when a later map
+replaces them; they do not construct a second effective config. Production
+`init-config` merges only defaults and owner values; later operations read only
+the persistent config. Neither dev layer ships in bundles.
+
 Rendering is split so validation visibly precedes side effects (0.4.10). On
 install and dev `prepare`, `registrations.registration_stage()` runs first: it reads
 and validates routes and client registrations into a temporary directory and

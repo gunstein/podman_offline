@@ -3,5 +3,6 @@ kind: ConfigMap
 metadata:
   name: app1-settings
 data:
+  DEMO_CONFIG_LAYER: '@@DEMO_CONFIG_LAYER@@'
   PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
   HTTPS_PORT: '@@HTTPS_PORT@@'

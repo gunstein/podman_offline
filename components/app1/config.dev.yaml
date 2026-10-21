@@ -1,0 +1,2 @@
+# Shared, non-secret dev settings; excluded from offline bundles.
+DEMO_CONFIG_LAYER: component-dev

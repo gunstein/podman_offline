@@ -307,6 +307,19 @@ def check_database_volume_absent(claim, password):
         )
 
 
+def check_dev_shared_settings(component, owner, keys):
+    """Refuse component dev values that the owner's final overrides would hide."""
+    path = common.ROOT / "components" / component / "config.dev.yaml"
+    if path.exists() or path.is_symlink():
+        local = rendering.config_layer(path)
+        for key in keys:
+            if key in local:
+                raise common.DeployError(
+                    f"{path}: {key} is shared by {owner}; "
+                    f"set it in the owner's config, not this component's dev config"
+                )
+
+
 def dev_settings():
     """Compile the source catalog and merge dev config for each component.
 
@@ -318,6 +331,8 @@ def dev_settings():
     settings = {}
     for component, descriptor in known.items():
         source = descriptor["public_from"]
+        if source:
+            check_dev_shared_settings(component, source, shared_keys(known[source]))
         overrides = (
             public_settings(
                 settings[source],

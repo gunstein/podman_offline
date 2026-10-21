@@ -208,6 +208,13 @@ def generate(source, target):
             if new == "gateway":
                 values.update(SHARED)
             dump(destination / defaults.name, values)
+        dev_config = origin / "config.dev.yaml"
+        if dev_config.exists():
+            with dev_config.open(encoding="utf-8") as stream:
+                dump(
+                    destination / dev_config.name,
+                    rename_defaults(yaml.safe_load(stream)),
+                )
         if (origin / "route.conf").exists():
             (destination / "route.conf").write_text(
                 rename_route((origin / "route.conf").read_text(encoding="utf-8")),

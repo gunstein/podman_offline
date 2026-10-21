@@ -2,6 +2,7 @@ DB_HOST: app1-postgres
 DB_PORT: '5432'
 DB_USER: todo
 DB_NAME: todo
+DEMO_CONFIG_LAYER: defaults
 SECRET_FILES:
   app1-database-password:
   - path: credentials/database

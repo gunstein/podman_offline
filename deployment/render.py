@@ -140,14 +140,17 @@ def component_defaults(component, overrides=None, dev=False):
     Each layer file is optional; a component without settings needs none.
     """
     paths = [
-        path
-        for path in (
-            common.ROOT / "config/common.defaults.yaml",
-            common.ROOT / "components" / component / "config.defaults.yaml",
-        )
-        + ((common.ROOT / "config/dev.yaml",) if dev else ())
-        if path.exists() or path.is_symlink()
+        common.ROOT / "config/common.defaults.yaml",
+        common.ROOT / "components" / component / "config.defaults.yaml",
     ]
+    if dev:
+        paths.extend(
+            [
+                common.ROOT / "config/dev.yaml",
+                common.ROOT / "components" / component / "config.dev.yaml",
+            ]
+        )
+    paths = [path for path in paths if path.exists() or path.is_symlink()]
     config = merge_config(*paths, overrides=overrides)
     materialized = (
         (common.BUILD / "dev" if dev else common.HOME) / component / "config.yaml"

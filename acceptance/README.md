@@ -1,3 +1,16 @@
+# Component dev overrides (backlog 56)
+
+The demo now has a tracked `components/app1/config.dev.yaml` with a public
+`DEMO_CONFIG_LAYER` marker. Both normal and renamed dev-up steps verify the
+rendered value and the running backend's single environment key (`component-dev`)
+and require its absence in the sibling backend. Production `healthy()` verifies
+`defaults` for app1/orders when installed and sibling isolation for app2/inventory.
+The renamed generator carries and renames component dev maps as declarations.
+Owner/help-only scenarios require no app marker. No full environment is printed.
+
+See [COMPONENT-DEV.md](COMPONENT-DEV.md) for checks, runnable lab commands and
+outstanding runtime verification. Stubbed harness results are not Podman evidence.
+
 # Secret templates and ConfigMap inline values (backlog 41)
 
 Source releases use one `components/<id>/VERSION` per component. The upgrade

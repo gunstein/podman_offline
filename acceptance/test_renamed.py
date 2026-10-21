@@ -147,6 +147,13 @@ class GeneratorTests(unittest.TestCase):
         )
         self.assertEqual(defaults["DB_HOST"], "orders-postgres")
         self.assertIn("orders-database-password", defaults["SECRET_FILES"])
+        dev = yaml.safe_load(
+            (self.target / "components/orders/config.dev.yaml").read_text()
+        )
+        self.assertEqual(dev["DEMO_CONFIG_LAYER"], "component-dev")
+        self.assertFalse(
+            (self.target / "components/inventory/config.dev.yaml").exists()
+        )
 
     @unittest.skipUnless(shutil.which("git"), "Git is required")
     def test_untracked_local_files_are_never_copied(self):

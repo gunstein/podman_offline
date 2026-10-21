@@ -135,6 +135,26 @@ upgrade that stops sharing a name an installed dependent takes from it is
 refused before any write; keep the name until the dependents no longer use it.
 A descriptor from before `shares` existed is read as sharing nothing.
 
+### Component dev configuration
+
+Source dev merges optional common defaults, component defaults, global
+`config/dev.yaml`, then `components/<id>/config.dev.yaml`. Values replace whole
+top-level values, including file/Secret maps and source lists. The component dev
+file is tracked shared configuration, contains no secret values, and wins over
+the ignored global dev file. It is excluded from bundles and never read by
+production `init-config`, `validate` or `install`.
+
+An owner's component dev settings are inherited by its `public_from` dependents.
+A dependent that declares any of those shared keys in its own component dev file
+is refused, rather than silently losing the value to inheritance. This includes
+`PUBLIC_ORIGIN`, `HTTPS_PORT` and custom `shares`. The older global dev layer's
+owner-wins behavior remains unchanged (backlog 58).
+
+Relative file sources still resolve from `build/dev/<id>/`; generated config
+there is output, never an input layer. See the [configuration examples and
+precedence](../README.md#configuration-and-initialization). Portable shipped-file
+references are separate planned work in backlog 57.
+
 ### Reserved configuration names
 
 All settings are written the same way, but these names have built-in meaning.

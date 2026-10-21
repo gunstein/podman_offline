@@ -127,6 +127,7 @@ def generated_secret_guard(config_dirs=None):
             continue
         base = ROOT / "build/dev" / directory.name
         sources.append((directory / "config.defaults.yaml", base))
+        sources.append((directory / "config.dev.yaml", base))
         # A local complete config is private state, not a configuration layer.
         sources.append((directory / "config.yaml", directory))
         sources.append((base / "config.yaml", base))

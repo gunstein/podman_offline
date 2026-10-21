@@ -129,17 +129,63 @@ settings](docs/COMPONENTS.md#reserved-configuration-names).
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
 | `components/<component>/config.defaults.yaml` | Component-specific defaults, including secret and volume references |
+| `components/<component>/config.dev.yaml` | Optional shared component dev overrides, tracked in Git and excluded from bundles |
 | `/var/lib/myproduct/<component>/config.yaml` | Authoritative persistent production config |
 
-Initialization and dev use exactly one merge rule: common defaults first,
-component defaults next, explicit overrides last. Merge is at the top level.
+Initialization merges common defaults and then component defaults. Dev adds
+global `config/dev.yaml` and then `components/<component>/config.dev.yaml`, in that
+order. All layers use one merge rule at the top level.
 A later value replaces the entire earlier value, including `SECRET_FILES`,
 `VOLUME_FILES` maps (including their source lists and generate declarations); no recursive merge or list
 concatenation takes place. Duplicate YAML keys are rejected in each source file.
 Individual layers may be incomplete; the complete merged result is validated.
-Dev overrides apply to all rendered components, with no per-component override
-syntax. A missing dev file means no overrides; an invalid existing file fails.
+Global dev overrides apply to all components; component dev overrides apply only
+to that component. Missing optional files mean no overrides; invalid existing
+files fail. Production initialization, validation and install never read either
+dev layer, even if a file is copied into a release by hand.
 `IP_ADDRESS` belongs to platform because only its proxy binds the host address.
+
+The component dev file contains shared, non-secret development settings. Since
+it wins over the ignored global dev file, changing a key it defines on one
+machine requires editing the tracked component file. Do not commit secrets or
+machine-specific absolute paths. Keep credentials in external/generated files.
+A `public_from` dependent may not set its owner's shared keys in its component
+dev file, even to the same value: this fails naming the key, file and owner.
+Set these keys on the owner, whose effective settings are inherited afterwards.
+The pre-existing global dev layer still has its older owner-wins behavior.
+
+For a renamed component `orders`, a complete map override must repeat retained
+entries. For example, if `components/orders/config.defaults.yaml` contains:
+
+```yaml
+VOLUME_FILES:
+  orders-seed:
+  - path: seed/reference.sql
+```
+
+then `components/orders/config.dev.yaml` can add a dev input with:
+
+```yaml
+VOLUME_FILES:
+  orders-seed:
+  - path: seed/reference.sql
+  - path: seed/dev-sample.sql
+```
+
+This replaces the entire `VOLUME_FILES` map; repeat any other required volume
+groups too. The same rule applies to `SECRET_FILES` and `SECRET_TEMPLATES`.
+Relative sources resolve from `build/dev/orders/`, so these example files must
+exist under `build/dev/orders/seed/`, not beside the override file. Generated
+`build/dev/<component>/config.yaml` is output and is never another input layer.
+Portable references to files shipped in a component are separate planned work
+in backlog item 57; adding a dev layer does not change path resolution.
+
+The demo's app1 ConfigMap supplies `DEMO_CONFIG_LAYER=component-dev` in dev and
+`defaults` in production; app2 has no such key. This public marker does not
+change application behavior. Bundles exclude the dev override files and do not
+collect external local inputs from them. A component's whole `files/` directory
+is still packaged, including harmless dev-only files stored there; selection
+for container delivery is separate from packaging.
 
 From a verified, unpacked bundle, run as the service user:
 

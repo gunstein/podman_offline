@@ -492,6 +492,75 @@ PY
     esac
     echo "PASS: public pull failed (exit $status)"
 }
+# Check only the demo's public layer marker, never a complete environment.
+config_layers() {
+    local mode=$1
+    local -a run_python=(python3)
+    if [[ $mode == prod ]]; then run_python=(as_product python3); fi
+    "${run_python[@]}" - "$mode" <<'CONFIG_LAYERS'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import yaml
+
+
+def check_layers(paths, mode, first, second):
+    """Check selected layer and sibling isolation in rendered and running containers."""
+    docs = []
+    for path in paths:
+        docs.extend(doc for doc in yaml.safe_load_all(path.read_text()) if doc)
+    maps = {doc["metadata"]["name"]: doc.get("data", {}) for doc in docs if doc.get("kind") == "ConfigMap"}
+    pods = {doc["metadata"]["name"]: doc for doc in docs if doc.get("kind") == "Pod"}
+    expected = "component-dev" if mode == "dev" else "defaults"
+    for component in (first, second):
+        pod = pods.get(component + "-todo")
+        if pod is None:
+            if mode == "dev":
+                raise RuntimeError("Missing dev layer consumer: " + component)
+            continue  # PROD owner/help-only scenarios have no app containers.
+        consumers = [item for item in pod["spec"]["containers"] if item["name"] == "backend"]
+        if len(consumers) != 1:
+            raise RuntimeError("Missing layer consumer: " + component)
+        container = consumers[0]
+        data = {}
+        for source in container.get("envFrom", []):
+            data.update(maps.get(source.get("configMapRef", {}).get("name"), {}))
+        if component == first:
+            if data.get("DEMO_CONFIG_LAYER") != expected:
+                raise RuntimeError("Wrong rendered config layer: " + component)
+            command = ["printenv", "DEMO_CONFIG_LAYER"]
+        else:
+            if "DEMO_CONFIG_LAYER" in data:
+                raise RuntimeError("Component dev setting leaked to sibling")
+            command = ["sh", "-c", 'test "${DEMO_CONFIG_LAYER+x}" != x']
+        result = subprocess.run(["podman", "exec", component + "-todo-backend"] + command,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, check=False, timeout=10)
+        if result.returncode or (component == first and result.stdout.rstrip("\n") != expected):
+            raise RuntimeError("Wrong running config layer or sibling leakage: " + component)
+    print("PASS: component dev layer and sibling isolation (" + mode + ")")
+
+
+def main():
+    mode = sys.argv[1]
+    if mode not in ("dev", "prod"):
+        raise RuntimeError("Unknown config layer mode")
+    paths = ([Path("build/install.yaml")] if mode == "dev" else
+             sorted((Path.home() / ".config/containers/systemd").glob(os.environ["PRODUCT_NAME"] + "-*.yaml")))
+    if not paths:
+        raise RuntimeError("Missing rendered config layer inputs")
+    first, second = (("orders", "inventory") if os.environ["PRODUCT_NAME"] == "shop" else ("app1", "app2"))
+    check_layers(paths, mode, first, second)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, yaml.YAMLError, subprocess.TimeoutExpired):
+        raise SystemExit("FAIL: component config layer check (details withheld)")
+CONFIG_LAYERS
+}
 # Wait for all manifest-defined app containers and their Podman health status.
 healthy() {
     local component components
@@ -629,6 +698,7 @@ if __name__ == "__main__":
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
         raise SystemExit("FAIL: " + str(error))
 HEALTHY
+    config_layers prod
 }
 # Wait for the backend through the HTTPS proxy before authenticated marker checks.
 wait_backend() {
@@ -758,6 +828,7 @@ dev-up)
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated platform, identity, app1, app2, help;"* ]]
     ./dev/dev.sh up
+    config_layers dev
     ;;
 venv)
     cd "$src"
@@ -803,6 +874,7 @@ RENAMED_HOST
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated gateway, login-service, orders, inventory, manual;"* ]]
     ./dev/dev.sh up
+    config_layers dev
     pods=$(podman pod ps --format '{{.Name}}' | sort | tr '\n' ' ')
     test "$pods" = 'gateway-proxy inventory-postgres inventory-todo login-service-postgres login-service-server manual-web orders-postgres orders-todo '
     echo "PASS: renamed dev pods $pods"

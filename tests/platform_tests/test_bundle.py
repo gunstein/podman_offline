@@ -469,6 +469,7 @@ data: {image: ignored}
             "components/app1/config.defaults.yaml",
             "components/app1/config.yaml",
             "config/dev.yaml",
+            "components/app1/config.dev.yaml",
             "build/dev/app1/config.yaml",
         ):
             with self.subTest(source=source):

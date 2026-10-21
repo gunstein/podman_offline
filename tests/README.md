@@ -65,9 +65,24 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory: 347
-platform tests and 64 demo tests (411 unique tests), plus 196 separate
+renamed-inventory regressions protect the separation. Current inventory: 354
+platform tests and 64 demo tests (418 unique tests), plus 200 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
+
+# Component dev configuration (backlog 56)
+
+`test_component_dev.py` uses arbitrary components and no `apps/` to cover optional
+layers, precedence, whole-map replacement, independent Secret/volume mappings,
+validate/prepare agreement without validation writes or host commands, safe YAML
+diagnostics, owner-shared key refusal and inheritance, private-source guards,
+real bundle exclusion and production ignoring even malformed hand-copied dev
+files. Credential tests retain password bytes across layer changes, refuse a
+missing password with an existing database volume and retry after restoration.
+The test module is included automatically in `--export` and `--isolate`.
+`test_config_demo.py` checks the demo's production/dev marker values; acceptance
+harness tests check running-value assertions, sibling isolation and renamed
+declarations with Podman stubbed. See [verification](../acceptance/COMPONENT-DEV.md)
+for actual results and the outstanding real runtime checks.
 
 # Configurable CA coverage (backlog 45a)
 

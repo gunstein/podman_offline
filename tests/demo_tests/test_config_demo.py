@@ -22,6 +22,12 @@ class DemoConfigTests(ConfigFixture):
             self.write(
                 "components/" + component + "/config.defaults.yaml", source.read_bytes()
             )
+            dev_source = source.with_name("config.dev.yaml")
+            if dev_source.exists():
+                self.write(
+                    "components/" + component + "/config.dev.yaml",
+                    dev_source.read_bytes(),
+                )
             self.select(component)
             target = common.HOME / component / "config.yaml"
             if target.exists():
@@ -29,6 +35,11 @@ class DemoConfigTests(ConfigFixture):
             deploy.init_config(component)
             production = rendering.load_config(target)
             dev = rendering.component_defaults(component, dev=True)
+            if component == "app1":
+                self.assertEqual(production["DEMO_CONFIG_LAYER"], "defaults")
+                self.assertEqual(dev["DEMO_CONFIG_LAYER"], "component-dev")
+            else:
+                self.assertNotIn("DEMO_CONFIG_LAYER", dev)
             for settings in (production, dev):
                 paths = []
                 for group in ("SECRET_FILES", "VOLUME_FILES"):
