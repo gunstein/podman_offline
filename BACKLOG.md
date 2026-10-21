@@ -4737,15 +4737,16 @@ win.
     Introduce one small helper, for example
     `as_service_user() { setpriv --reuid="$user" --regid="$group" --clear-groups -- "$@"; }`,
     and use it for the directory loop and the CNI lock. `--clear-groups` keeps
-    root's supplementary groups from being inherited. This removes the
-    check/use race instead of narrowing it: no privilege is held while the
-    pathname is resolved. `setpriv` (util-linux) is preferred over `runuser`
+    root's supplementary groups from being inherited. The intended boundary is
+    that pathname replacement cannot confer authority beyond the service user;
+    verify the effective authority as required in point 18. `setpriv`
+    (util-linux) is preferred over `runuser`
     because it does not open a PAM session; check that it is present in the
     command preflight. Both are RPM-installed, so fapolicyd trusts them.
-    `setpriv` keeps the caller's SELinux domain, and type transitions depend on
-    the domain, not the UID, so the pre-created directories get the same labels
-    as today. Keep the pre-creation itself. It exists so that Podman does not
-    create these directories and the lock with a runtime type (see the comments
+    Verify that the helper retains the expected SELinux context and that
+    pre-created directories get the same labels as today; the OL9 probe is the
+    acceptance gate for this assumption. Keep the pre-creation itself. It exists
+    so that Podman does not create these directories and the lock with a runtime type (see the comments
     in the script); removing it would reintroduce that labeling defect.
 12. **Intended behavior change on repeat.** Root's `install -d` today silently
     repairs the owner and mode of existing subdirectories. As the service user it
@@ -4772,11 +4773,10 @@ win.
       during the walk could apply a home/container label to an outside file.
       This is the replacement race in point 2 for labels.
 
-    Preferred resolution: run both `restorecon` calls through the same
-    `as_service_user` helper. Setting `security.selinux` requires owning the
-    file (or `CAP_FOWNER`), so a redirected relabel then cannot touch root-owned
-    host files, and the caller's unconfined domain keeps the relabel permission.
-    Probe on OL9:
+    Preferred resolution to verify: run both `restorecon` calls through the same
+    `as_service_user` helper. Do not treat a changed UID or a retained SELinux
+    domain alone as proof of safe relabeling: verify the effective credentials,
+    capabilities and actual policy behavior. Probe on OL9:
     1. that it relabels a normal home, including the storage directory itself,
        as today;
     2. that nothing outside `storage` is owned by subordinate IDs, since
@@ -4784,10 +4784,13 @@ win.
     3. that a planted `.local` link and a mid-walk replacement leave the outside
        target's label unchanged.
 
-    If any of these fail, keep `restorecon` as root, but only after an
-    `O_NOFOLLOW`/`openat` component check that refuses non-directories or links
-    in `.local/share/containers/storage`. Document the residual race and why it
-    is acceptable, or choose the root `openat` walk from point 5.
+    If any of these fail, do not fall back to a component check followed by
+    ordinary root `restorecon` on the checked pathname. Even a check using
+    `O_NOFOLLOW`/`openat` leaves a replacement race when the later operation
+    resolves that pathname again. A root alternative must keep the actual
+    operation bound to safely opened objects throughout traversal and relabeling,
+    with its own race regression. If no bounded mechanism is verified, leave
+    this part explicitly blocked; documenting the race does not close item 46.
 14. **Test placement.** The 8 tests in `tests/platform_tests/test_prepare_host.py`
     use stubs and run without root. Keep them, and add a static stub test: with
     `setpriv` and `install` stubbed, every command whose argument is under
@@ -4829,6 +4832,38 @@ win.
 16. **Review guide.** Add items 46 and 54 to the known-gap table in
     `docs/REVIEW_GUIDE.md` now. Mark 46 resolved there only with lab evidence
     from the current change.
+
+### Implementation clarifications (2026-10-21)
+
+These clarify the acceptance boundary after review at `16b2566`; they do not
+represent new runtime evidence.
+
+17. **Separate layout checks from the security boundary.** Reject pre-existing
+    links in the managed directory chain and at the CNI lock, including dangling
+    links, with a clear path-only diagnostic. This is a layout check for those
+    paths, not a blanket ban on links in application data. Point 10 describes
+    the current GNU `install` behavior, not a requirement to silently replace a
+    planted lock link. A link introduced after the check must still be harmless
+    to protected outside targets because the operation lacks elevated authority.
+    Running as the service user limits authority; it does not by itself confine
+    access to the home. Do not claim that all outside paths are inaccessible.
+18. **Verify the helper's authority, not just its command line.** In the
+    separate-UID probe, record real/effective/saved UID and GID, supplementary
+    groups, effective/permitted/ambient capabilities and SELinux context inside
+    the helper. Require no root identity, inherited privileged groups or
+    capabilities that bypass the intended boundary. For relabeling, test both
+    a root-owned non-writable outside target and a disposable root-owned target
+    writable by the service user; unchanged ownership alone does not demonstrate
+    unchanged labeling. A failure in directory, lock or label preparation must
+    stop before linger/firewall and must never trigger a root repair/retry.
+19. **Preserve retry behavior without promising rollback.** A failed preparation
+    may leave earlier valid setup steps in place; a new invocation must succeed
+    after the operator removes the unsafe condition. Test that an existing
+    regular CNI lock is not replaced or truncated, including a lock appearing
+    between the existence check and creation. On normal repeat, verify the
+    storage exclusion and retained container/volume identities as well as
+    ownership and labels. Keep all adversarial fixtures disposable and cleanup
+    independent of attacker-controlled symlink targets.
 
 Related, but owned by item 54 and out of scope here: the README's
 `sudoedit "/var/lib/$product_name/$bundle/config.yaml"`, and root `sha256sum` and
