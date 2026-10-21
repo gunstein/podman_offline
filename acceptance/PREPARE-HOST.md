@@ -105,6 +105,12 @@ identity evidence required by the probe, and rejects the attempted separate-UID
 created and no real-host malicious step ran here. Actual Python 3.6 execution,
 SELinux label preservation and fapolicyd compatibility remain unverified.
 
+## Lab runs
+
+| Run | Revision | Result |
+| --- | --- | --- |
+| `h46-platform` | `e8287b1` | Stopped at `03-host-path-safety` (`IndexError`): the disposable fixture lived under `/var/tmp`, where the policy default is `<<none>>`. `matchpathcon -n` printed no context, and every relabel check there would have passed vacuously. The fixture now lives under `/var/lib`, and a path without a default context is refused. No product code was involved. |
+
 ## Runnable real-host gates
 
 `03-host-path-safety` runs the disposable proof as root on DEV, before any

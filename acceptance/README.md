@@ -493,7 +493,8 @@ cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PAS
 
 `03-host-path-safety` runs before product-specific scenarios on DEV. With
 `sudo -n`, the guest executes `prepare_host_test.py` on stdin. It creates a
-uniquely named temporary system account and home under `/var/tmp`, records the
+uniquely named temporary system account and home under `/var/lib` (the policy
+maps `/var/tmp/.*` to `<<none>>`, which would make relabel checks vacuous), records the
 real service helper's UID/GID slots, groups, capabilities and SELinux context,
 requires deliberately wrong types on owned config/storage directories to be
 restored to their default types while a file inside storage keeps its label,

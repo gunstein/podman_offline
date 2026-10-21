@@ -17,6 +17,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+PROBE_PARENT = "/var/lib"
+
 # Executed on stdin after the real as_service_user helper drops authority.
 AUTHORITY = r"""
 import json, os
@@ -178,11 +180,21 @@ def label(path):
     return command(["stat", "-c", "%C", path]).stdout.strip()
 
 
+def default_type(path):
+    """Policy default type; a path without one (<<none>>) makes label checks vacuous."""
+    expected = command(["matchpathcon", "-n", path]).stdout.strip().split(":")
+    if len(expected) < 4:
+        raise RuntimeError(
+            "No SELinux default context for probe path; label checks would be vacuous: "
+            + str(path)
+        )
+    return expected[2]
+
+
 def require_default_type(path):
     """restorecon normally restores type, not the whole user/role/range context."""
-    expected = command(["matchpathcon", "-n", path]).stdout.strip().split(":")
     actual = label(path).split(":")
-    if len(expected) < 4 or len(actual) < 4 or actual[2] != expected[2]:
+    if len(actual) < 4 or actual[2] != default_type(path):
         raise RuntimeError(
             "Service-user relabel did not restore the default type: " + str(path)
         )
@@ -270,6 +282,10 @@ def outside_fixture(base):
         directory.chmod(0o755)
     (nested / "writable").write_bytes(b"root-owned nested writable fixture")
     (nested / "writable").chmod(0o666)
+    # The fixture label must differ from the policy default, or a redirected
+    # restorecon would leave it unchanged and the check could not see it.
+    if default_type(target) == "user_home_t":
+        raise RuntimeError("Outside fixture default type equals its wrong label")
     command(["chcon", "-R", "-t", "user_home_t", target])
     return target
 
@@ -311,8 +327,9 @@ def disposable(script, base):
         prepare(script, account, home)
         storage = home / ".local/share/containers/storage"
         for path in (home / ".config", storage):
-            expected = command(["matchpathcon", "-n", path]).stdout.strip().split(":")
-            wrong_type = "var_t" if expected[2] == "user_home_t" else "user_home_t"
+            wrong_type = (
+                "var_t" if default_type(path) == "user_home_t" else "user_home_t"
+            )
             command(["chcon", "-t", wrong_type, path])
         retained = storage / "retained-label"
         retained.write_bytes(b"retained storage fixture")
@@ -496,10 +513,12 @@ def main():
     if command(["getenforce"]).stdout.strip() != "Enforcing":
         parser.error("SELinux Enforcing is required; this is not a mocked label test")
     script = args.script.resolve(strict=True)
-    # A normal /var/tmp path is accessible under both identities. The caller
-    # explicitly chooses a disposable lab; never run against arbitrary hosts.
+    # Like the real service home, the fixture lives under /var/lib: the policy
+    # maps /var/tmp/.* to <<none>>, so restorecon would never change a label
+    # there and every relabel check would pass vacuously. The caller explicitly
+    # chooses a disposable lab; never run against arbitrary hosts.
     with tempfile.TemporaryDirectory(
-        prefix="podman-offline-host-", dir="/var/tmp"
+        prefix="podman-offline-host-", dir=PROBE_PARENT
     ) as directory:
         base = Path(directory)
         base.chmod(0o755)

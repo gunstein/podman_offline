@@ -119,6 +119,32 @@ class HostProbeTests(unittest.TestCase):
                 ):
                     probe.require_default_type(Path("/fixture/home"))
 
+    def test_path_without_policy_context_is_refused_not_vacuous(self):
+        """matchpathcon prints <<none>> for /var/tmp/.*; that must not pass or crash."""
+        none = subprocess.CompletedProcess([], 0, "<<none>>\n", "")
+        with mock.patch.object(probe, "command", return_value=none):
+            with self.assertRaisesRegex(RuntimeError, "vacuous"):
+                probe.default_type(Path("/var/tmp/fixture/home/.config"))
+            with (
+                mock.patch.object(
+                    probe, "label", return_value="unconfined_u:object_r:user_tmp_t:s0"
+                ),
+                self.assertRaisesRegex(RuntimeError, "vacuous"),
+            ):
+                probe.require_default_type(Path("/var/tmp/fixture/home"))
+        self.assertEqual(probe.PROBE_PARENT, "/var/lib")
+
+    def test_outside_fixture_refuses_a_default_equal_to_its_wrong_label(self):
+        home = subprocess.CompletedProcess(
+            [], 0, "system_u:object_r:user_home_t:s0\n", ""
+        )
+        with (
+            tempfile.TemporaryDirectory() as name,
+            mock.patch.object(probe, "command", return_value=home),
+            self.assertRaisesRegex(RuntimeError, "equals its wrong label"),
+        ):
+            probe.outside_fixture(Path(name))
+
     def authority(self):
         return {
             "Uid": "123 123 123 123",
