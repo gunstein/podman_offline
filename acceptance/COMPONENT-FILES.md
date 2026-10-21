@@ -67,7 +67,9 @@ its bundle/checksum/optional signature and image inventory back. Real Git fixtur
 tests protect unchanged operator source and checksum failure handling. The
 existing app1-first/app2-first upgrade then queries `release-v2`. Persistent
 comparison permits only `app1/files/app1-seed.tar` to change; config, credentials,
-Todo data and sibling checks remain required. Item 53's actual image upgrade is
+Todo data and sibling checks remain required. The verified archive hash becomes the
+baseline for the later platform and Identity upgrades, which still fail if it
+changes again. Item 53's actual image upgrade is
 still separate work and can extend this builder and its changed-file check.
 
 `database_test.seed_retry_check` is a runnable disposable Podman probe. It imports

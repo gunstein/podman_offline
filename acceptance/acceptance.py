@@ -459,6 +459,8 @@ class Run:
 
         allowed_changes names files an earlier, separately verified step may
         change on purpose; every other file and the CA must stay identical.
+        A passing check moves those allowed files into the baseline, so a later
+        upgrade accepts the verified state but still detects new changes.
         """
         try:
             state = json.loads(self.guest("PROD", "persistent-state", log_stdout=False))
@@ -509,6 +511,11 @@ class Run:
             raise RuntimeError(
                 "Persistent config, certificates or CA changed during upgrade"
             )
+        for name in allowed_changes:
+            if name in state["files_sha256"]:
+                before["files_sha256"][name] = state["files_sha256"][name]
+            else:
+                before["files_sha256"].pop(name, None)
 
     def upgrade(self):
         """Build and install a new version, and check persistent state and e2e."""

@@ -449,6 +449,23 @@ installed_components() { echo platform; }
                         self.harness.meta["persistent_after"][allowed], "changed"
                     )
 
+    def test_allowed_change_becomes_baseline_for_later_upgrades(self):
+        """Accept an earlier verified change later, but not a new change to it."""
+        before = self.state_fixture()
+        allowed = min(before["files_sha256"])
+        changed = json.loads(json.dumps(before))
+        changed["files_sha256"][allowed] = "b" * 64
+        again = json.loads(json.dumps(changed))
+        again["files_sha256"][allowed] = "c" * 64
+        outputs = iter(json.dumps(item) for item in (before, changed, changed, again))
+        self.harness.guest = lambda *args, **kwargs: next(outputs)
+        self.harness.persistent_state("before")
+        self.harness.persistent_state("after", (allowed,))
+        self.harness.persistent_state("after")
+        self.assertEqual(self.harness.meta["persistent_after"][allowed], "same")
+        with self.assertRaisesRegex(RuntimeError, "changed during upgrade"):
+            self.harness.persistent_state("after")
+
     def test_invalid_or_empty_json_and_nonzero_valid_json_fail(self):
         """Reject invalid stdout and a failing status even when the JSON is valid."""
         for status, output in (
