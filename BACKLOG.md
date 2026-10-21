@@ -11,8 +11,8 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-21)
 
-Items 56 and 57 are implemented with local tests; real runtime verification is
-pending. They followed the operator's 2026-10-21 order:
+Items 56 and 57 are done: implemented with local tests and a clean real lab
+matrix (`t10`, `cda22e7`). They followed the operator's 2026-10-21 order:
 component-specific dev overrides, then portable references to bundled component
 files. They unblock the organisation's migration/seed setup without leaking
 component-specific declarations into global dev config. Item 46 follows: prevent
@@ -25,10 +25,10 @@ verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
 1. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
-   implemented; real runtime verification pending. Isolate each component's dev
+   done; lab matrix `t10` clean at `cda22e7`. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
 2. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
-   implemented; real runtime verification pending. Use one explicit file reference
+   done; lab matrix `t10` clean at `cda22e7`. Use one explicit file reference
    in source/dev and an isolated offline release,
    without hand-editing release paths. Separate from the override-layer change.
 3. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
@@ -5244,7 +5244,8 @@ components, authoritative production config, shared settings, credential retenti
 side-effect-free validation and host Python 3.6 compatibility. Coordinate with
 item 57, but keep the two changes independently reviewable.
 
-Status: implemented on 2026-10-21; real Podman/systemd verification pending.
+Status: done. Implemented on 2026-10-21; real Podman/systemd verification
+passed in lab matrix `t10` at `cda22e7` ([COMPONENT-DEV.md](acceptance/COMPONENT-DEV.md)).
 The optional component dev layer, shared-key refusal, private-source bundle guard,
 demo marker, renamed-product handling and runtime acceptance assertions are in
 place. Local verification and the understandability review are recorded in
@@ -5365,12 +5366,13 @@ offline bundles, authoritative production config, scoped file access, credential
 retention, read-only validation and Python 3.6 compatibility. High-priority
 follow-up to item 56; a separate feature, not an implicit part of its merge rules.
 
-Status: implemented on 2026-10-21; real Podman/systemd/SELinux/fapolicyd verification
-pending. `component_file` resolves public inputs in the selected component/release,
+Status: done. Implemented on 2026-10-21; real Podman/systemd/SELinux/fapolicyd
+verification passed in lab matrix `t10` at `cda22e7`
+([COMPONENT-FILES.md](acceptance/COMPONENT-FILES.md)). `component_file` resolves public inputs in the selected component/release,
 with shared validation/materialization, logical retained config and existing
 private-source guards. The app1 demo and isolated SQL upgrade/failure-retry
 acceptance checks are implemented. See [verification and understandability
-review](acceptance/COMPONENT-FILES.md) for actual results and outstanding checks.
+review](acceptance/COMPONENT-FILES.md) for actual results and lab evidence.
 The review notes below describe the baseline and implementation requirements.
 
 Review follow-up (2026-10-21): the demo seed runs each SQL file with
@@ -5379,7 +5381,7 @@ stay committed; the real failure/retry probe now requires the failing file's
 earlier row to be absent. The `sts` README example uses a relative dev path under
 `build/dev/sts/` instead of a machine-specific path in a tracked file, and the docs
 recommend an explicit file list or history table for real migrations instead of
-executing every imported file. Real runtime verification is still pending.
+executing every imported file.
 
 The operator clarification in item 56 applies: no transition from pre-feature
 installations is required. Test upgrades between releases of the new model.

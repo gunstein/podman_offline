@@ -1,7 +1,8 @@
 # Component-specific dev configuration (backlog 56)
 
 Implemented on 2026-10-21. Local product/harness verification is separate from
-real Podman/systemd evidence; no real lab run of this change has been performed.
+real Podman/systemd evidence, which passed on 2026-10-21 at `cda22e7`
+(see [Real runtime verification](#real-runtime-verification)).
 Existing installations may be discarded, as explicitly agreed by the operator.
 No migration or compatibility layer was added. Item 57 was unimplemented at this
 verification baseline; its later implementation/evidence is recorded separately
@@ -112,16 +113,26 @@ algorithm or framework was added. The public marker and fixed app names exist
 only in demo declarations and the acceptance harness, not generic deployment
 code. The affected ownership, validation and failure order are explicit.
 
-## Real runtime checks still required
+## Real runtime verification
 
-After committing this work, use the documented disposable lab prerequisites in
-[README.md](README.md). These commands are provided, not executed here:
+| Run | Revision | Result |
+| --- | --- | --- |
+| `t9-app2` | `101bc54` | Stopped at `10-platform-persistent`: harness compared against the pre-app1-upgrade baseline (fixed in `cda22e7`) |
+| `t10-app1` | `cda22e7` | CLEAN PASS: full app1-first flow, app1/help/platform/Identity upgrades, uninstall |
+| `t10-app2` | `cda22e7` | CLEAN PASS: full app2-first flow, same upgrades and uninstall |
+| `t10-help` | `cda22e7` | CLEAN PASS: help-only upgrade |
+| `t10-platform` | `cda22e7` | CLEAN PASS: platform/help without Identity |
+| `t10-identity` | `cda22e7` | CLEAN PASS: Identity-only upgrade with declared config change |
+| `t10-shop` | `cda22e7` | CLEAN PASS: renamed product, registration removal and retained-bundle uninstall |
 
-```sh
-python3 acceptance/acceptance.py --run component-dev-app1-first --first-app app1 run
-python3 acceptance/acceptance.py --run component-dev-app2-first --first-app app2 run
-python3 acceptance/acceptance.py --run component-dev-shop --renamed-product run
-```
+Runs used the two disposable lab VMs (Oracle Linux 9.8, Podman 5.8.2, systemd 252,
+SELinux Enforcing, fapolicyd active on PROD) from clean checkouts. Evidence is
+stored outside Git under `~/podman-offline-acceptance-runs/<run>/`. Results
+earlier than `cda22e7` are not evidence for this revision.
+
+The checks below ran in the app1-first, app2-first, help, Identity and renamed
+runs; the platform-only run has no app and therefore no marker.
+
 
 DEV dev-up checks app1/orders renders and exposes `component-dev` in its actual
 backend; app2/inventory has no marker, including an empty environment value.
@@ -133,4 +144,3 @@ app marker. In PROD the check reads the service user's `installed/` completion
 markers: an installed app whose consumer is missing from the rendered Quadlet
 YAML fails instead of being skipped, so a misnamed or absent pod cannot pass
 unchecked (review follow-up, 2026-10-21; harness regression added). Existing persistence, restart, upgrade and sibling checks still run.
-No claim is made about actual Podman, systemd, SELinux or fapolicyd results.

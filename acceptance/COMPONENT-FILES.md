@@ -1,7 +1,7 @@
 # Portable bundled component files (backlog 57)
 
 Implemented on 2026-10-21 from main `afbf70f`. Real Podman/systemd/SELinux/fapolicyd
-verification is outstanding. Existing installations can be discarded; no migration,
+verification passed on 2026-10-21 at `cda22e7`; see [Real runtime verification](#real-runtime-verification). Existing installations can be discarded; no migration,
 schema compatibility layer or old-release fallback was added.
 
 ## Contract and information flow
@@ -86,7 +86,7 @@ that old file. The demo uses idempotent upserts, one transaction per file
 (`--single-transaction`) and retry, not migration tracking or cross-file
 rollback. The real probe's failing file inserts a row before its error and
 requires that row to be absent while the earlier file's row is committed
-(review follow-up 2026-10-21; real runtime result pending). Do not reuse disposable
+(review follow-up 2026-10-21; passed in `03-database-runtime` of the `t10` runs). Do not reuse disposable
 dev data volumes as fresh production volumes.
 
 ## Local verification
@@ -140,21 +140,25 @@ code. No generic SQL runner, expansion engine, plugin or transaction framework
 was added. Review traced config ownership, validation ordering, side effects,
 completion and failure boundaries in the affected flow.
 
-## Outstanding real runtime verification
+## Real runtime verification
 
-Commit this work before running the clean-checkout lab harness. Use the disposable
-VM prerequisites in [README.md](README.md) and a new run ID for each scenario:
+| Run | Revision | Result |
+| --- | --- | --- |
+| `t9-app2` | `101bc54` | Stopped at `10-platform-persistent`: harness compared against the pre-app1-upgrade baseline (fixed in `cda22e7`) |
+| `t10-app1` | `cda22e7` | CLEAN PASS: full app1-first flow, app1/help/platform/Identity upgrades, uninstall |
+| `t10-app2` | `cda22e7` | CLEAN PASS: full app2-first flow, same upgrades and uninstall |
+| `t10-help` | `cda22e7` | CLEAN PASS: help-only upgrade |
+| `t10-platform` | `cda22e7` | CLEAN PASS: platform/help without Identity |
+| `t10-identity` | `cda22e7` | CLEAN PASS: Identity-only upgrade with declared config change |
+| `t10-shop` | `cda22e7` | CLEAN PASS: renamed product, registration removal and retained-bundle uninstall |
 
-```sh
-python3 acceptance/acceptance.py --run component-files-app1-first --first-app app1 run
-python3 acceptance/acceptance.py --run component-files-app2-first --first-app app2 run
-python3 acceptance/acceptance.py --run component-files-shop --renamed-product run
-```
+Runs used the two disposable lab VMs (Oracle Linux 9.8, Podman 5.8.2, systemd 252,
+SELinux Enforcing, fapolicyd active on PROD) from clean checkouts. Evidence is
+stored outside Git under `~/podman-offline-acceptance-runs/<run>/`. Results
+earlier than `cda22e7` are not evidence for this revision.
 
-The first two scenarios include the disposable SQL failure/retry probe, source
-dev markers, offline install, changed-SQL upgrade, retained config/Todo data and
-untouched siblings. The renamed scenario checks the same DEV/PROD base rows with
-renamed file references and components. All real runtime, mount/import, startup,
-SELinux and fapolicyd assertions are implemented but unverified here. Rerun the
-isolated platform suite on a host permitting GPG-agent sockets to close that
-separate local verification gap.
+The app1-first and app2-first runs include the disposable SQL failure/retry probe
+(`03-database-runtime`), DEV seed rows, offline install, changed-SQL upgrade to
+`release-v2`, retained config/Todo data and untouched siblings. The renamed run
+checks the same base rows with renamed file references and components. The lab
+`03-unit` step (`tests/run.py all`) passed on the DEV VM, where GPG-agent sockets are permitted.
