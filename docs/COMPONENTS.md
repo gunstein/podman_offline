@@ -147,8 +147,12 @@ production `init-config`, `validate` or `install`.
 An owner's component dev settings are inherited by its `public_from` dependents.
 A dependent that declares any of those shared keys in its own component dev file
 is refused, rather than silently losing the value to inheritance. This includes
-`PUBLIC_ORIGIN`, `HTTPS_PORT` and custom `shares`. The older global dev layer's
-owner-wins behavior remains unchanged (backlog 58).
+`PUBLIC_ORIGIN`, `HTTPS_PORT` and custom `shares`. Shared keys always come from
+the owner's effective dev config, which includes global `config/dev.yaml`, so a
+global value reaches the owner and every dependent identically. An owner's own
+`config.dev.yaml` value is more specific and wins over the global one for all
+dependents alike, as production `init-config` also inherits from the owner
+(backlog 58).
 
 Relative file sources still resolve from `build/dev/<id>/`; generated config
 there is output, never an input layer. See the [configuration examples and

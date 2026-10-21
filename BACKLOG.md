@@ -120,7 +120,7 @@ lifecycle on real hosts; failure injection only in fresh local processes).
 Update 2026-10-21: item 56 is implemented and locally tested; real runtime checks
 are pending ([evidence](acceptance/COMPONENT-DEV.md)).
 
-Open: 57 (top implementation priority), 46, 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 58, 5, 7, 6, and
+Open: 57 (top implementation priority), 46, 54, 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5541,19 +5541,19 @@ resolution, config persistence and release selection.
 
 ## 58. Clarify global dev overrides of owner-shared settings
 
-Status: planned follow-up identified during item 56; not part of that item's
-implementation. Agree priority separately.
+Status: done (documentation only), 2026-10-21. No code change.
 
 `deploy.dev_settings()` applies a `public_from` owner's effective shared values
-after merging a dependent's layers. A global `config/dev.yaml` declaration on
-the dependent can therefore be silently replaced, for example when the owner's
-component dev file supplies another value. Item 56 refuses such declarations in
-the dependent's component dev file, but deliberately leaves the global layer's
-existing owner-wins behavior unchanged. Its inheritance regression covers this
-case; no global-layer refusal is claimed.
+after merging a dependent's layers. The owner's effective values already include
+the global `config/dev.yaml`, which applies to every component. A global shared
+key therefore reaches the owner and every dependent with the same value; nothing
+is lost. The only difference arises when the owner's own `config.dev.yaml` sets
+the key: that more specific value wins for the owner and all dependents alike.
+This keeps proxy, Identity and apps consistent, matches production (`init-config`
+inherits shared values from the owner) and is covered by item 56's
+`test_owner_dev_settings_reach_dependents`.
 
-Decide and document the intended global-layer diagnostics without rejecting
-ordinary global settings used by an owner and its dependents. Cover
-`PUBLIC_ORIGIN`, `HTTPS_PORT`, custom `shares`, owner-local precedence, readable
-value-safe errors and unchanged production config. Reuse the existing merge and
-shared-setting model; do not add another config layer or widen item 56.
+Refusing global shared keys would break ordinary use: `config/dev.yaml.example`
+sets `PUBLIC_ORIGIN` and `HTTPS_PORT` globally. The precedence is now documented
+in README, docs/COMPONENTS.md and acceptance/COMPONENT-DEV.md, and the
+REVIEW_GUIDE known gap is marked resolved.

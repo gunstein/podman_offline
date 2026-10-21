@@ -18,7 +18,8 @@ All use `render.merge_config`: later top-level values replace whole earlier
 values. Maps/lists are not recursively merged. `public_from` owner values are
 still applied last. A dependent's component dev file that declares an owner's
 shared key is refused, naming the key, file and owner without printing values.
-The global dev layer retains its existing owner-wins behavior (backlog 58).
+Global dev values reach owner and dependents identically; an owner's component
+dev value wins for all of them (documented in backlog 58, no code change).
 
 Production `init-config` never reads the dev layers; later validation and install
 continue to read only authoritative persistent config. Tests deliberately place

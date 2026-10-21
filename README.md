@@ -152,7 +152,10 @@ machine-specific absolute paths. Keep credentials in external/generated files.
 A `public_from` dependent may not set its owner's shared keys in its component
 dev file, even to the same value: this fails naming the key, file and owner.
 Set these keys on the owner, whose effective settings are inherited afterwards.
-The pre-existing global dev layer still has its older owner-wins behavior.
+Shared keys always come from the owner's effective dev config, which includes the
+global `config/dev.yaml`, so a global value reaches the owner and every dependent
+identically. If the owner's own `config.dev.yaml` sets a shared key, that more
+specific value wins over the global one for all dependents alike (backlog 58).
 
 For a renamed component `orders`, a complete map override must repeat retained
 entries. For example, if `components/orders/config.defaults.yaml` contains:
