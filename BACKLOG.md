@@ -5271,6 +5271,51 @@ migration init-container, independently of unrelated components and production.
    today's rules, not against the new override file. Clearly distinguish this
    task from item 57; adding a layer alone does not make paths portable.
 
+### Review additions (2026-10-21)
+
+Code facts and decisions from the review; they refine the task above.
+
+- **Current code.** `render.component_defaults()` builds the layer list and
+  `merge_config()` applies the `public_from` shared settings (`overrides`) after
+  all layers. `deploy.dev_settings()` is the dev caller; `init_config()` is the
+  production caller and must never read the new layer. `bundle.py` copies an
+  allowlist per component (`manifests`, `config.defaults.yaml`, `route.conf`,
+  `client.yaml`, `files`), so `config.dev.yaml` is not packaged today; prove it.
+  README still says dev overrides apply to all components with no per-component
+  override; update it.
+- **Tracked file, no secrets.** `components/<id>/config.dev.yaml` is committed
+  (shared dev settings). The acceptance harness requires a clean committed
+  checkout, so the demo override must be tracked. It must never contain secret
+  values; secrets stay in `credentials/` files. `config/dev.yaml` stays local
+  and ignored.
+- **Shared settings are not silently ignored.** A `public_from` dependent must not
+  set a shared key (`PUBLIC_ORIGIN`, `HTTPS_PORT`, the owner's `shares`) in its
+  `config.dev.yaml`: the owner's value is applied afterwards, so the local value
+  would vanish. Refuse it naming key, file and owner, never values. The owner may
+  set its own shared keys there; dependents inherit them as today. If
+  `config/dev.yaml` already has the same silent-ignore behavior, record it in the
+  backlog rather than widening this item.
+- **Bundle guard.** `bundle.generated_secret_guard()` reads `config/dev.yaml` with
+  base `build/dev/<id>`; add `components/<id>/config.dev.yaml` with the same
+  base, so a generated secret declared only there cannot be bundled. List every
+  reader of dev config (grep) in the report; one merge implementation only.
+- **Demo usage (app1).** Add a small, observable, non-secret value, for example a
+  `DEMO_CONFIG_LAYER` key in the `app1-settings` ConfigMap from a placeholder with
+  value `defaults` in `config.defaults.yaml` and `component-dev` in
+  `components/app1/config.dev.yaml`. It must not change application behavior or
+  existing E2E assertions; app2 must not receive it.
+- **Acceptance.** DEV after dev-up: the running app1 container shows
+  `component-dev` (podman exec printenv for that key only, never the full
+  environment); app2 does not have the key. PROD after install: app1 shows
+  `defaults`. Add stubbed harness regressions including a wrong-layer value
+  reported as failure.
+- **Additional tests.** Component dev beats global dev; a map replaces rather than
+  merges; shared-key refusal for a dependent and owner-to-dependent inheritance;
+  production init-config/validate/install ignore a hand-copied file of that name;
+  a real bundle archive excludes it; the guard refuses a generated secret declared
+  only in it. Update `tests/run.py --export` fixtures if needed and run
+  `python3 -B tests/run.py platform --isolate`.
+
 ### Verification and delivery
 
 Add focused platform tests for all precedence levels, absent/invalid files,
@@ -5339,6 +5384,73 @@ component's shipped file in both source dev and an unpacked offline bundle.
 6. Document source/default config examples and relocated offline install/upgrade
    commands, including how it combines with item 56. Update relevant contracts,
    diagram text and tests only where affected; no general file-routing framework.
+
+### Review additions (2026-10-21)
+
+Code facts and decisions from the review; they refine the task above.
+
+- **Current code.** `render.resolve_path(value, base_dir)` resolves relative paths
+  from `build/dev/<id>/` in dev and the persistent config directory in production;
+  the release is `common.ROOT`. It is used by `render.load_file_group`,
+  `render.check_file_sources`, `render.secret_keys`,
+  `deploy.database_password_path` and `bundle.generated_secret_guard` (which reads
+  `entry["path"]` directly). All must use one shared resolver for the new kind.
+  `file_group_sources` validates entry shape. VOLUME_FILES archives are written
+  under `HOME/files` at install; Podman imports them at every start, overwriting
+  matching files and keeping unlisted ones (README).
+- **Recommended syntax.** A separate key, not a path prefix, so it cannot be
+  mistaken for an ordinary relative path and `path` semantics stay unchanged:
+
+  ```yaml
+  VOLUME_FILES:
+    app1-seed:
+    - component_file: sql/010-reference.sql
+  ```
+
+  An entry has exactly one of `path` or `component_file`; `generate` with
+  `component_file` is refused before writes. Confirm or justify another choice.
+- **Selected release.** The base is `common.ROOT/components/<current component>/files/`:
+  the source checkout in dev, the unpacked bundle running `./deploy` in production,
+  for validate and install alike. No release path is stored in config. Refuse the
+  reference when there is no component context (standalone fixtures), and as a
+  database password source or any generated credential.
+- **Stale files.** Because Podman keeps unlisted files in an imported volume, a file
+  removed from a later release still exists there. The demo makes every SQL file
+  idempotent; document the limitation for the organisation's own migrations. No
+  migration framework.
+- **Demo usage (app1).** `components/app1/files/sql/010-reference.sql` creates a
+  marker table (for example `demo_seed(name text primary key, value text)`) and
+  upserts `reference` with a value identifying the release content;
+  `files/sql-dev/900-dev-sample.sql` upserts `dev-sample`. `config.defaults.yaml`
+  maps only the reference file to `VOLUME_FILES.app1-seed`; the item 56
+  `config.dev.yaml` repeats it and adds the dev file (whole-map replacement). A new
+  init container `seed-database`, after `prepare-database`, uses the already
+  bundled `localhost/demo-postgres` image (official postgres with `psql`), mounts
+  the PVC read-only and the existing database password Secret, and runs an
+  explicit sorted list of `*.sql` files with `ON_ERROR_STOP`. The password goes
+  from the mounted file into `PGPASSWORD` inside the container and is never
+  printed. No new image or app rebuild; todo data, probes and app2 unchanged;
+  update demo inventory counts intentionally.
+- **Acceptance.** DEV after dev-up: `demo_seed` has `reference` and `dev-sample`
+  (query in the app1 postgres container, print only these rows). PROD after
+  install: `reference` present, `dev-sample` absent. App1 upgrade in both app1-first
+  and app2-first: build the new bundle with a changed reference value in an
+  isolated build checkout (as the help/Identity builders do, never the operator's
+  checkout). The `upgrade-bundle` step in `acceptance/remote.sh` currently requires
+  that only `components/app1/VERSION` changed; require exactly VERSION plus that
+  SQL file. After upgrade `reference` has the new value, the existing
+  `persistent_state` check proves unchanged config, todo data stays readable and
+  sibling checks pass. Coordinate with item 53, which changes the same step. The
+  renamed `shop` scenario must carry component files and references and assert
+  the same rows. Harness regressions reject the old value after upgrade, a
+  `dev-sample` row on PROD and a missing `reference` row.
+- **Additional tests.** Refuse absolute, `..`, empty, symlinked file or `files/`
+  directory, cross-component, `path` plus `component_file`, `generate`, database
+  password use and missing component context; SECRET_FILES use keeps key/size rules
+  without printing values; the bundle guard handles entries without `path`; a
+  relocated unpacked bundle with the source checkout removed resolves the same
+  declaration; init-config keeps the logical reference and a newer bundle with
+  changed bytes and unchanged config delivers the new bytes.
 
 ### Verification and delivery
 
