@@ -220,7 +220,8 @@ class FapolicydDeliveryTests(unittest.TestCase):
         ]
         self.assertEqual([line for line in code if ".py" in line], [])
         self.assertEqual(
-            sorted(path.name for path in SCRIPT.parent.iterdir()), ["prepare-host.sh"]
+            sorted(path.name for path in SCRIPT.parent.iterdir()),
+            ["prepare-host.sh", "release.py"],
         )
 
     def test_embedded_helper_fits_a_pipe(self):

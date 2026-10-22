@@ -147,7 +147,7 @@ release=$(cd "$(dirname "$0")/.." && pwd)
 user=myproduct
 if [[ -f $release/bundle.yaml ]]; then
     # Parse the YAML: bundle.py may quote a value such as 'on'.
-    user=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["product"])' "$release/bundle.yaml") \
+    user=$(python3 -I -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["product"])' "$release/bundle.yaml") \
         || die "Cannot read the product name from $release/bundle.yaml"
 fi
 port=
@@ -198,7 +198,7 @@ service_gid=$(id -g "$user")
 [[ $(stat -c %u "$service_home") == "$service_uid" ]] || die "The home $service_home must be owned by $user"
 chmod 0700 "$service_home"
 # Keep ID mappings for existing volumes; users must not overlap.
-read -r uid_range gid_range < <(python3 - "$user" <<'PY'
+read -r uid_range gid_range < <(python3 -I - "$user" <<'PY'
 import sys
 from pathlib import Path
 user = sys.argv[1]

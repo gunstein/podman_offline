@@ -19,6 +19,7 @@ build entrypoint and also uses `-B`.
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
+| `scripts/release.py` | Independently authenticated root helper: snapshot/signature verification, strict archive inventory, atomic immutable publication under `/opt/<product>/releases`, exact fapolicyd enrollment/wait and scoped retirement; never imports incoming code. |
 | `scripts/prepare-host.sh` | Explicit root host setup; drop to the service UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. Its embedded Python helper (a here-document, because fapolicyd denies reading untrusted Python files before trust) uses directory descriptors and exclusive lock creation; it does not inspect application data. |
 
 `common.ROOT` is the directory above the package, both in source and unpacked
@@ -263,19 +264,38 @@ Each offline bundle ships the complete `deployment/` package with checksums and
 only its own resources/images. Bytecode and private state, including aliases to
 declared secrets/credential files, stay out of archives.
 
-Operators recursively add only `<release>/deployment/` to the existing per-bundle
-fapolicyd trust file. The CLI expands directory trust to individual file records.
-The read-only wait helper requires every current package file, rejects incomplete
-or malformed/duplicate records, and checks that all old package entries disappear
-after retirement. Other release files and credentials are not trusted. The
-wrapper executes via Bash and Python imports run with `-B`; no new allow/crun/memfd
-or SELinux rules are introduced. Directory add/delete semantics follow the
-[upstream fapolicyd guidance](https://github.com/linux-application-whitelisting/fapolicyd#managing-the-file-trust-source).
+An independently authenticated `scripts/release.py` runs with root authority via
+stdin, separate from bundle code. It locks the protected `/opt/<product>` anchor,
+snapshots archive/signature, checks gpgv against a separately provisioned keyring,
+validates every member and the exact checksum inventory, and publishes a complete
+root-owned release at `/opt/<product>/releases/<product>-<component>-<version>`.
+A root-owned `.release.json` binds the authenticated archive hash, file paths,
+sizes, modes and streamed hashes, including directory inventory and inode/ctime
+bindings. Payloads are never reopened as untrusted Python before enrollment. Existing releases must
+match it exactly; version content cannot be overwritten. Staging is never used
+as installed code. The service home and private state stay separate.
 
-No migration code, fallback root deploy.py or compatibility layer for existing
-installations is added. Historical pinned-release helpers and reports retain
-their original layouts. Fresh target verification of directory trust is still
-required; see [refactor verification](acceptance/DEPLOY-REFACTOR.md).
+Only authenticated `deployment/` path/size/hash records are atomically enrolled
+in the scoped trust file using fapolicyd's documented text format. This avoids
+opening untrusted Python for CLI hashing; idempotent merges retain older versions. The shared bounded wait compares the live paths, sizes and SHA256
+values with the protected provenance, including removal of old trust on
+retirement. Root-controlled ancestors and files protect the `integrity = none`
+baseline after enrollment; `sha256` is supplementary, not a substitute. The
+helper refuses unexpected ownership, writable modes/ACLs, links and special
+files. The wrapper executes via Bash and Python imports run with `-B`; no new
+allow/crun/memfd or SELinux rules are introduced. The helper's own bootstrap is
+separately authenticated; it cannot trust its own unverified input.
+
+Normal deploy commands run as the service user against read-only release inputs.
+Config/credentials and lifecycle pending records remain owned by deploy. Old
+releases and trust survive install/health/e2e failures; root retirement follows
+all required checks and removes only the selected old release. Repeated calls
+resume enrollment of identical authenticated content; per-product locking and
+atomic directory rename prevent concurrent or partial publication.
+
+No migration code or old-layout fallback is added. Historical pinned-release
+helpers and reports retain their original layouts. Current-change OL9 verification
+is pending; see [protected release verification](acceptance/PROTECTED-RELEASES.md).
 
 ## Private app file delivery (0.4.4)
 

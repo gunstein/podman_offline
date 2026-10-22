@@ -224,7 +224,7 @@ defaults are never merged into it, and config is never overwritten or extended
 automatically. Existing complete files continue to work unchanged. If a new
 release needs an absent key, install fails before image operations with the
 persistent file path and key name, without its value. Before retrying, back up
-that file privately and explicitly add the required key using `sudoedit`; consult
+that file privately and explicitly add the required key using `sudoedit -u "$product_name"`; consult
 the release’s defaults and notes for its type and meaning. Add shared changes
 consistently to platform and dependents. Defaults are examples for this manual step,
 not an automatic migration mechanism. Explicit edits take effect when that
@@ -531,7 +531,8 @@ There is no migration, fallback or automatic rewrite of persistent config.
 ├── installed/<component>                  installed version, written last, 0600
 ├── .config/containers/systemd/             scoped .kube/.yaml + shared .network
 ├── .local/share/containers/storage/        images, DB data and secret volumes
-└── releases/myproduct-<bundle>-<version>/   code/manifests/images, disposable
+
+/opt/myproduct/releases/myproduct-<bundle>-<version>/  root-owned code/manifests/images
 ```
 
 Proxy and identity consume imported volumes, not host bind mounts. The renderer
@@ -617,12 +618,12 @@ After the usual signature/checksum verification and unpacking, run as the servic
 user (the release directories may be anywhere accessible):
 
 ```sh
-~/releases/myproduct-sts-1.0.0/deploy init-config sts
-~/releases/myproduct-sts-1.0.0/deploy validate
-~/releases/myproduct-sts-1.0.0/deploy install
+/opt/myproduct/releases/myproduct-sts-1.0.0/deploy init-config sts
+/opt/myproduct/releases/myproduct-sts-1.0.0/deploy validate
+/opt/myproduct/releases/myproduct-sts-1.0.0/deploy install
 # A later verified/unpacked release, with the same persistent config:
-~/releases/myproduct-sts-1.0.1/deploy validate
-~/releases/myproduct-sts-1.0.1/deploy install
+/opt/myproduct/releases/myproduct-sts-1.0.1/deploy validate
+/opt/myproduct/releases/myproduct-sts-1.0.1/deploy install
 ```
 
 The app1 demo runs a read-only seed PVC in `seed-database` after
@@ -937,23 +938,87 @@ either order. For a platform/help-only installation, install `help` after
 remain installed on its own.
 
 `--port`, every `HTTPS_PORT` and the port in `PUBLIC_ORIGIN` must agree.
-The archive is opened by the operator and streamed to the service user, which cannot
-read the operator's private home. No `cd` by the operator into the 0700 service
-home is needed. Shell scripts run through `bash` under fapolicyd.
+The administrator obtains `scripts/release.py` from a separately authenticated,
+reviewed commit. Its bootstrap is independent of the incoming application bundle:
+a helper extracted from an unverified bundle cannot establish its own trust.
+On the trusted source workstation, compress that reviewed helper with
+`gzip -n -c scripts/release.py > release.py.gz`. Deliver its SHA256 digest through
+an independent authenticated administrative channel, not merely a checksum file
+beside the candidate upload.
+
+Before provisioning, the administrator confirms that `/usr/local/libexec` and
+all its ancestors are root-owned, nonwritable by service users through modes or
+ACLs, and contain no symlinks. Refuse an existing linked, nonregular, foreign-owned
+or service-writable helper target instead of repairing it. Install the compressed
+helper as root-owned 0644
+`/usr/local/libexec/podman-offline-release.py.gz`, then authenticate that exact
+protected copy against the independently obtained digest before first execution:
 
 ```sh
+# helper_sha256 comes from the independent trusted channel.
+sudo install -o root -g root -m 0644 release.py.gz /usr/local/libexec/podman-offline-release.py.gz
+printf '%s  %s\n' "$helper_sha256" /usr/local/libexec/podman-offline-release.py.gz | sudo sha256sum -c -
+```
+
+Only proceed if the protected-copy digest matches. Updating the helper repeats
+this separate reviewed administrative procedure. An organisation-signed OS
+package can provision it instead. A raw untrusted Python file can be denied by
+fapolicyd even when only hashing it; compressed transport plus stdin avoids that
+problem without changing rules or enrolling the helper's source as application
+code. The lab uses equivalent authenticated-controller delivery over SSH and a
+Bash printf pipe. The public bundle-signing key is also provisioned independently
+of application archives. These are trusted administrator actions; the product
+service account has no authority over helper/key provisioning.
+
+The helper requires Python 3.6+, packaged PyYAML, gpgv and fapolicyd-cli on the
+host; no online dependencies are fetched. Decode the authenticated root-protected
+helper directly into the interpreter's stdin with isolated imports (`-I`),
+excluding CWD, PYTHONPATH and user site packages from privileged execution:
+
+```sh
+release_tool() {
+    gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - "$@"
+}
 product_name=myproduct  # product: in bundles.yaml; also the service user
 bundle=platform
 version=0.4.11
-archive="$product_name-$bundle-$version-offline.tar.gz"
-# Signed bundles: the organisation's public key, delivered separately.
-gpgv --keyring ./bundle-signing.gpg "$archive.asc" "$archive"
-sha256sum -c "$archive.sha256"
-stage=$(mktemp -d "/tmp/$product_name-install.XXXXXXXX")
-tar xzf "$archive" -C "$stage"
-sudo bash "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" --port 8443
-rm -rf -- "$stage"
+archive="$PWD/$product_name-$bundle-$version-offline.tar.gz"
+# Authenticate the organisation's public key out of band before provisioning it.
+# Existing different keyrings are refused; key rotation is an admin operation.
+# bundle_key_sha256 is the public key export's independently authenticated digest.
+release_tool provision-key --product "$product_name" --keyring "$PWD/bundle-signing.gpg" \
+    --key-sha256 "$bundle_key_sha256"
+release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
+    --archive "$archive" --signature "$archive.asc" --keyring "/opt/$product_name/keyring.gpg"
+release="/opt/$product_name/releases/$product_name-$bundle-$version"
+sudo bash "$release/scripts/prepare-host.sh" --port 8443
 ```
+
+The helper snapshots the archive/signature into a private directory under the
+protected `/opt/<product>` anchor and verifies that exact copy before extraction.
+It rejects links, special files, ambiguous members, unexpected inventory and
+identity mismatches. It publishes a complete root-owned release atomically and
+retains authenticated inventory/provenance and inode/ctime bindings in `.release.json`.
+Payload hashes are calculated while copying the signed archive stream; untrusted
+Python files are not reopened before enrollment. Protected inode/ctime bindings
+refuse any later filesystem changes, including same-size writes. Do not manually
+copy, modify, chmod or relabel a published tree; unsafe state is refused rather
+than silently repaired. Repeating the same
+signed archive resumes trust enrollment; different bytes for the same identity
+are refused. A per-product lock serializes publication, trust and retirement.
+After an interrupted process, incomplete `.staging-*` directories are untrusted
+root-only scratch; they are never reused as releases and may be removed by an
+administrator when no helper process is running. `/opt` needs space for the
+archive and extracted release at the same time.
+
+The protected layout supports the existing `integrity = none` baseline: the
+service user cannot replace trusted bytes or any ancestor after enrollment.
+`size` cannot detect deliberate same-size changes. `sha256` is additional
+verification, not a replacement for authentication or protected ownership. The
+helper reports the configured `none`, `size` or `sha256` strategy and refuses
+other/ambiguous strategies; it never changes global integrity policy. Current
+OL9 lab coverage must be recorded for the actual setting; a stronger setting
+requires its own startup/upgrade verification.
 
 prepare-host creates the system user named after the product (`myproduct` in
 the demo) with home `/var/lib/<user>` and nologin shell, allocates noncolliding subuid/subgid ranges, enables linger
@@ -1024,79 +1089,34 @@ def main():
 main()
 HEALTH
 }
-# Wait for an exact trust entry and, optionally, removal of an old release.
+# Wait against the protected authenticated inventory, including size and SHA256.
 wait_trust() {
-    local wanted=${1%/}/ removed=${2:-} expected dump status attempt
-    if [[ -n $removed ]]; then removed=${removed%/}/; fi
-    expected=$(sudo -n find "$wanted" -type f -print) || {
-        echo 'FAIL: could not enumerate package trust files' >&2; return 1;
-    }
-    [[ -n $expected ]] || { echo 'FAIL: empty deployment package' >&2; return 1; }
-    for attempt in {1..30}; do
-        dump=$(timeout 10 sudo -n fapolicyd-cli --dump-db) || {
-            echo 'FAIL: could not read trust database' >&2; return 1;
-        }
-        status=0
-        awk -v expected="$expected" -v wanted="$wanted" -v removed="$removed" '
-            BEGIN {
-                count=split(expected, files, "\n")
-                for (i=1; i<=count; i++) required[files[i]]=1
-            }
-            {
-                path=$0
-                sub(/^[^[:space:]]+[[:space:]]+/, "", path)
-                sub(/[[:space:]]+[0-9]+[[:space:]]+[[:xdigit:]]+[[:space:]]*$/, "", path)
-                if (NF < 4 || path !~ /^\// || $(NF-1) !~ /^[0-9]+$/ ||
-                    length($NF) != 64 || $NF !~ /^[[:xdigit:]]+$/) invalid=1
-                if (index(path, wanted) == 1) {
-                    if (!(path in required) || ++seen[path] != 1) invalid=1
-                }
-                if (removed != "" && index(path, removed) == 1) old=1
-            }
-            END {
-                if (NR == 0 || invalid) exit 2
-                for (path in required) if (seen[path] != 1) exit 1
-                if (old) exit 1
-            }
-        ' <<< "$dump" || status=$?
-        case "$status" in
-            0) printf 'PASS: package trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
-            1) printf 'WAIT: package trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
-            *) echo 'FAIL: invalid or empty trust database output' >&2; return 1;;
-        esac
-        if [[ $attempt != 30 ]]; then sleep 1; fi
-    done
-    echo 'FAIL: trust update did not finish within 30 checks' >&2
-    return 1
+    release_tool wait --product "$product_name" --component "$bundle" --version "$version"
 }
 ```
 
-Unpack and recursively trust only the verified release's `deployment/` package. Trust uses one file per
-bundle; never trust the whole release, private keys, crun rules or memfd rules.
-The CLI expands that directory into individual trusted files. Wait for every
-package file to appear in the database; on upgrade also wait until all files
-beneath the old package path disappear. Do not trust the shell wrapper, config,
-credentials or other release directories. Repeat signature, checksum and trust
-for each release:
+For every component release, repeat `release_tool prepare` with its new
+`bundle`, `version`, archive and signature before running deploy. Only the
+verified `deployment/` files are enrolled by atomically publishing their
+authenticated path/size/hash records in `/etc/fapolicyd/trust.d/podman-offline-<product>.<component>`.
+This uses the documented trust-file format and avoids opening untrusted Python
+files through `--file add`. Repeated preparation merges identical records and
+preserves older verified versions; no duplicate-add exception is needed. The helper
+compares the live database with authenticated paths, sizes and SHA256 digests;
+unlisted files, duplicate records and stale content cannot pass. It never trusts
+private configuration, credentials, shell wrappers or image archives.
 
 ```sh
-gpgv --keyring ./bundle-signing.gpg "$archive.asc" "$archive"
-sha256sum -c "$archive.sha256"
-release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
-as_product mkdir -p "/var/lib/$product_name/releases"
-as_product tar xzf - -C "/var/lib/$product_name/releases" < "$archive"
-sudo bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$release"
-sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "$product_name-$bundle"
-sudo fapolicyd-cli --update
-wait_trust "$release/deployment/"
+release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
+    --archive "$archive" --signature "$archive.asc" --keyring "/opt/$product_name/keyring.gpg"
+release="/opt/$product_name/releases/$product_name-$bundle-$version"
 # Start with bundle=platform, then identity, then app1/app2; help needs only platform.
 as_product bash "$release/deploy" init-config "$bundle"
-sudoedit "/var/lib/$product_name/$bundle/config.yaml"
+sudoedit -u "$product_name" "/var/lib/$product_name/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
 # Demo only: dev/generate-certificates.sh copied from the source checkout.
 as_product bash -s -- --root "/var/lib/$product_name" "$bundle" myproduct-proxy < generate-certificates.sh
-sudoedit "/var/lib/$product_name/$bundle/config.yaml"
-# Checks the bundle against config and installed components; changes nothing.
+sudoedit -u "$product_name" "/var/lib/$product_name/$bundle/config.yaml"
 sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
 sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 sudo systemctl --user -M "$product_name@" status "$product_name-$bundle.service"
@@ -1169,21 +1189,22 @@ or generate a new CA/password set. Install and check health/e2e first. Only afte
 success remove the old own trust entry, leaving other bundles' trust untouched:
 
 ```sh
-sudo fapolicyd-cli --file add "$release/deployment/" --trust-file "$product_name-$bundle"
-sudo fapolicyd-cli --update
-wait_trust "$release/deployment/"
+release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
+    --archive "$archive" --signature "$archive.asc" --keyring "/opt/$product_name/keyring.gpg"
+release="/opt/$product_name/releases/$product_name-$bundle-$version"
 sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 as_product podman ps
 healthy
-sudo fapolicyd-cli --file delete "/var/lib/$product_name/releases/$product_name-$bundle-$old_version/deployment/" --trust-file "$product_name-$bundle"
-sudo fapolicyd-cli --update
-wait_trust "$release/deployment/" "/var/lib/$product_name/releases/$product_name-$bundle-$old_version/deployment/"
+# Complete the required HTTPS/application e2e checks BEFORE retiring the old release.
+release_tool retire --product "$product_name" --component "$bundle" \
+    --version "$version" --old-version "$old_version"
 ```
 
 Use the `healthy` helper defined above. Also verify HTTPS and application e2e
 before removing the previous trust entry.
 
-Then old release directories can be deleted. Keep component configs, credentials,
+The helper removes only the selected old protected release after its trust
+entries disappear and the new authenticated trust inventory is ready. Keep component configs, credentials,
 files, shared PKI and Podman storage. Back up databases and private persistent
 state; none of it belongs to a release directory.
 
@@ -1210,8 +1231,10 @@ After removing dependents, uninstall Identity and platform from their own bundle
 Podman Secret contents also remain in named volumes after down/stop; removed
 Secret keys can remain there. The private home/storage restricts host access.
 Explicit own-data deletion removes those volumes too. Never enable KubeDownForce:
-it can delete database volumes. At final host removal, remove all release trust,
-`loginctl disable-linger <user>`, remove the storage fcontext equivalence with
+it can delete database volumes. At final host removal, an administrator uninstalls
+all components, removes the selected product's scoped trust and protected
+`/opt/<product>` tree, disables linger with `loginctl disable-linger <user>`,
+removes the storage fcontext equivalence with
 `semanage fcontext -d /var/lib/<user>/.local/share/containers`, and optionally
 `userdel -r <user>`. These are destructive operator choices, not bundle install steps.
 

@@ -27,7 +27,8 @@ src="$base/src"
 renamed="$base/renamed"
 version=$requested_version
 if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
-product="$state/releases/$product_name-$bundle-${version:-RELEASE}"
+release_root="/opt/$product_name/releases"
+product="$release_root/$product_name-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
 # Run commands as the service user from its home with the right runtime.
 as_product() {
@@ -99,34 +100,29 @@ lab_signing_key() {
     [[ -n $BUNDLE_SIGNING_KEY ]]
     gpg --batch --export "$BUNDLE_SIGNING_KEY" > "$base/bundle-signing.gpg"
 }
-# Verify and trust only this bundle's release, reusing an already prepared release.
+# Authenticated controller code is sent over the existing SSH channel, never
+# loaded as root from the incoming archive or service-owned filesystem.
+release_source() {
+# RELEASE_HELPER_BODY
+    :
+}
+release_safety_source() {
+# RELEASE_SAFETY_BODY
+    :
+}
+release_tool() {
+    release_source | sudo -n python3 -I -B - "$@"
+}
 prepare_release() {
-    local trust_status=0 trust_output
-    cd "$base"
-    archive="$product_name-$bundle-$version-offline.tar.gz"
-    # The signature first, against the build's public key only (README, "Signed bundles").
-    gpgv --keyring "$base/bundle-signing.gpg" "$archive.asc" "$archive"
-    sha256sum -c "$archive.sha256"
-    if ! sudo -n test -d "$product"; then
-        # shellcheck disable=SC2024
-        as_product tar xzf - -C "$state/releases" < "$archive"
-    fi
-    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$product"
-    # Retry trust even after a previous attempt extracted the release successfully.
-    trust_output=$(sudo -n fapolicyd-cli --file add "$product/deployment/" --trust-file "$product_name-$bundle" 2>&1) || trust_status=$?
-    # fapolicyd 1.4.5 returns 9 for an entirely duplicate add. Accept only that
-    # diagnostic, then still require every package file in the live database.
-    if [[ $trust_status != 0 ]]; then
-        if [[ $trust_status != 9 || $trust_output != *"After removing duplicates, there is nothing to add"* ]]; then
-            printf '%s\n' "$trust_output" >&2
-            return "$trust_status"
-        fi
-        echo 'Release package already listed; verifying live trust'
-    elif [[ -n $trust_output ]]; then
-        printf '%s\n' "$trust_output"
-    fi
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deployment/"
+    # The lab operator's private transfer tree is independent of the service UID.
+    local key_sha256
+    key_sha256=$(sha256sum "$base/bundle-signing.gpg")
+    key_sha256=${key_sha256%% *}
+    release_tool provision-key --product "$product_name" --keyring "$base/bundle-signing.gpg" --key-sha256 "$key_sha256"
+    release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
+        --archive "$base/$product_name-$bundle-$version-offline.tar.gz" \
+        --signature "$base/$product_name-$bundle-$version-offline.tar.gz.asc" \
+        --keyring "/opt/$product_name/keyring.gpg"
 }
 # ./deploy validate must pass for this release before it is installed (backlog 23).
 validate_release() {
@@ -353,50 +349,24 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: " + str(error))
 LAUNCH_DIAGNOSTICS
 }
-# Wait, read-only, for exact trust paths after the daemon's asynchronous update.
+# Authenticated inventory supplies exact paths, sizes and SHA256 values.
 wait_trust() {
-    local wanted=${1%/}/ removed=${2:-} expected dump status attempt
-    if [[ -n $removed ]]; then removed=${removed%/}/; fi
-    expected=$(sudo -n find "$wanted" -type f -print) || {
-        echo 'FAIL: could not enumerate package trust files' >&2; return 1;
-    }
-    [[ -n $expected ]] || { echo 'FAIL: empty deployment package' >&2; return 1; }
-    for attempt in {1..30}; do
-        dump=$(timeout 10 sudo -n fapolicyd-cli --dump-db) || {
-            echo 'FAIL: could not read trust database' >&2; return 1;
-        }
-        status=0
-        awk -v expected="$expected" -v wanted="$wanted" -v removed="$removed" '
-            BEGIN {
-                count=split(expected, files, "\n")
-                for (i=1; i<=count; i++) required[files[i]]=1
-            }
-            {
-                path=$0
-                sub(/^[^[:space:]]+[[:space:]]+/, "", path)
-                sub(/[[:space:]]+[0-9]+[[:space:]]+[[:xdigit:]]+[[:space:]]*$/, "", path)
-                if (NF < 4 || path !~ /^\// || $(NF-1) !~ /^[0-9]+$/ ||
-                    length($NF) != 64 || $NF !~ /^[[:xdigit:]]+$/) invalid=1
-                if (index(path, wanted) == 1) {
-                    if (!(path in required) || ++seen[path] != 1) invalid=1
-                }
-                if (removed != "" && index(path, removed) == 1) old=1
-            }
-            END {
-                if (NR == 0 || invalid) exit 2
-                for (path in required) if (seen[path] != 1) exit 1
-                if (old) exit 1
-            }
-        ' <<< "$dump" || status=$?
-        case "$status" in
-            0) printf 'PASS: package trust ready for %s; removed=%s\n' "$wanted" "${removed:-none}"; return;;
-            1) printf 'WAIT: package trust update pending for %s; removed=%s (%s/30)\n' "$wanted" "${removed:-none}" "$attempt";;
-            *) echo 'FAIL: invalid or empty trust database output' >&2; return 1;;
-        esac
-        if [[ $attempt != 30 ]]; then sleep 1; fi
-    done
-    echo 'FAIL: trust update did not finish within 30 checks' >&2
-    return 1
+    local wanted=${1%/} removed=${2:-} release component wanted_version
+    release=${wanted%/deployment}
+    component=${release##*/}
+    component=${component#"$product_name-"}
+    wanted_version=${component##*-}
+    component=${component%-*}
+    local arguments=(wait --product "$product_name" --component "$component" --version "$wanted_version")
+    if [[ -n $removed ]]; then
+        removed=${removed%/}; removed=${removed%/deployment}; removed=${removed##*-}
+        arguments+=(--old-version "$removed")
+    fi
+    [[ $release == "/opt/$product_name/releases/$product_name-$component-$wanted_version" ]] || return 1
+    release_tool "${arguments[@]}"
+}
+retire_release() {
+    release_tool retire --product "$product_name" --component "$bundle" --version "$version" --old-version "$old_version"
 }
 
 # Validate the VM role's fapolicyd, SELinux and firewalld profile.
@@ -601,7 +571,7 @@ def main():
         version = marker.read_text().strip()
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
             raise RuntimeError("Invalid installed seed component version")
-        root = home / "releases" / (os.environ["PRODUCT_NAME"] + "-" + component + "-" + version)
+        root = Path("/opt") / os.environ["PRODUCT_NAME"] / "releases" / (os.environ["PRODUCT_NAME"] + "-" + component + "-" + version)
     elif mode == "dev":
         root = Path.cwd()
     else:
@@ -875,25 +845,20 @@ clone)
     ;;
 # The product tests must not see the lab signing key exported above.
 unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py all;;
+release-safety)
+    release_safety_source | sudo -n python3 -I -B - "$product" "$product_name" "$base/$product_name-$bundle-$version-offline.tar.gz"
+    ;;
 host-path-safety)
     if [[ $role == DEV ]]; then
         # The operator reads probe code; only its execution needs root.
         # shellcheck disable=SC2024
-        sudo -n python3 -B - "$src/scripts/prepare-host.sh" < "$src/acceptance/prepare_host_test.py"
+        sudo -n python3 -I -B - "$src/scripts/prepare-host.sh" < "$src/acceptance/prepare_host_test.py"
     else
-        cd "$base"
-        archive="$product_name-$bundle-$version-offline.tar.gz"
-        gpgv --keyring "$base/bundle-signing.gpg" "$archive.asc" "$archive"
-        sha256sum -c "$archive.sha256"
-        stage=$(mktemp -d "/tmp/$product_name-host-probe.XXXXXXXX")
-        trap 'rm -rf -- "$stage"' EXIT
-        tar xzf "$archive" -C "$stage"
-        # A pipe, not a .py file: fapolicyd denies opening untrusted Python files.
+        # Only a protected authenticated script may be executed by the root probe.
+        prepare_release
         gzip -dc "$base/prepare_host_test.py.gz" \
-            | sudo -n python3 -B - "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" \
+            | sudo -n python3 -I -B - "$product/scripts/prepare-host.sh" \
                 --installed-user "$product_name" --port "$port"
-        rm -rf -- "$stage"
-        trap - EXIT
     fi
     ;;
 identity-template-baseline) cd "$src"; python3 acceptance/identity_template_baseline.py;;
@@ -1106,8 +1071,7 @@ renamed-uninstall)
         *) echo "Unsupported renamed uninstall: $bundle" >&2; exit 2;;
     esac
     sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
-    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file "$product_name-$bundle"
-    sudo -n fapolicyd-cli --update
+    release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
     sudo -n test ! -e "$state/installed/$bundle"
     sudo -n test ! -e "$state/metadata/$bundle.json"
     sudo -n test ! -e "$state/routes/$bundle.conf"
@@ -1358,7 +1322,7 @@ help-without-identity)
     echo 'PASS: platform/help are healthy without Identity installed or DNS-resolvable'
     ;;
 platform-before|platform-after|platform-downgrade)
-    as_product python3 - "$action" "$state/platform-lifecycle.json" "$product" "$state/releases/$product_name-platform-$old_version" <<'PLATFORM_LIFECYCLE'
+    as_product python3 - "$action" "$state/platform-lifecycle.json" "$product" "$release_root/$product_name-platform-$old_version" <<'PLATFORM_LIFECYCLE'
 import hashlib
 import json
 import os
@@ -1434,21 +1398,13 @@ help-content)
     grep -Fq "help-release-$requested_version" <<< "$content"
     echo 'PASS: new help content served via verified HTTPS'
     ;;
-help-retire|platform-retire|identity-retire)
-    old_release="$state/releases/$product_name-$bundle-$old_version"
-    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "$product_name-$bundle"
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deployment/" "$old_release/deployment/"
-    as_product rm -rf -- "$old_release"
+app-retire|help-retire|platform-retire|identity-retire)
+    old_release="$release_root/$product_name-$bundle-$old_version"
+    retire_release
     sudo -n test ! -e "$old_release"
     echo "PASS: old $bundle release and its own trust retired after verification"
     ;;
 prepare-host)
-    cd "$base"
-    archive="$product_name-$bundle-$version-offline.tar.gz"
-    sha256sum -c "$archive.sha256"
-    stage=$(mktemp -d "/tmp/$product_name-host.XXXXXXXX")
-    tar xzf "$archive" -C "$stage"
     # The documented host baseline (README, fapolicyd): a subject cache large
     # enough that starting processes are not evicted (backlog 29).
     sudo -n sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf
@@ -1456,9 +1412,8 @@ prepare-host)
         || echo 'subj_cache_size = 16381' | sudo -n tee -a /etc/fapolicyd/fapolicyd.conf >/dev/null
     sudo -n systemctl restart fapolicyd
     sudo -n systemctl is-active fapolicyd
-    sudo -n bash "$stage/$product_name-$bundle-$version/scripts/prepare-host.sh" --port "$port"
-    rm -rf -- "$stage"
-    as_product mkdir -p "$state/releases"
+    prepare_release
+    sudo -n bash "$product/scripts/prepare-host.sh" --port "$port"
     ;;
 help-alone)
     prepare_release
@@ -1489,15 +1444,12 @@ HELP_ALONE
     ;;
 upgrade)
     prepare_release
-    old_release="$state/releases/$product_name-$bundle-$old_version"
+    old_release="$release_root/$product_name-$bundle-$old_version"
     validate_release
     install_checked
     healthy
     if [[ $bundle == app1 ]]; then seed_content prod release-v2; fi
-    sudo -n fapolicyd-cli --file delete "$old_release/deployment/" --trust-file "$product_name-$bundle"
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deployment/" "$old_release/deployment/"
-    echo 'PASS: old own deployment package trust removed; other bundles untouched'
+    echo 'PASS: upgraded and healthy; old release/trust retained until controller e2e checks pass'
     ;;
 persistent-state)
     as_product python3 - <<'HASHES'
@@ -1530,20 +1482,16 @@ main()
 HASHES
     ;;
 unpack)
-    cd "$base"
-    archive="$product_name-$bundle-$requested_version-offline.tar.gz"
-    sha256sum -c "$archive.sha256"
-    tar -xOf "$archive" "$product_name-$bundle-$requested_version/VERSION" > "version-$bundle"
-    version=$(cat "version-$bundle")
-    test "$version" = "$requested_version"
-    [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-    cat "version-$bundle"
+    prepare_release
+    cat "$product/VERSION" > "$base/version-$bundle"
+    test "$(cat "$base/version-$bundle")" = "$requested_version"
+    cat "$base/version-$bundle"
     ;;
 registry-offline)
     cd "$base/registry"
     sha256sum -c myproduct-0.0.0-offline.tar.gz.sha256
     tar xzf myproduct-0.0.0-offline.tar.gz
-    sudo -n bash -c 'cd "$1" && sha256sum -c --quiet checksums.sha256' bash "$PWD/myproduct-0.0.0"
+    (cd myproduct-0.0.0 && sha256sum -c --quiet checksums.sha256)
     as_product podman load -i /dev/stdin < myproduct-0.0.0/images/images.tar
     image=$(cat myproduct-0.0.0/images/images.txt)
     [[ $image =~ ^127\.0\.0\.1:[0-9]+/acceptance/busybox:1\.37\.0$ ]]
@@ -2307,7 +2255,7 @@ def observe():
     expected = set()
     for component in components:
         version = pathlib.Path(HOME, "installed", component).read_text().strip()
-        package = HOME / "releases" / (PRODUCT + "-" + component + "-" + version) / "deployment"
+        package = pathlib.Path("/opt") / PRODUCT / "releases" / (PRODUCT + "-" + component + "-" + version) / "deployment"
         files = [str(path) for path in package.rglob("*") if path.is_file()]
         if not files:
             raise SystemExit("FAIL: missing sibling deployment package")
@@ -2362,10 +2310,9 @@ SIBLINGS
     ;;
 uninstall)
     sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
-    sudo -n fapolicyd-cli --file delete "$product/deployment/" --trust-file "$product_name-app1"
-    sudo -n fapolicyd-cli --update
+    release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
     app2_version=$(sudo -n -H -u "$product_name" cat "$state/installed/app2")
-    wait_trust "$state/releases/$product_name-app2-$app2_version/deployment/" "$product/deployment/"
+    wait_trust "$release_root/$product_name-app2-$app2_version/deployment/" "$product/deployment/"
     sudo -n test ! -e "$state/installed/app1"
     sudo -n test ! -e "$state/routes/app1.conf"
     sudo -n test ! -e "$state/clients/app1"

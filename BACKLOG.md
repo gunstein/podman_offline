@@ -25,7 +25,9 @@ a clean real lab matrix (`t11`, `3a54714`; [verification](acceptance/PREPARE-HOS
 operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 54 follows item 46 for release trust. Item 63 (operator request) then
+Item 54 follows item 46 for release trust; implementation is on
+`feature/protected-releases`, with review and the full OL9 matrix still pending.
+Item 63 (operator request) then
 parameterises image versions through build-time `config/images.yaml`.
 Item 62 is implemented with local regression coverage for misplaced container
 fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
@@ -159,7 +161,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 54, 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 54 (implementation on feature branch; lab matrix pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5493,10 +5495,27 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply the
 signed-bundle, isolation and fapolicyd contracts to the operator's privileged
 release steps; coordinate with items 38 and 46.
 
-Status: planned; next implementation priority after item 46, which is now
-lab-verified. Found in the item 46 review on 2026-10-19. Analysis updated on
+Status: implementation delivered on branch `feature/protected-releases`, based on
+`a37f4e4`; implementation and local regressions delivered, full current-change
+OL9 matrix pending.
+Not marked resolved. Found in the item 46 review on 2026-10-19. Analysis updated on
 2026-10-22 against `07f8d56`: three local reproductions confirm gaps in release
-verification/trust wiring. No fix or real-host exploit verification yet.
+verification/trust wiring. That analysis predates this implementation;
+current-change real-host verification remains pending.
+
+Implementation: shared `scripts/release.py` authenticates a protected snapshot,
+strictly validates/extracts archives and publishes immutable root-owned releases
+under `/opt/<product>/releases`, with protected provenance and exact live
+size/SHA256 trust checks. README and the harness share this helper; independently
+authenticated bootstrap, service-user config editing, scoped retirement after
+health/e2e, resumable retirement cleanup and separate-UID lab probes are documented in
+[PROTECTED-RELEASES.md](acceptance/PROTECTED-RELEASES.md). No old-layout migration
+or global integrity-policy changes are included. Local results: 50 focused and
+234 harness tests passed; isolated platform suite ran 403 tests with 399 passes,
+three unchanged gpg-agent fixture failures and one unchanged `/proc/self/fd/0`
+error. Static checks and understandability review passed; real OL9 matrix remains
+required before resolution. The original analysis and task
+below remain the review baseline, not claims of current runtime verification.
 
 ### Problem
 

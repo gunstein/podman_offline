@@ -65,7 +65,7 @@ this list; update entries with implementation/test evidence when resolved.
 | Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
 | ~~Global dev values on a `public_from` dependent can be silently replaced by owner inheritance~~ | Resolved by backlog 58: analysis showed owner and dependents always receive the same effective value; the precedence is documented, no code change |
 | ~~Root `prepare-host.sh` follows service-writable home paths for ownership, mode and relabel operations~~ | Resolved by backlog 46: service-user-only, descriptor-based preparation; lab matrix `t11` clean at `3a54714` ([verification](../acceptance/PREPARE-HOST.md)) |
-| Root checksum, fapolicyd trust and `sudoedit` operate on service-writable release/data paths (check/use race) | Backlog 54 |
+| Root release authentication/trust must remain protected from service-user modification | Backlog 54 implementation uses protected `/opt` publication and shared exact-inventory trust; [current-change lab matrix](../acceptance/PROTECTED-RELEASES.md) pending |
 | ~~Bundles carry checksums but no signature~~ | Resolved by backlog 38: optional `.asc` (gpg), verified with `gpgv` on the target before unpacking |
 
 External image support does not by itself demonstrate arbitrary component support.

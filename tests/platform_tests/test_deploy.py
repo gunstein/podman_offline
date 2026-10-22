@@ -874,6 +874,44 @@ class CommandTests(DeployFixture):
         self.assertFalse(common.QUADLET_DIR.exists())
         self.assertFalse(common.FILES_DIR.exists())
 
+    def test_standalone_install_and_validate_write_only_to_home(self):
+        self.install_fixture()
+        self.config["VOLUME_FILES"] = {
+            "uploads": [{"path": str(self.root / "files/message.txt")}]
+        }
+        self.write_config()
+        original_open = Path.open
+        original_mkdir = Path.mkdir
+
+        def readonly_open(path, mode="r", *args, **kwargs):
+            if (
+                self.root in path.parents
+                and common.HOME not in path.parents
+                and path != common.HOME
+                and any(flag in mode for flag in "wax+")
+            ):
+                raise AssertionError("write outside standalone persistent home")
+            return original_open(path, mode, *args, **kwargs)
+
+        def readonly_mkdir(path, *args, **kwargs):
+            if (
+                self.root in path.parents
+                and common.HOME not in path.parents
+                and path != common.HOME
+            ):
+                raise AssertionError("mkdir in standalone release")
+            return original_mkdir(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "open", readonly_open), mock.patch.object(
+            Path, "mkdir", readonly_mkdir
+        ):
+            from deployment import validation
+
+            validation.validate()
+            deploy.install()
+            deploy.install()
+        self.assertTrue(common.QUADLET_YAML.exists())
+
     def test_install_uses_persistent_config_not_release_config(self):
         self.install_fixture()
         self.write("config.yaml", "invalid release config")

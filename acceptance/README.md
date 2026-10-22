@@ -1,3 +1,10 @@
+# Protected releases (backlog 54)
+
+Production lab steps use the shared authenticated root helper and protected
+`/opt/<product>/releases` layout. All six scenarios now include a separate-UID
+`07-release-safety` probe; current-change OL9 verification is pending. Read
+[bootstrap, failure/retry contracts, local evidence and matrix commands](PROTECTED-RELEASES.md).
+
 # Secret-derived init environment (backlog 61)
 
 The normal `database-runtime` and renamed-product dev flows now run
