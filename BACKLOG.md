@@ -5317,8 +5317,10 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply the
 signed-bundle, isolation and fapolicyd contracts to the operator's privileged
 release steps; coordinate with items 38 and 46.
 
-Status: planned; high priority after item 46. Found in the item 46 review on
-2026-10-19. No fix or real-host exploit verification yet.
+Status: planned; next implementation priority after item 46, which is now
+lab-verified. Found in the item 46 review on 2026-10-19. Analysis updated on
+2026-10-22 against `07f8d56`: three local reproductions confirm gaps in release
+verification/trust wiring. No fix or real-host exploit verification yet.
 
 ### Problem
 
@@ -5327,44 +5329,185 @@ The README operator recipe unpacks a release as the service user into
 service-writable tree: `sudo ... sha256sum -c checksums.sha256` and
 `sudo fapolicyd-cli --file add "$release/deployment/"`. A compromised service
 account can replace files between the checksum and the trust step (check/use
-race), so root may trust content that was never verified. It is unverified
-whether `fapolicyd-cli --file add` follows symlinks inside the directory, which
-could add host files outside the release to the trust database. With the
-fapolicyd default `integrity = none`, trust is by path, so a trusted file can
-also be modified after the trust step and still execute. `sudoedit` of
-`config.yaml` in the service-owned data directory runs its write-back as root
-and needs the same path review.
+race), so root may trust content that was never verified. A race is not required:
+the account can also change the package and its local checksum list before the
+operator starts. Signing the original archive does not authenticate an existing,
+service-writable extraction of it.
+
+`prepare_release()` in `acceptance/remote.sh` verifies the incoming archive but
+skips extraction when the release directory already exists. Root then reads
+that directory's own `checksums.sha256` and registers all files in `deployment/`.
+`sha256sum -c` does not reject additional files absent from the list. The current
+`wait_trust` derives its expected file set from the live directory and checks
+paths and record syntax, without comparing size/hash with authenticated content.
+
+With fapolicyd `integrity = none`, the trust decision has no content-integrity
+check. Files must therefore remain protected after enrollment as well as before
+it. `sudoedit` of `config.yaml` currently targets root in the README despite the
+config living in the service-owned data directory; use service-user authority.
+These findings establish a broken verification/trust boundary, not proof of
+direct root code execution.
+
+### Analysis and local evidence (2026-10-22)
+
+The actual `prepare_release` and `wait_trust` shell functions were exercised
+with disposable files outside the checkout. Hashing, file enumeration and the
+archive were real. The signature step was simulated by checking a fixed digest
+of the original archive; fapolicyd enrollment/database output and sudo identity
+changes were simulated. This tests binding to the authenticated input, not
+OpenPGP, separate-UID enforcement or the real daemon.
+
+| Reproduction | Observed result |
+| --- | --- |
+| Replace a package file and rewrite the extracted checksum list before invoking `prepare_release` | Exit 0; the changed file was passed to simulated trust enrollment while the original archive remained unchanged |
+| Add `deployment/extra.py`, absent from both the original archive and its checksum list | Exit 0; the extra file was included in simulated trust enrollment |
+| Supply a live trust record with the expected path but arbitrary size and a syntactically valid unrelated hash | `wait_trust` returned success |
+
+Nine existing harness tests for trust waiting, release retry, README parity,
+upgrade ordering and retention of old trust on failure passed. Those tests do
+not cover the three gaps above. No new real Podman/systemd/SELinux/fapolicyd run
+was performed for this analysis; item 46's successful lab matrix does not verify
+item 54.
+
+Another boundary to include: the harness's `prepare-host` action checks only
+the archive checksum before extracting and running its script as root. Unlike
+the README recipe, it does not call `gpgv` there. Require signature verification
+before the first privileged execution of bundle code, not only later in
+`prepare_release`. Review other archive consumers such as `unpack` and the
+separate registry fixture according to whether they execute code or import data.
+
+### Chosen direction and scope
+
+Use a final root-owned release tree outside the service home, for example
+`/opt/<product>/releases/<product>-<component>-<version>/`. The service user may
+read/traverse it but must not modify files, add entries or replace any ancestor.
+Config, credentials, installed metadata, import archives, Quadlets and Podman
+storage remain service-owned under `/var/lib/<product>` and its runtime directory.
+
+Root ownership of a `releases` directory under the service-owned home is not
+enough: the service user can rename that directory entry and replace it because
+it controls the parent. Check the entire trusted anchor chain. A protected
+verification copy alone is also insufficient if trust or execution still uses
+a different, service-writable final copy. Do not recursively chown an existing
+service-owned release tree as the repair mechanism.
+
+The existing production code already separates these paths: `common.ROOT`
+locates release inputs, `catalog.component_paths` locates persistent output,
+and `install_components` stages under `XDG_RUNTIME_DIR`. The wrapper uses
+`python3 -B`. This suggests limited deploy-engine changes, but read-only release
+operation must be tested for init-config, validate, install, retry, upgrade and
+uninstall, including `component_file` inputs and standalone fixtures. Dev
+`prepare` deliberately writes source build output and keeps its existing role.
+
+Prefer one small shared release helper used by the operator recipe and the
+acceptance harness. It should own staging, verification, publication and trust
+ordering explicitly. Keep the existing deploy lifecycle and pending-operation
+model; a second generic transaction framework is unnecessary. Existing
+installations may be discarded: no migration, old-layout aliases or compatibility
+layer is required. Normal repeated operations and data retention still apply.
 
 ### Task
 
 1. Trace every root operation on release and data paths in the README recipe,
    `acceptance/remote.sh` and any helper, and classify which paths the service
    user can write or replace.
-2. Choose a bounded design and document its assumptions, for example: unpack and
-   verify as root into a root-owned, service-readable release directory (so the
-   service user cannot alter trusted files), or verify and trust from a
-   root-held copy. Keep the service user able to run `deploy` from it, and keep
-   the signature/checksum verification before any trust.
-3. Verify on Oracle Linux 9 how `fapolicyd-cli --file add` treats symlinks and
-   special files, and refuse links/special files in `deployment/` before trust.
-4. Decide and document the recommended fapolicyd `integrity` setting (`size` or
-   `sha256`) versus the host baseline, including its effect on upgrades and the
-   existing `wait_trust` flow. Warn, as for `subj_cache_size`, if the host
-   setting is incompatible with the chosen design.
-5. Edit service-owned config as the service user (for example
-   `sudoedit -u "$product_name"`) or verify that root `sudoedit` cannot be
-   redirected; update the recipe consistently.
-6. Add regressions where the harness can prove them (release ownership/modes,
-   refusal of links in `deployment/`) and a malicious lab step: as the service
-   user, swap a package file after verification or plant a symlink in
-   `deployment/`, and require that it is neither trusted nor executable.
+2. Implement the protected final layout above, with service-readable files and
+   no service write permission through modes or ACLs. Validate product/component
+   identifiers, version and all ancestor directories before privileged writes.
+   Keep private persistent state out of the release and out of fapolicyd trust.
+3. Stage the archive in a fresh protected area, then verify that exact snapshot
+   against a separately provisioned trusted keyring. Do not verify one pathname
+   and later extract a replaceable copy. Verify the signature before unpacking
+   or executing archive-provided setup code. Document how the release helper
+   itself is initially obtained and authenticated; an unverified helper cannot
+   establish its own trust. Preserve item 46's fapolicyd lesson: opening a new
+   untrusted Python helper file can fail before enrollment. Keep bootstrap
+   execution compatible with the actual OL9 policy and Python 3.6.
+4. Validate archive members before extraction: expected single top directory,
+   relative confined paths, no duplicate/ambiguous destinations, symbolic or hard
+   links, devices, FIFOs or other special files. Reject unsafe names and metadata;
+   establish explicit ownership/modes rather than accepting service-writable or
+   privileged modes from the tar. Extract into a new empty protected directory,
+   never over an existing release. Validate descriptor identity against the
+   requested product/component/version and require an exact authenticated file
+   inventory, including refusal of unlisted extra files.
+5. Publish the complete verified tree at its final path before enrolling that
+   path. Publication must not overwrite an existing release or expose a partial
+   extraction. Retain protected provenance sufficient to distinguish the exact
+   authenticated archive and file set. A repeated call for the same content may
+   resume trust setup; the same product/component/version with different content
+   must fail. Refuse unexpected existing ownership/content rather than silently
+   repairing it. Define behavior for concurrent publication and interrupted
+   staging/publication/trust updates; preserve a previously usable release.
+6. Trust only the verified `deployment/` inventory. Update `wait_trust` to compare
+   expected paths, sizes and hashes with the authenticated inventory, not a
+   service-controlled directory listing. Preserve bounded polling, scoped trust
+   files, duplicate-add diagnostics and explicit failures. Confirm OL9 handling
+   of initial/intermediate/final symlinks and special files; the helper's own
+   checks and protected paths must make safety independent of CLI traversal
+   behavior.
+7. Document the integrity policy explicitly. `size` is not protection against
+   deliberate same-size replacement. `sha256` is additional content verification,
+   not a substitute for verifying the bytes before enrollment or protecting the
+   final release. Decide whether the protected layout supports the existing
+   `none` baseline or requires `sha256`; test any stronger setting with startup,
+   upgrades and `wait_trust`. Do not silently change global host policy. Warn or
+   refuse settings incompatible with the documented design.
+8. Use `sudoedit -u "$product_name"` consistently for service-owned config,
+   including the README's missing-config-key recovery instructions. Run deploy
+   and ordinary data operations as the service user. Keep root release retirement
+   scoped to validated protected paths; update old-release deletion, trust removal,
+   final host removal and all harness release-path assumptions. Retain old trust
+   and release files until install, health and required application checks pass;
+   preserve sibling releases, trust and persistent data.
+9. Add regressions for the three reproductions, signature failure before host
+   setup, archive/link/special-file rejection, protected ancestors and final
+   ownership/modes, immutable-version conflicts, exact live trust records and
+   interrupted/repeated operations. Verify the production lifecycle against a
+   service-readable but nonwritable release. Include renamed products and the
+   platform/help-only scenario without assuming app1 is present.
+10. Add separate-UID malicious OL9 lab probes: attempt replacement before/after
+    verification and after enrollment, addition of unlisted files, ancestor
+    replacement and symlink insertion. Require protected writes to fail, no
+    unauthenticated trust enrollment and no execution of substituted package
+    content through the tested file-based launch path. Do not generalize this to
+    a claim that a service user cannot execute arbitrary code at all. Record
+    exact package versions, SELinux/fapolicyd settings and outside-target state;
+    handle expected negative-probe audit evidence explicitly without broadly
+    suppressing unrelated denials. Run the full six-scenario acceptance matrix.
+
+### Sources and remaining host questions
+
+- [Upstream fapolicyd integrity documentation](https://github.com/linux-application-whitelisting/fapolicyd/blob/main/README.md):
+  size checking is intended for accidental overwrites; SHA256 compares content
+  with the stored digest. Neither authenticates an attacker-controlled initial
+  enrollment.
+- [fapolicyd release notes](https://github.com/linux-application-whitelisting/fapolicyd/releases):
+  version 1.4.5 explicitly mentions reporting skipped symlinks. Do not assume all
+  symlinks are followed; test the installed OL9 build and path positions above.
+- [GNU tar security guidance](https://www.gnu.org/software/tar/manual/html_section/Security.html):
+  use a new empty extraction directory protected from untrusted modification.
+
+Understandability review: the authoritative input should be the authenticated
+archive snapshot; the protected published release is its durable representation.
+The shared helper decides and performs privileged release/trust work, while deploy
+owns service-user configuration and lifecycle state. On success, publish, enroll,
+wait and deploy in that order. After failure, discard incomplete private staging
+or resume an already verified identical release; never reinterpret a writable
+directory as verified just because it exists. Validate this flow in tests and
+document the remaining real-host assumptions before declaring completion.
 
 ### Done when
 
-No root verification, trust or edit step operates on a path the service user can
-replace; the recipe, acceptance helper and README agree; regressions and the
-malicious lab step pass on real hosts with SELinux Enforcing and fapolicyd, and a
-normal install and upgrade remain green in the six-scenario matrix.
+No root verification, trust or config-edit step operates on a path the service
+user can replace. Authenticated content, the complete published file set and
+live trust records agree, and the service user cannot change the final release
+or its ancestors. Bootstrap signature verification, failure/retry behavior and
+retirement are covered by the shared helper and consistent operator instructions.
+Regressions and malicious lab probes pass with SELinux Enforcing and fapolicyd;
+normal install, retry, upgrade and uninstall preserve credentials, data and
+sibling isolation in the six-scenario matrix. Update the review guide and record
+current-change lab evidence before marking this item resolved.
 
 
 ## 55. Add an explicit component-scoped dev reset
