@@ -21,7 +21,8 @@ operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
 Item 54 follows item 46 for release trust. Item 59 is a high-priority follow-up
-to standardise Quadlet placeholder syntax and reject invalid templates early;
+to standardise Quadlet placeholder syntax and reject invalid templates early.
+Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
 items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
 verification statuses are recorded below.
@@ -44,70 +45,73 @@ The order for an offline production deployment of an organisation's own apps:
 5. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-6. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+6. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
+   rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
+   tests and documentation; after item 59.
+7. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-7. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+8. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-8. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+9. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-9. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+10. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-10. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+11. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-11. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+12. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-12. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+13. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-13. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+14. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-14. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+15. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-15. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+16. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-16. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+17. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-17. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-18. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+18. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+19. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-19. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+20. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-20. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+21. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-21. [Item 36](#36-harden-the-demo-application-containers): container hardening
+22. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-22. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+23. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-23. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+24. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-24. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+25. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-25. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+26. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-26. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+27. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-27. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+28. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-28. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+29. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
    usability improvement, not automatic database recovery or a production blocker.
-29. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+30. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -133,7 +137,7 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 54 (next implementation priority), 59 (high priority, after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 54 (next implementation priority), 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -6052,3 +6056,59 @@ two values originate, which tokens are allowed, when validation runs, what can
 have changed when an error occurs, and why retry still works. Delivery is complete
 when the templates, shared validation, fixtures and current documentation agree,
 the relevant checks pass, and any runtime verification gaps are recorded.
+
+
+## 60. Rename the CLI wrapper to deploy.sh
+
+Status: planned, high priority (2026-10-22). Schedule after item 59 and before
+items 48/49. Requested because several users expect the shell script to have a
+`.sh` suffix. The canonical command becomes `./deploy.sh` in source and releases.
+
+### Analysis and implementation brief
+
+The current `deploy` is a small Bash wrapper: it changes to its own directory and
+executes `python3 -B -m deployment`, forwarding all arguments. Renaming the wrapper
+is straightforward; the work is making every caller and delivered bundle agree.
+The suffix is a usability/naming decision, not a change of interpreter or CLI
+behavior.
+
+Read [AGENTS.md](AGENTS.md) and [the review guide](docs/REVIEW_GUIDE.md). Implement
+this as a focused rename:
+
+1. Rename the root executable `deploy` to `deploy.sh`, preserving its executable
+   bit, Bash shebang, directory handling, argument forwarding and exit behavior.
+   Keep the Python package `deployment` and its modules, including `deploy.py`,
+   named as they are. Subcommands and arguments remain the same.
+2. Find all executable-path references, including shell/Python callers, bundle
+   file lists, checksums, executable permissions, host-preparation/trust handling,
+   dev tooling, acceptance scripts, CI and test fixtures. Update active references
+   to the new filename. Inspect each match; do not globally replace the word
+   `deploy`, Python identifiers or conceptual uses of deployment terminology.
+3. Update current README/docs, help and error messages, command examples and
+   instructions emitted by scripts. Update active instructions in planned backlog
+   items (including item 59) where they refer to the executable. Preserve historical
+   verification reports and pinned historical fixtures as historical evidence.
+4. New bundles must include executable `deploy.sh`, with checksum/trust handling
+   matching the new path. Verify that an unpacked, relocated offline bundle works
+   without its source checkout. Keep Python 3.6 and the existing offline dependency
+   contract; no new runtime dependencies or installation steps are needed.
+5. Existing installations can be discarded. Make `deploy.sh` the sole current
+   entry point; no `deploy` alias, compatibility wrapper or migration is required.
+   Preserve ordinary install, retry and retained-data behavior in new installations.
+
+### Verification and completion
+
+Adapt existing wrapper, bundle and acceptance-harness tests. Cover invocation from
+another working directory, argument forwarding and exit status, executable mode,
+help/validation and a relocated bundle using the new path. Exercise relevant
+existing lifecycle tests through the renamed wrapper instead of adding duplicate
+business-logic tests. Include a minimal/renamed product fixture without `apps/`
+where appropriate, so verification is not limited to the demo checkout.
+
+Search for remaining old executable references and explain intentional historical
+matches. Run relevant platform/isolation and harness checks, documentation/link
+checks and `git diff --check`. Report exact results and any real Podman/systemd
+verification gap separately. Complete the understandability check by tracing the
+public command through the wrapper to Python in both source and bundle, including
+an error exit. Done means the source, release contents, callers, help, tests and
+current documentation all agree on `./deploy.sh`.
