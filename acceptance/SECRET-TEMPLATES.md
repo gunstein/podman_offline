@@ -87,6 +87,15 @@ remain distinct from already replaced values to prevent recursive expansion.
 Existing file-write
 atomicity and credential rotation are not expanded in this task.
 
+## Init-container coverage (backlog 61)
+
+The original probe and historical results below cover ordinary containers.
+The new [generated-Secret init probe](INIT-SECRET.md) adds real product rendering,
+exact nonempty process assertions, init `always`, fresh execution tokens,
+direct replacement and relocated-release Quadlet updates. Both normal and
+renamed lab flows invoke it. Its real runtime verification is pending; the
+historical matrix does not close that gap.
+
 ## Disposable runtime probe
 
 After building the current demo images, as the rootless DEV lab user:

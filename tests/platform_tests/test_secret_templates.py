@@ -2,16 +2,17 @@
 
 import base64
 import copy
+import shutil
 import subprocess
 from pathlib import Path
 from unittest import mock
 
 import yaml
-from deployment import catalog, common, deploy, templates, validation
-from deployment import render as rendering
-
 from helpers.deploy_fixture import DeployFixture, document
 from helpers.product_fixture import WORKER, ProductFixture
+
+from deployment import catalog, common, deploy, templates, validation
+from deployment import render as rendering
 
 
 class SecretTemplateTests(DeployFixture):
@@ -72,6 +73,45 @@ class SecretTemplateTests(DeployFixture):
             self.config, self.path, self.checked(), self.root / "files"
         )[0]
 
+    def init_pod(self):
+        init = copy.deepcopy(self.pod["spec"]["containers"][0])
+        init["name"] = "migration"
+        self.pod["spec"]["initContainers"] = [init]
+        self.pod["metadata"]["annotations"] = {
+            "io.podman.annotations.init.container.type": "always"
+        }
+        self.write("manifests/pod.yaml", yaml.safe_dump(self.pod))
+        return init
+
+    def test_generated_secret_and_init_reference_survive_rendering(self):
+        init = self.init_pod()
+        docs = list(yaml.safe_load_all(self.materialize()))
+        pod = next(d for d in docs if d["kind"] == "Pod")
+        secret = next(d for d in docs if d["metadata"]["name"] == "app-settings")
+        self.assertEqual(pod["spec"]["initContainers"][0], init)
+        self.assertEqual(
+            pod["metadata"]["annotations"], self.pod["metadata"]["annotations"]
+        )
+        self.assertEqual(
+            base64.b64decode(secret["data"]["connection"]),
+            b"Host=database;Port=5432;Password=PrivatePassword",
+        )
+        self.assertEqual(self.password.read_bytes(), b"PrivatePassword\n\n")
+
+    def test_init_invalid_key_or_secret_fails_before_generation(self):
+        for name, key in (("app-settings", "missing"), ("app-missing", "connection")):
+            init = self.init_pod()
+            init["env"][0]["valueFrom"]["secretKeyRef"] = {"name": name, "key": key}
+            self.write("manifests/pod.yaml", yaml.safe_dump(self.pod))
+            if self.password.exists():
+                self.password.unlink()
+            self.write_config()
+            for operation in (self.materialize, validation.validate):
+                with self.assertRaises(common.DeployError):
+                    operation()
+            self.assertFalse(self.password.exists())
+        self.process.assert_not_called()
+
     def test_render_integer_lf_and_no_extra_files_or_logs(self):
         before = set(self.root.rglob("*"))
         text = self.materialize()
@@ -96,6 +136,7 @@ class SecretTemplateTests(DeployFixture):
         )
 
     def test_validate_reads_no_credential_contents_and_runs_no_host_commands(self):
+        self.init_pod()
         self.write("config.yaml", yaml.safe_dump(self.config))
         original = Path.open
 
@@ -706,3 +747,95 @@ class ConfigMapLifecycleTests(ProductFixture):
         with self.assertRaisesRegex(common.DeployError, "metadata must be a map"):
             rendering.component_defaults("worker")
         self.assertFalse((common.HOME / "worker/config.yaml").exists())
+
+
+class InitSecretLifecycleTests(ProductFixture):
+    def product(self):
+        product = copy.deepcopy(WORKER)
+        worker = product["worker"]
+        worker["defaults"] = {
+            "HOST": "release.invalid",
+            "SECRET_FILES": {"worker-password": [{"path": "credentials/password"}]},
+            "SECRET_TEMPLATES": {
+                "worker-settings": {
+                    "connection-string": "Host=@@HOST@@;Password=@@secret:worker-password/password@@"
+                }
+            },
+        }
+        pod = worker["manifests"][0]
+        init = copy.deepcopy(pod["spec"]["containers"][0])
+        init.update(
+            name="migration",
+            env=[
+                {
+                    "name": "APP_CONNECTIONSTRING",
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": "worker-settings",
+                            "key": "connection-string",
+                        }
+                    },
+                }
+            ],
+        )
+        pod["spec"]["initContainers"] = [init]
+        pod["metadata"]["annotations"] = {
+            "io.podman.annotations.init.container.type": "always"
+        }
+        return product
+
+    def assert_connection(self, output, host):
+        docs = list(yaml.safe_load_all(output.read_text()))
+        secret = next(d for d in docs if d["metadata"]["name"] == "worker-settings")
+        self.assertEqual(
+            base64.b64decode(secret["data"]["connection-string"]),
+            ("Host=" + host + ";Password=SyntheticPassword").encode(),
+        )
+        pod = next(d for d in docs if d["kind"] == "Pod")
+        self.assertEqual(
+            pod["spec"]["initContainers"][0]["env"][0],
+            {
+                "name": "APP_CONNECTIONSTRING",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "worker-settings",
+                        "key": "connection-string",
+                    }
+                },
+            },
+        )
+        self.assertEqual(self.mode(output), 0o600)
+
+    def test_dev_override_and_isolated_release_retained_config(self):
+        self.write_product(self.product())
+        local = self.source / "components/worker/config.dev.yaml"
+        local.write_text("HOST: dev.invalid\n")
+        password = self.source / "build/dev/worker/credentials/password"
+        password.parent.mkdir(parents=True)
+        password.write_bytes(b"SyntheticPassword\n")
+        deploy.prepare()
+        self.assert_connection(common.BUILD / "install.yaml", "dev.invalid")
+        releases = self.build_and_unpack()
+        # No source or sibling release can supply the production renderer.
+        shutil.rmtree(str(self.source))
+
+        def provide(directory):
+            config_path = directory / "config.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            config["HOST"] = "retained.invalid"
+            config_path.write_text(yaml.safe_dump(config))
+            source = directory / "credentials/password"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"SyntheticPassword\n")
+            source.chmod(0o600)
+
+        release = releases["worker"]
+        self.install(release, configure=provide)
+        output = catalog.component_paths("worker")[2]
+        self.assert_connection(output, "retained.invalid")
+        before = (common.HOME / "worker/credentials/password").read_bytes()
+        self.install(release)
+        self.assert_connection(output, "retained.invalid")
+        self.assertEqual(
+            (common.HOME / "worker/credentials/password").read_bytes(), before
+        )

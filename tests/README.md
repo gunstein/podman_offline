@@ -563,3 +563,14 @@ local suite has 185 tests. Wrapper tests use actual scripts and real bundles but
 stub host account/runtime and Podman/systemd in isolated child processes. Runtime
 staging in component fixtures stays within TemporaryDirectory even when the
 synthetic `/run/user/1000` is absent; production guards remain tested separately.
+
+
+## Generated Secret values in init containers (backlog 61)
+
+`test_secret_templates.py` checks exact Secret bytes and preserved init
+`secretKeyRef`/`always` declarations, wrong/missing keys before generation,
+credential-free validation, component dev overrides and isolated production
+init-config/install/retry with retained config/passwords. These are product tests
+with host commands stubbed. `acceptance/test_init_secret.py` separately checks the
+runtime probe's negative assertions and orchestration; actual Podman/systemd
+verification remains pending. See [the scenario and operator diagnostics](../acceptance/INIT-SECRET.md).

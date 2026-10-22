@@ -901,6 +901,7 @@ build-images) cd "$src"; ./dev/build-images.sh;;
 database-runtime)
     cd "$src"
     python3 acceptance/secret_templates_test.py
+    python3 acceptance/init_secret_test.py
     if ! test -e apps/identity/DatabaseEnvironment.cs; then python3 acceptance/database_test.py; fi
     ;;
 pull-images) cd "$src"; ./dev/pull-images.sh;;
@@ -937,7 +938,7 @@ examples-setup)
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
 renamed-generate)
-    (cd "$src" && python3 acceptance/secret_templates_test.py)
+    (cd "$src" && python3 acceptance/secret_templates_test.py && python3 acceptance/init_secret_test.py)
     # Only YAML, descriptors and runtime settings change; deploy code stays as checked out.
     python3 "$src/acceptance/renamed_product.py" generate "$src" "$renamed"
     for path in deployment bundle.py dev scripts quadlet deploy build-bundle.sh; do

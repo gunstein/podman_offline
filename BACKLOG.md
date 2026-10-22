@@ -11,9 +11,10 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-22)
 
-Item 61 is the highest-priority next task: investigate the reported empty
-connection-string environment variable in a migration init container and close
-the end-to-end Secret delivery test gap before the remaining planned work.
+Item 61 has local implementation and tests; real Podman/Quadlet verification is
+still the highest-priority verification task. No renderer defect is established;
+the private migration image/entrypoint still needs operator-side diagnosis.
+See [the runnable probe and safe diagnostics](acceptance/INIT-SECRET.md).
 
 Items 56 and 57 are done: implemented with local tests and a clean real lab
 matrix (`t10`, `cda22e7`). They followed the operator's 2026-10-21 order:
@@ -33,8 +34,8 @@ verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
 1. [Item 61](#61-verify-secret-derived-environment-values-in-init-containers):
-   highest priority; reproduce and localise empty values, then add real
-   Podman/Quadlet coverage of generated Secrets consumed by init containers.
+   highest verification priority; probe and local tests implemented;
+   real generated-Secret init-process delivery remains pending.
 2. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
@@ -144,7 +145,7 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 61 (highest implementation priority), 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 61 (implementation delivered, runtime verification pending), 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -174,9 +175,29 @@ restore core or merge Identity back into platform.
 
 ## 61. Verify Secret-derived environment values in init containers
 
-Status: planned; highest priority, ahead of the remaining open work. Requested
-2026-10-22 after an operator encountered a failing migration init container.
-This item does not claim a confirmed renderer or Podman defect.
+Status: implementation delivered with local product/harness tests, 2026-10-22;
+real Podman/Quadlet verification pending and still highest verification priority.
+Requested after an operator encountered a failing migration init container.
+No confirmed renderer or Podman defect; no speculative product workaround added.
+
+Implementation/evidence: [INIT-SECRET.md](acceptance/INIT-SECRET.md).
+`acceptance/init_secret_test.py` renders a minimal component with retained
+synthetic password and dev overrides, tests init/control processes through direct
+replacement, builds/relocates an offline bundle, removes its source and rerenders
+from persistent config through the release modules for Quadlet start/restart.
+Each execution requires exact nonempty values, an independent expected-value
+check, a fresh init success token and zero init exit. Host commands are bounded,
+diagnostics withheld and cleanup UUID-scoped. Both normal and renamed lab flows
+invoke it. Product tests also exercise production init-config/install/retry.
+
+Local evidence on baseline `735b39d` plus this working change: 30 focused product
+tests and 230 acceptance-harness tests pass (including eight new probe tests).
+`platform --isolate` ran 384 tests: 380 passed, three signing tests failed because
+gpg-agent key generation is unavailable, and one unchanged host-delivery test
+failed because `/proc/self/fd/0` is unavailable in this environment. No tests were
+silently excluded. Static checks and the understandability review are recorded
+in the verification document. Historical item 41 lab runs do not verify this new
+init path. The original task and acceptance criteria follow.
 
 ### Operator report and coverage gap
 

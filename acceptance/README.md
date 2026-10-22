@@ -1,3 +1,14 @@
+# Secret-derived init environment (backlog 61)
+
+The normal `database-runtime` and renamed-product dev flows now run
+`init_secret_test.py`: real product rendering, an exited `always` init process,
+ordinary-container control, direct kube replacement and relocated-release Quadlet
+rerender/restart. Assertions require fresh execution and the exact nonempty value;
+a healthy main container cannot hide a failed or skipped init. No database or
+private organisation image is required. See [the offline scenario and safe
+operator diagnostic procedure](INIT-SECRET.md). Real runtime evidence is pending;
+local product and harness tests do not establish Podman delivery.
+
 # Portable component files (backlog 57)
 
 The app1 demo ships idempotent SQL via `component_file` and an imported read-only
