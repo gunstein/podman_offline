@@ -25,8 +25,10 @@ a clean real lab matrix (`t11`, `3a54714`; [verification](acceptance/PREPARE-HOS
 operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 54 follows item 46 for release trust. Item 62 is implemented with local
-regression coverage for misplaced container fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
+Item 54 follows item 46 for release trust. Item 63 (operator request) then
+parameterises image versions through build-time `config/images.yaml`.
+Item 62 is implemented with local regression coverage for misplaced container
+fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
 to standardise Quadlet placeholder syntax and reject invalid templates early.
 Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
 items 48/49 then cover proxy ingress trust and logging; item 50 is
@@ -51,76 +53,80 @@ The order for an offline production deployment of an organisation's own apps:
 5. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-6. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
+6. [Item 63](#63-parameterise-image-versions-with-build-time-variables): high priority
+   (operator request); `{{NAME}}` image tokens from `config/images.yaml` and
+   `{{COMPONENT_VERSION}}`, resolved at build; literal tags in releases;
+   refuse equal-version releases with different images. After item 54.
+7. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
    starting with `spec.env`; after item 54 and before item 59.
-7. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+8. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-8. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
+9. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
    rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
    tests and documentation; after item 59.
-9. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+10. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-10. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+11. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-11. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+12. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-12. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+13. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-13. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+14. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-14. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+15. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-15. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+16. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-16. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+17. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-17. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+18. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-18. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+19. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-19. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+20. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-20. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-21. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+21. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+22. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-22. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+23. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-23. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+24. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-24. [Item 36](#36-harden-the-demo-application-containers): container hardening
+25. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-25. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+26. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-26. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+27. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-27. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+28. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-28. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+29. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-29. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+30. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-30. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+31. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-31. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+32. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` and `reset --all --delete-data`
    for disposable dev data; whole-dev mode removes local dev Secrets and volumes
    for a fresh start. Not automatic database recovery or a production blocker.
@@ -153,7 +159,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 54, 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -6354,7 +6360,7 @@ source-file context, including equal-version `newer-only` repeat installs after
 review follow-up. Exact scope, checks and limitations:
 [MANIFEST-STRUCTURE.md](acceptance/MANIFEST-STRUCTURE.md).
 This closes the confirmed structural validation gap, distinct from item 61's
-pending real runtime evidence. The original finding and task follow.
+completed runtime verification. The original finding and task follow.
 
 ### Finding and reproduction
 
@@ -6453,3 +6459,202 @@ semantic checks -> materialization, including the error path before side effects
 Update current validation documentation and this item's status with the actual
 scope and evidence. Success means this concrete YAML mistake fails clearly at
 validation; it does not establish the cause of the remaining private Grate failure.
+
+## 63. Parameterise image versions with build-time variables
+
+Status: planned, high priority (2026-10-22). Requested by the operator: image
+versions must be controlled by parameters, not edited inside each manifest.
+Decision (operator, 2026-10-22): one shared variables file `config/images.yaml`,
+`{{NAME}}` tokens only in container image references, resolved at bundle build
+and in dev; plus a built-in `{{COMPONENT_VERSION}}` for images that follow their
+component's release. Production keeps receiving fixed literal tags.
+
+### Why image versions must not live in component config
+
+Analysis on `a37f4e4`:
+
+- `config/common.defaults.yaml` and `components/<id>/config.defaults.yaml` are
+  copied into the authoritative production config by `init-config`. Later
+  defaults are never merged into it (review-guide contract "Authoritative
+  production config"). An image version there would keep the old image after an
+  upgrade, or let an operator select an image the offline bundle does not
+  contain.
+- The bundle must know its images at build time. `bundle.build_release` calls
+  `manifest_images(directory / "manifests")` on the source manifests and saves
+  exactly those images in `images/images.tar` and `images/images.txt`.
+  `render.find_images` deliberately rejects `@@` placeholders in `image:`
+  ("placeholders are not supported").
+- `@@NAME@@` (`common.PH`, whole-value only, resolved by `render.replace` from
+  config at render time) means "comes from installation config". Build-time
+  image values need a different, visibly distinct syntax so a reviewer can tell
+  that they are fixed in the release.
+
+### Current image flow (all places that read source manifests for images)
+
+- `bundle.manifest_images()` is used by `build_release`, `dev/build-images.sh`
+  and `dev/pull-images.sh`. It parses source manifests through
+  `render.load_yaml_all` and `render.find_images`.
+- `bundle.build_release` copies `components/<id>/manifests` verbatim into the
+  release with `shutil.copytree`.
+- `render.py` around line 186 loads source component manifests for dev and
+  validate. Rendered output (`deploy.py` near line 982, `health.py`) must not be
+  token-resolved again.
+- `deploy.load_and_verify_images` and the code near `deploy.py:854` load the
+  release's `components/<id>/manifests` at install and check that every image
+  exists after `podman load`.
+- `dev/build-images.sh` maps `localhost/demo-postgres:<tag>` to
+  `docker.io/library/postgres:<tag>` and builds other `localhost/demo-<app>`
+  images from `apps/<app>/Containerfile`. It works on resolved names.
+- `install_needed` (`deploy.py`): with `upgrade: newer-only` an equal installed
+  version is kept. Installed metadata is the compiled descriptor
+  (`deploy.py:830`) and records no images. A changed variable, for example
+  `POSTGRES_VER`, without a `VERSION` bump would therefore be silently ignored
+  on an existing installation. This is the main correctness risk of the
+  feature.
+- The acceptance harness hard-codes tags. `remote.sh` help and identity upgrade
+  builders regex-replace `localhost/demo-help:X.Y.Z` and
+  `localhost/demo-identity:X.Y.Z` in manifests (with a count==1 check) and build
+  the new tag. Literal tags also appear in `tests/demo_tests/test_images_demo.py`,
+  `test_bundle_demo.py`, `test_proxy.py`, `acceptance/test_identity.py`,
+  `acceptance/test_components.py`, `acceptance/renamed_product.py` (keeps image
+  names), README, ARCHITECTURE and acceptance documents.
+
+### Target behaviour
+
+1. `config/images.yaml` (optional; absent means no variables) is a flat mapping:
+   ```yaml
+   POSTGRES_VER: '17.11'
+   NGINX_VER: 1.28-alpine
+   TODO_BACKEND_VER: 0.2.2
+   TODO_FRONTEND_VER: 0.2.0
+   ```
+   Keys match `^[A-Z][A-Z0-9_]*$`. Values must be YAML strings. Reject numbers
+   (`17.11` parses as a float) with a message telling the author to quote them.
+   `COMPONENT_VERSION` is reserved. The file is build input. It never enters
+   component or production config and is not merged by `merge_config`.
+2. Manifests may use `{{NAME}}` only inside a container or initContainer
+   `image` string, in any part of it (registry, name or tag). Example:
+   `image: localhost/demo-postgres:{{POSTGRES_VER}}`. No nesting, defaults or
+   expressions. `{{` anywhere else in a manifest is an error that names the file
+   and field.
+3. `{{COMPONENT_VERSION}}` resolves to the owning component's
+   `components/<id>/VERSION`. It requires component context; the standalone
+   `manifests/` fixture has no component and must reject it clearly.
+4. Resolution happens in one shared function used by every source-manifest
+   reader listed above: bundle image discovery, bundle release copy, dev,
+   validate, build-images and pull-images. Unknown names fail with file,
+   component, container and variable name. Only names appear in messages, never
+   unrelated file contents.
+5. The release contains resolved literal manifests. `bundle.build_release` writes
+   the resolved text instead of copying verbatim, before checksums are computed.
+   `images.txt` must equal the images found in the shipped manifests. Production
+   install, validate, upgrade and health then need no knowledge of the variables,
+   and `render.find_images` keeps rejecting any unresolved `{{`/`@@` in a release.
+   Do not ship `config/images.yaml` in bundles.
+6. Equal version, different images: record the resolved, sorted image list in
+   the compiled descriptor (`bundle.yaml`), which installed metadata already
+   stores. When `install_needed` would keep an equal installed version but the
+   recorded images differ, refuse with a clear message to bump the component's
+   `VERSION`; do not reinstall silently. Metadata from before this change has no
+   image list. Treat that as "unknown" and allow the normal equal-version
+   behaviour; existing lab installations may be discarded, so no migration
+   layer is needed. Check `catalog.check_descriptor` and descriptor comparisons
+   (`check_kept_shares`, sibling checks) so the new field does not break them.
+7. A variable defined but unused by any selected manifest prints a warning at
+   bundle build. That catches typos and leftovers without blocking.
+
+### Demo adoption
+
+Convert the demo so both forms are exercised:
+- help and identity: `{{COMPONENT_VERSION}}`. Their images are built per
+  component.
+- todo-backend and todo-frontend: `TODO_BACKEND_VER` and `TODO_FRONTEND_VER`.
+  app1 and app2 share these images and may have different component versions.
+- postgres in app1, app2 and identity: `POSTGRES_VER`.
+- platform nginx: `NGINX_VER`.
+
+This changes the demo's help and identity tags to the component version (for
+example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
+- The help and identity upgrade builders in `remote.sh` should set only `VERSION`
+  (plus content and marker changes) and build the image tagged with the new
+  version. Remove the manifest regex replacement and its count check.
+- `seed_upgrade.py` bumps app1 `VERSION` only. Its image must stay unchanged
+  because todo images use variables. Assert that.
+- `renamed_product.py` must carry `config/images.yaml` into the generated
+  product (it copies Git-tracked files; verify) and keep image names unchanged.
+
+### Detailed instructions for the implementation agent
+
+1. Read [AGENTS.md](AGENTS.md), [the review guide](docs/REVIEW_GUIDE.md),
+   `docs/COMPONENTS.md`, [tests/README.md](tests/README.md) and
+   [acceptance/README.md](acceptance/README.md), and items 20, 21, 41, 56 and
+   57. Re-check the code paths above on the current baseline before changing
+   anything; line numbers will drift.
+2. Implement one loader and resolver, for example a small function next to
+   `render.load_yaml_all`. It should take the component (or none), parse the
+   YAML, find tokens only in `image` fields of `pod_specs`/containers/
+   initContainers, and reject tokens elsewhere. Keep YAML loading safe
+   (`yaml.safe_load_all`) and Python 3.6 compatible on the target; the release
+   never resolves.
+3. For the release copy, prefer substituting resolved values into the original
+   text after the parsed check has proved that every token sits in an image
+   field. That preserves comments and formatting. Re-parse the written release
+   manifest and require that `find_images` equals the bundle's image list.
+4. Wire the resolver into `bundle.manifest_images`, `build_release`, the dev and
+   validate source paths and both dev image scripts. Make sure renders of
+   generated output and release manifests do not resolve a second time.
+5. Implement the equal-version image guard (target behaviour 6), with a
+   message naming the component and telling the operator to bump `VERSION`.
+   Never print config or credential data.
+6. Convert the demo and harness as described, keeping existing upgrade, sibling
+   and persistent-state assertions.
+7. Documentation:
+   - `docs/COMPONENTS.md`: a new "Image versions" section.
+   - README build and upgrade sections: how to change an image, and that a
+     changed image needs a `VERSION` bump.
+   - `docs/REVIEW_GUIDE.md`: a contract row "Image references", covering
+     build-time only, literal in release, equal-version guard.
+   - `ARCHITECTURE.md`: replace hard-coded tag references where they describe
+     current behaviour.
+
+### Tests
+
+- Platform/product (generic, runnable with `platform --isolate`, no demo):
+  - resolution in image fields;
+  - `COMPONENT_VERSION`;
+  - unknown variable;
+  - token outside image (env value, name, command, annotation);
+  - non-string value;
+  - reserved name;
+  - missing file with and without tokens;
+  - standalone fixture rejecting `COMPONENT_VERSION`;
+  - nested or malformed tokens;
+  - unused-variable warning;
+  - release manifests contain no tokens and match `images.txt` and descriptor
+    images;
+  - comments preserved;
+  - equal-version different-images refusal;
+  - old metadata without images accepted.
+- Demo tests: updated expected images, now resolved from `config/images.yaml`.
+- Harness tests: upgrade builders no longer edit manifests. The identity and help
+  builds tag `COMPONENT_VERSION`, and `seed_upgrade` keeps the todo image.
+- Real lab: this touches every bundle and the upgrade flows. Run the full
+  six-scenario matrix (app1, app2, help, platform, identity, shop) and record
+  the run IDs and commit. Product, harness and real-runtime results must be
+  reported separately.
+
+### Acceptance criteria
+
+- Changing a value in `config/images.yaml` (or a component `VERSION` for
+  `COMPONENT_VERSION` images) changes the built, bundled, installed and running
+  image tags, with no manifest edits.
+- Production config never contains image versions. Releases contain only
+  literal, fully qualified images.
+- An equal-version release with different images is refused with guidance and
+  never silently ignored.
+- All existing contracts and lab scenarios stay green. The understandability
+  review covers one normal build and upgrade flow and one failure flow (unknown
+  variable or equal-version refusal).
+
+Out of scope: operator overrides of image versions in production config,
+registry credentials, automatic `VERSION` bumps and image pruning.

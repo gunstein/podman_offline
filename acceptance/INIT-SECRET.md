@@ -213,8 +213,8 @@ Quadlet PASS. The old catch-all message discarded the failing operation, so this
 log does not establish the runtime cause. The tarfile warning alone does not
 establish extraction failure either. This change repairs failure reporting and
 preserves the original error when cleanup also fails; it does not claim to fix
-an unobserved Podman or renderer defect. A new lab run is required to identify
-or rule out that remaining failure. No production policy or Secret semantics
+an unobserved Podman or renderer defect. At that point a new lab run was required to identify
+or rule out the remaining failure; the subsequent records below resolve it. No production policy or Secret semantics
 were changed.
 
 Verification of this diagnostic correction: all 233 acceptance-harness tests
@@ -224,7 +224,7 @@ stubbed host and three new failure-reporting regressions. Ruff lint/format and
 completion and primary failure followed by failed cleanup: fixed phase labels
 identify the boundary, raw output stays private, owned cleanup continues and
 an incomplete cleanup cannot yield success. Product code is unchanged; real
-Podman/systemd verification of this correction remains pending.
+Podman/systemd verification was pending at that point; see the completed runs below.
 
 ### Runtime-directory space fix (2026-10-22)
 
@@ -237,7 +237,7 @@ for rootless Podman/systemd. The full-flow regression now uses distinct home and
 runtime paths, exercises real bundling and release rendering, requires the
 runtime directory to remain empty and verifies cleanup of the home fixture.
 This fixes the test's storage location; it does not relax process assertions or
-change production Secret behavior. Real lab rerun remains required.
+change production Secret behavior. Both lab reruns below subsequently passed.
 
 ### Completed real lab verification (2026-10-22)
 
@@ -250,7 +250,10 @@ Both runs below report **CLEAN PASS** from a clean checkout of
 | `init-secret-renamed-20261022-181444` | Renamed product | `logs/03-renamed-generate.log` |
 
 Reports and full logs are retained outside Git at
-`~/podman-offline-acceptance-runs/<run>/REPORT.md` and the log paths above.
+`~/podman-offline-acceptance-runs/<run>/REPORT.md`, `EVIDENCE.md` and the log
+paths above. The report revision metadata and probe PASS lines were independently
+read when recording these results; no private manifests or credentials are copied
+into Git.
 Both logs contain PASS for generated-Secret init/control initial kube play,
 replacement, relocated-release Quadlet initial start, rerender/restart and
 complete owned-resource cleanup. These are actual process assertions, not just
