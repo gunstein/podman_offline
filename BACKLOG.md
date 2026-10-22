@@ -25,8 +25,8 @@ a clean real lab matrix (`t11`, `3a54714`; [verification](acceptance/PREPARE-HOS
 operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 54 follows item 46 for release trust. Item 62 then closes the confirmed
-manifest-validation gap for misplaced container fields. Item 59 is a high-priority follow-up
+Item 54 follows item 46 for release trust. Item 62 is implemented with local
+regression coverage for misplaced container fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
 to standardise Quadlet placeholder syntax and reject invalid templates early.
 Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
 items 48/49 then cover proxy ingress trust and logging; item 50 is
@@ -51,7 +51,7 @@ The order for an offline production deployment of an organisation's own apps:
 5. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-6. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): high priority;
+6. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
    starting with `spec.env`; after item 54 and before item 59.
 7. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
@@ -150,7 +150,7 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 61 (implementation delivered, runtime verification pending), 54, 62, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 61 (implementation delivered, runtime verification pending), 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -6342,8 +6342,13 @@ current documentation all agree on `./deploy.sh`.
 
 ## 62. Reject misplaced container fields in manifest validation
 
-Status: planned, high priority (2026-10-22). After item 54 and before item 59.
-Confirmed validation gap, distinct from item 61's pending real runtime evidence.
+Status: implemented with local product regression coverage (2026-10-22).
+Shared `render.pod_specs` rejects nineteen container-only fields directly under
+Pod `spec`; validate, prepare, install and bundle building use the guard with
+source-file context. Exact scope, checks and limitations:
+[MANIFEST-STRUCTURE.md](acceptance/MANIFEST-STRUCTURE.md).
+This closes the confirmed structural validation gap, distinct from item 61's
+pending real runtime evidence. The original finding and task follow.
 
 ### Finding and reproduction
 
