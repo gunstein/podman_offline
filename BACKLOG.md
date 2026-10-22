@@ -6345,7 +6345,8 @@ current documentation all agree on `./deploy.sh`.
 Status: implemented with local product regression coverage (2026-10-22).
 Shared `render.pod_specs` rejects nineteen container-only fields directly under
 Pod `spec`; validate, prepare, install and bundle building use the guard with
-source-file context. Exact scope, checks and limitations:
+source-file context, including equal-version `newer-only` repeat installs after
+review follow-up. Exact scope, checks and limitations:
 [MANIFEST-STRUCTURE.md](acceptance/MANIFEST-STRUCTURE.md).
 This closes the confirmed structural validation gap, distinct from item 61's
 pending real runtime evidence. The original finding and task follow.

@@ -37,7 +37,7 @@ The existing `broken_orders` fixture also includes misplaced Secret-based env,
 so renamed-product validate/prepare/install ordering regressions exercise this
 error alongside existing semantic failures, including before password generation.
 
-Current-change checks (Python 3.14 / local PyYAML):
+Initial implementation checks at `6392d34` (Python 3.14 / local PyYAML):
 
 - Focused product tests: `PYTHONPATH=tests python3 -B -m unittest
   platform_tests.test_manifest_structure platform_tests.test_validation_order
@@ -66,6 +66,12 @@ reference/database semantic checks -> preflight -> materialize.
 The guard uses explicit source context. Bundle `manifest_images` also calls
 `pod_specs` per source file before image discovery, staging or image operations.
 
+For an already-installed equal version with `upgrade: newer-only`,
+`install_checks` returns `render=False`. Validate and install then share
+`install_preconditions`, which loads each source file and calls `pod_specs`
+with its path before combining documents for image discovery. This preserves
+source diagnostics even when effective rendering and materialization are skipped.
+
 Success still reaches the existing materialization and installation flow.
 A misplaced field raises before generation, persistent writes or host commands;
 no pending work is created or acknowledged. Existing config, credentials, output
@@ -82,3 +88,26 @@ value delivery; backlog 61 retains that separate runtime gate. Python 3.6 syntax
 compatibility was checked statically, not by running a Python 3.6 interpreter.
 This change rejects the confirmed YAML placement mistake and makes no claim
 about the remaining private Grate failure.
+
+## Review follow-up: equal-version newer-only installs
+
+Review of `main...6392d34` found that the equal-version `newer-only` path
+rejected `spec.env` but reported only `manifests`, losing the source filename.
+The new regression failed for both validate and install before the fix.
+`install_preconditions` now checks each file with explicit source context before
+collecting its documents, reusing the existing shape check.
+
+The relocated-release regression now runs both `always` and `newer-only`, asserts
+the actual render decision after the first install, and requires the filename in
+both commands' failures. Both paths preserve config, credentials, output and
+sibling state, read no credentials and make no host calls on rejection; repair
+permits retry. The diff and successful/rejected repeat flows were reviewed;
+the understandability review passed with no new state or validation engine.
+
+Follow-up verification (Python 3.14): focused product suite **32 passed**;
+isolated platform suite **388 passed**. Changed-file Ruff, full documented
+format/Pyright/Vermin checks, relative documentation links and `git diff --check`
+passed. Acceptance-harness code is unchanged and its tests were not rerun for
+this follow-up; the **233 passed** above are the initial implementation's run.
+No real Podman/systemd/SELinux/fapolicyd verification or Python 3.6 interpreter
+run was performed for the follow-up.
