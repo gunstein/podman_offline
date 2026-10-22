@@ -121,8 +121,9 @@ The order for an offline production deployment of an organisation's own apps:
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
 31. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
-   `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
-   usability improvement, not automatic database recovery or a production blocker.
+   `dev/dev.sh reset <component> --delete-data` and `reset --all --delete-data`
+   for disposable dev data; whole-dev mode removes local dev Secrets and volumes
+   for a fresh start. Not automatic database recovery or a production blocker.
 32. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
@@ -5685,6 +5686,10 @@ because `sts-db-data` existed while its database password file was missing.
 Manual removal of that disposable volume allowed startup. The reset command
 below is proposed functionality, not implemented behavior.
 
+Scope update 2026-10-22: the operator also requests one simple way to delete all
+Secrets and volumes of the dev installation. Add the explicit whole-dev mode
+below alongside the component mode; no reset command exists yet.
+
 ### Why
 
 An existing database volume may contain valuable data. Generating a replacement
@@ -5728,6 +5733,66 @@ to manually discovering containers, volumes and retained credential copies.
    whole dev catalog; reset itself must not restart siblings. Keep normal `up`
    and `down` data-retention behavior unchanged.
 
+### Whole-dev reset: all development Secrets and volumes
+
+Also implement:
+
+```sh
+./dev/dev.sh reset --all --delete-data
+```
+
+This is an explicit fresh start of this checkout's dev installation, including
+new passwords. The component mode above keeps its narrower retention contract;
+its preservation of generated passwords/certificates is not the contract of
+`--all`. Make the distinction clear in help, preview, confirmation and docs.
+
+- Require `--all` and `--delete-data`; reject a component combined with `--all`.
+  Show a read-only plan with exact owned pods, volumes, Podman Secrets and local
+  credential paths, never their contents. Require explicit confirmation that all
+  listed dev database contents and dev credentials will be lost. Cancel/no input
+  must leave everything unchanged.
+- Stop/remove all pods and containers of this dev product, then remove all their
+  exclusively owned declared dev volumes, including database, import and
+  Secret-backed copies where present. Remove matching Podman Secret objects too,
+  so startup cannot consume a stale retained value. Never use global prune,
+  `podman volume rm --all`, `podman secret rm --all` or ownership inferred only
+  from a name prefix. Refuse resources still used by unrelated containers.
+- Remove local dev Secret source files under `build/dev/`, including generated
+  passwords/session keys and local dev TLS/signing/PFX credentials. Include the
+  dev-only CA/private material under `build/dev/PKI` when present. Preserve source
+  manifests, config defaults, global/component dev overrides, application files
+  and unrelated non-secret input files. Do not simply delete the entire `build/`
+  directory: it may contain manually supplied component files and other outputs.
+- Do not delete or follow Secret sources outside the managed dev tree. Report
+  those external inputs as retained and explain that any desired replacement is
+  an explicit operator action. Preserve production state, root/source PKI,
+  external organisation certificates, original images and the shared network.
+  A secret copied into the managed dev tree is disposable in this mode, even if
+  originally provided by the operator; list it clearly before confirmation.
+- Invalidate/rebuild the affected generated dev config, rendered YAML and import
+  artifacts so no secret survives in an old generated output that can be replayed
+  accidentally. Keep the last successful resource inventory or a cleanup record
+  until cleanup completes; it must support a retry after partial deletion.
+  Coordinate with the retained state needed by component reset instead of adding
+  separate competing ownership models.
+- Resolve ownership from effective declarations and the last rendered dev state,
+  covering removed/renamed components where the old inventory identifies them.
+  Refuse ambiguous or external ownership before deletion. Reset must not depend
+  on reading Secret contents, generating replacement secrets or passing ordinary
+  startup's missing-password/existing-volume guard; that is exactly the broken
+  state it must help clean up. Validate paths and symlinks without following them
+  outside the dev tree.
+- Cleanup is safely repeatable: absent owned resources are acceptable, inspection
+  errors are not absence, and deletion failure stops success reporting while
+  preserving enough inventory to resume. Preflight the full plan before mutation.
+- Reset itself does not start apps or generate credentials. Explain the next steps:
+  generated `generate:` sources are recreated by normal prepare/up; externally
+  supplied Secrets/PFX/password inputs must be reprovisioned first. The shipped
+  demo can use `./dev/demo-credentials.sh` before `./dev/dev.sh up`, but generic
+  products must not implicitly invoke demo provisioning. Confirm that full reset
+  followed by provisioning/start produces a new database with matching new
+  client/server passwords and recomposed `SECRET_TEMPLATES` values.
+
 ### Verification and delivery
 
 Add focused platform tests with arbitrary component IDs and no `apps/`: explicit
@@ -5739,7 +5804,13 @@ disposable component, starts again and verifies database initialization and
 sibling data/process retention across reset. Keep unit/harness and actual runtime
 evidence separate. Document the command, irreversible data loss and the backup
 recovery alternative; complete the understandability review of resource ownership
-and deletion order. No new general recovery framework is required.
+and deletion order. For `--all`, add positive and negative coverage for the complete cleanup set,
+new generated passwords after reinitialization, dev certificate/CA disposal,
+preserved external credentials/non-secret files/config/images/other products,
+confirmation/cancellation, stale Secret copies, invalid startup state and partial
+cleanup retry. Provide a focused real Podman fresh-start scenario using synthetic
+resources and no private organisation image. No new general recovery framework
+is required.
 
 
 ## 56. Add component-specific dev configuration overrides
