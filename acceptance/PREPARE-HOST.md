@@ -1,8 +1,9 @@
 # Host preparation boundary (backlog 46)
 
-Implemented on 2026-10-21 from `5f720d1`. The current-change real-host gate is
-**pending**. Local filesystem tests and stubbed acceptance tests do not establish
-OL9 SELinux/fapolicyd behavior. The historical separate-UID exploit probe in the
+Implemented on 2026-10-21 from `5f720d1`. The real-host gate **passed** on
+2026-10-22: lab matrix `t11` at `3a54714` was a CLEAN PASS in all six scenarios
+(see [Lab runs](#lab-runs)). Local filesystem tests and stubbed acceptance tests
+alone do not establish OL9 SELinux/fapolicyd behavior. The historical separate-UID exploit probe in the
 backlog is evidence of the original defect, not verification of this fix.
 
 ## Mechanism and scope
@@ -116,7 +117,8 @@ SELinux label preservation and fapolicyd compatibility remain unverified.
 | `h46-platform` | `e8287b1` | Stopped at `03-host-path-safety` (`IndexError`): the disposable fixture lived under `/var/tmp`, where the policy default is `<<none>>`. `matchpathcon -n` printed no context, and every relabel check there would have passed vacuously. The fixture now lives under `/var/lib`, and a path without a default context is refused. No product code was involved. |
 | `h46b-platform` | `aafede6` | `03-host-path-safety` passed on DEV (all disposable cases against real SELinux; DEV has fapolicyd inactive). Stopped at `05-transfer`: scp could not overwrite `prepare_host_test.py` on PROD with "Permission denied" when the second bundle was transferred. The cause is fapolicyd's `%languages` rule, which denies opening untrusted Python files. The same rule would have denied `prepare-host.sh` reading the shipped `scripts/prepare-home.py` at `06-prepare-host`. The helper is now embedded as a here-document, and the probe is transferred gzip-compressed and piped. |
 | `h46c-platform` | `a82be32` | `03-host-path-safety` passed. `06-prepare-host` passed on PROD with fapolicyd active, using the embedded helper. Stopped at `07-host-path-safety` before any planting: the probe read the Podman state through `as_service_user`. That helper sets no-new-privileges, so SELinux denied Podman's `unconfined_t` -> `container_runtime_t` transition (`nnp_transition` AVC). The command also started in the operator's private working directory. The probe now runs Podman through `runuser` from the service home, and service-user commands start in the home. This was a probe defect: product preparation never runs Podman. |
-| `h46d-platform` | `8cebe9f` | CLEAN PASS (platform/help scenario). DEV: disposable separate-UID proof passed. PROD (fapolicyd active): preparation passed. Planted CNI links as the real service user were refused. The normal repeat preserved container IDs, volume identities and storage labels. Services stayed healthy, and there were no FANOTIFY/AVC events since run start. The full scenario matrix is still pending. |
+| `h46d-platform` | `8cebe9f` | CLEAN PASS (platform/help scenario). DEV: disposable separate-UID proof passed. PROD (fapolicyd active): preparation passed. Planted CNI links as the real service user were refused. The normal repeat preserved container IDs, volume identities and storage labels. Services stayed healthy, and there were no FANOTIFY/AVC events since run start. |
+| `t11-app1`, `t11-app2`, `t11-help`, `t11-platform`, `t11-identity`, `t11-shop` | `3a54714` | CLEAN PASS in all six. `03-host-path-safety` and `07-host-path-safety` passed in each, the latter with the renamed product's `gateway` bundle in `shop`. The existing restart, reboot, persistence, upgrade and audit checks followed. |
 
 ## Runnable real-host gates
 

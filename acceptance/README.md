@@ -515,8 +515,8 @@ checks follow in the existing scenarios.
 
 These are malicious tests for the runner's resettable lab, not a production
 recovery command. The probe requires SELinux Enforcing and will not substitute
-mocked labels or silently skip a missing prerequisite. Current-change real lab
-results are pending; commands and evidence boundaries are in
+mocked labels or silently skip a missing prerequisite. Real lab results
+(clean matrix `t11` at `3a54714`), commands and evidence boundaries are in
 [PREPARE-HOST.md](PREPARE-HOST.md).
 
 ## Registry source acceptance

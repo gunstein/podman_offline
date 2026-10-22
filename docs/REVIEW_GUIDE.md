@@ -62,7 +62,7 @@ this list; update entries with implementation/test evidence when resolved.
 | Accepted exposure: Secret-derived env values are visible to the service user/root in runtime inspection and process environments; use file mounts when the app supports them | Backlog 41; [contract](COMPONENTS.md#secret-templates) |
 | Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
 | ~~Global dev values on a `public_from` dependent can be silently replaced by owner inheritance~~ | Resolved by backlog 58: analysis showed owner and dependents always receive the same effective value; the precedence is documented, no code change |
-| Host-home ownership/relabel boundary: service-user-only operations and descriptor-based preparation implemented; separate-UID OL9 Enforcing/fapolicyd verification remains pending | Backlog 46; [implementation and verification](../acceptance/PREPARE-HOST.md). Do not mark resolved before the current-change lab gate passes. |
+| ~~Root `prepare-host.sh` follows service-writable home paths for ownership, mode and relabel operations~~ | Resolved by backlog 46: service-user-only, descriptor-based preparation; lab matrix `t11` clean at `3a54714` ([verification](../acceptance/PREPARE-HOST.md)) |
 | Root checksum, fapolicyd trust and `sudoedit` operate on service-writable release/data paths (check/use race) | Backlog 54 |
 | ~~Bundles carry checksums but no signature~~ | Resolved by backlog 38: optional `.asc` (gpg), verified with `gpgv` on the target before unpacking |
 
