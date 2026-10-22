@@ -25,7 +25,8 @@ a clean real lab matrix (`t11`, `3a54714`; [verification](acceptance/PREPARE-HOS
 operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 54 follows item 46 for release trust. Item 59 is a high-priority follow-up
+Item 54 follows item 46 for release trust. Item 62 then closes the confirmed
+manifest-validation gap for misplaced container fields. Item 59 is a high-priority follow-up
 to standardise Quadlet placeholder syntax and reject invalid templates early.
 Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
 items 48/49 then cover proxy ingress trust and logging; item 50 is
@@ -50,76 +51,79 @@ The order for an offline production deployment of an organisation's own apps:
 5. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-6. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+6. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): high priority;
+   reject valid YAML with container fields at the wrong structural level,
+   starting with `spec.env`; after item 54 and before item 59.
+7. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-7. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
+8. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
    rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
    tests and documentation; after item 59.
-8. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+9. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-9. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+10. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-10. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+11. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-11. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+12. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-12. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+13. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-13. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+14. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-14. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+15. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-15. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+16. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-16. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+17. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-17. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+18. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-18. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+19. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-19. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-20. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+20. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+21. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-21. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+22. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-22. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+23. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-23. [Item 36](#36-harden-the-demo-application-containers): container hardening
+24. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-24. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+25. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-25. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+26. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-26. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+27. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-27. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+28. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-28. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+29. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-29. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+30. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-30. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+31. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
    usability improvement, not automatic database recovery or a production blocker.
-31. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+32. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -145,7 +149,7 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 61 (implementation delivered, runtime verification pending), 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 61 (implementation delivered, runtime verification pending), 54, 62, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -6263,3 +6267,107 @@ verification gap separately. Complete the understandability check by tracing the
 public command through the wrapper to Python in both source and bundle, including
 an error exit. Done means the source, release contents, callers, help, tests and
 current documentation all agree on `./deploy.sh`.
+
+
+## 62. Reject misplaced container fields in manifest validation
+
+Status: planned, high priority (2026-10-22). After item 54 and before item 59.
+Confirmed validation gap, distinct from item 61's pending real runtime evidence.
+
+### Finding and reproduction
+
+The operator placed `env` beside `initContainers` under a Pod's `spec`, instead
+of inside the selected init-container object:
+
+```yaml
+spec:
+  initContainers:
+  - name: migration
+    image: localhost/probe:1
+    imagePullPolicy: Never
+  containers:
+  - name: main
+    image: localhost/probe:1
+    imagePullPolicy: Never
+  env:                         # Wrong: belongs to a container, not Pod spec.
+  - name: APP_CONNECTIONSTRING
+    valueFrom:
+      secretKeyRef:
+        name: worker-settings
+        key: connection
+```
+
+This is syntactically valid YAML, but `spec.env` is not a valid Pod field.
+The operator observed empty/missing init environment variables. After correcting
+the indentation, inspect showed the expected environment; the remaining migration
+failure is separate and is not diagnosed by this finding.
+
+A read-only synthetic reproduction at `7063f57` confirmed that
+`render.effective_documents()` accepts the wrong structure above with a declared
+`worker-settings` Secret template. `check_pod_specs()` checks selected supported
+properties, but does not reject this misplaced field. Recursive reference scanning
+can still count its Secret reference as used; a successful reference check is not
+proof that the field belongs to a container or will be consumed by Podman.
+
+### Implementation brief for the AI agent
+
+Read [AGENTS.md](AGENTS.md), [the review guide](docs/REVIEW_GUIDE.md) and item 61.
+Trace `render.effective_documents()`, `check_pod_specs()`, `pod_specs()`,
+`containers()` and `references()` in `deployment/render.py`, then
+`deploy.validate_component()` and its callers in `deployment/validation.py` and
+`deployment/deploy.py`. Inspect bundle manifest validation too.
+
+- Add structural validation that rejects misplaced container fields. At minimum,
+  reject `env`, `envFrom`, `command`, `args`, `image`, `imagePullPolicy` and
+  `volumeMounts` directly under Pod `spec`, with regression coverage for the
+  operator's `spec.env` case. Assess other common misplaced fields and document
+  the exact enforced scope; do not call a small guard complete schema validation.
+- Put the check in the shared declaration-validation path used by validate,
+  prepare and install, before credential generation, output writes or host
+  commands. Reuse the same check for bundle building where applicable; do not
+  add a validate-only rule or a late install-only check.
+- Report the source manifest and field path, and explain the correct location.
+  For example: `pod.yaml: spec.env is not allowed here; place env under
+  spec.containers[] or spec.initContainers[]`. Do not print field values,
+  passwords, connection strings or whole YAML documents. Carry source context
+  explicitly where needed instead of relying on a generic filename in errors.
+- Reject the error rather than silently moving fields into a container: a Pod
+  may have several ordinary/init containers, so the intended recipient is unknown.
+  Preserve valid `env` on each individual container and support both ordinary YAML
+  sequence indentation styles. The problem is object structure, not an exact
+  number of spaces or where the sequence dash is aligned.
+- Keep Python 3.6, offline operation and supported Podman annotations/fields.
+  Choose a small maintainable structural guard unless broader schema validation
+  has a clear justified scope. Do not require a Kubernetes cluster, network schema
+  downloads or a new mandatory external CLI. Do not apply a recursive keyword ban:
+  ConfigMap `data`, Secret key maps and annotation values may legitimately contain
+  words such as `env`, `image` or `command`.
+- Review existing schema/shape checks before extending them. Avoid duplicate
+  allowlists or independent validation engines. A broader strict field allowlist
+  must be tied to documented supported structures and must not accidentally reject
+  otherwise supported manifests. Do not expand supported resource kinds or add
+  unrelated lifecycle/Secret behavior while addressing this gap.
+
+### Regression coverage and completion
+
+Use synthetic renamed/minimal components without `apps/`. Prove that misplaced
+`spec.env` is rejected even when its Secret and key exist and the reference would
+otherwise pass. Cover the other guarded fields, correct placement in ordinary and
+init containers, multiple Secret-based env entries in the same init container,
+and valid arbitrary keys in ConfigMaps/Secrets/annotations.
+
+Exercise the public validate command and prepare/install paths, including an
+unpacked relocated component bundle with retained production config. Assert that
+refusal preserves config, credentials, existing rendered output and sibling state,
+reads no credential contents during validate, and causes no Podman/systemd call.
+Adapt relevant existing tests rather than building another harness. Cover bundle
+build refusal before image operations if the shared check applies there.
+
+Run relevant product tests, `python3 -B tests/run.py platform --isolate`, acceptance
+harness tests if changed, and appropriate static checks plus `git diff --check`.
+Report environment-blocked checks and real runtime verification separately.
+Complete an understandability review of source context -> structural check ->
+semantic checks -> materialization, including the error path before side effects.
+Update current validation documentation and this item's status with the actual
+scope and evidence. Success means this concrete YAML mistake fails clearly at
+validation; it does not establish the cause of the remaining private Grate failure.
