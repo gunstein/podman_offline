@@ -61,7 +61,12 @@ The scenario:
 Only this run's temporary directory, pod, Secret-backed volumes, Quadlet and image
 alias are removed, also after failure. Cleanup errors fail the run. It never
 resets a database or removes original images, retained operator credentials or
-unrelated pods/volumes. Diagnostics from subprocesses are captured and withheld.
+unrelated pods/volumes. Raw subprocess output and argv are captured and withheld.
+The probe prints fixed START/PASS/FAIL phase labels for bundle relocation, release
+rendering, Quadlet registration/start, process verification and cleanup. Failures
+report numeric command exit status, timeout or OS errno without private values.
+Cleanup failures are reported separately and cannot replace the primary failure;
+a cleanup failure on its own still fails the probe.
 The normal `database-runtime` and renamed-product lab flows invoke the probe;
 no VM reset is performed by this standalone command.
 
@@ -192,3 +197,25 @@ Static compatibility does not replace Python 3.6 execution. The understandabilit
 trace above covers authoritative inputs, pure validation, private rendering,
 process assertions, failure cleanup and retained-state retry without new product
 state or a second Secret renderer.
+
+### Partial lab evidence and diagnostic correction (2026-10-22)
+
+Run `init-secret-app1-20261022-170953` at `ecceaac` passed the ordinary Secret
+probe (direct kube play and Quadlet, including updates) and both generated-Secret
+init/control direct kube play checks. It failed before the first relocated
+Quadlet PASS. The old catch-all message discarded the failing operation, so this
+log does not establish the runtime cause. The tarfile warning alone does not
+establish extraction failure either. This change repairs failure reporting and
+preserves the original error when cleanup also fails; it does not claim to fix
+an unobserved Podman or renderer defect. A new lab run is required to identify
+or rule out that remaining failure. No production policy or Secret semantics
+were changed.
+
+Verification of this diagnostic correction: all 233 acceptance-harness tests
+passed, including real prepare/bundle/relocated-render orchestration with a
+stubbed host and three new failure-reporting regressions. Ruff lint/format and
+`git diff --check` passed. Understandability review traced successful phase
+completion and primary failure followed by failed cleanup: fixed phase labels
+identify the boundary, raw output stays private, owned cleanup continues and
+an incomplete cleanup cannot yield success. Product code is unchanged; real
+Podman/systemd verification of this correction remains pending.

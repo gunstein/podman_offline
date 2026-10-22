@@ -293,6 +293,71 @@ class InitSecretHarnessTests(unittest.TestCase):
             probe.render_release(Path("."), Path("config"), Path("output"), "worker")
         self.assertNotIn("PrivateSynthetic", str(error.exception))
 
+    def test_failed_command_reports_status_without_private_argv_or_output(self):
+        with (
+            mock.patch.object(
+                probe.subprocess,
+                "run",
+                return_value=types.SimpleNamespace(
+                    returncode=125, stdout="PrivateOutput", stderr="PrivateError"
+                ),
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            self.assertRaisesRegex(
+                probe.ProbeFailure, "start Quadlet: command exit=125"
+            ) as error,
+        ):
+            with probe.phase("start Quadlet"):
+                probe.command(["podman", "PrivateArgument"])
+        for private in ("PrivateOutput", "PrivateError", "PrivateArgument"):
+            self.assertNotIn(private, output.getvalue() + str(error.exception))
+
+    def test_phase_hides_unknown_errors_and_timeout_command(self):
+        cases = (
+            (ValueError("PrivateValue"), "operation failed"),
+            (OSError(13, "PrivatePath"), "OS error errno=13"),
+            (
+                probe.subprocess.TimeoutExpired(
+                    ["PrivateArgument"],
+                    180,
+                    output="PrivateOutput",
+                    stderr="PrivateError",
+                ),
+                "command timed out",
+            ),
+        )
+        for error, expected in cases:
+            with (
+                self.subTest(expected=expected),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                self.assertRaises(probe.ProbeFailure) as caught,
+            ):
+                with probe.phase("relocate"):
+                    raise error
+            self.assertEqual(str(caught.exception), "relocate: " + expected)
+            self.assertNotIn("Private", output.getvalue())
+
+    def test_cleanup_failure_preserves_primary_failure_and_is_reported(self):
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            self.assertRaisesRegex(probe.ProbeFailure, "render: command exit=1"),
+        ):
+            try:
+                with probe.phase("render"):
+                    raise probe.ProbeFailure("command exit=1")
+            finally:
+                with probe.phase("cleanup", cleanup=True):
+                    raise RuntimeError("PrivateCleanupError")
+        self.assertIn("FAIL: init probe cleanup: operation failed", output.getvalue())
+        self.assertNotIn("PrivateCleanupError", output.getvalue())
+        # Cleanup alone must still fail the test, never turn an incomplete cleanup green.
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(probe.ProbeFailure, "cleanup: operation failed"),
+        ):
+            with probe.phase("cleanup", cleanup=True):
+                raise RuntimeError("PrivateCleanupError")
+
     def test_lab_wires_both_normal_and_renamed_flows(self):
         remote = Path(__file__).with_name("remote.sh").read_text()
         for action in ("database-runtime)", "renamed-generate)"):

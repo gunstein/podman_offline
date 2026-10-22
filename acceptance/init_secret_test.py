@@ -17,10 +17,53 @@ import tempfile
 import time
 import uuid
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
-from secret_templates_test import command, image
+from secret_templates_test import image
+
+
+class ProbeFailure(RuntimeError):
+    """Only fixed messages and numeric status, safe for the public evidence log."""
+
+
+def command(arguments, allowed=(0,)):
+    """Never disclose argv or captured output, including failed command output."""
+    result = subprocess.run(
+        arguments,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        check=False,
+        timeout=180,
+    )
+    if result.returncode not in allowed:
+        raise ProbeFailure("command exit=" + str(result.returncode))
+    return result
+
+
+@contextmanager
+def phase(label, cleanup=False):
+    """Name each boundary; cleanup must not replace an already reported failure."""
+    pending_failure = sys.exc_info()[0] is not None
+    print("START: init probe " + label, flush=True)
+    try:
+        yield
+    except Exception as error:
+        # Exception messages may contain secrets. Only our own safe type is shown.
+        detail = str(error) if isinstance(error, ProbeFailure) else "operation failed"
+        if isinstance(error, subprocess.TimeoutExpired):
+            detail = "command timed out"
+        elif isinstance(error, OSError):
+            detail = "OS error errno=" + str(error.errno)
+        message = label + ": " + detail
+        print("FAIL: init probe " + message, flush=True)
+        if not (cleanup and pending_failure):
+            raise ProbeFailure(message) from None
+    else:
+        print("PASS: init probe " + label, flush=True)
+
 
 # No assertion traceback or private value can reach logs. The expected file is
 # supplied independently of the product recipe/renderer, as a test-only Secret.
@@ -163,9 +206,9 @@ def verify(name, nonce, timeout=60):
             state = json.loads(result.stdout)[0]["State"]
             logs = command(["podman", "logs", target])
             if "PROBE-FAIL" in logs.stdout + logs.stderr:
-                raise RuntimeError("Secret probe " + role + ": process value mismatch")
+                raise ProbeFailure("Secret probe " + role + ": process value mismatch")
             if state["Status"] == "exited" and state.get("ExitCode") != 0:
-                raise RuntimeError("Secret probe " + role + ": non-zero exit")
+                raise ProbeFailure("Secret probe " + role + ": non-zero exit")
             marker = "PROBE-OK:" + nonce
             complete.append(
                 marker in logs.stdout.splitlines()
@@ -178,7 +221,7 @@ def verify(name, nonce, timeout=60):
         if all(complete):
             return
         time.sleep(1)
-    raise RuntimeError(
+    raise ProbeFailure(
         "Secret probe init/control: missing, stale or timed out assertion"
     )
 
@@ -192,9 +235,7 @@ def render_release(release, config_path, output, name):
         timeout=180,
     )
     if result.returncode:
-        raise RuntimeError(
-            "Secret probe release rendering failed (diagnostics withheld)"
-        )
+        raise ProbeFailure("release renderer exit=" + str(result.returncode))
 
 
 def cleanup(unit, manifest, name, unit_started, played):
@@ -231,21 +272,21 @@ def cleanup(unit, manifest, name, unit_started, played):
         except (RuntimeError, OSError, subprocess.TimeoutExpired):
             failures.append(True)
     if failures:
-        raise RuntimeError("Secret probe cleanup failed (owned resources only)")
+        raise ProbeFailure("Secret probe cleanup failed (owned resources only)")
 
 
 def run(probe_image=None):
     if os.geteuid() == 0 or not os.environ.get("XDG_RUNTIME_DIR"):
-        raise RuntimeError("Run as the rootless lab user with XDG_RUNTIME_DIR")
+        raise ProbeFailure("Run as the rootless lab user with XDG_RUNTIME_DIR")
     os.umask(0o077)
     version = command(
         ["podman", "version", "--format", "{{.Client.Version}}"]
     ).stdout.strip()
     systemd = command(["systemctl", "--version"]).stdout.splitlines()[0]
     if not re.fullmatch(r"[0-9]+(?:[.][0-9]+)+(?:[-+][A-Za-z0-9.]+)?", version):
-        raise RuntimeError("Secret probe could not identify Podman version")
+        raise ProbeFailure("Secret probe could not identify Podman version")
     if not re.fullmatch(r"systemd [0-9]+.*", systemd):
-        raise RuntimeError("Secret probe could not identify systemd version")
+        raise ProbeFailure("Secret probe could not identify systemd version")
     print("INFO: Podman " + version + "; " + systemd)
     name = "init-probe-" + uuid.uuid4().hex[:12]
     probe_image = probe_image or image("app1", "backend")
@@ -290,58 +331,64 @@ def run(probe_image=None):
                     command(["podman", "kube", "play", "--replace", str(manifest)])
                     verify(name, nonce)
                     if dev_password.read_bytes() != retained:
-                        raise RuntimeError("Secret probe changed retained dev password")
+                        raise ProbeFailure("Secret probe changed retained dev password")
                     print(
                         "PASS: generated Secret init/control kube play "
                         + ("replacement" if index else "initial")
                     )
-                command(["podman", "kube", "down", str(manifest)])
-                played = False
+                with phase("stop direct kube pod"):
+                    command(["podman", "kube", "down", str(manifest)])
+                    played = False
                 # Real bundle builder, then remove the entire source checkout.
-                command([sys.executable, "-B", str(source / "bundle.py")])
-                archive = next((source / "dist").glob("*-offline.tar.gz"))
-                release_parent = root / "relocated"
-                release_parent.mkdir()
-                with tarfile.open(str(archive)) as bundle:
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore", DeprecationWarning)
-                        bundle.extractall(str(release_parent))  # noqa: S202 - our own freshly built archive
-                release = next(release_parent.iterdir())
-                shutil.rmtree(source)
+                with phase("build and relocate bundle"):
+                    command([sys.executable, "-B", str(source / "bundle.py")])
+                    archive = next((source / "dist").glob("*-offline.tar.gz"))
+                    release_parent = root / "relocated"
+                    release_parent.mkdir()
+                    with tarfile.open(str(archive)) as bundle:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", DeprecationWarning)
+                            bundle.extractall(str(release_parent))  # noqa: S202 - our own freshly built archive
+                    release = next(release_parent.iterdir())
+                    shutil.rmtree(source)
                 config_path = root / "persistent/config.yaml"
                 target_password = config_path.parent / "credentials/password"
                 target_password.parent.mkdir(parents=True)
                 target_password.write_bytes(retained)
                 target_password.chmod(0o600)
-                unit.write_text("[Kube]\nYaml=" + str(manifest) + "\n")
-                unit.chmod(0o600)
-                command(["systemctl", "--user", "daemon-reload"])
+                with phase("register Quadlet"):
+                    unit.write_text("[Kube]\nYaml=" + str(manifest) + "\n")
+                    unit.chmod(0o600)
+                    command(["systemctl", "--user", "daemon-reload"])
                 for index in range(2):
                     host = "prod-" + str(index) + ".invalid"
                     config["HOST"] = host
                     private_yaml(config_path, config)
                     output = root / "rendered.yaml"
-                    render_release(release, config_path, output, name)
-                    nonce = uuid.uuid4().hex
-                    instrument(
-                        output,
-                        manifest,
-                        name,
-                        "Host=" + host + ";Password=" + password,
-                        nonce,
-                    )
+                    with phase("render and instrument release"):
+                        render_release(release, config_path, output, name)
+                        nonce = uuid.uuid4().hex
+                        instrument(
+                            output,
+                            manifest,
+                            name,
+                            "Host=" + host + ";Password=" + password,
+                            nonce,
+                        )
                     unit_started = played = True
-                    command(
-                        [
-                            "systemctl",
-                            "--user",
-                            "restart" if index else "start",
-                            name + ".service",
-                        ]
-                    )
-                    verify(name, nonce)
+                    with phase("start/restart Quadlet"):
+                        command(
+                            [
+                                "systemctl",
+                                "--user",
+                                "restart" if index else "start",
+                                name + ".service",
+                            ]
+                        )
+                    with phase("verify Quadlet init/control processes"):
+                        verify(name, nonce)
                     if target_password.read_bytes() != retained:
-                        raise RuntimeError(
+                        raise ProbeFailure(
                             "Secret probe changed retained production password"
                         )
                     print(
@@ -349,9 +396,11 @@ def run(probe_image=None):
                         + ("rerender/restart" if index else "initial")
                     )
             finally:
-                cleanup(unit, manifest, name, unit_started, played)
+                with phase("remove owned resources", cleanup=True):
+                    cleanup(unit, manifest, name, unit_started, played)
     finally:
-        command(["podman", "untag", probe_image, alias])
+        with phase("remove temporary image alias", cleanup=True):
+            command(["podman", "untag", probe_image, alias])
     print("PASS: generated Secret init probe complete; owned resources removed")
 
 
@@ -362,6 +411,8 @@ if __name__ == "__main__":
     )
     try:
         run(parser.parse_args().image)
+    except ProbeFailure as error:
+        raise SystemExit("FAIL: generated Secret init probe: " + str(error)) from None
     except (
         RuntimeError,
         OSError,
