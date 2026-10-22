@@ -9,7 +9,7 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-21)
+## Current priority (updated 2026-10-22)
 
 Items 56 and 57 are done: implemented with local tests and a clean real lab
 matrix (`t10`, `cda22e7`). They followed the operator's 2026-10-21 order:
@@ -20,7 +20,9 @@ a clean real lab matrix (`t11`, `3a54714`; [verification](acceptance/PREPARE-HOS
 operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 54 follows item 46 for release trust; items 48/49 then cover proxy ingress trust and logging; item 50 is
+Item 54 follows item 46 for release trust. Item 59 is a high-priority follow-up
+to standardise Quadlet placeholder syntax and reject invalid templates early;
+items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
 verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
@@ -39,70 +41,73 @@ The order for an offline production deployment of an organisation's own apps:
 4. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-5. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+5. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+   use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
+   early validation; after item 54.
+6. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-6. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+7. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-7. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+8. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-8. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+9. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-9. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+10. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-10. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+11. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-11. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+12. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-12. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+13. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-13. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+14. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-14. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+15. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-15. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+16. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-16. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-17. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+17. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+18. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-18. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+19. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-19. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+20. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-20. [Item 36](#36-harden-the-demo-application-containers): container hardening
+21. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-21. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+22. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-22. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+23. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-23. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+24. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-24. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+25. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-25. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+26. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-26. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+27. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-27. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+28. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
    usability improvement, not automatic database recovery or a production blocker.
-28. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+29. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -128,7 +133,7 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 54 (next implementation priority), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 54 (next implementation priority), 59 (high priority, after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -5917,3 +5922,133 @@ Refusing global shared keys would break ordinary use: `config/dev.yaml.example`
 sets `PUBLIC_ORIGIN` and `HTTPS_PORT` globally. The precedence is now documented
 in README, docs/COMPONENTS.md and acceptance/COMPONENT-DEV.md, and the
 REVIEW_GUIDE known gap is marked resolved.
+
+
+## 59. Standardise Quadlet placeholder syntax
+
+Status: planned, high priority (2026-10-22). Schedule after item 54 and before
+items 48/49. This is a consistency and validation improvement, not evidence that
+the current valid templates generate incorrect units.
+
+### Analysis and decision
+
+The Quadlet templates currently use `{name}` and `{product}`, while the YAML,
+ConfigMap and Secret templates use `@@...@@`. The Quadlet spelling is a project
+convention implemented by two literal replacements in `deploy.quadlet_text()`;
+it is not syntax required by Podman or systemd. There is no technical need for
+two placeholder spellings. Literal replacement also leaves misspelled markers
+in the output without reporting the template error.
+
+Standardise Quadlet on `@@UNIT_NAME@@` and `@@PRODUCT_NAME@@`. Keep the distinct
+sources and rendering rules: these are internally calculated unit/product names,
+not user configuration keys. Sharing marker syntax does not mean exposing the
+YAML config or Secret resolvers to Quadlet, or changing YAML type preservation.
+
+### Implementation brief for the AI agent
+
+Read [AGENTS.md](AGENTS.md) and [the review guide](docs/REVIEW_GUIDE.md), then trace
+both component and standalone flows before editing. Inspect:
+
+- `quadlet/template.kube` and `quadlet/template.network`;
+- `deployment/deploy.py`: `quadlet_text()`, `check_shared_network()`,
+  `write_component_units_and_imports()` and `install_standalone()`;
+- `deployment/common.py`, `deployment/catalog.py` and `deployment/validation.py`
+  for template paths, authoritative names and read-only validation;
+- `deployment/templates.py` and `deployment/render.py` for existing token parsing
+  and the deliberately different config/Secret/YAML rendering contracts;
+- the Quadlet fixtures in `tests/helpers/`, plus relevant validation, deployment,
+  renamed-product, retry and bundle tests in `tests/platform_tests/`.
+
+Implement the following contract:
+
+1. Change the shipped `.kube` template to use these values, preserving its other
+   directives:
+
+   ```ini
+   [Unit]
+   Description=@@UNIT_NAME@@
+
+   [Kube]
+   Yaml=@@UNIT_NAME@@.yaml
+   Network=@@PRODUCT_NAME@@.network
+   ```
+
+   The `.network` template becomes:
+
+   ```ini
+   [Network]
+   NetworkName=@@PRODUCT_NAME@@
+   ```
+
+2. Resolve only these two names from explicit internal arguments. Product name
+   comes from the existing catalog contract (`product:` in the source/compiled
+   descriptor); unit name uses the existing component naming contract. Standalone
+   fixtures retain `common.STANDALONE_PRODUCT`. Do not derive names from demo
+   component IDs, environment variables, arbitrary config values or secrets.
+   Do not introduce `UNIT_NAME` / `PRODUCT_NAME` as configurable settings.
+
+3. Render text in one nonrecursive pass, supporting inline and repeated tokens.
+   Reject unknown names, malformed `@@...@@` syntax and unresolved markers with
+   a useful template-path/token diagnostic. Explicitly reject the obsolete
+   `{name}` and `{product}` markers rather than silently accepting a mixed
+   template. Preserve unrelated literal braces, shell `${...}` expressions and
+   systemd `%` specifiers; do not ban every brace expression. Errors must not dump
+   whole templates or configuration/Secret contents. Do not require every allowed
+   marker to occur in every template.
+
+4. Use the same pure rendering/validation logic for read-only `deploy validate`
+   and install. Check both required templates for the selected operation during
+   early preflight, including standalone mode, before image import, generated
+   credentials, unit writes or host commands. Trace the existing ordering:
+   validating `.kube` only in `write_component_units_and_imports()` is too late.
+   Keep validation side-effect free and avoid a second parser with different
+   acceptance rules. Respect component isolation and existing lifecycle checks.
+
+5. Preserve generated unit/network names, YAML references, permissions, service
+   directives and shared-network comparison/retry behavior. For equivalent valid
+   template content, rendering must produce the same bytes as before. Renamed
+   products and standalone fixtures must work without special demo assumptions.
+   New source templates and the renderer must travel together in offline bundles.
+
+6. Update affected test fixtures, comments, docstrings and current documentation.
+   Explain that the marker syntax is shared but the allowed values depend on the
+   template context. Historical backlog descriptions may remain historical.
+   Existing installations can be discarded: no migration, dual-syntax fallback
+   or compatibility aliases are required. Normal retry and retained-data contracts
+   still apply to installations made with the new code.
+
+Keep this small. Reuse a suitable existing tokenizer/substitution helper with a
+Quadlet-specific resolver if that keeps the code clearer; do not reuse a resolver
+that grants arbitrary config or Secret access. Do not add Jinja, another external
+dependency, a generic template framework or unrelated deployment refactoring.
+Retain Python 3.6 and offline operation. Do not change YAML typed substitution,
+ConfigMap inline composition or Secret template policies.
+
+### Verification and acceptance criteria
+
+Add focused regression coverage for:
+
+- Both templates, repeated/inline tokens and exact expected rendered output.
+- A renamed product with a distinct component ID: the full unit name is used
+  once, while the shared network uses only the product name; also standalone.
+- Unknown, malformed and obsolete markers, config/Secret references being refused,
+  and unrelated braces/shell expressions/systemd specifiers being preserved.
+  Config values must not override the two internally supplied names.
+- Identical rejection through read-only validation and install, with assertions
+  that invalid templates cause no host commands or installation mutations.
+- Repeated install/shared-network comparisons and sibling resource preservation.
+- Current templates and renderer in an unpacked relocated offline bundle, using
+  a minimal/renamed fixture without `apps/` or access to the original checkout.
+
+Run the relevant platform, isolation and acceptance-harness checks using existing
+repository conventions, plus `git diff --check`. Reuse existing bundle/retry tests
+where they already prove the contract instead of duplicating the implementation
+in tests. If real Podman/systemd verification is performed, report it separately
+from unit/harness results; otherwise state that gap explicitly. Historical lab
+results are not evidence for this change.
+
+Complete an understandability review: a reader should be able to trace where the
+two values originate, which tokens are allowed, when validation runs, what can
+have changed when an error occurs, and why retry still works. Delivery is complete
+when the templates, shared validation, fixtures and current documentation agree,
+the relevant checks pass, and any runtime verification gaps are recorded.
