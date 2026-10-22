@@ -10,7 +10,10 @@ configuration and host version still need operator-side verification.
 
 Use the current checkout as a rootless user with a working user systemd manager,
 Quadlet, Python 3/PyYAML on the host, tar/disk space for one image archive, and an
-already available image with `python` on PATH and its standard library. The probe
+already available image with `python` on PATH and its standard library. The home
+filesystem needs room for the image archive, compressed bundle and extracted
+release simultaneously. The private disposable directory is created under the
+rootless user's home, not the usually small `XDG_RUNTIME_DIR` tmpfs. The probe
 needs no database, app source, private image, registry or new SELinux/fapolicyd
 rules. Its default image is the already built demo backend; closed networks can
 specify another image explicitly:
@@ -219,3 +222,16 @@ completion and primary failure followed by failed cleanup: fixed phase labels
 identify the boundary, raw output stays private, owned cleanup continues and
 an incomplete cleanup cannot yield success. Product code is unchanged; real
 Podman/systemd verification of this correction remains pending.
+
+### Runtime-directory space fix (2026-10-22)
+
+The follow-up run `init-secret-fix-20261022-173957` at `1eb713f` isolated the
+failure to bundle relocation: `OS error errno=28` (ENOSPC). Direct init/control
+checks and owned cleanup passed. The fixture incorrectly stored the source,
+image archive, compressed bundle and extracted release in `XDG_RUNTIME_DIR`.
+Move that private temporary tree under the user's home; keep `XDG_RUNTIME_DIR`
+for rootless Podman/systemd. The full-flow regression now uses distinct home and
+runtime paths, exercises real bundling and release rendering, requires the
+runtime directory to remain empty and verifies cleanup of the home fixture.
+This fixes the test's storage location; it does not relax process assertions or
+change production Secret behavior. Real lab rerun remains required.

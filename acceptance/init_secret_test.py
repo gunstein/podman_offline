@@ -296,8 +296,10 @@ def run(probe_image=None):
     alias = "localhost/" + name + ":probe"
     command(["podman", "tag", probe_image, alias])
     try:
+        # Image archives and their extracted copies need disk space. The user
+        # runtime directory is usually a small tmpfs reserved for runtime state.
         with tempfile.TemporaryDirectory(
-            prefix=name + "-", dir=os.environ["XDG_RUNTIME_DIR"]
+            prefix=name + "-", dir=str(Path.home())
         ) as directory:
             root = Path(directory)
             source = root / "source"

@@ -186,6 +186,8 @@ class InitSecretHarnessTests(unittest.TestCase):
                 "#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nif sys.argv[1] == 'save': Path(sys.argv[sys.argv.index('-o')+1]).write_bytes(b'archive')\n"
             )
             stub.chmod(0o755)
+            runtime = root / "runtime"
+            runtime.mkdir()
             calls, observed = [], []
             active = {}
             real_command = probe.command
@@ -256,7 +258,7 @@ class InitSecretHarnessTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ,
                     {
-                        "XDG_RUNTIME_DIR": str(root),
+                        "XDG_RUNTIME_DIR": str(runtime),
                         "PATH": str(stub.parent) + os.pathsep + os.environ["PATH"],
                     },
                 ),
@@ -265,6 +267,7 @@ class InitSecretHarnessTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 probe.run("localhost/test:available")
+            self.assertEqual(list(runtime.iterdir()), [])
             self.assertEqual(len(observed), 4)
             self.assertEqual(len({nonce for _, nonce in observed}), 4)
             for index, (value, _) in enumerate(observed):
