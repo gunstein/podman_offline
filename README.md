@@ -291,6 +291,18 @@ unpacked bundle it runs as the service user and needs no runtime directory. `dev
 components in dependency order, followed by `podman kube play`. Run
 `dev/dev.sh down` before removing a component from the catalog: it stops what
 the last prepare rendered.
+
+Manifest structure validation rejects these container-only fields directly under
+Pod `spec`: `env`, `envFrom`, `command`, `args`, `image`, `imagePullPolicy`,
+`volumeMounts`, `volumeDevices`, `ports`, `workingDir`,
+`livenessProbe`, `readinessProbe`, `startupProbe`, `lifecycle`, `stdin`,
+`stdinOnce`, `tty`, `terminationMessagePath` and `terminationMessagePolicy`.
+Place them inside the intended `spec.containers[]` or `spec.initContainers[]`
+entry. Both YAML sequence indentation styles work. This is a focused structural
+guard, not full Kubernetes schema validation; other Pod fields and arbitrary
+ConfigMap/Secret keys and annotations remain supported. Bundle building uses
+the same guard before image operations. See [verification](acceptance/MANIFEST-STRUCTURE.md).
+
 Run `./deploy prepare` from the source checkout; product bundles reject dev
 prepare and use persistent config through install. Standalone fixtures retain
 their explicit prepare flow; in a release without `components/`, `./deploy

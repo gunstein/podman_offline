@@ -47,8 +47,8 @@ writes nothing else. Then:
 2. `render.effective_documents()` returns the manifests as they will be
    installed, with whole-value placeholders replaced and public ConfigMap `data`
    composed by the shared substitution callback, and checks everything decidable from
-   declarations: resource kinds, names after substitution, pull policy, mounts,
-   duplicates and the links to config and imported registration volumes. It
+   declarations: resource kinds, Pod field placement, names after substitution,
+   pull policy, mounts, duplicates and the links to config and imported registration volumes. It
    writes nothing.
 3. `deploy.database_preflight()` reads those documents, so Podman is asked
    about the configured volume. It is the first host command.

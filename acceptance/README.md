@@ -6,9 +6,10 @@ ordinary-container control, direct kube replacement and relocated-release Quadle
 rerender/restart. Assertions require fresh execution and the exact nonempty value;
 a healthy main container cannot hide a failed or skipped init. No database or
 private organisation image is required. See [the offline scenario and safe
-operator diagnostic procedure](INIT-SECRET.md). Both normal app1 and renamed-product
-lab scenarios reported CLEAN PASS on 2026-10-22; see the
-[run records and scope](INIT-SECRET.md#completed-lab-verification-2026-10-22).
+operator diagnostic procedure](INIT-SECRET.md). Normal and renamed lab runs at
+`52f28e4` both passed the real probe, including replacement and relocated Quadlet
+rerender/restart; see [recorded evidence and limits](INIT-SECRET.md#completed-real-lab-verification-2026-10-22).
+Local product and harness tests remain separate from that runtime evidence.
 
 # Portable component files (backlog 57)
 

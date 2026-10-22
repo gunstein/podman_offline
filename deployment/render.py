@@ -822,8 +822,33 @@ def check_kinds(documents, source):
             raise common.DeployError(f"{source}: {kind} metadata must be a map")
 
 
+# Container-only fields commonly misplaced beside containers/initContainers.
+# Pod fields such as securityContext and restartPolicy deliberately stay allowed.
+CONTAINER_ONLY_FIELDS = (
+    "env",
+    "envFrom",
+    "command",
+    "args",
+    "image",
+    "imagePullPolicy",
+    "volumeMounts",
+    "volumeDevices",
+    "ports",
+    "workingDir",
+    "livenessProbe",
+    "readinessProbe",
+    "startupProbe",
+    "lifecycle",
+    "stdin",
+    "stdinOnce",
+    "tty",
+    "terminationMessagePath",
+    "terminationMessagePolicy",
+)
+
+
 def pod_specs(documents, source="manifests"):
-    """Return (pod document, spec) for each Pod after checking every kind."""
+    """Check supported resource/Pod shapes and return each (document, spec)."""
     documents = list(documents)  # Callers may pass a one-shot YAML generator.
     check_kinds(documents, source)
     specs = []
@@ -832,6 +857,12 @@ def pod_specs(documents, source="manifests"):
             spec = doc.get("spec", {})
             if not isinstance(spec, dict):
                 raise common.DeployError(f"{source}: Pod spec must be a map")
+            for field in CONTAINER_ONLY_FIELDS:
+                if field in spec:
+                    raise common.DeployError(
+                        f"{source}: spec.{field} is not allowed here; place {field} "
+                        "under spec.containers[] or spec.initContainers[]"
+                    )
             check_lists(spec, ("volumes",), f"{source}: Pod spec")
             specs.append((doc, spec))
     return specs
@@ -979,7 +1010,7 @@ def effective_documents(config, path, manifests, component=None, imported=()):
         original = [document for document in original if document is not None]
         try:
             rendered = [replace(document, config) for document in original]
-            check_pod_specs(rendered)
+            check_pod_specs(rendered, str(manifest))
             for before, doc in zip(original, rendered):
                 if isinstance(doc, dict) and doc["kind"] == "ConfigMap":
                     doc["data"] = configmap_data(before, doc, config)

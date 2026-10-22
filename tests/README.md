@@ -572,5 +572,6 @@ synthetic `/run/user/1000` is absent; production guards remain tested separately
 credential-free validation, component dev overrides and isolated production
 init-config/install/retry with retained config/passwords. These are product tests
 with host commands stubbed. `acceptance/test_init_secret.py` separately checks the
-runtime probe's negative assertions and orchestration; actual Podman/systemd
-verification remains pending. See [the scenario and operator diagnostics](../acceptance/INIT-SECRET.md).
+runtime probe's negative assertions and orchestration. Separate normal and renamed
+real Podman/systemd runs passed at `52f28e4`; see
+[the evidence, scenario and operator diagnostics](../acceptance/INIT-SECRET.md).

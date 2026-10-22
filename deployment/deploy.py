@@ -853,7 +853,10 @@ def install_preconditions(name, checked):
         for path in sorted(
             (common.ROOT / "components" / name / "manifests").glob("*.yaml")
         ):
-            documents.extend(rendering.load_yaml_all(path))
+            source_documents = rendering.load_yaml_all(path)
+            # Keep the source path when newer-only skips effective rendering.
+            rendering.pod_specs(source_documents, str(path))
+            documents.extend(source_documents)
     rendering.find_images(documents)
     return network, network_text, archive
 

@@ -9,6 +9,19 @@ def broken_orders(case):
     documents = copy.deepcopy(RENAMED["orders"]["manifests"])
     web = documents[2]["spec"]
     container = web["containers"][0]
+    if case == "misplaced env":
+        web["env"] = [
+            {
+                "name": "APP_CONNECTIONSTRING",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "orders-database-password",
+                        "key": "password",
+                    }
+                },
+            }
+        ]
+        return documents, r"10-resources.yaml: spec\.env is not allowed here"
     if case == "undefined mount":
         container["volumeMounts"].append({"name": "nowhere", "mountPath": "/x"})
         return documents, "undefined volume: .nowhere."
@@ -28,6 +41,7 @@ def broken_orders(case):
 
 
 CASES = (
+    "misplaced env",
     "undefined mount",
     "missing reference",
     "duplicate resource",

@@ -11,9 +11,9 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-22)
 
-Item 61 is done: local product/harness tests and both normal app1 and renamed-product
-lab scenarios have CLEAN PASS (2026-10-22). No renderer defect was established;
-the lab probe does not certify an organisation's private migration image.
+Item 61 is done: local tests and both normal/renamed real lab runs passed at
+`52f28e4` (2026-10-22). No renderer defect is established;
+the private migration image/entrypoint still needs operator-side diagnosis.
 See [the runnable probe and safe diagnostics](acceptance/INIT-SECRET.md).
 
 Items 56 and 57 are done: implemented with local tests and a clean real lab
@@ -26,8 +26,9 @@ operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
 Item 54 follows item 46 for release trust. Item 63 (operator request) then
-parameterises image versions through build-time `config/images.yaml`. Item 62 then closes the confirmed
-manifest-validation gap for misplaced container fields. Item 59 is a high-priority follow-up
+parameterises image versions through build-time `config/images.yaml`.
+Item 62 is implemented with local regression coverage for misplaced container
+fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
 to standardise Quadlet placeholder syntax and reject invalid templates early.
 Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
 items 48/49 then cover proxy ingress trust and logging; item 50 is
@@ -36,8 +37,8 @@ verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
 1. [Item 61](#61-verify-secret-derived-environment-values-in-init-containers):
-   done; generated-Secret init-process delivery verified in both normal app1
-   and renamed-product lab scenarios (2026-10-22).
+   done; local tests and real generated-Secret init-process delivery passed in
+   normal and renamed lab runs at `52f28e4`.
 2. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
@@ -56,7 +57,7 @@ The order for an offline production deployment of an organisation's own apps:
    (operator request); `{{NAME}}` image tokens from `config/images.yaml` and
    `{{COMPONENT_VERSION}}`, resolved at build; literal tags in releases;
    refuse equal-version releases with different images. After item 54.
-7. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): high priority;
+7. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
    starting with `spec.env`; after item 54 and before item 59.
 8. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
@@ -155,7 +156,10 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 54, 62, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
+both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
+
+Open: 54, 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -185,18 +189,14 @@ restore core or merge Identity back into platform.
 
 ## 61. Verify Secret-derived environment values in init containers
 
-Status: done, 2026-10-22. Local product/harness tests and both planned real
-Podman/Quadlet lab scenarios passed.
+Status: done, 2026-10-22; local product/harness tests and real Podman/Quadlet
+verification passed. Runs `init-secret-space-20261022-175002` (normal app1) and
+`init-secret-renamed-20261022-181444` (renamed product) both CLEAN PASS at `52f28e4`.
+See [the recorded evidence and limits](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22).
 Requested after an operator encountered a failing migration init container.
 No confirmed renderer or Podman defect; no speculative product workaround added.
 
 Implementation/evidence: [INIT-SECRET.md](acceptance/INIT-SECRET.md).
-Operator-supplied terminal summaries report CLEAN PASS for
-`init-secret-space-20261022-175002` (normal app1) and
-`init-secret-renamed-20261022-181444` (renamed product), after the runtime-tmpfs
-storage fix `52f28e4`. Both include the generated-Secret init probe and a passing
-prod audit. Evidence paths, scope and remaining private-image/Python 3.6 limits
-are recorded in the verification document.
 `acceptance/init_secret_test.py` renders a minimal component with retained
 synthetic password and dev overrides, tests init/control processes through direct
 replacement, builds/relocates an offline bundle, removes its source and rerenders
@@ -6353,8 +6353,14 @@ current documentation all agree on `./deploy.sh`.
 
 ## 62. Reject misplaced container fields in manifest validation
 
-Status: planned, high priority (2026-10-22). After item 54 and before item 59.
-Confirmed validation gap, distinct from item 61's now-completed lab verification.
+Status: implemented with local product regression coverage (2026-10-22).
+Shared `render.pod_specs` rejects nineteen container-only fields directly under
+Pod `spec`; validate, prepare, install and bundle building use the guard with
+source-file context, including equal-version `newer-only` repeat installs after
+review follow-up. Exact scope, checks and limitations:
+[MANIFEST-STRUCTURE.md](acceptance/MANIFEST-STRUCTURE.md).
+This closes the confirmed structural validation gap, distinct from item 61's
+completed runtime verification. The original finding and task follow.
 
 ### Finding and reproduction
 

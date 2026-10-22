@@ -173,10 +173,13 @@ runs. Cleanup attempts the owned resources and retry starts a fresh isolated run
 no new product retry state is introduced. Production install retry remains covered
 by existing lifecycle tests and the new retained-config init fixture.
 
-Real lab verification for item 61 is **complete** in both planned scenarios;
-see [the completed run records](#completed-lab-verification-2026-10-22).
-Python 3.6 execution and the organisation's private image remain separate
-verification gaps. Historical local results below retain their original scope.
+Real Podman/Quadlet verification for item 61 **passed** in the normal and renamed
+lab runs at `52f28e4`; see [completed verification below](#completed-real-lab-verification-2026-10-22).
+The old item 41 lab results cover its ordinary-container probe only. Python 3.6
+execution and the organisation's private image remain separate verification gaps.
+
+The following local and failed-run entries retain their original results and
+then-current limitations. The completed runs below supersede their pending status.
 
 
 ### Local verification (2026-10-22)
@@ -236,37 +239,36 @@ runtime directory to remain empty and verifies cleanup of the home fixture.
 This fixes the test's storage location; it does not relax process assertions or
 change production Secret behavior. Both lab reruns below subsequently passed.
 
-### Completed lab verification (2026-10-22)
+### Completed real lab verification (2026-10-22)
 
-The operator supplied terminal step summaries ending in **CLEAN PASS** for both
-planned scenarios after storage fix `52f28e4`:
+Both runs below report **CLEAN PASS** from a clean checkout of
+`52f28e47e51c62f25e2c81d281c0837b2395d110`:
 
-| Scenario | Run ID | Result |
+| Run | Scenario | Init-probe evidence |
 | --- | --- | --- |
-| Normal, `--first-app app1` | `init-secret-space-20261022-175002` | CLEAN PASS; `03-database-runtime`, prod audit and cleanup passed |
-| Renamed product, `--renamed-product` | `init-secret-renamed-20261022-181444` | CLEAN PASS; `03-renamed-generate`, prod audit and cleanup passed |
+| `init-secret-space-20261022-175002` | Normal app1-first lifecycle | `logs/03-database-runtime.log` |
+| `init-secret-renamed-20261022-181444` | Renamed product | `logs/03-renamed-generate.log` |
 
-The controller retains the full evidence at:
+Reports and full logs are retained outside Git at
+`~/podman-offline-acceptance-runs/<run>/REPORT.md`, `EVIDENCE.md` and the log
+paths above. The report revision metadata and probe PASS lines were independently
+read when recording these results; no private manifests or credentials are copied
+into Git.
+Both logs contain PASS for generated-Secret init/control initial kube play,
+replacement, relocated-release Quadlet initial start, rerender/restart and
+complete owned-resource cleanup. These are actual process assertions, not just
+successful rendering or ordinary-container health. The reports also record
+successful remaining lifecycle steps and the final PROD audit.
 
-- `/home/gunstein/podman-offline-acceptance-runs/init-secret-space-20261022-175002/EVIDENCE.md`
-- `/home/gunstein/podman-offline-acceptance-runs/init-secret-renamed-20261022-181444/EVIDENCE.md`
+The recorded baseline is Oracle Linux 9.8, Podman 5.8.2, systemd 252 and PyYAML
+5.4.1. SELinux was Enforcing on DEV and PROD. The init probe ran on DEV, where
+fapolicyd was inactive; PROD lifecycle/audit ran with fapolicyd active. Therefore
+these runs establish the init probe's Podman/Quadlet behavior, but do not establish
+that this disposable probe itself runs under active fapolicyd.
 
-These records are based on the operator's supplied summaries; the full evidence
-files, their revision metadata and hashes were not independently read here.
-`52f28e4` identifies the delivered fix, not a separately verified run-metadata SHA.
-No private manifests, credentials or connection strings are copied into Git.
-
-Both passing steps invoke the generated-Secret probe, covering direct initial
-start/replacement and relocated-release Quadlet start/rerender/restart with fresh
-init/control assertions. The normal scenario also passed offline installation,
-database authentication, login, stop/start, crash/hang recovery, reboot,
-upgrades, sibling isolation and uninstall. The renamed scenario passed dev and
-offline installation with renamed components, restart/redeploy, registration
-removal, retained-bundle uninstall and surviving-service checks. Both passed the
-production audit. This completes backlog 61's planned lab verification; it does
-not certify the organisation's external Grate image or actual Python 3.6 execution.
-
-Registration is documentation-only. Status consistency, relative links and
-`git diff --check` were checked; no runtime tests were rerun to record these
-operator results. The previous implementation understandability review remains
-applicable; no lifecycle or cleanup behavior changed in this registration.
+This closes item 61's synthetic generated-Secret delivery verification gap and
+supersedes the two earlier failed attempts. It does not verify the organisation's
+private Grate image/entrypoint, other Podman versions or init type `once`.
+These results predate item 62's structural-validation changes and must not be
+reported as a real runtime run of that later branch change. No tests were rerun
+when recording this documentation correction.
