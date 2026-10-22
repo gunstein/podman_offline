@@ -84,7 +84,9 @@ from tests; the understandability review passed.
 
 No real Podman/systemd/SELinux/fapolicyd run was performed for this change.
 Product tests and acceptance-harness results do not establish runtime Secret
-value delivery; backlog 61 retains that separate runtime gate. Python 3.6 syntax
+value delivery. Backlog 61's normal and renamed runtime runs passed separately
+at the earlier `52f28e4` revision ([evidence](INIT-SECRET.md#completed-real-lab-verification-2026-10-22));
+they do not constitute a runtime run of this structural-validation change. Python 3.6 syntax
 compatibility was checked statically, not by running a Python 3.6 interpreter.
 This change rejects the confirmed YAML placement mistake and makes no claim
 about the remaining private Grate failure.

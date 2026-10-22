@@ -173,10 +173,13 @@ runs. Cleanup attempts the owned resources and retry starts a fresh isolated run
 no new product retry state is introduced. Production install retry remains covered
 by existing lifecycle tests and the new retained-config init fixture.
 
-Real Podman/systemd/SELinux/fapolicyd verification for item 61 is **pending**.
-The old item 41 lab results cover its ordinary-container probe only. Record new
-runtime results here after executing the new scenario; Python 3.6 execution and
-the organisation's private image remain separate verification gaps.
+Real Podman/Quadlet verification for item 61 **passed** in the normal and renamed
+lab runs at `52f28e4`; see [completed verification below](#completed-real-lab-verification-2026-10-22).
+The old item 41 lab results cover its ordinary-container probe only. Python 3.6
+execution and the organisation's private image remain separate verification gaps.
+
+The following local and failed-run entries retain their original results and
+then-current limitations. The completed runs below supersede their pending status.
 
 
 ### Local verification (2026-10-22)
@@ -235,3 +238,34 @@ runtime paths, exercises real bundling and release rendering, requires the
 runtime directory to remain empty and verifies cleanup of the home fixture.
 This fixes the test's storage location; it does not relax process assertions or
 change production Secret behavior. Real lab rerun remains required.
+
+### Completed real lab verification (2026-10-22)
+
+Both runs below report **CLEAN PASS** from a clean checkout of
+`52f28e47e51c62f25e2c81d281c0837b2395d110`:
+
+| Run | Scenario | Init-probe evidence |
+| --- | --- | --- |
+| `init-secret-space-20261022-175002` | Normal app1-first lifecycle | `logs/03-database-runtime.log` |
+| `init-secret-renamed-20261022-181444` | Renamed product | `logs/03-renamed-generate.log` |
+
+Reports and full logs are retained outside Git at
+`~/podman-offline-acceptance-runs/<run>/REPORT.md` and the log paths above.
+Both logs contain PASS for generated-Secret init/control initial kube play,
+replacement, relocated-release Quadlet initial start, rerender/restart and
+complete owned-resource cleanup. These are actual process assertions, not just
+successful rendering or ordinary-container health. The reports also record
+successful remaining lifecycle steps and the final PROD audit.
+
+The recorded baseline is Oracle Linux 9.8, Podman 5.8.2, systemd 252 and PyYAML
+5.4.1. SELinux was Enforcing on DEV and PROD. The init probe ran on DEV, where
+fapolicyd was inactive; PROD lifecycle/audit ran with fapolicyd active. Therefore
+these runs establish the init probe's Podman/Quadlet behavior, but do not establish
+that this disposable probe itself runs under active fapolicyd.
+
+This closes item 61's synthetic generated-Secret delivery verification gap and
+supersedes the two earlier failed attempts. It does not verify the organisation's
+private Grate image/entrypoint, other Podman versions or init type `once`.
+These results predate item 62's structural-validation changes and must not be
+reported as a real runtime run of that later branch change. No tests were rerun
+when recording this documentation correction.

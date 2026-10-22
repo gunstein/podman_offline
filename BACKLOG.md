@@ -11,8 +11,8 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-22)
 
-Item 61 has local implementation and tests; real Podman/Quadlet verification is
-still the highest-priority verification task. No renderer defect is established;
+Item 61 is done: local tests and both normal/renamed real lab runs passed at
+`52f28e4` (2026-10-22). No renderer defect is established;
 the private migration image/entrypoint still needs operator-side diagnosis.
 See [the runnable probe and safe diagnostics](acceptance/INIT-SECRET.md).
 
@@ -35,8 +35,8 @@ verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
 1. [Item 61](#61-verify-secret-derived-environment-values-in-init-containers):
-   highest verification priority; probe and local tests implemented;
-   real generated-Secret init-process delivery remains pending.
+   done; local tests and real generated-Secret init-process delivery passed in
+   normal and renamed lab runs at `52f28e4`.
 2. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
@@ -150,7 +150,10 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 61 (implementation delivered, runtime verification pending), 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
+both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
+
+Open: 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -180,8 +183,10 @@ restore core or merge Identity back into platform.
 
 ## 61. Verify Secret-derived environment values in init containers
 
-Status: implementation delivered with local product/harness tests, 2026-10-22;
-real Podman/Quadlet verification pending and still highest verification priority.
+Status: done, 2026-10-22; local product/harness tests and real Podman/Quadlet
+verification passed. Runs `init-secret-space-20261022-175002` (normal app1) and
+`init-secret-renamed-20261022-181444` (renamed product) both CLEAN PASS at `52f28e4`.
+See [the recorded evidence and limits](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22).
 Requested after an operator encountered a failing migration init container.
 No confirmed renderer or Podman defect; no speculative product workaround added.
 

@@ -93,8 +93,9 @@ The original probe and historical results below cover ordinary containers.
 The new [generated-Secret init probe](INIT-SECRET.md) adds real product rendering,
 exact nonempty process assertions, init `always`, fresh execution tokens,
 direct replacement and relocated-release Quadlet updates. Both normal and
-renamed lab flows invoke it. Its real runtime verification is pending; the
-historical matrix does not close that gap.
+renamed lab flows invoke it. Both flows passed at `52f28e4` on 2026-10-22;
+the [item 61 evidence](INIT-SECRET.md#completed-real-lab-verification-2026-10-22)
+records those runs separately from the historical ordinary-container matrix.
 
 ## Disposable runtime probe
 
