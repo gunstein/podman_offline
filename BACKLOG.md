@@ -11,6 +11,10 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-22)
 
+Item 61 is the highest-priority next task: investigate the reported empty
+connection-string environment variable in a migration init container and close
+the end-to-end Secret delivery test gap before the remaining planned work.
+
 Items 56 and 57 are done: implemented with local tests and a clean real lab
 matrix (`t10`, `cda22e7`). They followed the operator's 2026-10-21 order:
 component-specific dev overrides, then portable references to bundled component
@@ -28,90 +32,93 @@ lower-priority production hardening. Item 42 remains before item 3; implementati
 verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
-1. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
+1. [Item 61](#61-verify-secret-derived-environment-values-in-init-containers):
+   highest priority; reproduce and localise empty values, then add real
+   Podman/Quadlet coverage of generated Secrets consumed by init containers.
+2. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
-2. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
+3. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Use one explicit file reference
    in source/dev and an isolated offline release,
    without hand-editing release paths. Separate from the override-layer change.
-3. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
+4. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
    done; lab matrix `t11` clean at `3a54714`. Protect the
    root/service-user boundary on repeated host preparation; high priority,
    conditional on an attacker controlling the service account.
-4. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
+5. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-5. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+6. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-6. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
+7. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
    rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
    tests and documentation; after item 59.
-7. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+8. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-8. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+9. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-9. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+10. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-10. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+11. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-11. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+12. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-12. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+13. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-13. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+14. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-14. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+15. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-15. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+16. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-16. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+17. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-17. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+18. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-18. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-19. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+19. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+20. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-20. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+21. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-21. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+22. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-22. [Item 36](#36-harden-the-demo-application-containers): container hardening
+23. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-23. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+24. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-24. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+25. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-25. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+26. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-26. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+27. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-27. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+28. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-28. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+29. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-29. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+30. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` for disposable dev data; a dev
    usability improvement, not automatic database recovery or a production blocker.
-30. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+31. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -137,7 +144,7 @@ local environment's GPG socket restriction; see the verification reports.
 Update for item 46 (2026-10-22): done; lab matrix `t11` clean at `3a54714` after three lab
 fixes ([verification](acceptance/PREPARE-HOST.md)).
 
-Open: 54 (next implementation priority), 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 61 (highest implementation priority), 54, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -164,6 +171,129 @@ baseline before implementation; these tasks are not claims of completed work.
 The refactor must preserve the behavior and naming established by items 8 and 9;
 its original core terminology below is historical scope, not an instruction to
 restore core or merge Identity back into platform.
+
+## 61. Verify Secret-derived environment values in init containers
+
+Status: planned; highest priority, ahead of the remaining open work. Requested
+2026-10-22 after an operator encountered a failing migration init container.
+This item does not claim a confirmed renderer or Podman defect.
+
+### Operator report and coverage gap
+
+The organisation's external Duende Identity migration image runs Grate and
+reports `Required argument missing for option: --connstring`. The operator
+confirmed that the image expects `APP_CONNECTIONSTRING`. Its manifest uses:
+
+```yaml
+env:
+  - name: APP_CONNECTIONSTRING
+    valueFrom:
+      secretKeyRef:
+        name: sts-migrations
+        key: connection-string
+```
+
+Inspection of the created migration container reports that the variable exists
+but is empty. The rendered Secret's content has not yet been checked, and the
+organisation's Podman version, effective configuration and image entrypoint
+have not been captured. Do not infer a database, seeding, Grate or Podman bug
+from this observation alone. Do not require the operator's private image,
+credentials or full connection string to build the regression scenario.
+
+At the reviewed baseline (`7c3ce53`), product tests cover Secret-template
+composition and key validation. `acceptance/secret_templates_test.py` checks
+Secret env/file delivery and replacement through real kube play and Quadlet,
+but uses a regular container and hand-written Secrets. The .NET connection
+probe in `acceptance/database_test.py` also uses a regular container. Neither
+proves the complete generated-Secret-to-init-container flow. Historical green
+lab runs for item 41 remain valid evidence for their existing scope, not for
+this missing case. Tests of the harness use mocked host commands and cannot
+establish actual runtime delivery.
+
+### Detailed instructions for the implementation agent
+
+1. Read [AGENTS.md](AGENTS.md), [the review guide](docs/REVIEW_GUIDE.md),
+   [test instructions](tests/README.md), [acceptance instructions](acceptance/README.md),
+   [Secret-template verification](acceptance/SECRET-TEMPLATES.md) and items 33,
+   41, 56 and 57. Recheck the current code and coverage before implementation.
+   Trace effective config through `deployment/templates.py`, `render.py`,
+   dev prepare and production install to the actual Podman input. Check
+   `initContainers` handling, Secret ordering/key selection, top-level config
+   replacement and container recreation. Verify actual process environment;
+   runtime inspection alone is not sufficient evidence of delivery.
+2. Build a minimal declarative fixture with arbitrary component/resource names,
+   a retained synthetic password file and `SECRET_TEMPLATES` composing a full
+   connection string. Render through the real product code. Use an already
+   available probe image whose process can inspect its environment, without
+   depending on `apps/`, Duende, Grate, a registry connection or a database.
+   Support an explicit image argument for closed-network reproduction; document
+   the image's required interpreter and command. Keep ordinary-container coverage
+   as a control and extend existing helpers rather than creating a second harness.
+3. Add focused product tests for generated Secret bytes and the preserved
+   `env.valueFrom.secretKeyRef` in an init container. Cover wrong/missing keys
+   and declarations under the existing validation contract. Exercise component
+   dev overrides and production retained config where relevant to the report.
+   Do not introduce a blanket ban on empty generic Secret values without a
+   separately justified contract change; this connection-string probe must
+   explicitly reject empty or missing values.
+4. Add a real runtime scenario for the full chain: effective config and retained
+   password -> rendered Secret -> `secretKeyRef` -> init process environment.
+   Require exact equality with an independently constructed expected value and
+   require a non-empty value. Comparing env only with a mounted file is not
+   enough: both could contain the same stale or empty value. A main container
+   may confirm successful init completion, but its own env success must never
+   substitute for the init process assertion. Record failures even when an init
+   container has already exited; bound waits and handle the supported init type
+   explicitly, including the operator's `always` annotation.
+5. Exercise initial direct `podman kube play`, rerendered replacement, initial
+   Quadlet start and the supported rerender/restart lifecycle. Change a public
+   recipe input for the second expected value while retaining the password;
+   require the init container to execute again and receive the new value.
+   This tests stale-value detection without implementing database password
+   rotation. Include an isolated offline release using persistent config so a
+   source-only render test cannot mask a production delivery difference. Keep
+   this focused; do not duplicate the entire lab matrix unnecessarily.
+6. Add harness regressions showing that missing, empty, wrong and stale init
+   values, non-zero init exit and timeout cause failure. Confirm that a healthy
+   main container cannot hide a failed/skipped init assertion. Wire the real
+   scenario into existing relevant lab flows, including renamed resources.
+   Keep product tests runnable via `platform --isolate` without demo sources.
+7. If reproduction identifies a product defect, fix it in the responsible
+   existing path and add a regression that fails before the fix. If it is a
+   configuration, entrypoint or supported-version issue, document the evidence
+   and precise correction instead of adding speculative deploy workarounds.
+   A passing synthetic probe does not prove the organisation's private image
+   works; state what operator-side checks remain. Never print secrets, full
+   connection strings, unfiltered inspect output or raw subprocess diagnostics.
+   Failure messages should identify the stage/resource/key, not private values.
+8. Give the operator a short offline diagnostic procedure to distinguish a
+   missing/empty rendered key, wrong reference, stale container and init-process
+   consumption failure using presence/length or pass/fail checks. Document exact
+   commands, prerequisite image, supported host versions, cleanup and expected
+   outcomes. Use disposable names and clean only test-owned pods, volumes,
+   Secrets, units and temporary files, including on failure. Never reset the
+   operator's database, delete retained credentials or require weaker host policy.
+
+### Acceptance criteria and evidence
+
+- The full generated-Secret-to-init-process path passes with exact, non-empty
+  values on initial deployment and after the supported update/restart flow,
+  through both direct Podman and Quadlet; the failure cases above are enforced.
+- Validation remains side-effect-free and does not read credential contents;
+  private data stays in the existing Secret/0600 manifest path, not plain env
+  literals, ConfigMaps, command arguments, logs or evidence artifacts.
+- Run relevant product tests, `python3 -B tests/run.py platform --isolate` and
+  `python3 -B -m unittest discover -s acceptance -p 'test_*.py'`, plus the
+  repository's required checks appropriate to changed code. Report failures
+  and unavailable prerequisites rather than silently excluding tests.
+- Record actual commit, Podman/systemd versions, host policy and commands for
+  real runs. Distinguish unit/product, acceptance-harness and real runtime
+  results. If the lab is unavailable, deliver the runnable scenario and leave
+  runtime verification explicitly pending; mocks or older matrix results do
+  not close this gap.
+- Complete the understandability review with one successful flow and one
+  failed-init/retry flow. Update the relevant coverage documentation and this
+  item's status with evidence, preserving historical verification scope.
 
 ## 10. Supplement test coverage before structural changes
 
