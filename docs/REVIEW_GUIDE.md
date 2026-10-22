@@ -60,7 +60,7 @@ this list; update entries with implementation/test evidence when resolved.
 | Demo apps connect to PostgreSQL as the image's superuser | Backlog 35 |
 | Demo containers run as container root without `securityContext` or resource limits | Backlog 36 |
 | Accepted exposure: Secret-derived env values are visible to the service user/root in runtime inspection and process environments; use file mounts when the app supports them | Backlog 41; [contract](COMPONENTS.md#secret-templates) |
-| Generated-Secret delivery to an init process, including replacement and Quadlet rerender/restart, still lacks real runtime evidence | Backlog 61; local tests and runnable [init probe](../acceptance/INIT-SECRET.md) delivered, lab pending |
+| ~~Generated-Secret delivery to an init process, including replacement and Quadlet rerender/restart, lacks real runtime evidence~~ | Resolved by backlog 61; normal app1 and renamed-product lab scenarios CLEAN PASS on 2026-10-22 ([evidence](../acceptance/INIT-SECRET.md#completed-lab-verification-2026-10-22)) |
 | Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
 | ~~Global dev values on a `public_from` dependent can be silently replaced by owner inheritance~~ | Resolved by backlog 58: analysis showed owner and dependents always receive the same effective value; the precedence is documented, no code change |
 | ~~Root `prepare-host.sh` follows service-writable home paths for ownership, mode and relabel operations~~ | Resolved by backlog 46: service-user-only, descriptor-based preparation; lab matrix `t11` clean at `3a54714` ([verification](../acceptance/PREPARE-HOST.md)) |

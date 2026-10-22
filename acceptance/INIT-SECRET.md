@@ -173,10 +173,10 @@ runs. Cleanup attempts the owned resources and retry starts a fresh isolated run
 no new product retry state is introduced. Production install retry remains covered
 by existing lifecycle tests and the new retained-config init fixture.
 
-Real Podman/systemd/SELinux/fapolicyd verification for item 61 is **pending**.
-The old item 41 lab results cover its ordinary-container probe only. Record new
-runtime results here after executing the new scenario; Python 3.6 execution and
-the organisation's private image remain separate verification gaps.
+Real lab verification for item 61 is **complete** in both planned scenarios;
+see [the completed run records](#completed-lab-verification-2026-10-22).
+Python 3.6 execution and the organisation's private image remain separate
+verification gaps. Historical local results below retain their original scope.
 
 
 ### Local verification (2026-10-22)
@@ -210,8 +210,8 @@ Quadlet PASS. The old catch-all message discarded the failing operation, so this
 log does not establish the runtime cause. The tarfile warning alone does not
 establish extraction failure either. This change repairs failure reporting and
 preserves the original error when cleanup also fails; it does not claim to fix
-an unobserved Podman or renderer defect. A new lab run is required to identify
-or rule out that remaining failure. No production policy or Secret semantics
+an unobserved Podman or renderer defect. At that point a new lab run was required to identify
+or rule out the remaining failure; the subsequent records below resolve it. No production policy or Secret semantics
 were changed.
 
 Verification of this diagnostic correction: all 233 acceptance-harness tests
@@ -221,7 +221,7 @@ stubbed host and three new failure-reporting regressions. Ruff lint/format and
 completion and primary failure followed by failed cleanup: fixed phase labels
 identify the boundary, raw output stays private, owned cleanup continues and
 an incomplete cleanup cannot yield success. Product code is unchanged; real
-Podman/systemd verification of this correction remains pending.
+Podman/systemd verification was pending at that point; see the completed runs below.
 
 ### Runtime-directory space fix (2026-10-22)
 
@@ -234,4 +234,39 @@ for rootless Podman/systemd. The full-flow regression now uses distinct home and
 runtime paths, exercises real bundling and release rendering, requires the
 runtime directory to remain empty and verifies cleanup of the home fixture.
 This fixes the test's storage location; it does not relax process assertions or
-change production Secret behavior. Real lab rerun remains required.
+change production Secret behavior. Both lab reruns below subsequently passed.
+
+### Completed lab verification (2026-10-22)
+
+The operator supplied terminal step summaries ending in **CLEAN PASS** for both
+planned scenarios after storage fix `52f28e4`:
+
+| Scenario | Run ID | Result |
+| --- | --- | --- |
+| Normal, `--first-app app1` | `init-secret-space-20261022-175002` | CLEAN PASS; `03-database-runtime`, prod audit and cleanup passed |
+| Renamed product, `--renamed-product` | `init-secret-renamed-20261022-181444` | CLEAN PASS; `03-renamed-generate`, prod audit and cleanup passed |
+
+The controller retains the full evidence at:
+
+- `/home/gunstein/podman-offline-acceptance-runs/init-secret-space-20261022-175002/EVIDENCE.md`
+- `/home/gunstein/podman-offline-acceptance-runs/init-secret-renamed-20261022-181444/EVIDENCE.md`
+
+These records are based on the operator's supplied summaries; the full evidence
+files, their revision metadata and hashes were not independently read here.
+`52f28e4` identifies the delivered fix, not a separately verified run-metadata SHA.
+No private manifests, credentials or connection strings are copied into Git.
+
+Both passing steps invoke the generated-Secret probe, covering direct initial
+start/replacement and relocated-release Quadlet start/rerender/restart with fresh
+init/control assertions. The normal scenario also passed offline installation,
+database authentication, login, stop/start, crash/hang recovery, reboot,
+upgrades, sibling isolation and uninstall. The renamed scenario passed dev and
+offline installation with renamed components, restart/redeploy, registration
+removal, retained-bundle uninstall and surviving-service checks. Both passed the
+production audit. This completes backlog 61's planned lab verification; it does
+not certify the organisation's external Grate image or actual Python 3.6 execution.
+
+Registration is documentation-only. Status consistency, relative links and
+`git diff --check` were checked; no runtime tests were rerun to record these
+operator results. The previous implementation understandability review remains
+applicable; no lifecycle or cleanup behavior changed in this registration.
