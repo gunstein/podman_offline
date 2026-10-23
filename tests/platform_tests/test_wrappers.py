@@ -136,6 +136,9 @@ class WrapperTests(unittest.TestCase):
                             "app1": {
                                 "requires": ["platform", "identity"],
                                 "public_from": "platform",
+                                # Dev prepare and install resolve the
+                                # route's state path (backlog 64 regression).
+                                "routes": "platform",
                             },
                         },
                     }
@@ -178,6 +181,9 @@ class WrapperTests(unittest.TestCase):
                         }
                     )
                 )
+            (source / "components/app1/route.conf").write_text(
+                "location /app1/ { return 204; }\n"
+            )
             (shim / "sitecustomize.py").write_text(HOST_STUB)
             commands = root / "commands.jsonl"
             env = dict(

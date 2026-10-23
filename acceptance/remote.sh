@@ -13,33 +13,40 @@ run_started=$9
 requested_version=${10:-}
 old_version=${11:-}
 bundle=${12:-app1}
-# product: in the bundles.yaml under test; also the service user (prepare-host default).
+# product: in the bundles.yaml under test; it names the installation root.
 product_name=${13:-myproduct}
 # Any component ID; the bundle's own descriptor decides what it may do.
 [[ $bundle =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || exit 2
 [[ $product_name =~ ^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$ ]] || exit 2
-# Python steps read the name from the environment; sudo passes it with env.
-export PRODUCT_NAME=$product_name
-state=/var/lib/$product_name
+# The runtime login account deliberately differs from the product name and has
+# an ordinary home and shell (backlog 64); product files live under the root.
+service_user="${product_name:0:27}-ops"
+install_root=/var/lib/$product_name
+state=$install_root/state
+# Python steps read these from the environment; sudo passes them with env.
+export PRODUCT_NAME=$product_name SERVICE_USER=$service_user PRODUCT_ROOT=$install_root PRODUCT_STATE=$state
+as_root_env=(env PRODUCT_NAME="$product_name" SERVICE_USER="$service_user" PRODUCT_ROOT="$install_root" PRODUCT_STATE="$state")
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
 # The renamed product generated from $src by acceptance/renamed_product.py.
 renamed="$base/renamed"
 version=$requested_version
 if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
-release_root="/opt/$product_name/releases"
+release_root="$install_root/releases"
 product="$release_root/$product_name-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
-# Run commands as the service user from its home with the right runtime.
+# Run commands as the runtime account from its login home with the right
+# runtime and the documented production Podman settings (docs/PRODUCTION-INSTALL.md).
 as_product() {
-    sudo -n -H -u "$product_name" env PRODUCT_NAME="$product_name" bash -c '
+    sudo -n -H -u "$service_user" "${as_root_env[@]}" bash -c '
         cd "$HOME" || exit
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export XDG_CONFIG_HOME="$PRODUCT_ROOT/config" XDG_DATA_HOME="$PRODUCT_ROOT/storage"
         exec "$@"
     ' bash "$@"
 }
-# Control the product service in the service user's systemd instance.
-user_service() { sudo -n systemctl --user -M "$product_name@" "$@"; }
+# Control the product service in the runtime account's systemd instance.
+user_service() { sudo -n systemctl --user -M "$service_user@" "$@"; }
 # Capture deploy diagnostics before evidence; fail closed if a DB password leaks.
 install_checked() {
     as_product python3 - "$product" <<'PRIVATE_INSTALL'
@@ -51,7 +58,7 @@ import sys
 release = Path(sys.argv[1])
 result = subprocess.run(["bash", "./deploy", "install"], cwd=str(release),
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
-credentials = [path.read_text().rstrip("\n") for path in Path.home().glob("*/credentials/*/password") if path.is_file()]
+credentials = [path.read_text().rstrip("\n") for path in Path(os.environ["PRODUCT_STATE"]).glob("*/credentials/*/password") if path.is_file()]
 if any(value and value in result.stdout + result.stderr for value in credentials):
     raise SystemExit("FAIL: deploy output contains a database password (content withheld)")
 sys.stdout.write(result.stdout)
@@ -62,6 +69,7 @@ PRIVATE_INSTALL
 # List only validated installed component markers, never their private state.
 installed_components() {
     as_product python3 - <<'INSTALLED'
+import os
 import pathlib
 import re
 
@@ -69,7 +77,7 @@ import re
 def main():
     """Return installed component names after strict name, version and metadata validation."""
     names = []
-    home = pathlib.Path.home()
+    home = pathlib.Path(os.environ["PRODUCT_STATE"])
     for path in sorted((home / "installed").glob("*")):
         if (
             not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", path.name)
@@ -126,7 +134,7 @@ prepare_release() {
 # ./deploy validate must pass for this release before it is installed (backlog 23).
 validate_release() {
     local output
-    output=$(sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$product")
+    output=$(sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$product")
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated $bundle;"* ]] || { echo "FAIL: validate did not pass for $bundle" >&2; return 1; }
 }
@@ -225,7 +233,7 @@ AUDIT
 }
 # Preserve safe launcher evidence before reboot discards the volatile journal.
 health_launch_diagnostics() {
-    sudo -n env PRODUCT_NAME="$product_name" python3 - "$run_started" <<'LAUNCH_DIAGNOSTICS'
+    sudo -n "${as_root_env[@]}" python3 - "$run_started" <<'LAUNCH_DIAGNOSTICS'
 import json
 import os
 import pathlib
@@ -317,7 +325,7 @@ def unit_state(name, output):
 def main():
     """Collect read-only launcher state and failures without application messages or environments."""
     try:
-        user = pwd.getpwnam(os.environ["PRODUCT_NAME"])
+        user = pwd.getpwnam(os.environ["SERVICE_USER"])
     except KeyError:
         print("LAUNCH_DIAGNOSTICS: service user absent; no product launcher to inspect")
         return
@@ -330,12 +338,12 @@ def main():
     for event in events:
         print("LAUNCH_EVENT " + json.dumps(event, sort_keys=True))
     print("LAUNCH_EVENTS count=" + str(len(events)))
-    listing = command(["systemctl", "--user", "-M", os.environ["PRODUCT_NAME"] + "@", "list-units",
+    listing = command(["systemctl", "--user", "-M", os.environ["SERVICE_USER"] + "@", "list-units",
                        "--all", "--type=service", "--plain", "--no-legend", "--no-pager"])
     units.update(UNIT.findall(listing))
     print("LAUNCH_UNITS count=" + str(len(units)))
     for name in sorted(units):
-        output = command(["systemctl", "--user", "-M", os.environ["PRODUCT_NAME"] + "@", "show", name]
+        output = command(["systemctl", "--user", "-M", os.environ["SERVICE_USER"] + "@", "show", name]
                          + ["--property=" + key for key in PROPERTIES])
         print("LAUNCH_UNIT " + json.dumps(unit_state(name, output), sort_keys=True))
     print("PASS: read-only launcher diagnostics collected; unrecognized messages and arguments withheld")
@@ -361,8 +369,14 @@ wait_trust() {
         removed=${removed%/}; removed=${removed%/deployment}; removed=${removed##*-}
         arguments+=(--old-version "$removed")
     fi
-    [[ $release == "/opt/$product_name/releases/$product_name-$component-$wanted_version" ]] || return 1
+    [[ $release == "$release_root/$product_name-$component-$wanted_version" ]] || return 1
     release_tool "${arguments[@]}"
+}
+# Name, type, size and mode of every login-home entry; never file contents.
+home_inventory() {
+    local home
+    home=$(getent passwd "$service_user" | cut -d: -f6)
+    sudo -n find "$home" -xdev -printf '%P %y %s %m\n' | LC_ALL=C sort
 }
 retire_release() {
     release_tool retire --product "$product_name" --component "$bundle" --version "$version" --old-version "$old_version"
@@ -522,11 +536,11 @@ def main():
     if mode not in ("dev", "prod"):
         raise RuntimeError("Unknown config layer mode")
     paths = ([Path("build/install.yaml")] if mode == "dev" else
-             sorted((Path.home() / ".config/containers/systemd").glob(os.environ["PRODUCT_NAME"] + "-*.yaml")))
+             sorted(Path(os.environ["PRODUCT_ROOT"], "config/containers/systemd").glob(os.environ["PRODUCT_NAME"] + "-*.yaml")))
     if not paths:
         raise RuntimeError("Missing rendered config layer inputs")
     first, second = (("orders", "inventory") if os.environ["PRODUCT_NAME"] == "shop" else ("app1", "app2"))
-    installed = ({path.name for path in (Path.home() / "installed").glob("*")} if mode == "prod" else ())
+    installed = ({path.name for path in (Path(os.environ["PRODUCT_STATE"]) / "installed").glob("*")} if mode == "prod" else ())
     check_layers(paths, mode, first, second, installed)
 
 
@@ -563,14 +577,14 @@ def main():
     mode, forced = sys.argv[1:]
     component = "orders" if os.environ["PRODUCT_NAME"] == "shop" else "app1"
     if mode == "prod":
-        home = Path.home()
+        home = Path(os.environ["PRODUCT_STATE"])
         marker = home / "installed" / component
         if not marker.exists():
             return
         version = marker.read_text().strip()
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
             raise RuntimeError("Invalid installed seed component version")
-        root = Path("/opt") / os.environ["PRODUCT_NAME"] / "releases" / (os.environ["PRODUCT_NAME"] + "-" + component + "-" + version)
+        root = Path(os.environ["PRODUCT_ROOT"]) / "releases" / (os.environ["PRODUCT_NAME"] + "-" + component + "-" + version)
     elif mode == "dev":
         root = Path.cwd()
     else:
@@ -700,7 +714,7 @@ def check_configmap_inline(paths):
 
 def main():
     """Wait up to 150 seconds for healthy; reject inventory, command and parse errors at once."""
-    folder = pathlib.Path.home() / ".config/containers/systemd"
+    folder = pathlib.Path(os.environ["PRODUCT_ROOT"], "config/containers/systemd")
     paths = sorted(folder.glob(os.environ["PRODUCT_NAME"] + "-*.yaml"))
     if not paths:
         raise RuntimeError("No installed component YAML")
@@ -779,8 +793,8 @@ clean)
     output=$(sudo -n find /etc/containers/systemd -maxdepth 1 -name "$product_name.*" -print)
     test -z "$output"
     if [[ $role == PROD ]]; then
-        if getent passwd "$product_name"; then echo "FAIL: $product_name user already exists"; exit 1; fi
-        sudo -n test ! -e "$state"
+        if getent passwd "$service_user"; then echo "FAIL: $service_user account already exists"; exit 1; fi
+        sudo -n test ! -e "$install_root"
     fi
     test ! -e "$base"
     ;;
@@ -857,7 +871,7 @@ host-path-safety)
         prepare_release
         gzip -dc "$base/prepare_host_test.py.gz" \
             | sudo -n python3 -I -B - "$product/scripts/prepare-host.sh" \
-                --installed-user "$product_name" --port "$port"
+                --installed-user "$service_user" --product "$product_name" --port "$port"
     fi
     ;;
 identity-template-baseline) cd "$src"; python3 acceptance/identity_template_baseline.py;;
@@ -1033,10 +1047,11 @@ renamed-init-check)
     sudo -n test ! -e "$state/app1"
     # gateway shares SHOP_NAME; every public_from dependent inherited the same value.
     as_product python3 - <<'SHARED_SETTING'
+import os
 import pathlib
 import yaml
 
-home = pathlib.Path.home()
+home = pathlib.Path(os.environ["PRODUCT_STATE"])
 expected = yaml.safe_load((home / "gateway/config.yaml").read_text())["SHOP_NAME"]
 for component in ("login-service", "orders", "inventory", "manual"):
     config = yaml.safe_load((home / component / "config.yaml").read_text())
@@ -1069,7 +1084,7 @@ renamed-uninstall)
         manual) path=/help volume=;;
         *) echo "Unsupported renamed uninstall: $bundle" >&2; exit 2;;
     esac
-    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
     release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
     sudo -n test ! -e "$state/installed/$bundle"
     sudo -n test ! -e "$state/metadata/$bundle.json"
@@ -1214,7 +1229,7 @@ from pathlib import Path
 import sys
 import yaml
 
-root = Path.home()
+root = Path(os.environ["PRODUCT_STATE"])
 path = root / "identity/config.yaml"
 config = yaml.safe_load(path.read_text())
 if "SECRET_TEMPLATES" not in config:
@@ -1259,7 +1274,7 @@ def command(arguments):
 
 
 def observe():
-    root = Path.home() / "identity"
+    root = Path(os.environ["PRODUCT_STATE"]) / "identity"
     paths = [root / "config.yaml"] + [path for path in (root / "credentials").rglob("*") if path.is_file()]
     required = ("identity-db/password", "identity/identity.key", "identity/identity.crt")
     if any(not (root / "credentials" / name).is_file() for name in required):
@@ -1281,7 +1296,7 @@ def observe():
 
 
 def main():
-    snapshot = Path.home() / "identity-lifecycle.json"
+    snapshot = Path(os.environ["PRODUCT_STATE"]) / "identity-lifecycle.json"
     state = observe()
     if sys.argv[1] == "identity-before":
         fd = os.open(str(snapshot), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1293,7 +1308,7 @@ def main():
         image = "localhost/demo-identity:" + version
         if state["files"] != before["files"] or state["volumes"] != before["volumes"]:
             raise RuntimeError("Identity credentials, config or data volumes changed")
-        if (Path.home() / "installed/identity").read_text().strip() != version:
+        if (Path(os.environ["PRODUCT_STATE"]) / "installed/identity").read_text().strip() != version:
             raise RuntimeError("Identity version marker missing")
         image_id = command(["podman", "image", "inspect", "--format", "{{.Id}}", image]).strip().replace("sha256:", "")
         if state["image_name"] != image or state["image"] == before["image"] or state["image"] != image_id:
@@ -1331,10 +1346,11 @@ import sys
 
 
 def observe():
-    root = Path.home()
+    root = Path(os.environ["PRODUCT_STATE"])
     paths = []
-    for directory in ("platform", "identity", "app1", "app2", "help", "installed", "routes", "clients", ".config/containers/systemd"):
+    for directory in ("platform", "identity", "app1", "app2", "help", "installed", "routes", "clients", "../config/containers/systemd"):
         paths.extend(path for path in (root / directory).rglob("*") if path.is_file())
+    # Quadlets live beside state/ under the installation root (backlog 64).
     files = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
     names = ["platform-proxy-nginx"]
     if sys.argv[1] == "platform-downgrade":
@@ -1411,12 +1427,39 @@ prepare-host)
         || echo 'subj_cache_size = 16381' | sudo -n tee -a /etc/fapolicyd/fapolicyd.conf >/dev/null
     sudo -n systemctl restart fapolicyd
     sudo -n systemctl is-active fapolicyd
+    # An existing ordinary login account (home under /home, bash), created
+    # here only because the lab VM is disposable; production uses an existing one.
+    if ! getent passwd "$service_user" >/dev/null; then
+        sudo -n useradd --create-home --shell /bin/bash "$service_user"
+    fi
+    account_home=$(getent passwd "$service_user" | cut -d: -f6)
+    [[ $account_home == /home/* ]]
     prepare_release
-    sudo -n bash "$product/scripts/prepare-host.sh" --port "$port"
+    sudo -n bash "$product/scripts/prepare-host.sh" --port "$port" --user "$service_user"
+    # The documented bootstrap file, written by the account itself.
+    sudo -n -H -u "$service_user" bash -c '
+        umask 077
+        mkdir -p "$HOME/.$1"
+        printf "INSTALL_ROOT=%s\n" "$2" > "$HOME/.$1/$1.env"
+        chmod 0700 "$HOME/.$1"
+        chmod 0600 "$HOME/.$1/$1.env"
+    ' bash "$product_name" "$install_root"
+    # Constrain the login home after bootstrap: the product must not write to it.
+    sudo -n chmod 0555 "$account_home"
+    home_inventory > "$base/home-inventory-before"
+    echo "PASS: $service_user prepared; home $account_home read-only with only the bootstrap file added"
+    ;;
+home-unchanged)
+    # Product writes never appear in the login home, including after reboot.
+    home_inventory > "$base/home-inventory-after"
+    diff "$base/home-inventory-before" "$base/home-inventory-after"
+    du -sk "$(getent passwd "$service_user" | cut -d: -f6)"
+    echo "PASS: login home unchanged since bootstrap"
     ;;
 help-alone)
     prepare_release
     as_product python3 -B - "$product/deploy" <<'HELP_ALONE'
+import os
 import pathlib
 import subprocess
 import sys
@@ -1430,7 +1473,7 @@ def main():
     print(result.stderr, end="", file=sys.stderr)
     if result.returncode != 1 or result.stderr.strip() != "ERROR: Install the separate platform bundle before installing help":
         raise SystemExit("FAIL: help-alone did not refuse the missing platform")
-    home = pathlib.Path.home()
+    home = pathlib.Path(os.environ["PRODUCT_STATE"])
     if any((home / name).exists() for name in ("installed", "platform", "identity", "app1", "app2", "help", "routes", "clients")):
         raise SystemExit("FAIL: help-alone changed persistent component state")
     print("PASS: help-alone refused missing platform without component writes")
@@ -1452,6 +1495,7 @@ upgrade)
     ;;
 persistent-state)
     as_product python3 - <<'HASHES'
+import os
 import hashlib
 import json
 import pathlib
@@ -1460,7 +1504,7 @@ import ssl
 
 def main():
     """Hash private persistent files for the controller without printing their contents."""
-    root = pathlib.Path.home()
+    root = pathlib.Path(os.environ["PRODUCT_STATE"])
     paths = []
     for component in ("platform", "identity", "app1", "app2", "help"):
         config = root / component / "config.yaml"
@@ -1553,7 +1597,7 @@ install)
     date +%s > "$base/install-start-$bundle"
     install_checked
     as_product podman ps --all
-    sudo -n -H -u "$product_name" cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
+    sudo -n -H -u "$service_user" cat "$product/images/images.txt" | while read -r image; do as_product podman image exists "$image"; done
     ;;
 database-auth)
     as_product python3 - <<'DATABASE_AUTH'
@@ -1606,7 +1650,7 @@ def logs_safe(home):
         if result.returncode or any(value in content for value in credentials) or ("password=" in content.lower() and "host=" in content.lower()):
             raise RuntimeError("Database log safety check failed (content withheld)")
     product = os.environ["PRODUCT_NAME"]
-    for path in (home / ".config/containers/systemd").glob(product + "-*.yaml"):
+    for path in pathlib.Path(os.environ["PRODUCT_ROOT"], "config/containers/systemd").glob(product + "-*.yaml"):
         if stat.S_IMODE(path.stat().st_mode) != 0o600:
             raise RuntimeError("Rendered install YAML is not mode 0600")
         for doc in yaml.safe_load_all(path.read_text()):
@@ -1618,7 +1662,7 @@ def logs_safe(home):
 
 
 def main():
-    home = pathlib.Path.home()
+    home = pathlib.Path(os.environ["PRODUCT_STATE"])
     logs_safe(home)
     result = subprocess.run(["podman", "exec", "identity-server-app", "dotnet", "Identity.dll", "--database-check"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
@@ -1643,7 +1687,7 @@ except Exception:
     raise SystemExit("FAIL: installed database credentials (details withheld)") from None
 DATABASE_AUTH
     # The service user cannot read the system journal; root reads its records only.
-    sudo -n env PRODUCT_NAME="$product_name" python3 - "$(id -u "$product_name")" "$run_started" <<'DATABASE_JOURNAL'
+    sudo -n "${as_root_env[@]}" python3 - "$(id -u "$service_user")" "$run_started" <<'DATABASE_JOURNAL'
 import os
 import pathlib
 import subprocess
@@ -1661,7 +1705,7 @@ def credentials(home):
 
 def main(uid, since):
     """Require a readable, nonempty service-user journal without any database password."""
-    values = credentials(pathlib.Path("/var/lib", os.environ["PRODUCT_NAME"]))
+    values = credentials(pathlib.Path(os.environ["PRODUCT_STATE"]))
     result = subprocess.run(["journalctl", "_UID=" + uid, "--since", "@" + since, "--no-pager", "--output=cat"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
                             check=False, timeout=60)
@@ -1692,8 +1736,21 @@ check)
     grep -q 'podman-user-wait-network-online.service' <<< "$generated"
     output=$(sudo -n podman ps -aq)
     test -z "$output"
-    sudo -n ls -Zd "$state" "$state/.local/share/containers/storage"
-    sudo -n env PRODUCT_NAME="$product_name" python3 - <<'PERMISSIONS'
+    # Backlog 64: the user manager (and so the Quadlet generator and every
+    # service, also after reboot) uses the installation root's config/storage.
+    manager_env=$(user_service show-environment)
+    grep -qx "XDG_CONFIG_HOME=$install_root/config" <<< "$manager_env"
+    grep -qx "XDG_DATA_HOME=$install_root/storage" <<< "$manager_env"
+    for component in $(installed_components); do
+        source_path=$(user_service show -p SourcePath --value "$product_name-$component.service")
+        [[ $source_path == "$install_root/config/containers/systemd/$product_name-$component.kube" ]] \
+            || { echo "FAIL: $component unit generated from ${source_path@Q}"; exit 1; }
+    done
+    graphroot=$(as_product podman info --format '{{.Store.GraphRoot}}')
+    [[ $graphroot == "$install_root/storage/containers/storage" ]] || { echo "FAIL: graphroot ${graphroot@Q}"; exit 1; }
+    echo "PASS: user manager, generated units and Podman graphroot use $install_root"
+    sudo -n ls -Zd "$install_root" "$state" "$install_root/config" "$install_root/storage/containers/storage"
+    sudo -n "${as_root_env[@]}" python3 - <<'PERMISSIONS'
 import os
 import pathlib
 import pwd
@@ -1703,10 +1760,11 @@ import stat
 def main():
     """Require private state and readable Quadlets for every installed component."""
     product = os.environ["PRODUCT_NAME"]
-    account = pwd.getpwnam(product)
-    root = pathlib.Path("/var/lib", product)
-    paths = {root: 0o700, root / "PKI/private": 0o700}
-    units = root / ".config/containers/systemd"
+    account = pwd.getpwnam(os.environ["SERVICE_USER"])
+    root = pathlib.Path(os.environ["PRODUCT_STATE"])
+    units = pathlib.Path(os.environ["PRODUCT_ROOT"], "config/containers/systemd")
+    paths = {root: 0o700, root / "PKI/private": 0o700, root.parent / "config": 0o700,
+             root.parent / "storage": 0o700}
     paths[units / (product + ".network")] = 0o644
     for marker in (root / "installed").glob("*"):
         component = marker.name
@@ -1724,7 +1782,7 @@ def main():
         if (item.st_uid != account.pw_uid or item.st_gid != account.pw_gid
                 or stat.S_IMODE(item.st_mode) != mode):
             raise SystemExit("FAIL: private ownership/mode: " + str(path))
-        print("PASS: {0}:{0} {1:04o} {2}".format(product, mode, path))
+        print("PASS: {0}:{0} {1:04o} {2}".format(account.pw_name, mode, path))
 
 
 main()
@@ -1733,7 +1791,10 @@ PERMISSIONS
     test -n "$container_ids"
     mapfile -t containers <<< "$container_ids"
     upper_dirs=$(as_product podman inspect --format '{{.GraphDriver.Data.UpperDir}}' "${containers[@]}")
-    sudo -n env PRODUCT_NAME="$product_name" python3 - "$upper_dirs" <<'LABELS'
+    while read -r upper; do
+        [[ $upper == "$install_root/storage/containers/storage/"* ]] || { echo "FAIL: container layer outside $install_root"; exit 1; }
+    done <<< "$upper_dirs"
+    sudo -n "${as_root_env[@]}" python3 - "$upper_dirs" <<'LABELS'
 import os
 import pathlib
 import re
@@ -1746,8 +1807,9 @@ try:
 except ImportError:
     raise SystemExit("FAIL: the selinux Python module is missing; install the host's policycoreutils-python-utils before the snapshot")
 
-HOME = pathlib.Path("/var/lib", os.environ["PRODUCT_NAME"])
-STORAGE = HOME / ".local/share/containers/storage"
+HOME = pathlib.Path(os.environ["PRODUCT_STATE"])
+ROOT = pathlib.Path(os.environ["PRODUCT_ROOT"])
+STORAGE = ROOT / "storage/containers/storage"
 CUSTOMIZABLE = pathlib.Path("/etc/selinux/targeted/contexts/customizable_types")
 
 
@@ -1873,7 +1935,7 @@ def main():
                 check_label(pathlib.Path(directory) / name)
     outputs, failures = [], []
     # Both dry runs are read-only evidence, even when the first one reports an error.
-    for arguments in (["-e", str(STORAGE), str(HOME)], [str(STORAGE)]):
+    for arguments in (["-e", str(STORAGE), str(HOME), str(ROOT / "config"), str(ROOT / "storage")], [str(STORAGE)]):
         try:
             outputs.append(dryrun(arguments))
         except RuntimeError as error:
@@ -1901,12 +1963,13 @@ LABELS
     start_time=$(date -d "@$run_started" +%H:%M:%S)
     audit_events check
     as_product python3 - <<'CREDENTIAL_FILES'
+import os
 import hashlib
 import json
 import subprocess
 from pathlib import Path
 
-ROOT = Path.home()
+ROOT = Path(os.environ["PRODUCT_STATE"])
 NAMES = ("session-key", "todo-client.key", "todo-client.crt", "ca.crt")
 # Fixed code only: no source bytes, credentials or configuration in argv/logs.
 PROBE = r"""
@@ -1985,7 +2048,7 @@ CREDENTIAL_FILES
     done
     as_product podman exec platform-proxy-nginx wget -qO- http://identity-server:8080/identity/.well-known/openid-configuration
     # Only matching pull evidence, not arbitrary application logs with auth data.
-    uid=$(id -u "$product_name")
+    uid=$(id -u "$service_user")
     journal=$(sudo -n journalctl _UID="$uid" --since "@$run_started" --no-pager)
     if grep -Ei 'Trying to pull|Pulling image|pull access denied' <<< "$journal"; then
         echo 'FAIL: install attempted a pull'; exit 1
@@ -2042,8 +2105,10 @@ CONTAINER = "app1-todo-backend"
 
 def product_command(arguments):
     """Build a Podman call as the service user from the right home and runtime."""
-    return ["sudo", "-n", "-H", "-u", os.environ["PRODUCT_NAME"], "bash", "-c",
-            'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
+    return ["sudo", "-n", "-H", "-u", os.environ["SERVICE_USER"], "env",
+            "PRODUCT_ROOT=" + os.environ["PRODUCT_ROOT"], "bash", "-c",
+            'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; '
+            'export XDG_CONFIG_HOME="$PRODUCT_ROOT/config" XDG_DATA_HOME="$PRODUCT_ROOT/storage"; exec "$@"',
             "bash"] + arguments
 
 
@@ -2131,8 +2196,10 @@ CONTAINER = "app1-todo-backend"
 
 def product_command(arguments):
     """Build a Podman call as the service user from the right home and runtime."""
-    return ["sudo", "-n", "-H", "-u", os.environ["PRODUCT_NAME"], "bash", "-c",
-            'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"',
+    return ["sudo", "-n", "-H", "-u", os.environ["SERVICE_USER"], "env",
+            "PRODUCT_ROOT=" + os.environ["PRODUCT_ROOT"], "bash", "-c",
+            'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; '
+            'export XDG_CONFIG_HOME="$PRODUCT_ROOT/config" XDG_DATA_HOME="$PRODUCT_ROOT/storage"; exec "$@"',
             "bash"] + arguments
 
 
@@ -2234,7 +2301,7 @@ siblings-before|siblings-after|help-siblings-before|help-siblings-after|platform
     if [[ $action == platform-siblings-* ]]; then mode=platform; fi
     if [[ $action == identity-siblings-* ]]; then observation="$base/identity-siblings.json"; mode=identity; fi
     if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
-    sudo -n env PRODUCT_NAME="$product_name" python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
+    sudo -n "${as_root_env[@]}" python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
 import hashlib
 import json
 import os
@@ -2244,7 +2311,7 @@ import subprocess
 import sys
 
 PRODUCT = os.environ["PRODUCT_NAME"]
-HOME = pathlib.Path("/var/lib", PRODUCT)
+HOME = pathlib.Path(os.environ["PRODUCT_STATE"])
 
 
 def command(arguments):
@@ -2259,8 +2326,10 @@ def command(arguments):
 
 def observe():
     """Project sibling process identity, version markers and their exact trust records."""
-    prefix = ["sudo", "-n", "-H", "-u", PRODUCT, "bash", "-c",
-              'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; exec "$@"', "bash"]
+    prefix = ["sudo", "-n", "-H", "-u", os.environ["SERVICE_USER"], "env",
+              "PRODUCT_ROOT=" + os.environ["PRODUCT_ROOT"], "bash", "-c",
+              'cd "$HOME" || exit; export XDG_RUNTIME_DIR="/run/user/$(id -u)"; '
+              'export XDG_CONFIG_HOME="$PRODUCT_ROOT/config" XDG_DATA_HOME="$PRODUCT_ROOT/storage"; exec "$@"', "bash"]
     mode = sys.argv[3] if len(sys.argv) > 3 else "app1"
     components = {"app1": ["platform", "identity", "app2", "help"],
                   "help": ["platform", "identity", "app1", "app2"],
@@ -2296,7 +2365,7 @@ def observe():
     expected = set()
     for component in components:
         version = pathlib.Path(HOME, "installed", component).read_text().strip()
-        package = pathlib.Path("/opt") / PRODUCT / "releases" / (PRODUCT + "-" + component + "-" + version) / "deployment"
+        package = pathlib.Path(os.environ["PRODUCT_ROOT"]) / "releases" / (PRODUCT + "-" + component + "-" + version) / "deployment"
         files = [str(path) for path in package.rglob("*") if path.is_file()]
         if not files:
             raise SystemExit("FAIL: missing sibling deployment package")
@@ -2313,14 +2382,14 @@ def observe():
                 for name in components}
     result = {"containers": observed, "trust": records, "versions": versions}
     if components:
-        root = HOME
+        root = pathlib.Path(os.environ["PRODUCT_ROOT"])
         files = []
         for component in components:
-            files.append(root / component / "config.yaml")
+            files.append(root / "state" / component / "config.yaml")
             for directory in ("credentials", "files"):
-                files.extend(path for path in (root / component / directory).rglob("*") if path.is_file())
+                files.extend(path for path in (root / "state" / component / directory).rglob("*") if path.is_file())
             for suffix in (".yaml", ".kube"):
-                files.append(root / ".config/containers/systemd" / (PRODUCT + "-" + component + suffix))
+                files.append(root / "config/containers/systemd" / (PRODUCT + "-" + component + suffix))
         result["state"] = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
         network = json.loads(command(prefix + ["podman", "network", "inspect", PRODUCT]))
         if not isinstance(network, list) or len(network) != 1 or not network[0].get("id"):
@@ -2350,9 +2419,9 @@ except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
 SIBLINGS
     ;;
 uninstall)
-    sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
     release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
-    app2_version=$(sudo -n -H -u "$product_name" cat "$state/installed/app2")
+    app2_version=$(sudo -n -H -u "$service_user" cat "$state/installed/app2")
     wait_trust "$release_root/$product_name-app2-$app2_version/deployment/" "$product/deployment/"
     sudo -n test ! -e "$state/installed/app1"
     sudo -n test ! -e "$state/routes/app1.conf"

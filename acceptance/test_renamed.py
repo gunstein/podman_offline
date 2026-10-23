@@ -420,7 +420,9 @@ class ScenarioTests(unittest.TestCase):
         self.assertLess(
             actions.index("renamed-remove-manual"), actions.index("install")
         )
-        self.assertEqual(self.calls[-2], ("PROD", "renamed-uninstall", "manual"))
+        self.assertEqual(self.calls[-3], ("PROD", "renamed-uninstall", "manual"))
+        # Backlog 64: the login home still holds only the bootstrap file.
+        self.assertEqual(self.calls[-1], ("PROD", "home-unchanged", None))
         # No demo-specific production checks run in this scenario.
         for demo in ("check", "prod-e2e", "uninstall", "dev-up", "bundle"):
             self.assertNotIn(demo, actions)

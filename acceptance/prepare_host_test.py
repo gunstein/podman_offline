@@ -43,12 +43,14 @@ calls = 0
 lock = home / module["LOCK"]
 if phase.startswith("lock-"):
     lock.unlink()
+# config/ itself sits in the root-owned installation root, which the account
+# cannot change; the first account-replaceable directory is config/cni.
 def swap():
-    (home / ".config").rename(home / ".config-held")
-    (home / ".config").symlink_to(outside)
+    (home / "config/cni").rename(home / "config/cni-held")
+    (home / "config/cni").symlink_to(outside)
 def open_race(path, flags, *args, **kwargs):
     global calls
-    if path == ".config":
+    if path == "cni":
         calls += 1
         if calls == 2:
             swap()
@@ -89,7 +91,7 @@ if phase.startswith("lock-"):
         raise RuntimeError("Lock link injection did not execute")
     if phase == "lock-file" and lock.read_bytes() != b"concurrent lock":
         raise RuntimeError("Concurrent lock was truncated")
-elif not (home / ".config").is_symlink():
+elif not (home / "config/cni").is_symlink():
     raise RuntimeError("Directory injection did not execute")
 """
 
@@ -125,8 +127,8 @@ def shell(script, uid, gid, home, body, code=None, arguments=(), check=True):
         """source "$1"
 service_uid=$2
 service_gid=$3
-service_home=$4
-container_home=$service_home/.local/share/containers
+install_root=$4
+container_home=$install_root/storage/containers
 shift 4
 """
         + body
@@ -155,9 +157,9 @@ def as_user(script, account, home, arguments, code=None, check=True):
         account.pw_uid,
         account.pw_gid,
         home,
-        # Root enters the home it cannot be denied; the operator's private
+        # Root enters the root it cannot be denied; the operator's private
         # working directory is not accessible to the service user.
-        'cd "$service_home"\nas_service_user env HOME="$service_home" XDG_RUNTIME_DIR="/run/user/$service_uid" "$@"',
+        'cd "$install_root"\nas_service_user env HOME="$install_root" XDG_RUNTIME_DIR="/run/user/$service_uid" "$@"',
         code=code,
         arguments=arguments,
         check=check,
@@ -234,16 +236,22 @@ def prepare(script, account, home, check=True):
         account.pw_uid,
         account.pw_gid,
         home,
-        "prepare_service_home\necho later-host-actions",
+        "prepare_install_directories\necho later-host-actions",
         check=check,
     )
 
 
 @contextlib.contextmanager
 def temporary_account(base):
-    """Create only a uniquely named probe account; never remove a real account."""
+    """Create only a uniquely named probe account; never remove a real account.
+
+    Yields the account and a disposable installation root laid out like
+    prepare-host.sh leaves it: root-owned 0755 with the account's state/,
+    config/ and storage/ (0700).
+    """
     name = "po46-" + uuid.uuid4().hex[:12]
     home = base / "home"
+    root = base / "root"
     command(
         [
             "useradd",
@@ -262,7 +270,11 @@ def temporary_account(base):
         account = pwd.getpwnam(name)
         home.mkdir(mode=0o700)
         os.chown(str(home), account.pw_uid, account.pw_gid)
-        yield account, home
+        root.mkdir(mode=0o755)
+        for directory in ("state", "config", "storage"):
+            (root / directory).mkdir(mode=0o700)
+            os.chown(str(root / directory), account.pw_uid, account.pw_gid)
+        yield account, root
     finally:
         # No --remove: do not let account metadata select a recursive deletion.
         command(["userdel", name])
@@ -333,8 +345,8 @@ def disposable(script, base):
             raise RuntimeError("Service helper changed the caller's SELinux context")
         print("Service helper authority: " + json.dumps(authority, sort_keys=True))
         prepare(script, account, home)
-        storage = home / ".local/share/containers/storage"
-        for path in (home / ".config", storage):
+        storage = home / "storage/containers/storage"
+        for path in (home / "config/cni", storage):
             wrong_type = (
                 "var_t" if default_type(path) == "user_home_t" else "user_home_t"
             )
@@ -345,11 +357,11 @@ def disposable(script, base):
         command(["chcon", "-t", "user_home_t", retained])
         retained_label = label(retained)
         prepare(script, account, home)
-        for path in (home / ".config", storage):
+        for path in (home / "config/cni", storage):
             require_default_type(path)
         if label(retained) != retained_label:
             raise RuntimeError("Recursive relabel entered populated storage")
-        lock = home / ".config/cni/net.d/cni.lock"
+        lock = home / "config/cni/net.d/cni.lock"
         lock.write_bytes(b"retained lock")
         inode = lock.stat().st_ino
         prepare(script, account, home)
@@ -357,12 +369,13 @@ def disposable(script, base):
             raise RuntimeError("Repeat replaced or truncated the CNI lock")
         outside = outside_fixture(base)
         before = snapshot(outside)
+        # state/, config/ and storage/ cannot be replaced by the account.
         for relative in (
-            ".config",
-            ".local",
-            ".config/cni",
-            ".config/cni/net.d",
-            ".config/cni/net.d/cni.lock",
+            "config/cni",
+            "config/containers",
+            "storage/containers",
+            "config/cni/net.d",
+            "config/cni/net.d/cni.lock",
         ):
             path = home / relative
             for dangling in (False, True):
@@ -377,7 +390,7 @@ def disposable(script, base):
                     if result.returncode == 0 or "later-host-actions" in result.stdout:
                         raise RuntimeError("Unsafe path accepted: " + relative)
                     require_unchanged(outside, before)
-        foreign = home / ".config/containers"
+        foreign = home / "config/containers"
         os.chown(str(foreign), 0, 0)
         try:
             if prepare(script, account, home, check=False).returncode == 0:
@@ -409,27 +422,39 @@ def disposable(script, base):
                 lock.unlink()
                 prepare(script, account, home)
             else:
-                (home / ".config").unlink()
-                (home / ".config-held").rename(home / ".config")
+                (home / "config/cni").unlink()
+                (home / "config/cni-held").rename(home / "config/cni")
         # A replacement at the relabel command boundary is resolved under the
         # same dropped authority as recursive traversal, including writable files.
-        for relative in (".local", ".local/share/containers/storage"):
+        for relative in ("storage/containers", "storage/containers/storage"):
             path = home / relative
             with planted_link(script, account, home, path, outside):
                 as_user(
                     script,
                     account,
                     home,
-                    ["restorecon", "-R", home / ".local/share/containers/storage"],
+                    ["restorecon", "-R", home / "storage/containers/storage"],
                     check=False,
                 )
-                as_user(script, account, home, ["restorecon", "-R", home], check=False)
-                if relative == ".local":
+                as_user(
+                    script,
+                    account,
+                    home,
+                    [
+                        "restorecon",
+                        "-R",
+                        home / "state",
+                        home / "config",
+                        home / "storage",
+                    ],
+                    check=False,
+                )
+                if relative == "storage/containers":
                     as_user(
                         script,
                         account,
                         home,
-                        ["restorecon", home / ".local/writable"],
+                        ["restorecon", home / "storage/containers/writable"],
                         check=False,
                     )
                 require_unchanged(outside, before)
@@ -437,11 +462,12 @@ def disposable(script, base):
         print("PASS: separate-UID links, replacement races, lock retention and retry")
 
 
-def podman(account, home, arguments):
+def podman(account, root, arguments):
     """Run Podman as the service user like its own session, not via as_user.
 
     as_service_user sets no-new-privileges, and SELinux then denies Podman's
     unconfined_t -> container_runtime_t transition (nnp_transition AVC).
+    The production storage is selected exactly as the user manager does.
     """
     return command(
         [
@@ -450,12 +476,14 @@ def podman(account, home, arguments):
             account.pw_name,
             "--",
             "env",
-            "HOME=" + str(home),
+            "HOME=" + account.pw_dir,
             "XDG_RUNTIME_DIR=/run/user/" + str(account.pw_uid),
+            "XDG_CONFIG_HOME=" + str(root / "config"),
+            "XDG_DATA_HOME=" + str(root / "storage"),
             "podman",
         ]
         + arguments,
-        cwd=home,
+        cwd=root,
     )
 
 
@@ -478,24 +506,26 @@ def product_state(script, account, home):
                     label(path),
                 )
             )
-    storage = home / ".local/share/containers/storage"
+    storage = home / "storage/containers/storage"
     return sorted(containers), sorted(volumes), label(storage)
 
 
-def installed(script, user, port, base):
+def installed(script, user, product, port, base):
     """Plant only disposable links on a resettable PROD VM, then repeat setup."""
-    if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", user):
-        raise ValueError("Invalid installed service user")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,31}", user) or not re.fullmatch(
+        r"[a-z]([a-z0-9-]{0,30}[a-z0-9])?", product
+    ):
+        raise ValueError("Invalid installed account or product")
     account = pwd.getpwnam(user)
-    home = Path(account.pw_dir)
-    if home != Path("/var/lib") / user or account.pw_uid == 0:
-        raise ValueError("Unexpected installed service home")
+    home = Path("/var/lib") / product
+    if Path(account.pw_dir) == home or account.pw_uid == 0:
+        raise ValueError("Unexpected installed account")
     outside = outside_fixture(base)
     before = snapshot(outside)
     state = product_state(script, account, home)
     # Compare populated-storage labels before/after a normal full rerun. The
     # selected mountpoint labels supplement the runner's persistent data checks.
-    paths = (".config/cni", ".config/cni/net.d", ".config/cni/net.d/cni.lock")
+    paths = ("config/cni", "config/cni/net.d", "config/cni/net.d/cni.lock")
     for relative in paths:
         path = home / relative
         with planted_link(
@@ -510,7 +540,7 @@ def installed(script, user, port, base):
             )
             if (
                 result.returncode == 0
-                or "Service-home preparation failed" not in result.stderr
+                or "Installation directory preparation failed" not in result.stderr
             ):
                 raise RuntimeError(
                     "Full preparation did not refuse planted link: " + relative
@@ -530,6 +560,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("script", type=Path)
     parser.add_argument("--installed-user")
+    parser.add_argument("--product")
     parser.add_argument("--port", type=int, default=8443)
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -537,7 +568,7 @@ def main():
     if command(["getenforce"]).stdout.strip() != "Enforcing":
         parser.error("SELinux Enforcing is required; this is not a mocked label test")
     script = args.script.resolve(strict=True)
-    # Like the real service home, the fixture lives under /var/lib: the policy
+    # Like the real installation root, the fixture lives under /var/lib: the policy
     # maps /var/tmp/.* to <<none>>, so restorecon would never change a label
     # there and every relabel check would pass vacuously. The caller explicitly
     # chooses a disposable lab; never run against arbitrary hosts.
@@ -547,7 +578,7 @@ def main():
         base = Path(directory)
         base.chmod(0o755)
         if args.installed_user:
-            installed(script, args.installed_user, args.port, base)
+            installed(script, args.installed_user, args.product, args.port, base)
         else:
             stage = base / "scripts"
             stage.mkdir()

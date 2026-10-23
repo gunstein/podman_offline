@@ -347,7 +347,7 @@ class ComponentObservationTests(unittest.TestCase):
         code["check_configmap_inline"] = lambda paths: None
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            units = root / ".config/containers/systemd"
+            units = root / "config/containers/systemd"
             units.mkdir(parents=True)
             for name in ("platform", "identity", "app1", "app2", "help"):
                 (units / ("myproduct-" + name + ".yaml")).write_text(
@@ -375,14 +375,18 @@ class ComponentObservationTests(unittest.TestCase):
 
             code["podman"] = podman
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 code["main"]()
             self.assertIn("all 5 app containers", output.getvalue())
             rows.pop()
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 self.assertRaisesRegex(RuntimeError, "Missing"),
             ):
                 code["main"]()
@@ -392,7 +396,7 @@ class ComponentObservationTests(unittest.TestCase):
         code = guest_code("HEALTHY")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            units = root / ".config/containers/systemd"
+            units = root / "config/containers/systemd"
             units.mkdir(parents=True)
             for name in ("platform", "app1"):
                 (units / ("myproduct-" + name + ".yaml")).write_text(
@@ -400,7 +404,9 @@ class ComponentObservationTests(unittest.TestCase):
                 )
             code["podman"] = mock.Mock()
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 self.assertRaisesRegex(RuntimeError, "across components"),
             ):
                 code["main"]()
@@ -418,7 +424,9 @@ class ComponentObservationTests(unittest.TestCase):
                 "ERROR: Install the separate platform bundle before installing help\n",
             )
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 mock.patch.object(code["sys"], "argv", ["guest", "deploy"]),
                 mock.patch.object(subprocess, "run", return_value=result) as process,
                 contextlib.redirect_stdout(io.StringIO()),
@@ -575,26 +583,19 @@ class ComponentObservationTests(unittest.TestCase):
         code = guest_code("SIBLINGS")
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-
-            def rooted(*parts):
-                path = Path(*parts)
-                return home / "opt" if str(path) == "/opt" else path
-
-            code["pathlib"] = types.SimpleNamespace(Path=rooted)
-            code["HOME"] = home
+            # The installation root: state/, config/ and protected releases/.
+            code["HOME"] = home / "state"
             contents = {
-                "installed/platform": "0.4.3",
-                "platform/config.yaml": "retained",
-                ".config/containers/systemd/myproduct-platform.yaml": "retained",
-                ".config/containers/systemd/myproduct-platform.kube": "retained",
+                "state/installed/platform": "0.4.3",
+                "state/platform/config.yaml": "retained",
+                "config/containers/systemd/myproduct-platform.yaml": "retained",
+                "config/containers/systemd/myproduct-platform.kube": "retained",
             }
             for name, value in contents.items():
                 path = home / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(value)
-            package = (
-                home / "opt/myproduct/releases/myproduct-platform-0.4.3/deployment"
-            )
+            package = home / "releases/myproduct-platform-0.4.3/deployment"
             files = [
                 package / "__main__.py",
                 package / "common.py",
@@ -627,10 +628,13 @@ class ComponentObservationTests(unittest.TestCase):
                 )
 
             code["command"] = command
-            with mock.patch.object(
-                code["sys"],
-                "argv",
-                ["guest", "identity-siblings-before", "unused", "identity"],
+            with (
+                mock.patch.object(
+                    code["sys"],
+                    "argv",
+                    ["guest", "identity-siblings-before", "unused", "identity"],
+                ),
+                mock.patch.dict(os.environ, {"PRODUCT_ROOT": str(home)}),
             ):
                 self.assertEqual(code["observe"]()["trust"], sorted(rows))
                 for broken in (
@@ -781,7 +785,9 @@ class DatabaseHarnessTests(unittest.TestCase):
             )
             output = io.StringIO()
             with (
-                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(home), "PRODUCT_ROOT": str(home)}
+                ),
                 mock.patch.object(
                     subprocess, "run", side_effect=[identity, positive, positive]
                 ) as process,
@@ -905,7 +911,10 @@ class DatabaseHarnessTests(unittest.TestCase):
         script = REMOTE
         start = script.index("    # The service user cannot read the system journal")
         self.assertTrue(
-            script[start:].splitlines()[1].lstrip().startswith("sudo -n env")
+            script[start:]
+            .splitlines()[1]
+            .lstrip()
+            .startswith('sudo -n "${as_root_env[@]}"')
         )
 
 

@@ -48,7 +48,10 @@ class RetryFixture(ComponentFixture):
 
     def protected(self):
         return {
-            str(path.relative_to(common.STATE)): (path.read_bytes(), path.stat().st_mode)
+            str(path.relative_to(common.STATE)): (
+                path.read_bytes(),
+                path.stat().st_mode,
+            )
             for path in common.STATE.rglob("*")
             if path.is_file()
             and (

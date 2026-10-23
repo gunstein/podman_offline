@@ -759,7 +759,8 @@ class Run:
             raise RuntimeError("Unexpected VM runtime path")
         self.dev_private = runtime + "/podman-offline-" + self.id
         self.ssh("DEV", "mkdir -m 700 " + shlex.quote(self.dev_private))
-        base = "/var/lib/" + self.product + "/"
+        # Mirrors remote.sh: the runtime account is not named after the product.
+        base = "/var/lib/" + self.product + "/state/"
         files = {
             "ca.crt": "PKI/private/ca.crt",
             "alice-password": component + "/" + directory + "/users/alice-password",
@@ -771,8 +772,8 @@ class Run:
             args = SSH + [
                 self.host("PROD"),
                 "sudo -n -H -u "
-                + self.product
-                + " cat "
+                + self.product[:27]
+                + "-ops cat "
                 + shlex.quote(base + relative),
             ]
             self.write("$ " + shlex.join(args) + " > [private runtime file]\n")
@@ -951,6 +952,7 @@ class Run:
         self.step("09-e2e-after-reboot", lambda: self.guest("DEV", "prod-e2e"))
         self.step("09-database-auth", lambda: self.guest("PROD", "database-auth"))
         self.step("09-markers-after-reboot", lambda: self.guest("DEV", "markers-check"))
+        self.step("09-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.upgrade_help()
         self.upgrade()
         self.upgrade_platform()
@@ -960,6 +962,7 @@ class Run:
         self.step("10-check-uninstall", lambda: self.guest("PROD", "check"))
         self.step("10-e2e-uninstall", lambda: self.guest("DEV", "survivor-e2e"))
         self.step("10-markers-uninstall", lambda: self.guest("DEV", "survivor-markers"))
+        self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True
 
     def execute_renamed(self):
@@ -1062,6 +1065,7 @@ class Run:
         self.step(
             "10-survivor-after-manual", lambda: self.guest("DEV", "renamed-survivor")
         )
+        self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True
 
     def inventory_without_registrations(self):

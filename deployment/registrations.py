@@ -96,7 +96,7 @@ def registration_stage(components, directory, known, home=None, configs=None):
                 )
         if not declared:
             continue
-        config_path = catalog.component_paths(component, home)[0]
+        config_path = catalog.state_paths(component, home)[0]
         if configs is None:
             config = rendering.load_config(config_path)
         else:

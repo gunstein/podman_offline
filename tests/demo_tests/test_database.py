@@ -174,7 +174,9 @@ class DatabaseTests(DeployFixture):
                         "home/" + component + "/config.yaml", yaml.safe_dump(legacy)
                     )
                     before = {
-                        p: p.read_bytes() for p in common.STATE.rglob("*") if p.is_file()
+                        p: p.read_bytes()
+                        for p in common.STATE.rglob("*")
+                        if p.is_file()
                     }
                     write_descriptor(self.root, component, self.range)
                     self.process.reset_mock()

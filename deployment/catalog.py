@@ -432,11 +432,14 @@ def unit_name(component):
     return product_name(common.ROOT) + "-" + component
 
 
-def component_paths(component, home=None):
-    """Return one component's persistent config, archives and Quadlet paths."""
+def state_paths(component, home=None):
+    """Return one component's config and archive paths in a state directory.
+
+    home names another state directory than common.STATE (build/dev in source
+    dev). Refuses symlinked state paths.
+    """
     base = (home or common.STATE).resolve()
     state = base / component
-    unit = unit_name(component)
     paths = [
         state,
         state / "files",
@@ -446,20 +449,24 @@ def component_paths(component, home=None):
         metadata_path(base, component),
     ]
     paths.extend((state / "files").glob("*.tar"))
-    if home is None:
-        paths.extend(
-            [common.QUADLET_DIR / (unit + suffix) for suffix in (".yaml", ".kube")]
-        )
     if any(path.is_symlink() for path in paths):
         raise common.DeployError(
             f"Refuse symlinked component state or output paths for {component}"
         )
-    return (
-        state / "config.yaml",
-        state / "files",
-        common.QUADLET_DIR / (unit + ".yaml"),
-        common.QUADLET_DIR / (unit + ".kube"),
-    )
+    return state / "config.yaml", state / "files"
+
+
+def component_paths(component):
+    """Return one installed component's config, archives and Quadlet paths."""
+    config, files = state_paths(component)
+    unit = unit_name(component)
+    output = common.QUADLET_DIR / (unit + ".yaml")
+    quadlet = common.QUADLET_DIR / (unit + ".kube")
+    if output.is_symlink() or quadlet.is_symlink():
+        raise common.DeployError(
+            f"Refuse symlinked component state or output paths for {component}"
+        )
+    return config, files, output, quadlet
 
 
 def installed_version(home, name):

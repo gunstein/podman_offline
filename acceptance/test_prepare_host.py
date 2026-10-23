@@ -229,7 +229,7 @@ class HostProbeTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if not phase.startswith("lock-"):
-                    self.assertTrue((home / ".config").is_symlink())
+                    self.assertTrue((home / "config/cni").is_symlink())
                 self.assertEqual(outside.stat().st_uid, info.st_uid)
                 self.assertEqual(
                     stat.S_IMODE(outside.stat().st_mode), stat.S_IMODE(info.st_mode)
@@ -272,7 +272,7 @@ class HostProbeTests(unittest.TestCase):
                 123,
                 456,
                 Path("/var/lib/svc-orders"),
-                "prepare_service_home",
+                "prepare_install_directories",
                 code="fixture",
                 arguments=["with space"],
                 check=False,
@@ -296,8 +296,8 @@ class HostProbeTests(unittest.TestCase):
 
     def test_podman_state_runs_without_no_new_privileges(self):
         """NNP blocks Podman's SELinux transition; the operator cwd is private."""
-        account = mock.Mock(pw_name="svc-orders", pw_uid=123)
-        home = Path("/var/lib/svc-orders")
+        account = mock.Mock(pw_name="svc-orders", pw_uid=123, pw_dir="/home/svc-orders")
+        home = Path("/var/lib/orders")
         empty = subprocess.CompletedProcess([], 0, "", "")
         with (
             mock.patch.object(probe, "command", return_value=empty) as execute,
@@ -310,12 +310,15 @@ class HostProbeTests(unittest.TestCase):
             self.assertEqual(call.args[0][:4], ["runuser", "-u", "svc-orders", "--"])
             self.assertIn("podman", call.args[0])
             self.assertEqual(call.kwargs["cwd"], home)
+            # Podman uses the installation root's storage, as the user manager does.
+            self.assertIn("XDG_DATA_HOME=/var/lib/orders/storage", call.args[0])
+            self.assertIn("XDG_CONFIG_HOME=/var/lib/orders/config", call.args[0])
 
     def test_service_user_commands_start_in_the_service_home(self):
         with mock.patch.object(probe, "shell") as shell:
             probe.as_user(None, mock.Mock(pw_uid=1, pw_gid=2), Path("/h"), ["true"])
         body = shell.call_args.args[4]
-        self.assertTrue(body.startswith('cd "$service_home"\n'), body)
+        self.assertTrue(body.startswith('cd "$install_root"\n'), body)
 
     def test_failed_command_is_not_silently_accepted(self):
         failure = subprocess.CompletedProcess(["probe"], 1, stdout="", stderr="refused")

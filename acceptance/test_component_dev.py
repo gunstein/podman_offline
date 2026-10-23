@@ -167,7 +167,9 @@ class ComponentDevHarnessTests(unittest.TestCase):
                 self.assertNotIn("PASS:", output.getvalue())
 
     def test_production_check_reads_completion_markers(self):
-        self.assertIn('(Path.home() / "installed").glob("*")', REMOTE)
+        self.assertIn(
+            '(Path(os.environ["PRODUCT_STATE"]) / "installed").glob("*")', REMOTE
+        )
         self.assertIn("check_layers(paths, mode, first, second, installed)", REMOTE)
 
     def test_runtime_assertions_are_wired_into_dev_and_production_steps(self):

@@ -29,8 +29,12 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
-# remote.sh exports the product name under test; its Python steps read it.
+# remote.sh exports the product name, runtime account and installation paths
+# under test; its Python steps read them.
 os.environ.setdefault("PRODUCT_NAME", "myproduct")
+os.environ.setdefault("SERVICE_USER", "myproduct-ops")
+os.environ.setdefault("PRODUCT_ROOT", "/var/lib/myproduct")
+os.environ.setdefault("PRODUCT_STATE", "/var/lib/myproduct/state")
 
 
 def shell_code(source, function=None, heredoc=None, action=None):
@@ -1064,6 +1068,7 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
             "09-e2e-after-reboot",
             "09-database-auth",
             "09-markers-after-reboot",
+            "09-home-unchanged",
             "10-help-before",
             "10-help-build",
             "10-help-transfer",
@@ -1117,6 +1122,7 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
             "10-check-uninstall",
             "10-e2e-uninstall",
             "10-markers-uninstall",
+            "10-home-unchanged",
         ]
         self.assertEqual(records[records.index("09-crash") :], expected)
         for step in (
@@ -1301,7 +1307,7 @@ as_product() {
             )
             result = subprocess.run(
                 ["python3", "-c", code],
-                env=dict(os.environ, HOME=temporary),
+                env=dict(os.environ, PRODUCT_STATE=temporary),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -1331,7 +1337,7 @@ as_product() {
         def transfer(args, stdout, **kwargs):
             """Simulate the SSH transfer and check that it uses private file output."""
             self.assertIn(
-                "sudo -n -H -u myproduct cat /var/lib/myproduct/",
+                "sudo -n -H -u myproduct-ops cat /var/lib/myproduct/state/",
                 args[-1],
             )
             paths.append(args[-1])
@@ -1345,9 +1351,9 @@ as_product() {
         self.assertEqual(
             paths,
             [
-                "sudo -n -H -u myproduct cat /var/lib/myproduct/PKI/private/ca.crt",
-                "sudo -n -H -u myproduct cat /var/lib/myproduct/identity/credentials/users/alice-password",
-                "sudo -n -H -u myproduct cat /var/lib/myproduct/identity/credentials/users/bob-password",
+                "sudo -n -H -u myproduct-ops cat /var/lib/myproduct/state/PKI/private/ca.crt",
+                "sudo -n -H -u myproduct-ops cat /var/lib/myproduct/state/identity/credentials/users/alice-password",
+                "sudo -n -H -u myproduct-ops cat /var/lib/myproduct/state/identity/credentials/users/bob-password",
             ],
         )
         self.assertNotIn(
@@ -1371,9 +1377,13 @@ as_product() {
         home.mkdir(mode=0o700)
         operator = self.root / "operator-private"
         operator.mkdir(mode=0o700)
-        probe = "import json,os,sys; print(json.dumps([os.getcwd(), os.environ['HOME'], os.environ['XDG_RUNTIME_DIR'], sys.argv[1:]]))"
+        probe = "import json,os,sys; print(json.dumps([os.getcwd(), os.environ['HOME'], os.environ['XDG_RUNTIME_DIR'], os.environ['XDG_CONFIG_HOME'], os.environ['XDG_DATA_HOME'], sys.argv[1:]]))"
         # Simulate sudo changing identity/HOME while retaining the caller's cwd.
-        stub = 'product_name=myproduct\nsudo() { shift 4; "$@"; }\n'
+        stub = (
+            "service_user=myproduct-ops\n"
+            "as_root_env=(env PRODUCT_ROOT=/var/lib/myproduct PRODUCT_STATE=/var/lib/myproduct/state)\n"
+            'sudo() { shift 4; "$@"; }\n'
+        )
         script = (
             stub
             + function
@@ -1398,6 +1408,9 @@ as_product() {
                 str(home),
                 str(home),
                 "/run/user/" + str(os.getuid()),
+                # The documented production Podman settings, not the login home.
+                "/var/lib/myproduct/config",
+                "/var/lib/myproduct/storage",
                 ["argument with spaces"],
             ],
         )
@@ -1537,11 +1550,13 @@ class HealthTests(unittest.TestCase):
         output, errors = io.StringIO(), io.StringIO()
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
-            units = home / ".config/containers/systemd"
+            units = home / "config/containers/systemd"
             units.mkdir(parents=True)
             (units / "myproduct-platform.yaml").touch()
             with (
-                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(home), "PRODUCT_ROOT": str(home)}
+                ),
                 mock.patch.object(subprocess, "run", side_effect=run),
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(errors),
@@ -2369,11 +2384,17 @@ class SelinuxTests(unittest.TestCase):
             walk=os.walk,
         )
         self.namespace["os"] = self.filesystem
+        # Historical run-6 evidence used the old service home; map it onto the
+        # installation root layout (backlog 64) without changing the fixture.
         self.lines = (
             Path(__file__)
             .with_name("fixtures")
             .joinpath("run-6-restorecon.log")
             .read_text()
+            .replace(
+                "/var/lib/myproduct/.local/share/containers/storage", str(self.storage)
+            )
+            .replace("/var/lib/myproduct/.config", "/var/lib/myproduct/config")
             .splitlines()
         )
         self.upper_layers = set(
@@ -2529,7 +2550,7 @@ class SelinuxTests(unittest.TestCase):
         lines = [
             line
             for line in self.lines
-            if line.startswith("Would relabel /var/lib/myproduct/.config")
+            if line.startswith("Would relabel /var/lib/myproduct/config")
         ]
         self.assertEqual(len(lines), 9)
         for line in lines:

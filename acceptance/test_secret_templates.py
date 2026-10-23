@@ -236,7 +236,9 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
             )
             namespace = {"__name__": "fixture"}
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 mock.patch("sys.argv", ["guest", str(release)]),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
@@ -256,7 +258,9 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
             password.parent.mkdir(parents=True)
             password.write_text("private-fixture")
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 mock.patch("sys.argv", ["guest", str(root)]),
                 mock.patch.object(
                     subprocess,
@@ -346,7 +350,7 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
         code = guest_code("HEALTHY")
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            folder = home / ".config/containers/systemd"
+            folder = home / "config/containers/systemd"
             folder.mkdir(parents=True)
             self.fixture(folder)
             row = {
@@ -365,7 +369,9 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
 
             code["podman"] = podman
             with (
-                mock.patch.object(Path, "home", return_value=home),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(home), "PRODUCT_ROOT": str(home)}
+                ),
                 contextlib.redirect_stdout(io.StringIO()) as output,
                 self.assertRaisesRegex(RuntimeError, "did not reach"),
             ):

@@ -141,7 +141,9 @@ class IdentityEvidenceTests(unittest.TestCase):
             (root / "installed/identity").write_text("0.4.1\n")
             code["observe"] = lambda: old
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 mock.patch.object(
                     code["sys"], "argv", ["guest", "identity-before", ""]
                 ),
@@ -156,7 +158,9 @@ class IdentityEvidenceTests(unittest.TestCase):
                 )
             )
             with (
-                mock.patch.object(Path, "home", return_value=root),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
                 mock.patch.object(
                     code["sys"], "argv", ["guest", "identity-after", "0.4.1"]
                 ),
