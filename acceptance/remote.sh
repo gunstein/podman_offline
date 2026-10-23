@@ -121,8 +121,7 @@ prepare_release() {
     release_tool provision-key --product "$product_name" --keyring "$base/bundle-signing.gpg" --key-sha256 "$key_sha256"
     release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
         --archive "$base/$product_name-$bundle-$version-offline.tar.gz" \
-        --signature "$base/$product_name-$bundle-$version-offline.tar.gz.asc" \
-        --keyring "/opt/$product_name/keyring.gpg"
+        --signature "$base/$product_name-$bundle-$version-offline.tar.gz.asc"
 }
 # ./deploy validate must pass for this release before it is installed (backlog 23).
 validate_release() {
@@ -1481,7 +1480,7 @@ def main():
 main()
 HASHES
     ;;
-unpack)
+publish-release)
     prepare_release
     cat "$product/VERSION" > "$base/version-$bundle"
     test "$(cat "$base/version-$bundle")" = "$requested_version"

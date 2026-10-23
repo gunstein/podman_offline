@@ -369,6 +369,22 @@ public product payloads. Declarations in common/component defaults and local/mat
 secrets from being copied into bundles, including through symlink aliases. Keep
 private files out of shipped directories and retain their declarations.
 
+### Installation compatibility
+
+Until the first real customer installation, existing development/lab installations
+may be discarded. For the protected-release layout, use a fresh host or explicitly
+remove the obsolete `/var/lib/<product>/releases` tree and its old
+`/etc/fapolicyd/trust.d/<product>-<component>` trust files as an administrator.
+Remove trust first, reload with `sudo fapolicyd-cli --update`, and verify with
+`sudo fapolicyd-cli --dump-db` that no old release paths remain before deleting
+the tree. Preserve unrelated trust and persistent config, credentials and volumes;
+never reuse service-writable release trust. The new helper does not migrate or
+clean up old installations automatically.
+
+After the first real customer installation, incompatible changes must include an
+explicit migration and verification procedure preserving customer data and
+credentials. The current permission to discard lab installations is temporary.
+
 ### Signed bundles
 
 `.sha256` files detect a damaged archive, but whoever can replace an archive can
@@ -390,7 +406,9 @@ example on a different medium) and keep it there. The target checks each
 archive with `gpgv`, which trusts only that keyring, before the checksum and
 before unpacking anything; see the installation steps below. Do not verify with
 a script taken from the unverified archive. An archive without `.asc` is
-unsigned: install it only if your organisation allows unsigned builds.
+unsigned and is for development only. Production publication and installation
+require a detached signature and the independently provisioned product keyring;
+there is no unsigned-install override.
 
 ## Proxy from YAML
 
@@ -989,7 +1007,7 @@ archive="$PWD/$product_name-$bundle-$version-offline.tar.gz"
 release_tool provision-key --product "$product_name" --keyring "$PWD/bundle-signing.gpg" \
     --key-sha256 "$bundle_key_sha256"
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-    --archive "$archive" --signature "$archive.asc" --keyring "/opt/$product_name/keyring.gpg"
+    --archive "$archive" --signature "$archive.asc"
 release="/opt/$product_name/releases/$product_name-$bundle-$version"
 sudo bash "$release/scripts/prepare-host.sh" --port 8443
 ```
@@ -998,11 +1016,15 @@ The helper snapshots the archive/signature into a private directory under the
 protected `/opt/<product>` anchor and verifies that exact copy before extraction.
 It rejects links, special files, ambiguous members, unexpected inventory and
 identity mismatches. It publishes a complete root-owned release atomically and
-retains authenticated inventory/provenance and inode/ctime bindings in `.release.json`.
+retains authenticated inventory/provenance and device/inode/mtime bindings in `.release.json`.
 Payload hashes are calculated while copying the signed archive stream; untrusted
-Python files are not reopened before enrollment. Protected inode/ctime bindings
-refuse any later filesystem changes, including same-size writes. Do not manually
-copy, modify, chmod or relabel a published tree; unsafe state is refused rather
+Python files are not reopened before enrollment. Protected device/inode/mtime bindings
+reject changed payload metadata, including ordinary same-size writes. Owner,
+permissions, links, ACLs, file set and sizes are also checked. SELinux relabeling
+(`restorecon`, `fixfiles` or autorelabel) is supported: xattr changes update ctime,
+which is deliberately excluded. Root remains trusted; these metadata checks do
+not detect a root writer who changes bytes and restores their mtime. Do not
+manually copy, modify or chmod a published tree; unsafe state is refused rather
 than silently repaired. Repeating the same
 signed archive resumes trust enrollment; different bytes for the same identity
 are refused. A per-product lock serializes publication, trust and retirement.
@@ -1108,7 +1130,7 @@ private configuration, credentials, shell wrappers or image archives.
 
 ```sh
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-    --archive "$archive" --signature "$archive.asc" --keyring "/opt/$product_name/keyring.gpg"
+    --archive "$archive" --signature "$archive.asc"
 release="/opt/$product_name/releases/$product_name-$bundle-$version"
 # Start with bundle=platform, then identity, then app1/app2; help needs only platform.
 as_product bash "$release/deploy" init-config "$bundle"
@@ -1190,7 +1212,7 @@ success remove the old own trust entry, leaving other bundles' trust untouched:
 
 ```sh
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-    --archive "$archive" --signature "$archive.asc" --keyring "/opt/$product_name/keyring.gpg"
+    --archive "$archive" --signature "$archive.asc"
 release="/opt/$product_name/releases/$product_name-$bundle-$version"
 sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 as_product podman ps

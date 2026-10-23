@@ -21,7 +21,9 @@ A separately authenticated public key from the trusted operator, rather than the
 service account, is checked against the independently authenticated
 `--key-sha256` on the protected copied bytes and pinned at
 `/opt/<product>/keyring.gpg`; a different existing
-key is refused. Rotation is a separate administrator operation.
+key is refused. Rotation is a separate administrator operation. Publication uses
+only that pinned product key; `--keyring` is accepted only by `provision-key`.
+Production signatures are mandatory; unsigned archives remain development-only.
 
 In the lab, the controller sends its reviewed source over authenticated SSH;
 Bash's builtin printf streams code to `sudo python3 -I -B -` through a real pipe. Isolated mode excludes caller
@@ -31,6 +33,16 @@ The root interpreter opens no untrusted target Python file. A regression compile
 the actual generated source and checks stdin's FIFO type, including the large
 embedded helper. The shared helper imports only host-installed PyYAML and Python
 standard-library modules, never the incoming release's deployment package.
+
+## Before the first customer installation
+
+Existing dev/lab hosts may be discarded. Prefer a fresh host. If reusing a lab
+host, an administrator must remove the obsolete `trust.d/<product>-<component>`
+files, reload fapolicyd, verify no `/var/lib/<product>/releases` entries remain in
+the live database, then remove that old tree. Preserve unrelated trust and
+persistent state. Publication does not scan, migrate or repair old layouts.
+After the first real customer installation, incompatible changes must include
+migration and verification preserving customer data and credentials.
 
 ## Protected flow
 
@@ -54,11 +66,14 @@ old-layout fallback or second deployment transaction model.
    VERSION, descriptor product/component/version and exact checksum inventory.
 4. `inventory` records every file's size/hash/mode and every directory, including
    empty ones. Protected `.release.json` binds this inventory to the signed
-   archive digest. Stored device/inode/ctime/mtime bindings reject later changes,
+   archive digest. Stored device/inode/mtime bindings reject later changes,
    including same-size writes and removed/recreated entries, without reopening
    untrusted payloads. Authenticated VERSION/descriptor/checksums are read from
    the archive stream, with a 16 MiB limit on each metadata file. Never manually
-   copy/chmod/relabel a published release; those operations invalidate bindings.
+   copy/chmod/modify a published release; those operations invalidate bindings.
+   SELinux relabeling is supported: ctime/xattrs are excluded, so `restorecon`,
+   `fixfiles` and autorelabel do not invalidate provenance. Root is trusted; a root
+   writer changing bytes and restoring mtime is outside this service-user boundary.
    Atomic same-filesystem rename publishes the whole tree;
    fsyncs make file/inventory/directory publication durable. Same archive/identity
    repeats safely; any different archive or changed final inventory is refused.
@@ -86,6 +101,14 @@ old-layout fallback or second deployment transaction model.
    old files. Interrupted deletion resumes only from that matching protected
    journal and checks remaining objects against the recorded inventory; unrelated
    or orphaned trees are refused. The journal is removed only after cleanup.
+
+A relabel leaves release inventory and old retained trust usable; the safety probe
+runs actual `restorecon -R` before repeat publication and subsequent trust/lifecycle
+checks. Metadata-only unit tests use a real user xattr to exercise the ctime
+change; they do not establish SELinux behavior on OL9. Unexpected ownership,
+permissions, ACLs or changed payload metadata still fail. Diagnostics identify
+the operation, protected path or probe phase and subprocess exit status without
+printing external stderr, credential contents or complete configuration.
 
 A process interrupted before publication leaves only an ignored root-only
 `.staging-*` directory; a new call starts fresh, never executes/reuses it. An
@@ -151,7 +174,9 @@ The negative probes request denied DAC writes, not execution of untrusted
 payloads. They do not suppress audit records; unexpected AVC/FANOTIFY denials
 still fail the existing audit gate. Runtime facts include exact RPM versions,
 SELinux mode and fapolicyd state. Protected files/ancestors must remain unchanged;
-there are no permitted outside-target writes or policy changes. This does not
+the release-safety probe permits only SELinux relabel metadata updates within
+the selected protected release. There are no permitted outside-target writes or
+policy changes. This does not
 claim that the service user cannot execute arbitrary code through other routes.
 
 Record revision, all six CLEAN PASS reports and their EVIDENCE.md paths here.
@@ -203,3 +228,38 @@ that actual gpgv verification passed locally. Signature-before-extraction order
 and rejection are exercised with injected command failures; the real signature
 and daemon path must pass in the lab. Understandability review of the final
 success/retry/retirement flow is recorded above; no independent review is claimed.
+
+
+## Review follow-up checks (2026-10-23)
+
+Production signatures are now mandatory; publication uses only the pinned product
+keyring, while `--keyring` selects input only for `provision-key`. The harness action
+`publish-release` names its authentication/publication/enrollment effects explicitly.
+The README and review guide record the temporary pre-customer migration exemption
+and the required removal of old service-writable trust before reusing a lab host.
+
+| Check | Actual result |
+| --- | --- |
+| Release regressions plus script-inventory test with `scripts/__pycache__` present | 21 passed (20 release tests) |
+| Acceptance-harness discovery, including a run without `-B` | 237 passed |
+| `python3 -B tests/run.py platform --isolate` | 410 run: 406 passed, three gpg-agent signing fixture failures and one `/proc/self/fd/0` delivery-test error, as in the previous local environment |
+| Ruff lint/format; Bash syntax; Pyright on helper/probe/new tests | Passed; Pyright 0 errors, 0 warnings |
+| Vermin on helper/probe/release tests | Minimum 3.5, compatible with required 3.6; actual 3.6 not run |
+| Current-change OL9/Podman/systemd/SELinux/fapolicyd matrix | Still pending; no current-change real-runtime result claimed |
+
+The relabel regression sets a real user xattr on the published tree, confirms
+ctime changed, then repeats publication, retains old scoped trust, waits for new
+trust and retires the relabeled old release. Signature/key tests reject missing
+signatures and caller-selected publication keys; commands remain mocked in these
+unit tests. Diagnostic regressions preserve phase/path/exit or errno while
+withholding injected credential values and captured subprocess output. The lab
+probe now runs real `restorecon -R` before repeat authentication and deployment.
+
+Understandability recheck: authority remains the signed snapshot and pinned key;
+ctime is deliberately excluded to permit SELinux relabeling, with root trusted.
+Successful relabel/repeat/upgrade/retire uses the same protected inventory and
+existing retirement journal. Failure reports now name the operation/path or probe
+phase without private stderr. No recovery mode, alternate key choice or unsigned
+production branch was added. Customer-data migration becomes mandatory after the
+first real customer installation, rather than adding a compatibility framework
+for disposable pre-customer hosts. Lab verification is still required for closure.

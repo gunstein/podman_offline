@@ -270,7 +270,7 @@ snapshots archive/signature, checks gpgv against a separately provisioned keyrin
 validates every member and the exact checksum inventory, and publishes a complete
 root-owned release at `/opt/<product>/releases/<product>-<component>-<version>`.
 A root-owned `.release.json` binds the authenticated archive hash, file paths,
-sizes, modes and streamed hashes, including directory inventory and inode/ctime
+sizes, modes and streamed hashes, including directory inventory and inode/mtime
 bindings. Payloads are never reopened as untrusted Python before enrollment. Existing releases must
 match it exactly; version content cannot be overwritten. Staging is never used
 as installed code. The service home and private state stay separate.
@@ -293,7 +293,11 @@ all required checks and removes only the selected old release. Repeated calls
 resume enrollment of identical authenticated content; per-product locking and
 atomic directory rename prevent concurrent or partial publication.
 
-No migration code or old-layout fallback is added. Historical pinned-release
+No migration code or old-layout fallback is added before the first real customer
+installation; current lab installations may be discarded. Incompatible changes
+after that milestone must provide migration preserving customer data/credentials.
+SELinux relabeling is supported: xattrs/ctime are excluded from the protected
+metadata bindings; root remains trusted. Historical pinned-release
 helpers and reports retain their original layouts. Current-change OL9 verification
 is pending; see [protected release verification](acceptance/PROTECTED-RELEASES.md).
 

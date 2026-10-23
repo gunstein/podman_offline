@@ -51,7 +51,7 @@ class ProtectedReleaseTests(unittest.TestCase):
         trust_patch = mock.patch.object(release, "TRUST_DIR", self.trust_dir)
         trust_patch.start()
         self.addCleanup(trust_patch.stop)
-        self.key = self.root / "keyring"
+        self.key = self.product / "keyring.gpg"
         self.key.write_bytes(b"IndependentKey")
         self.key.chmod(0o644)
         self.signature = self.root / "signature"
@@ -117,7 +117,6 @@ class ProtectedReleaseTests(unittest.TestCase):
                 self.product,
                 self.archive,
                 self.signature,
-                self.key,
                 "shop",
                 "worker",
                 "1.2.3",
@@ -162,7 +161,7 @@ class ProtectedReleaseTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             release.published(path)
         extra.unlink()
-        # Fixture reset: directory ctime correctly records even removed extra files.
+        # Fixture reset: directory mtime correctly records even removed extra files.
         shutil.rmtree(str(path))
         self.publish()
         self.files["deployment/common.py"] = b"different signed release"
@@ -212,7 +211,6 @@ class ProtectedReleaseTests(unittest.TestCase):
                 self.product,
                 self.archive,
                 self.signature,
-                self.key,
                 "shop",
                 "worker",
                 "1.2.3",
@@ -287,7 +285,6 @@ class ProtectedReleaseTests(unittest.TestCase):
                 self.product,
                 self.archive,
                 self.signature,
-                self.key,
                 "shop",
                 "worker",
                 "1.2.3",
@@ -338,7 +335,6 @@ class ProtectedReleaseTests(unittest.TestCase):
                 self.product,
                 self.archive,
                 self.signature,
-                self.key,
                 "shop",
                 "worker",
                 "1.2.4",
@@ -421,6 +417,7 @@ namespace['wait_trust'] = lambda *args: None
 namespace['withdraw'] = lambda *args: None
 namespace['retire'](Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
 """
+            assert release.__file__ is not None
             result = subprocess.run(
                 [
                     sys.executable,
@@ -513,7 +510,6 @@ namespace['retire'](Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
                 self.product,
                 self.archive,
                 self.signature,
-                self.key,
                 "shop",
                 "worker",
                 "1.2.4",
@@ -548,6 +544,9 @@ namespace['retire'](Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
     def test_independent_key_digest_is_checked_on_snapshot_and_rotation_is_refused(
         self,
     ):
+        self.key = self.root / "incoming-keyring"
+        self.key.write_bytes(b"IndependentKey")
+        (self.product / "keyring.gpg").unlink()
         expected = hashlib.sha256(self.key.read_bytes()).hexdigest()
         argv = [
             "release.py",
@@ -604,6 +603,101 @@ namespace['retire'](Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
             release.os, "getxattr", return_value=b"acl"
         ), self.assertRaises(release.ReleaseError):
             release.protected(path)
+
+    def test_relabel_preserves_repeat_publication_old_trust_and_retirement(self):
+        old = self.publish()
+        before = release.published(old)
+        release.scoped_trust(old)
+        payload = old / "deployment/common.py"
+        ctime = payload.stat().st_ctime_ns
+        # SELinux also changes xattrs/ctime. A user xattr needs no SELinux host.
+        for entry in [old] + list(old.rglob("*")):
+            os.setxattr(str(entry), "user.relabel-test", b"new-label")
+        self.assertNotEqual(payload.stat().st_ctime_ns, ctime)
+        self.assertEqual(release.published(old), before)
+        self.assertEqual(self.publish(), old)
+        self.name = "shop-worker-1.2.4"
+        self.files["VERSION"] = b"1.2.4\n"
+        self.files["bundle.yaml"] = b"product: shop\nname: worker\nversion: 1.2.4\n"
+        self.make_archive()
+        with mock.patch.object(release, "command", side_effect=self.command):
+            new = release.publish(
+                self.product, self.archive, self.signature, "shop", "worker", "1.2.4"
+            )
+        release.scoped_trust(new)  # Must still validate retained relabeled version.
+        with mock.patch.object(
+            release,
+            "command",
+            return_value=types.SimpleNamespace(stdout=self.rows(new)),
+        ):
+            release.wait_trust(new)
+            release.retire(self.product, new, old)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())
+        trust = (self.trust_dir / "podman-offline-shop.worker").read_text()
+        self.assertNotIn(str(old), trust)
+        self.assertIn(str(new), trust)
+
+    def test_publication_uses_only_pinned_key_and_unsigned_cli_is_refused(self):
+        self.publish()
+        self.assertEqual(self.calls[-1][4], str(self.product / "keyring.gpg"))
+        argv = [
+            "release.py",
+            "publish",
+            "--product",
+            "shop",
+            "--component",
+            "worker",
+            "--version",
+            "1.2.3",
+            "--archive",
+            str(self.archive),
+        ]
+        with mock.patch.object(release, "BASE", self.base), mock.patch.object(
+            release.os, "geteuid", return_value=0
+        ), mock.patch.object(release, "publish") as publish, mock.patch(
+            "sys.argv", argv
+        ):
+            with self.assertRaisesRegex(release.ReleaseError, "unsigned production"):
+                release.main()
+            publish.assert_not_called()
+            argv.extend(
+                ["--signature", str(self.signature), "--keyring", str(self.key)]
+            )
+            with self.assertRaisesRegex(
+                release.ReleaseError, "only accepted for provision-key"
+            ):
+                release.main()
+            publish.assert_not_called()
+            del argv[-2:]
+            release.main()
+            self.assertEqual(
+                publish.call_args.args,
+                (self.product, self.archive, self.signature, "shop", "worker", "1.2.3"),
+            )
+
+    def test_diagnostics_identify_step_and_public_path_without_private_error_text(self):
+        for error in (
+            OSError(13, "secret-password", "/credentials/private-value"),
+            KeyError("secret-password"),
+            ValueError("secret-password"),
+        ):
+            with self.subTest(kind=type(error).__name__):
+                try:
+                    with release.diagnostic("publish", Path("deployment/common.py")):
+                        raise error
+                except release.ReleaseError as observed:
+                    text = str(observed)
+                self.assertIn("publish [deployment/common.py]", text)
+                self.assertNotIn("secret-password", text)
+                self.assertNotIn("credentials", text)
+        path = self.publish()
+        (path / release.RECORD).write_text("{}")
+        with self.assertRaisesRegex(
+            release.ReleaseError,
+            "validate published inventory.*missing provenance field",
+        ):
+            release.published(path)
 
     def test_anchor_chain_rejects_service_writable_ancestor_and_existing_symlink(self):
         self.anchor.stop()

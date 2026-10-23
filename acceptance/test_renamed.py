@@ -520,7 +520,7 @@ class ScenarioTests(unittest.TestCase):
             sources[2].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
         )
         harness.guest.assert_called_once_with(
-            "PROD", "unpack", "0.4.7", bundle="gateway"
+            "PROD", "publish-release", "0.4.7", bundle="gateway"
         )
 
 

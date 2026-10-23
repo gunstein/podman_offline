@@ -42,6 +42,42 @@ def require(condition, message):
         raise ReleaseError(message)
 
 
+def error_message(error):
+    """Report our fixed messages, never external stderr, config or file contents."""
+    if isinstance(error, ReleaseError):
+        return str(error)
+    if isinstance(error, OSError):
+        return "OS error errno=" + str(error.errno)
+    if isinstance(error, KeyError):
+        return "missing provenance field"
+    return type(error).__name__
+
+
+@contextmanager
+def diagnostic(step, path=None):
+    # Paths here refer to public release metadata, never credential sources.
+    label = step
+    if path is not None:
+        value = str(path)
+        label += (
+            " ["
+            + (value if re.fullmatch(r"[A-Za-z0-9_+@./-]+", value) else "invalid path")
+            + "]"
+        )
+    try:
+        yield
+    except (
+        ReleaseError,
+        OSError,
+        ValueError,
+        KeyError,
+        tarfile.TarError,
+        subprocess.TimeoutExpired,
+        yaml.YAMLError,
+    ) as error:
+        raise ReleaseError(label + ": " + error_message(error)) from None
+
+
 def digest(path):
     result = hashlib.sha256()
     with path.open("rb") as stream:
@@ -51,6 +87,11 @@ def digest(path):
 
 
 def protected(path, directory=False):
+    with diagnostic("check protected object", path):
+        check_protected(path, directory)
+
+
+def check_protected(path, directory=False):
     """Refuse links, aliases, ACL grants, foreign owners and writable permissions."""
     info = path.lstat()
     require(
@@ -141,11 +182,14 @@ def command(arguments, allowed=(0,)):
 
 def copy_input(source, target):
     """Snapshot a regular input; its parents may be operator/service controlled."""
-    fd = os.open(str(source), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, "rb") as stream:
-        require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), "input is not regular")
-        with target.open("xb") as output:
-            shutil.copyfileobj(stream, output)
+    with diagnostic("snapshot input", target.name):
+        fd = os.open(str(source), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            require(
+                stat.S_ISREG(os.fstat(stream.fileno()).st_mode), "input is not regular"
+            )
+            with target.open("xb") as output:
+                shutil.copyfileobj(stream, output)
 
 
 def safe_name(name):
@@ -270,8 +314,10 @@ def inventory(tree, hashes):
 
     Do not reopen payload files here: the default fapolicyd language policy can
     deny even root reading untrusted Python before enrollment. Hashes come from
-    the verified archive stream while writing, and protected inode/ctime bindings
-    refuse changes (including same-size writes) before or after publication.
+    the verified archive stream while writing, and protected inode/mtime bindings
+    refuse ordinary payload changes (including same-size writes) before or after publication.
+    ctime is deliberately excluded: SELinux relabeling updates it without changing
+    payloads. Root and its relabel tools are trusted; service users cannot write.
     """
     protected(tree, directory=True)
     require(
@@ -296,7 +342,6 @@ def inventory(tree, hashes):
             bindings[relative] = [
                 info.st_dev,
                 info.st_ino,
-                info.st_ctime_ns,
                 info.st_mtime_ns,
             ]
             if is_directory:
@@ -312,6 +357,11 @@ def inventory(tree, hashes):
 
 
 def published(path):
+    with diagnostic("validate published inventory", path):
+        return read_published(path)
+
+
+def read_published(path):
     ancestors(path.parent)
     protected(path, directory=True)
     protected(path / RECORD)
@@ -334,8 +384,9 @@ def published(path):
     return record
 
 
-def publish(root, archive, signature, keyring, product, component, version):
+def publish(root, archive, signature, product, component, version):
     name = identity(product, component, version)
+    keyring = root / "keyring.gpg"
     ancestors(keyring.parent)
     protected(keyring)
     final = root / "releases" / name
@@ -360,9 +411,10 @@ def publish(root, archive, signature, keyring, product, component, version):
             ]
         )
         print("PASS: archive signature; START: validated extraction", flush=True)
-        tree, files, directories, bindings = extract(
-            snapshot, stage, name, product, component, version
-        )
+        with diagnostic("validate/extract signed archive", name):
+            tree, files, directories, bindings = extract(
+                snapshot, stage, name, product, component, version
+            )
         record = {
             "name": name,
             "product": product,
@@ -648,7 +700,6 @@ def retire(root, path, old):
                         == [
                             info.st_dev,
                             info.st_ino,
-                            info.st_ctime_ns,
                             info.st_mtime_ns,
                         ],
                         "unexpected retired file",
@@ -674,7 +725,11 @@ def main():
     parser.add_argument("--version")
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--signature", type=Path)
-    parser.add_argument("--keyring", type=Path)
+    parser.add_argument(
+        "--keyring",
+        type=Path,
+        help="input keyring for provision-key only; publish/prepare always use the pinned product key",
+    )
     parser.add_argument("--key-sha256")
     parser.add_argument("--old-version")
     args = parser.parse_args()
@@ -682,7 +737,13 @@ def main():
     if args.operation != "provision-key":
         identity(args.product, args.component, args.version)
     os.umask(0o022)
-    with product_lock(args.product) as root:
+    require(
+        args.operation == "provision-key" or args.keyring is None,
+        "--keyring is only accepted for provision-key; publication uses the pinned product key",
+    )
+    with diagnostic(args.operation, BASE / args.product), product_lock(
+        args.product
+    ) as root:
         if args.operation == "provision-key":
             require(
                 args.keyring is not None
@@ -716,14 +777,13 @@ def main():
         path = release_path(args.product, args.component, args.version)
         if args.operation in ("publish", "prepare"):
             require(
-                all((args.archive, args.signature, args.keyring)),
-                "archive/signature/keyring required",
+                all((args.archive, args.signature)),
+                "archive and detached signature required; unsigned production bundles are refused",
             )
             path = publish(
                 root,
                 args.archive,
                 args.signature,
-                args.keyring,
                 args.product,
                 args.component,
                 args.version,
@@ -762,12 +822,4 @@ if __name__ == "__main__":
         subprocess.TimeoutExpired,
         yaml.YAMLError,
     ) as error:
-        # Archive/config names and command diagnostics are untrusted. Do not echo them.
-        message = (
-            str(error)
-            if isinstance(error, ReleaseError)
-            else "OS error errno=" + str(error.errno)
-            if isinstance(error, OSError)
-            else type(error).__name__
-        )
-        raise SystemExit("ERROR: release: " + message) from None
+        raise SystemExit("ERROR: release: " + error_message(error)) from None

@@ -422,7 +422,7 @@ class Run:
                 digest.update(chunk)
         self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
-        self.guest("PROD", "unpack", version, bundle=bundle)
+        self.guest("PROD", "publish-release", version, bundle=bundle)
 
     def record_bundles(self, action):
         """Read the components and versions the last build produced on DEV."""

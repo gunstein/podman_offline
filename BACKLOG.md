@@ -3813,6 +3813,11 @@ is required.
 
 ## 38. Sign bundles so the target can authenticate them
 
+Policy update (item 54, 2026-10-23): production publication/installation now
+requires a detached signature verified against the independently pinned product
+keyring. Unsigned builds remain available for development only. This supersedes
+the original optional-production-signature policy below.
+
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 
 Status: done and lab-verified (2026-10-19): every run of the `t3-*`/`t5-*`
@@ -5510,12 +5515,28 @@ size/SHA256 trust checks. README and the harness share this helper; independentl
 authenticated bootstrap, service-user config editing, scoped retirement after
 health/e2e, resumable retirement cleanup and separate-UID lab probes are documented in
 [PROTECTED-RELEASES.md](acceptance/PROTECTED-RELEASES.md). No old-layout migration
-or global integrity-policy changes are included. Local results: 50 focused and
+or global integrity-policy changes are included. Current dev/lab installations
+may be discarded; after the first real customer installation, incompatible
+changes require an explicit migration preserving customer data and credentials.
+Initial local results (2026-10-22): 50 focused and
 234 harness tests passed; isolated platform suite ran 403 tests with 399 passes,
 three unchanged gpg-agent fixture failures and one unchanged `/proc/self/fd/0`
 error. Static checks and understandability review passed; real OL9 matrix remains
 required before resolution. The original analysis and task
 below remain the review baseline, not claims of current runtime verification.
+
+Review follow-up (2026-10-23): mandatory production signatures and pinned-key-only
+publication; SELinux relabel-compatible device/inode/mtime bindings (ctime excluded);
+explicit removal of obsolete service-writable release trust on disposable hosts;
+cache-tolerant script inventory test; step-scoped sanitized diagnostics and
+`publish-release` harness naming. Migration after the first customer is a future requirement,
+not a compatibility framework to implement before the first customer installation.
+Follow-up checks: 21 focused tests and 237 harness tests passed (also without
+`-B`); isolated platform suite ran 410 tests, with 406 passes and the same three
+gpg-agent fixture failures plus one `/proc/self/fd/0` error in this environment.
+Ruff/Bash/Pyright/Vermin checks passed. See the dated verification report for
+regression scope and understandability recheck. Current-change lab verification
+remains pending.
 
 ### Problem
 
@@ -5598,8 +5619,8 @@ Prefer one small shared release helper used by the operator recipe and the
 acceptance harness. It should own staging, verification, publication and trust
 ordering explicitly. Keep the existing deploy lifecycle and pending-operation
 model; a second generic transaction framework is unnecessary. Existing
-installations may be discarded: no migration, old-layout aliases or compatibility
-layer is required. Normal repeated operations and data retention still apply.
+dev/lab installations may currently be discarded: no migration, old-layout
+aliases or compatibility layer is required before the first real customer installation. Normal repeated operations and data retention still apply.
 
 ### Task
 

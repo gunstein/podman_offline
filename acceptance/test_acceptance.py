@@ -838,7 +838,7 @@ release_tool() {
                 "prepare --product shop --component worker --version 1.2.3",
                 result.stdout,
             )
-            self.assertIn("--keyring /opt/shop/keyring.gpg", result.stdout)
+            self.assertNotIn("--keyring /opt/shop/keyring.gpg", result.stdout)
             self.assertNotIn("tar ", code)
 
     def trust_procedure(self, source, install_status=0, health_status=0):
