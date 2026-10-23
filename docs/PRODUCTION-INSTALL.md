@@ -1,9 +1,15 @@
 # Produksjonsinstallasjon: eksisterende bruker, data under /var/lib/<produkt>
 
-**Status (backlog 64):** implementert og testet lokalt (produkt-, enhets- og
-harness-tester). Den reelle OL9-kjøringen med SELinux Enforcing og fapolicyd
-gjenstår; se `acceptance/PRODUCTION-LAYOUT.md` i kildekoden. Til den er kjørt
-rent, er denne flyten ikke merket klar for kundeinstallasjon.
+**Status (backlog 64):** implementert; de automatiske OL9-kjøringene med SELinux
+Enforcing og fapolicyd er rene. Denne veiledningen er ennå ikke kjørt ordrett
+som `produser` uten sudo på en ny vert; se `acceptance/PRODUCTION-LAYOUT.md` i
+kildekoden. Til det er gjort, er flyten ikke merket klar for kundeinstallasjon.
+
+**To roller, to kontoer.** *Administrator* bruker sin egen konto med sudo bare
+der veiledningen sier «Administrator» (steg 1–2, publisering av hver release,
+`retire` og omstart). *Driftsbrukeren* `produser` gjør alt annet, logger inn
+selv og har **ingen sudo-rettigheter** (ikke i `wheel`, ingen sudoers-regel).
+Produktet kaller aldri sudo, og `deploy` nekter å kjøre som root.
 
 Denne veiledningen, [PFX-veiledningen](PFX-CREDENTIALS.md) og
 [README](../README.md) følger med i hver komponent-release under
@@ -90,6 +96,7 @@ Suksess: siste linje er `PASS: protected release prepare`, og
 ## 2. Administrator: klargjør verten (én gang)
 
 ```sh
+sudo -l -U produser    # forventet: "User produser is not allowed to run sudo ..."
 sudo bash /var/lib/sms/releases/sms-platform-1.4.2/scripts/prepare-host.sh \
     --port 8443 --user produser
 ```
@@ -107,8 +114,9 @@ en gammel installasjon med hjem i `/var/lib/sms` stoppes med en feilmelding.
 
 ## 3. Driftsbruker: installasjonsinnstillinger (én gang)
 
-Logg inn som `produser` (ssh), eller `sudo -iu produser` og deretter
-`export XDG_RUNTIME_DIR=/run/user/$(id -u)`.
+Logg inn som `produser` selv (ssh eller konsoll). Alle driftsbrukersteg under
+forutsetter en slik innlogging; da setter systemet opp `systemctl --user` og
+`journalctl --user` uten manuelle eksporter.
 
 ```sh
 install -d -m 0700 ~/.sms

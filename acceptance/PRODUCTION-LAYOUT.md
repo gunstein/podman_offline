@@ -144,8 +144,9 @@ The `du` call is removed (the inventory already records sizes through sudo);
 with a 0700 bootstrap folder and fails on any unprivileged read of the home
 (it failed against `1eba4d4`).
 
-Not covered by these runs (record manually before operator use): runtime
-commands without cached sudo (the harness uses `sudo -u`), the guide's literal
+Not covered by these runs (record manually before operator use): the runtime
+account's commands in its own ssh login with no sudo rights (the harness uses
+the admin's `sudo -u`, which gives the same UID but no login session), the guide's literal
 command sequence on a fresh host, an app2-first run, a deliberate failed
 operation followed by a fresh-process retry on OL9 (covered only by local
 tests), logout as distinct from reboot, and a small separate `/home` (the lab

@@ -1031,7 +1031,8 @@ release_tool prepare --product "$product_name" --component "$bundle" --version "
     --archive "$archive" --signature "$archive.asc"
 release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
 sudo bash "$release/scripts/prepare-host.sh" --port 8443 --user "$service_user"
-# As the service user (its own login or sudo -iu): the bootstrap file.
+# The bootstrap file. In production the service user logs in itself and has
+# no sudo (docs/PRODUCTION-INSTALL.md); this reference uses the admin's sudo.
 sudo -iu "$service_user" bash -c 'umask 077; mkdir -p ~/.'"$product_name"' &&
     printf "INSTALL_ROOT=/var/lib/%s\n" '"$product_name"' > ~/.'"$product_name/$product_name"'.env'
 ```
