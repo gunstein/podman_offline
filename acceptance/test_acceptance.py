@@ -11,6 +11,8 @@ import re
 import shlex
 import stat
 import subprocess
+import sys
+import tarfile
 import tempfile
 import types
 import unittest
@@ -80,6 +82,61 @@ class HarnessTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(runner, "RUNS", self.root))
         self.stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
         self.harness = runner.Run("test", "not-used")
+
+    def test_guest_helper_is_controller_supplied_and_delivered_through_a_pipe(self):
+        self.harness.cfg = {
+            "LAB_CIDR": "192.0.2.0/24",
+            "PROD_IP": "192.0.2.2",
+            "PROD_HOST": "example.invalid",
+            "HTTPS_PORT": "8443",
+        }
+        self.harness.revision = "a" * 40
+        self.harness.ssh = mock.Mock(return_value="")
+        self.harness.guest("PROD", "release-safety", "1.2.3", bundle="platform")
+        script = self.harness.ssh.call_args.args[1]
+        # Read the Bash function directly by executing the pre-case definitions.
+        definitions = script.split('case "$action" in', 1)[0]
+        # Stub everything except source serialization. Inspect fd0 in Python, not
+        # /proc's availability in this container, to establish the transport type.
+        check = 'import os,stat,sys; assert stat.S_ISFIFO(os.fstat(0).st_mode); compile(sys.stdin.read(), "helper", "exec"); print("pipe-ok")'
+        definitions = definitions.replace(
+            'sudo -n python3 -I -B - "$@"', "python3 -c " + shlex.quote(check)
+        )
+        result = subprocess.run(
+            ["bash", "-se"],
+            input=definitions + "\nrelease_tool\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "pipe-ok")
+        # The real root interpreter must ignore hostile CWD/PYTHONPATH modules.
+        malicious = self.root / "shadow"
+        malicious.mkdir()
+        (malicious / "yaml.py").write_text(
+            "raise RuntimeError('untrusted module executed')\n"
+        )
+        (malicious / "argparse.py").write_text(
+            "raise RuntimeError('untrusted module executed')\n"
+        )
+        real = definitions.replace(
+            "python3 -c " + shlex.quote(check), 'python3 -I -B - "$@"'
+        )
+        result = subprocess.run(
+            ["bash", "-se"],
+            input=real + "\nrelease_tool --help\n",
+            cwd=malicious,
+            env=dict(os.environ, PYTHONPATH=str(malicious)),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--key-sha256", result.stdout)
+        self.assertNotIn("# RELEASE_HELPER_BODY", script)
+        self.assertNotIn("# RELEASE_SAFETY_BODY", script)
+        self.assertNotIn('HELPER_SOURCE = ""  # RELEASE_HELPER_SOURCE', script)
 
     def test_existing_run_cannot_be_reused(self):
         """Confirm that an existing run ID is never overwritten."""
@@ -615,49 +672,51 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
         remote = Path(__file__).with_name("remote.sh").read_text()
         return shell_code(remote, function="wait_trust")
 
-    def run_trust_wait(self, outputs, exit_code=0, files=None):
-        """Run the read-only trust wait against sequential database fixtures without delay."""
-        fixtures = self.root / "trust-fixtures"
-        fixtures.mkdir(exist_ok=True)
-        for index, output in enumerate(outputs, 1):
-            (fixtures / str(index)).write_text(output)
-        counter = fixtures / "counter"
-        counter.write_text("0")
-        script = r"""
-# Read the next database fixture and keep warnings on stderr.
-sudo() {
-    if [[ $2 == find ]]; then printf '%s\n' "$expected_files"; return 0; fi
-    printf 'Warning: fixture warning\n' >&2
-    count=$(cat "$fixtures/counter")
-    count=$((count + 1))
-    printf '%s' "$count" > "$fixtures/counter"
-    if [[ $count -gt $last ]]; then count=$last; fi
-    cat "$fixtures/$count"
-    return "$fixture_status"
-}
-# Avoid real waiting or external commands in the regression test.
-sleep() { :; }
-# Run the stubbed read with the same arguments as the production call.
-timeout() { shift; "$@"; }
-wait_trust /new/deployment/ /old/deployment/
-"""
-        prefix = (
-            "set -eu\nproduct_name=myproduct\nexpected_files="
-            + shlex.quote("\n".join(files or ["/new/deployment/__main__.py"]))
-            + "\nfixtures="
-            + shlex.quote(str(fixtures))
+    def run_trust_wait(self, outputs, exit_code=0, files=None, digest="a" * 64):
+        """Exercise the shared helper against independently specified trusted inventory."""
+        spec = importlib.util.spec_from_file_location(
+            "release_tool", Path(__file__).resolve().parents[1] / "scripts/release.py"
         )
-        prefix += (
-            "\nlast=" + str(len(outputs)) + "\nfixture_status=" + str(exit_code) + "\n"
-        )
-        result = subprocess.run(
-            ["bash", "-se"],
-            input=prefix + self.trust_helper() + script,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return result, int(counter.read_text())
+        assert spec is not None and spec.loader is not None
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        paths = files or ["/new/deployment/__main__.py"]
+        record = {
+            "files": {
+                path.removeprefix("/new/"): {"size": 123, "sha256": digest}
+                for path in paths
+            }
+        }
+        counter = 0
+
+        def command(arguments):
+            nonlocal counter
+            self.assertEqual(arguments, ["fapolicyd-cli", "--dump-db"])
+            counter += 1
+            print("Warning: fixture warning", file=sys.stderr)
+            if exit_code:
+                raise tool.ReleaseError("database command failed")
+            return types.SimpleNamespace(
+                stdout=outputs[min(counter - 1, len(outputs) - 1)]
+            )
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        status = 0
+        with (
+            mock.patch.object(tool, "published", return_value=record),
+            mock.patch.object(tool, "command", side_effect=command),
+            mock.patch.object(tool.time, "sleep"),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            try:
+                tool.wait_trust(Path("/new"), Path("/old"))
+            except tool.ReleaseError as error:
+                status = 1
+                print(str(error), file=stderr)
+        return types.SimpleNamespace(
+            returncode=status, stdout=stdout.getvalue(), stderr=stderr.getvalue()
+        ), counter
 
     def test_trust_wait_accepts_delayed_update_without_mutations(self):
         """Wait for the new entry and the removed old one without writing hash values."""
@@ -684,7 +743,11 @@ wait_trust /new/deployment/ /old/deployment/
         ]
         pending = "\n".join(rows) + "\n"
         result, calls = self.run_trust_wait(
-            [pending, pending + "file /new/deployment/__main__.py 123 " + digest + "\n"]
+            [
+                pending,
+                pending + "file /new/deployment/__main__.py 123 " + digest + "\n",
+            ],
+            digest=digest,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, 2)
@@ -699,7 +762,7 @@ wait_trust /new/deployment/ /old/deployment/
         rows = ["file " + path + " 123 " + "e" * 64 + "\n" for path in files]
         old = "file /old/deployment/nested/render.py 123 " + "f" * 64 + "\n"
         result, calls = self.run_trust_wait(
-            [rows[0], "".join(rows) + old, "".join(rows)], files=files
+            [rows[0], "".join(rows) + old, "".join(rows)], files=files, digest="e" * 64
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, 3)
@@ -720,7 +783,7 @@ wait_trust /new/deployment/ /old/deployment/
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, 30)
-        self.assertIn("30 checks", result.stderr)
+        self.assertIn("bounded polling", result.stderr)
 
     def test_trust_wait_rejects_failed_empty_or_invalid_read(self):
         """Stop at once on command errors or unusable stdout, also with warnings."""
@@ -737,148 +800,57 @@ wait_trust /new/deployment/ /old/deployment/
         readme = (
             Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
         )
-        self.assertIn(self.trust_helper().strip(), readme)
+        self.assertIn('release_tool wait --product "$product_name"', readme)
+        self.assertIn('release_tool "${arguments[@]}"', self.trust_helper())
+        self.assertNotIn("find ", self.trust_helper())
 
     def test_prepare_release_retries_trust_in_a_new_process(self):
-        """Reuse extracted files after checksum, add, update or live trust failures."""
+        """Every retry uses authenticated publication, never an existing-tree shortcut."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        code = shell_code(remote, function="prepare_release") + self.trust_helper()
-        stubs = r"""
-gpgv() {
-    [[ $* == "--keyring $base/bundle-signing.gpg myproduct-app1-0.4.3-offline.tar.gz.asc myproduct-app1-0.4.3-offline.tar.gz" ]] || return 9
-    echo signature-check >> "$base/calls"
+        code = shell_code(remote, function="prepare_release")
+        prefix = (
+            "set -eu\nproduct_name=shop\nbundle=worker\nversion=1.2.3\nbase=/operator\n"
+        )
+        stub = r"""
+sha256sum() { printf '%064d  fixture\n' 0; }
+release_tool() {
+    printf '%s\n' "$*"
+    if [[ $1 == prepare ]]; then return "$1_status"; fi
 }
-sha256sum() { echo archive-check >> "$base/calls"; }
-as_product() {
-    mkdir -p "$product/deployment"
-    touch "$product/deployment/__main__.py" "$product/deployment/common.py"
-    echo extract >> "$base/calls"
-}
-sudo() {
-    shift
-    case "$1" in
-        test) "$@";;
-        bash)
-            echo release-check >> "$base/calls"
-            [[ $failure != checksum ]];;
-        find) shift; command find "$@";;
-        fapolicyd-cli)
-            case "$2" in
-                --file)
-                    [[ $* == "fapolicyd-cli --file add $product/deployment/ --trust-file myproduct-app1" ]] || return 9
-                    echo add >> "$base/calls"
-                    if [[ $failure == add ]]; then return 7; fi
-                    if [[ $failure == add-one ]]; then return 1; fi
-                    if [[ $failure == add-nine ]]; then
-                        echo 'ERROR: another fapolicyd failure' >&2
-                        return 9
-                    fi
-                    if [[ $failure == partial || -f $base/trusted ]]; then
-                        echo 'ERROR: After removing duplicates, there is nothing to add' >&2
-                        return 9
-                    fi
-                    touch "$base/trusted";;
-                --update)
-                    echo update >> "$base/calls"
-                    [[ $failure != update ]] || return 8
-                    touch "$base/updated";;
-                --dump-db)
-                    echo wait >> "$base/calls"
-                    if [[ -f $base/trusted && -f $base/updated && $failure != wait ]]; then
-                        printf 'file %s 123 %064d\n' "$product/deployment/__main__.py" 0
-                        printf 'file %s 123 %064d\n' "$product/deployment/common.py" 0
-                    elif [[ $failure == partial ]]; then
-                        printf 'file %s 123 %064d\n' "$product/deployment/__main__.py" 0
-                    else
-                        printf 'file /unrelated/file 123 %064d\n' 0
-                    fi;;
-                *) return 9;;
-            esac;;
-        *) return 9;;
-    esac
-}
-sleep() { :; }
-timeout() { shift; "$@"; }
-prepare_release
 """
-        for failure in (
-            "checksum",
-            "add",
-            "add-one",
-            "add-nine",
-            "partial",
-            "update",
-            "wait",
-        ):
-            with self.subTest(failure=failure):
-                base = self.root / failure
-                base.mkdir()
-                (base / "myproduct-app1-0.4.3-offline.tar.gz").touch()
-                prefix = (
-                    "set -euo pipefail\nproduct_name=myproduct\nbase="
-                    + shlex.quote(str(base))
-                    + '\nstate="$base/state"\nproduct="$state/releases/myproduct-app1-0.4.3"\n'
-                    + "bundle=app1\nversion=0.4.3\nfailure=$1\n"
-                )
-
-                def attempt(stage, script=prefix + code + stubs):
-                    return subprocess.run(
-                        ["bash", "-c", script, "retry-test", stage],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-
-                first = attempt(failure)
-                self.assertNotEqual(first.returncode, 0)
-                self.assertTrue((base / "state/releases/myproduct-app1-0.4.3").is_dir())
-                calls = (base / "calls").read_text().splitlines()
-                if failure == "checksum":
-                    self.assertEqual(
-                        calls,
-                        [
-                            "signature-check",
-                            "archive-check",
-                            "extract",
-                            "release-check",
-                        ],
-                    )
-                elif failure in ("add", "add-one", "add-nine"):
-                    self.assertEqual(
-                        first.returncode,
-                        {"add": 7, "add-one": 1, "add-nine": 9}[failure],
-                    )
-                    self.assertNotIn("update", calls)
-                elif failure == "partial":
-                    self.assertIn("update", calls)
-                    self.assertIn("wait", calls)
-                    self.assertIn("trust update did not finish", first.stderr)
-                elif failure == "update":
-                    self.assertEqual(first.returncode, 8)
-                    self.assertNotIn("wait", calls)
-                for _ in range(2):
-                    (base / "calls").write_text("")
-                    retry = attempt("none")
-                    self.assertEqual(retry.returncode, 0, retry.stderr)
-                    self.assertNotIn("ERROR", retry.stdout + retry.stderr)
-                    self.assertEqual(
-                        (base / "calls").read_text().splitlines(),
-                        [
-                            "signature-check",
-                            "archive-check",
-                            "release-check",
-                            "add",
-                            "update",
-                            "wait",
-                        ],
-                    )
+        stub = stub.replace('"$1_status"', '"$fixture_status"')
+        for status in (1, 0, 0):
+            result = subprocess.run(
+                ["bash", "-se"],
+                input=prefix
+                + "fixture_status="
+                + str(status)
+                + "\n"
+                + stub
+                + code
+                + "\nprepare_release\n",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, status)
+            self.assertIn("provision-key --product shop", result.stdout)
+            self.assertIn(
+                "prepare --product shop --component worker --version 1.2.3",
+                result.stdout,
+            )
+            self.assertNotIn("--keyring /opt/shop/keyring.gpg", result.stdout)
+            self.assertNotIn("tar ", code)
 
     def trust_procedure(self, source, install_status=0, health_status=0):
         """Run the README or VM procedure with stubbed trust and install calls."""
         if source == "remote":
             remote = Path(__file__).with_name("remote.sh").read_text()
-            code = shell_code(remote, function="prepare_release") + shell_code(
-                remote, action="upgrade"
+            code = (
+                shell_code(remote, function="prepare_release")
+                + shell_code(remote, function="retire_release")
+                + shell_code(remote, action="upgrade")
+                + shell_code(remote, action="app-retire")
             )
         else:
             readme = (
@@ -888,13 +860,24 @@ prepare_release
             code = "\n".join(
                 block
                 for block in blocks
-                if "--file delete" in block and "exec bash ./deploy install" in block
+                if "release_tool retire" in block
+                and "exec bash ./deploy install" in block
             )
         (self.root / "version").write_text("0.1.1\n")
         (self.root / "myproduct-app1-0.1.1-offline.tar.gz").touch()
         calls = self.root / "trust-calls"
         calls.write_text("")
         stubs = r"""
+# Record shared-helper operations, without simulating filesystem safety here.
+release_tool() {
+    case "$1" in
+        provision-key) :;;
+        prepare) echo add >> "$calls"; echo update >> "$calls";;
+        retire) echo delete >> "$calls"; echo update >> "$calls";;
+        wait) :;;
+        *) return 9;;
+    esac
+}
 # Record trust actions and simulate install failures.
 sudo() {
     case "$*" in
@@ -923,7 +906,7 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
         prefix = (
             "set -eu\nproduct_name=myproduct\nbase="
             + shlex.quote(str(self.root))
-            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\nstate=/var/lib/myproduct\nold_version=0.1.0\nas_product() { :; }\ncalls="
+            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\narchive=/operator/archive\nrelease_root=/opt/myproduct/releases\nstate=/var/lib/myproduct\nold_version=0.1.0\nas_product() { :; }\ncalls="
             + shlex.quote(str(calls))
             + "\ninstall_status="
             + str(install_status)
@@ -984,6 +967,7 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
                 mock.call("PROD", "persistent-state", log_stdout=False),
                 mock.call("DEV", "prod-e2e"),
                 mock.call("DEV", "markers-check"),
+                mock.call("PROD", "app-retire", "0.1.1", old_version="0.1.0"),
             ],
         )
 
@@ -1100,6 +1084,7 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
             "10-persistent-after",
             "10-e2e-upgrade",
             "10-markers-upgrade",
+            "10-retire-app",
             "10-platform-siblings-before",
             "10-platform-before",
             "10-platform-build",
@@ -1199,6 +1184,76 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
         self.assertIn('podman run --rm --pull=never --network=none "$image"', block)
         self.assertIn("audit_events check", block)
         self.assertNotIn("podman pull", block)
+
+    def test_registry_fixture_checksums_stream_python_and_extract_only_images(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = shell_code(remote, action="registry-offline")
+        for failure in (None, "modified-python", "unlisted-python", "missing-image"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                base = Path(directory)
+                registry = base / "registry"
+                registry.mkdir()
+                files = {
+                    "scripts/release.py": b"untrusted Python must never be opened",
+                    "images/images.tar": b"image archive",
+                    "images/images.txt": b"127.0.0.1:5000/acceptance/busybox:1.37.0\n",
+                }
+                checksums = "".join(
+                    hashlib.sha256(value).hexdigest() + "  " + name + "\n"
+                    for name, value in files.items()
+                )
+                if failure == "modified-python":
+                    files["scripts/release.py"] = b"changed after checksums"
+                elif failure == "unlisted-python":
+                    files["scripts/extra.py"] = b"unlisted"
+                elif failure == "missing-image":
+                    del files["images/images.tar"]
+                files["checksums.sha256"] = checksums.encode()
+                archive = registry / "myproduct-0.0.0-offline.tar.gz"
+                with tarfile.open(str(archive), "w:gz") as output:
+                    for name, value in files.items():
+                        member = tarfile.TarInfo("myproduct-0.0.0/" + name)
+                        member.size = len(value)
+                        output.addfile(member, io.BytesIO(value))
+                archive.with_name(archive.name + ".sha256").write_text(
+                    hashlib.sha256(archive.read_bytes()).hexdigest()
+                    + "  "
+                    + archive.name
+                    + "\n"
+                )
+                prefix = """set -euo pipefail
+base=$1
+run_started=0
+healthy() { :; }
+audit_events() { :; }
+as_product() {
+    printf '%s\\n' "$*" >> "$base/podman-calls"
+    if [[ $2 == run ]]; then printf registry-offline-ok; fi
+}
+"""
+                result = subprocess.run(
+                    ["bash", "-s", "--", str(base)],
+                    input=prefix + block,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if failure:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("checksum inventory mismatch", result.stderr)
+                    self.assertFalse((base / "podman-calls").exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(
+                        "checksums verified from archive streams", result.stdout
+                    )
+                    self.assertTrue(
+                        (registry / "myproduct-0.0.0/images/images.tar").is_file()
+                    )
+                    self.assertFalse((registry / "myproduct-0.0.0/scripts").exists())
 
     def test_launcher_denial_stops_before_markers_hang_or_reboot(self):
         """Stop immediately at the first pre-reboot launcher audit failure."""

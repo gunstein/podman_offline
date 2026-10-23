@@ -291,10 +291,10 @@ Current local check entry points:
 ```sh
 python3 -B tests/run.py all
 python3 -B -m unittest discover -s acceptance -p 'test_*.py'
-ruff check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
-ruff format --check deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
-pyright deployment/ bundle.py tests/ acceptance/ dev/smoke-test.py
-vermin -t=3.6- deployment/ bundle.py tests/ acceptance/prepare_host_test.py
+ruff check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
+ruff format --check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
+pyright deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
+vermin -t=3.6- deployment/ bundle.py scripts/release.py tests/ acceptance/prepare_host_test.py acceptance/release_safety_test.py
 shellcheck deploy build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
 ```
 
@@ -575,3 +575,12 @@ with host commands stubbed. `acceptance/test_init_secret.py` separately checks t
 runtime probe's negative assertions and orchestration. Separate normal and renamed
 real Podman/systemd runs passed at `52f28e4`; see
 [the evidence, scenario and operator diagnostics](../acceptance/INIT-SECRET.md).
+
+
+
+Backlog 54 adds `platform_tests.test_release`: real archive/publication and trust-file
+regressions without root/Podman/daemon requirements. Tests model root ownership;
+actual separate-UID enforcement belongs to the runnable
+[protected-release lab probe](../acceptance/PROTECTED-RELEASES.md). Component and
+standalone lifecycle tests deny release writes while allowing persistent-home
+outputs. Historical signing/host prerequisite failures must still be reported.

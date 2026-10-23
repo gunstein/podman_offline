@@ -578,11 +578,7 @@ class ComponentObservationTests(unittest.TestCase):
 
             def rooted(*parts):
                 path = Path(*parts)
-                return (
-                    home / path.relative_to("/var/lib/myproduct")
-                    if str(path).startswith("/var/lib/myproduct")
-                    else path
-                )
+                return home / "opt" if str(path) == "/opt" else path
 
             code["pathlib"] = types.SimpleNamespace(Path=rooted)
             code["HOME"] = home
@@ -596,7 +592,9 @@ class ComponentObservationTests(unittest.TestCase):
                 path = home / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(value)
-            package = home / "releases/myproduct-platform-0.4.3/deployment"
+            package = (
+                home / "opt/myproduct/releases/myproduct-platform-0.4.3/deployment"
+            )
             files = [
                 package / "__main__.py",
                 package / "common.py",
@@ -725,7 +723,7 @@ class ComponentObservationTests(unittest.TestCase):
             'network exists "$product_name"',
             'test "$http" = 404',
             "healthy",
-            '--trust-file "$product_name-app1"',
+            'release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"',
         ):
             self.assertIn(text, block)
         self.assertNotIn("--delete-data", block)

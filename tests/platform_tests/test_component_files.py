@@ -108,6 +108,74 @@ class ComponentFileTests(ProductFixture):
         self.assertEqual(installed_yaml.read_bytes(), before)
         self.process.assert_not_called()
 
+    def test_readonly_release_lifecycle_keeps_all_outputs_in_persistent_state(self):
+        self.product()
+        first = self.build_and_unpack()["processor"]
+        (self.source / "components/processor/VERSION").write_text("1.0.1\n")
+        second = self.build_and_unpack()["processor"]
+        shutil.rmtree(self.source)
+        before = {
+            str(path): path.read_bytes()
+            for path in self.releases.rglob("*")
+            if path.is_file()
+        }
+        # Deny write attempts even when tests run as root. No chmod-only test
+        # can establish nonwritability for a root test process.
+        original_open = Path.open
+
+        def readonly_open(path, mode="r", *args, **kwargs):
+            if self.releases in path.parents and any(flag in mode for flag in "wax+"):
+                raise AssertionError("write to read-only release")
+            return original_open(path, mode, *args, **kwargs)
+
+        original_mkdir = Path.mkdir
+
+        def readonly_mkdir(path, *args, **kwargs):
+            if path == self.releases or self.releases in path.parents:
+                raise AssertionError("mkdir in read-only release")
+            return original_mkdir(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "open", readonly_open), mock.patch.object(
+            Path, "mkdir", readonly_mkdir
+        ):
+            self.use_root(first)
+            deploy.init_config("processor")
+            self.assertEqual(validation.validate_bundle()[1], [])
+            # A failed host action leaves persistent work, then a fresh install
+            # call retries it while the input tree remains read-only.
+            original = deploy.run
+            failed = [False]
+
+            def fail_restart(*arguments):
+                if (
+                    arguments[:3] == ("systemctl", "--user", "restart")
+                    and not failed[0]
+                ):
+                    failed[0] = True
+                    raise common.DeployError("injected restart failure")
+                return original(*arguments)
+
+            with mock.patch.object(deploy, "run", side_effect=fail_restart):
+                with self.assertRaises(common.DeployError):
+                    deploy.install()
+            deploy.install()
+            retained = (common.HOME / "processor/config.yaml").read_bytes()
+            self.use_root(second)
+            deploy.install()
+            self.assertEqual(
+                (common.HOME / "processor/config.yaml").read_bytes(), retained
+            )
+            deploy.uninstall()
+        self.assertEqual(
+            before,
+            {
+                str(path): path.read_bytes()
+                for path in self.releases.rglob("*")
+                if path.is_file()
+            },
+        )
+        self.assertTrue((common.HOME / "processor/config.yaml").exists())
+
     def assert_archive(self, expected):
         with tarfile.open(
             str(common.HOME / "processor/files/processor-seed.tar")

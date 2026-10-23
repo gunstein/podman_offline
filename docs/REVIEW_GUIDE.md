@@ -21,6 +21,7 @@ The known gaps below explicitly identify outstanding work.
 | Component dev config | Source dev merges optional common defaults, component defaults, global dev and component dev in that order, replacing whole top-level values. Owner-shared settings remain authoritative; a dependent's component dev file may not declare them. Validate, prepare and dev credential tooling share this flow. Dev layers never initialize production config and never ship in bundles; generated dev config is output only. |
 | Bundled file references | `component_file` selects public immutable content under the current component's `files/` in the selected source/release, with explicit component context. Keep logical references in persistent config; reject traversal, symlinks throughout selected trees, special files, generation and database password use before delivery. Validation reads no source bytes. Ordinary `path` semantics and private-source guards remain; imported volumes overwrite matching files and retain unlisted ones. |
 | Credential retention | Generate missing secrets only when allowed; preserve valid existing credentials byte-for-byte. Do not expose credentials or complete connection strings in logs. Secret-template values are recomputed from retained sources, never independently persisted. |
+| Production release authentication | Signed archive plus independently provisioned pinned product keyring are mandatory before protected publication, trust or execution. Unsigned builds are development-only; checksums alone never authorize production installation. |
 | Signing provisioning | Validate public CA subject/lifetimes before writes; share CA creation across modes and retain complete existing CA/credentials when settings change. Refuse an explicit CA subject that differs from the retained CA, and explain that CA lifetime applies only to new CAs. Explicit signing PFX provisioning is separate from deploy/validate, supports arbitrary component IDs and works via stdin offline. Retain external PFX/PEM before issuance; read the private password file without exposing its value. Publish private files without clobbering existing credentials; deliver only the declared PFX, never provisioning keys/passwords implicitly. |
 | Secret templates | Only `SECRET_TEMPLATES` composes config and same-component file Secrets. Validate declarations before generation and read no secret bytes during validate. Reject unsafe input without values in errors; output only Opaque Secrets in existing 0600 install YAML, never plain env values or ConfigMaps. |
 | ConfigMap inline values | Compose only ConfigMap `data` using public string/integer config; refuse Secret references and recursive expansion without printing values. Keep whole-value behavior elsewhere and preserve shell/nginx dollar syntax. Init, validate and lifecycle share declaration checks; the lab checks the actual consuming container, including renamed products. |
@@ -33,9 +34,13 @@ The known gaps below explicitly identify outstanding work.
 | Product name | `product:` in `bundles.yaml` is the only source of the installation's names. Code builds unit, network, Quadlet, temporary-directory and archive names from `catalog.product_name()` / `catalog.unit_name()` (or the descriptor's `product`), never from a literal; `common.STANDALONE_PRODUCT` is only for standalone fixtures. `prepare-host.sh` defaults the service user to the bundle's product; the harness passes it as `product_name`. One service user runs one product (`check_same_product`). Image names come from the manifests (the demo's are neutral `localhost/demo-*`) and `PUBLIC_ORIGIN` from config; neither is derived from the product name. |
 | Shared settings | A `public_from` dependent takes `PUBLIC_ORIGIN`, `HTTPS_PORT` and the owner's `shares` at `init-config` and in dev, and install/validate compare them (`deploy.shared_keys`, `check_public_settings`); errors name the setting, both files and the owner, never values. `shares` is compiled into descriptors; an owner upgrade may not drop a name an installed dependent takes (`check_kept_shares`). Reserved names (`PUBLIC_HOSTNAME`, `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES`) cannot be shared; their documentation is docs/COMPONENTS.md, "Reserved configuration names". |
 
-For items 20 and 21 there are no existing installations requiring migration to a
-new schema. Do not add migration code, aliases or old-layout fallback. This does
-not remove normal restart/redeploy/retry or data-retention requirements within
+Before the first real customer installation, existing dev/lab installations may
+be discarded; no migration code, aliases or old-layout fallback are required for
+the current changes (including items 20, 21 and 54). After the first real customer
+installation, incompatible changes must provide a migration and verification
+procedure that preserves customer data and credentials. This temporary exemption
+must not become a permanent no-migration policy. Older backlog exemptions apply
+only to the pre-customer phase. This does not remove normal restart/redeploy/retry or data-retention requirements within
 the supported model. Historical evidence and pinned historical fixtures remain
 unchanged and must not be represented as current verification.
 
@@ -65,8 +70,8 @@ this list; update entries with implementation/test evidence when resolved.
 | Credentials are not encrypted at rest (sources, rendered YAML, Secret volumes, Identity keys) | Backlog 37 |
 | ~~Global dev values on a `public_from` dependent can be silently replaced by owner inheritance~~ | Resolved by backlog 58: analysis showed owner and dependents always receive the same effective value; the precedence is documented, no code change |
 | ~~Root `prepare-host.sh` follows service-writable home paths for ownership, mode and relabel operations~~ | Resolved by backlog 46: service-user-only, descriptor-based preparation; lab matrix `t11` clean at `3a54714` ([verification](../acceptance/PREPARE-HOST.md)) |
-| Root checksum, fapolicyd trust and `sudoedit` operate on service-writable release/data paths (check/use race) | Backlog 54 |
-| ~~Bundles carry checksums but no signature~~ | Resolved by backlog 38: optional `.asc` (gpg), verified with `gpgv` on the target before unpacking |
+| Root release authentication/trust must remain protected from service-user modification | Backlog 54 implementation uses protected `/opt` publication and shared exact-inventory trust; [current-change lab matrix](../acceptance/PROTECTED-RELEASES.md) pending |
+| ~~Bundles carry checksums but no signature~~ | Backlog 38 added `.asc` (gpg); backlog 54 requires signature verification with the pinned key before protected production publication. Unsigned builds remain development-only |
 
 External image support does not by itself demonstrate arbitrary component support.
 The baseline review ran 66 existing database/config/bundle/Identity tests

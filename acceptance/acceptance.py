@@ -216,6 +216,21 @@ class Run:
             self.product,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
+        safety = (
+            (ROOT / "acceptance/release_safety_test.py")
+            .read_text()
+            .replace(
+                'HELPER_SOURCE = ""  # RELEASE_HELPER_SOURCE',
+                "HELPER_SOURCE = " + repr((ROOT / "scripts/release.py").read_text()),
+            )
+        )
+        script = script.replace(
+            "# RELEASE_SAFETY_BODY", "printf '%s\\n' " + shlex.quote(safety)
+        )
+        script = script.replace(
+            "# RELEASE_HELPER_BODY",
+            "printf '%s\\n' " + shlex.quote((ROOT / "scripts/release.py").read_text()),
+        )
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
         return self.ssh(role, prefix + script, log_stdout=log_stdout)
 
@@ -407,7 +422,7 @@ class Run:
                 digest.update(chunk)
         self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
-        self.guest("PROD", "unpack", version, bundle=bundle)
+        self.guest("PROD", "publish-release", version, bundle=bundle)
 
     def record_bundles(self, action):
         """Read the components and versions the last build produced on DEV."""
@@ -559,6 +574,10 @@ class Run:
         )
         self.step("10-e2e-upgrade", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-markers-upgrade", lambda: self.guest("DEV", "markers-check"))
+        self.step(
+            "10-retire-app",
+            lambda: self.guest("PROD", "app-retire", new_version, old_version=version),
+        )
 
     def upgrade_platform(self):
         """Verify a newer shared platform and reject an older platform before persistent changes."""
@@ -880,6 +899,10 @@ class Run:
             "07-host-path-safety",
             lambda: self.guest("PROD", "host-path-safety", bundle="help"),
         )
+        self.step(
+            "07-release-safety",
+            lambda: self.guest("PROD", "release-safety", bundle="platform"),
+        )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         if self.platform_help_only:
             self.step(
@@ -976,6 +999,10 @@ class Run:
         self.step(
             "07-host-path-safety",
             lambda: self.guest("PROD", "host-path-safety", bundle="gateway"),
+        )
+        self.step(
+            "07-release-safety",
+            lambda: self.guest("PROD", "release-safety", bundle="gateway"),
         )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         self.step("07-init-check", lambda: self.guest("PROD", "renamed-init-check"))
