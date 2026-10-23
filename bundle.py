@@ -275,6 +275,11 @@ def build_release(version, descriptor=None):
         shutil.copy2(
             ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
         )
+    guide = ROOT / "docs/PRODUCTION-INSTALL.md"
+    if components and guide.is_file():
+        # The short operator guide travels with every release (backlog 64).
+        (target / "docs").mkdir()
+        shutil.copy2(guide, target / "docs/PRODUCTION-INSTALL.md")
     if components:
         # The compiled descriptor lets the target work without bundles.yaml.
         (target / "bundle.yaml").write_text(

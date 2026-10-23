@@ -114,6 +114,8 @@ class WrapperTests(unittest.TestCase):
                     source / name,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
                 )
+            (source / "docs").mkdir()
+            (source / "docs/PRODUCTION-INSTALL.md").write_text("# Operator guide\n")
             (source / "config").mkdir()
             (source / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
@@ -247,6 +249,11 @@ class WrapperTests(unittest.TestCase):
                     warnings.simplefilter("ignore", DeprecationWarning)
                     archive.extractall(str(extracted))
             platform_release = extracted / ("myproduct-platform-" + platform_version)
+            # The operator guide is delivered inside every component release.
+            self.assertEqual(
+                (platform_release / "docs/PRODUCTION-INSTALL.md").read_text(),
+                "# Operator guide\n",
+            )
             run(platform_release, "deploy", "init-config", "platform")
             run(platform_release, "deploy", "install")
             identity_version = (

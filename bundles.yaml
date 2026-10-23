@@ -15,8 +15,9 @@
 #   accepts:      roles this component serves, mapped to the volume ID that
 #                 receives the registrations: {routes: <id>, clients: <id>}
 #
-# product names the whole installation: the service user and its home
-# /var/lib/<product> (prepare-host.sh default), units <product>-<id>.service,
+# product names the whole installation: the installation root
+# /var/lib/<product> and bootstrap file ~/.<product>/<product>.env of the
+# runtime account (prepare-host.sh --user), units <product>-<id>.service,
 # the shared network <product>, Quadlet files and the bundle archives
 # <product>-<id>-<version>-offline.tar.gz. Lowercase letters, digits and inner
 # hyphens, a letter first, at most 32 characters.

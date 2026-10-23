@@ -14,6 +14,9 @@ items retain their individual scopes below; agree the next priority separately.
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
 space, keeping product files under a separate `/var/lib/<product>` root.
+Implementation and local regressions are delivered on
+`claude/friendly-mendel-8u3bqs` (built on the item 54 branch); the real OL9 run
+is pending ([verification](acceptance/PRODUCTION-LAYOUT.md)).
 Coordinate with item 54's protected release/trust work; integrate that security
 boundary before real installation, rather than implementing a second release
 helper or publishing service-writable trusted code. Item 64 precedes the other
@@ -173,7 +176,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent, coordinated with 54), 54 (implementation on feature branch; lab matrix pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; implemented locally, OL9 run pending), 54 (implementation on feature branch; lab matrix pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -203,7 +206,22 @@ restore core or merge Identity back into platform.
 
 ## 64. Support new rootless installations outside the login home
 
-Status: planned; highest-priority operator deliverable, requested 2026-10-23.
+Status: implemented with local regressions on `claude/friendly-mendel-8u3bqs`
+(2026-10-23), built on the unmerged item 54 branch; real OL9 scenario pending,
+so not ready for the operator yet. Requested 2026-10-23.
+
+Delivered: `deployment/layout.py` (bootstrap file `~/.<product>/<product>.env`
+with required `INSTALL_ROOT=/var/lib/<product>`, read as data; root/ancestor and
+account-directory checks; refusal of product Quadlets in the login home);
+`common.STATE` separate from the identity `common.HOME`; `prepare-host.sh --user`
+for an existing account with a `user@<uid>` drop-in setting
+`XDG_CONFIG_HOME=/var/lib/<product>/config` and `XDG_DATA_HOME=/var/lib/<product>/storage`;
+user manager agreement check before lifecycle commands; `release.py` anchor moved
+to `/var/lib/<product>`; the harness runs as `<product>-ops` with a read-only
+home and checks unit sources, graphroot and home inventory after reboot; the
+Norwegian [operator guide](docs/PRODUCTION-INSTALL.md) ships in every component
+bundle. Open: the OL9 runs and the manual checks listed in the verification
+report; item 54 must be reviewed/merged first or together.
 The operator needs to test an offline production installation immediately after
 implementation. Scope is **new installations only**: no migration of an old
 home-based installation, images, volumes or users. Ordinary upgrades, retries,

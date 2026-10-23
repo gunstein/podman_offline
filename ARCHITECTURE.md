@@ -12,18 +12,22 @@ build entrypoint and also uses `-B`.
 | --- | --- |
 | `deployment/__main__.py` | Minimal CLI delegation |
 | `deployment/cli.py` | Arguments, exit codes and concise errors |
-| `deployment/common.py` | Release/service-user paths, name rules, shared constants and DeployError |
+| `deployment/common.py` | Release paths, the account's identity home, production path slots, name rules, shared constants and DeployError |
+| `deployment/layout.py` | Production paths outside the login home (backlog 64): reads the bootstrap file `~/.<product>/<product>.env` as data, validates the root-owned `/var/lib/<product>` and the account's `state/`, `config/`, `storage/`, assigns `common.STATE`/`QUADLET_DIR`/`FILES_DIR` and checks the user manager's `XDG_*` |
 | `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners, the product name (`product_name`, `unit_name`) and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
 | `deployment/templates.py` | Shared single-pass substitution for ConfigMap data and Secret recipes, scoped input policies and private composition from loaded file Secrets; no writes or host commands |
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
-| `scripts/release.py` | Independently authenticated root helper: snapshot/signature verification, strict archive inventory, atomic immutable publication under `/opt/<product>/releases`, exact fapolicyd enrollment/wait and scoped retirement; never imports incoming code. |
-| `scripts/prepare-host.sh` | Explicit root host setup; drop to the service UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. Its embedded Python helper (a here-document, because fapolicyd denies reading untrusted Python files before trust) uses directory descriptors and exclusive lock creation; it does not inspect application data. |
+| `scripts/release.py` | Independently authenticated root helper: snapshot/signature verification, strict archive inventory, atomic immutable publication under `/var/lib/<product>/releases`, exact fapolicyd enrollment/wait and scoped retirement; never imports incoming code. |
+| `scripts/prepare-host.sh` | Explicit root host setup for an existing login account (`--user`): root-owned `/var/lib/<product>`, the account's `state/`/`config/`/`storage/`, subordinate IDs, SELinux equivalence, linger, port and the `user@<uid>` drop-in with `XDG_CONFIG_HOME`/`XDG_DATA_HOME`; drops to the account's UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. Its embedded Python helper (a here-document, because fapolicyd denies reading untrusted Python files before trust) uses directory descriptors and exclusive lock creation; it does not inspect application data. |
 
 `common.ROOT` is the directory above the package, both in source and unpacked
-bundles. `common.HOME` follows the service account's user-database home. There
+bundles. `common.HOME` follows the account's user-database home and is used only
+for identity checks and the bootstrap file. `common.STATE`, `QUADLET_DIR` and
+`FILES_DIR` are unset (`None`) until `layout.select()` assigns them for a
+production command; source dev and bundle building never assign them. There
 are no lifecycle actions during package import. Modules share these explicit
 paths without circular imports or a dependency framework.
 
@@ -182,7 +186,7 @@ sequenceDiagram
     participant G as registrations.py
     participant P as deploy.install_component_plan
     participant H as Podman / systemd
-    participant S as Service home
+    participant S as Installation root
 
     Op->>CLI: ./deploy install
     CLI->>D: install()
@@ -255,8 +259,8 @@ sequenceDiagram
 ## Persistent state and trust
 
 Component config and `credentials/`, imported archives, registration directories,
-installed metadata and markers, retry metadata and Podman data belong to the service
-home. Shared CA/network ownership is unchanged. Release code, defaults, manifests
+installed metadata and markers and retry metadata belong to `/var/lib/<product>/state`;
+Quadlets to `config/` and Podman data to `storage/` beside it (backlog 64). Shared CA/network ownership is unchanged. Release code, defaults, manifests
 and images are disposable; production never merges new defaults over existing
 config or credentials.
 
@@ -265,15 +269,16 @@ only its own resources/images. Bytecode and private state, including aliases to
 declared secrets/credential files, stay out of archives.
 
 An independently authenticated `scripts/release.py` runs with root authority via
-stdin, separate from bundle code. It locks the protected `/opt/<product>` anchor,
+stdin, separate from bundle code. It locks the protected `/var/lib/<product>` anchor,
 snapshots archive/signature, checks gpgv against a separately provisioned keyring,
 validates every member and the exact checksum inventory, and publishes a complete
-root-owned release at `/opt/<product>/releases/<product>-<component>-<version>`.
+root-owned release at `/var/lib/<product>/releases/<product>-<component>-<version>`.
 A root-owned `.release.json` binds the authenticated archive hash, file paths,
 sizes, modes and streamed hashes, including directory inventory and inode/mtime
 bindings. Payloads are never reopened as untrusted Python before enrollment. Existing releases must
 match it exactly; version content cannot be overwritten. Staging is never used
-as installed code. The service home and private state stay separate.
+as installed code. The account's `state/`, `config/` and `storage/` siblings
+stay separate and are never read by the helper.
 
 Only authenticated `deployment/` path/size/hash records are atomically enrolled
 in the scoped trust file using fapolicyd's documented text format. This avoids
@@ -300,6 +305,63 @@ SELinux relabeling is supported: xattrs/ctime are excluded from the protected
 metadata bindings; root remains trusted. Historical pinned-release
 helpers and reports retain their original layouts. Current-change OL9 verification
 is pending; see [protected release verification](acceptance/PROTECTED-RELEASES.md).
+
+## Production paths outside the login home (backlog 64)
+
+Production runs rootless as an existing login account whose name, UID and home
+need not match the product. Its home holds only the bootstrap file
+`~/.<product>/<product>.env`; every other product file is under the
+root-owned installation root `/var/lib/<product>` (0755):
+
+| Path | Owner | Holds |
+| --- | --- | --- |
+| `releases/`, `keyring.gpg`, `.release.lock` | root | `scripts/release.py` publication |
+| `state/` (`common.STATE`) | account, 0700 | config, credentials, import archives, metadata, markers, registrations, `pending-operation.json` |
+| `config/` | account, 0700 | `XDG_CONFIG_HOME`: `containers/systemd/` Quadlets (`common.QUADLET_DIR`), CNI lock |
+| `storage/` | account, 0700 | `XDG_DATA_HOME`: Podman graphroot `containers/storage`, volumes, caches |
+
+`deploy.service_user()` is the single entry for production commands
+(init-config, validate, install, uninstall, standalone install). It refuses root,
+a `HOME` other than the registered home and the source checkout, then calls
+`layout.select(product)` with the release descriptor's product:
+
+1. `read_bootstrap()` opens the file with `O_NOFOLLOW`; the directory must be the
+   account's with mode 0700, the file a single-link regular 0600 file of at
+   most 64 KiB. Lines are `KEY=VALUE`, comments and blank lines; one pair of
+   surrounding quotes is removed; nothing is expanded or executed. Only
+   `INSTALL_ROOT` is supported and required once; unknown keys (application
+   settings) are ignored, never logged, exported or forwarded. Errors name the
+   line and key, never a value.
+2. `install_root()` accepts exactly `/var/lib/<product>`.
+3. `check_root()` requires the root and every ancestor to be root-owned
+   directories without group/other write or ACLs, and `state/`, `config/` and
+   `storage/` to be the account's 0700 directories without ACLs.
+4. `check_home_unused()` refuses product Quadlets left in the login home: no
+   second installation is silently created and nothing is migrated.
+5. The common paths are assigned and the deploy process exports
+   `XDG_CONFIG_HOME`/`XDG_DATA_HOME` to its own children (Podman) only.
+
+Validate stops there (no host command). Lifecycle commands then call
+`production_environment()`, which also runs the read-only
+`systemctl --user show-environment` (`layout.check_user_manager`): the manager
+must carry the same two values. They come from the root-owned drop-in
+`user@<uid>.service.d/podman-offline-<product>.conf` written by
+`prepare-host.sh`. systemd 252 passes the user manager's environment to user
+generators, so the Quadlet generator reads `config/containers/systemd`, and
+services started at boot use the same graphroot; the OL9 lab `check` step
+verifies both (unit `SourcePath`, `podman info` graphroot, container layers)
+before and after reboot. A terminal export could not reach either. The
+drop-in redirects the XDG directories of that account's user manager only (one
+product per account); login shells keep their defaults, so interactive Podman
+diagnostics set the two variables explicitly (operator guide).
+
+Root never reads the bootstrap file: `prepare-host.sh` and `release.py` derive
+`/var/lib/<product>` from the authenticated release descriptor and validated
+arguments; deploy compares the user's setting with that prepared root and with
+the user manager. Source dev (`build/dev`, `dev/dev.sh`) and bundle building
+never call `layout.select()`, so a present bootstrap file cannot change them
+(`catalog.state_paths()` serves dev registration paths without Quadlet paths).
+Component bundles include `docs/PRODUCTION-INSTALL.md`.
 
 ## Private app file delivery (0.4.4)
 

@@ -1,5 +1,10 @@
 # Manual prod test on a VM
 
+> Historical checklist: it predates the backlog 64 layout (runtime login
+> account, product files under `/var/lib/<product>/{state,config,storage}`).
+> Current production steps and checks are in
+> [the production installation guide](../docs/PRODUCTION-INSTALL.md).
+
 Use a disposable VM with the same Podman version, OS/systemd and security setup
 as the target network. Prod uses rootless Podman as `myproduct`, with home
 `/var/lib/myproduct`. This checklist is manual; automated runs and evidence

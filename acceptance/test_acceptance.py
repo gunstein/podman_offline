@@ -905,12 +905,12 @@ healthy() { echo health >> "$calls"; return "$health_status"; }
 seed_content() { :; }
 # ./deploy validate is checked separately; it changes no trust state.
 validate_release() { :; }
-install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"; }
+install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"; }
 """
         prefix = (
-            "set -eu\nproduct_name=myproduct\nbase="
+            "set -eu\nproduct_name=myproduct\nservice_user=myproduct-ops\nbase="
             + shlex.quote(str(self.root))
-            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\narchive=/operator/archive\nrelease_root=/opt/myproduct/releases\nstate=/var/lib/myproduct\nold_version=0.1.0\nas_product() { :; }\ncalls="
+            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\narchive=/operator/archive\nrelease_root=/var/lib/myproduct/releases\nstate=/var/lib/myproduct/state\nold_version=0.1.0\nas_product() { :; }\ncalls="
             + shlex.quote(str(calls))
             + "\ninstall_status="
             + str(install_status)
@@ -1453,7 +1453,8 @@ as_product() {
         operator = self.root / "operator-private"
         operator.mkdir(mode=0o700)
         script = (
-            'product_name=myproduct\nsudo() { shift 4; "$@"; }\nproduct=$1\n' + command
+            'product_name=myproduct\nservice_user=produser\nsudo() { shift 4; "$@"; }\nproduct=$1\n'
+            + command
         )
         result = subprocess.run(
             ["bash", "-eu", "-c", script, "bash", str(release)],

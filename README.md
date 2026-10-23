@@ -39,17 +39,19 @@ host then follows it:
 | What | Name |
 | --- | --- |
 | Bundle archives and release folders | `hubbabubba-<component>-<version>-offline.tar.gz` |
-| Service user and home (`prepare-host.sh` default) | `hubbabubba`, `/var/lib/hubbabubba` |
+| Installation root (state, Quadlets, storage, releases) | `/var/lib/hubbabubba` |
+| Bootstrap file in the runtime account's home | `~/.hubbabubba/hubbabubba.env` |
 | Component units and Quadlet files | `hubbabubba-<component>.service`, `.kube`, `.yaml` |
 | Shared Podman network | `hubbabubba` (`hubbabubba.network`) |
 
-`./deploy` reads the name from the bundle, so the target needs no other
-setting. Lowercase letters, digits and inner hyphens, a letter first, at most
-32 characters (it is also a Linux user name). `prepare-host.sh --user <name>`
-chooses another service user; then use that name wherever this README uses
-the service user. One service user runs one product: install refuses a bundle
-of another product before any write. There is no rename of an existing
-installation; install the renamed product on a fresh service user.
+`./deploy` reads the name from the bundle; the only other target setting is
+the bootstrap file `~/.<product>/<product>.env` (backlog 64). Lowercase letters,
+digits and inner hyphens, a letter first, at most 32 characters. The runtime
+account is an existing login account chosen explicitly with
+`prepare-host.sh --user <account>`; its name, UID and home need not match the
+product (this README calls it the service user). One account runs one product:
+install refuses a bundle of another product before any write. There is no rename
+of an existing installation; install the renamed product on a fresh account.
 Image names are not derived from it: each component's manifests name their
 images, and the demo's are neutral (`localhost/demo-*`), as is the demo CA
 (`Demo Development CA`). `PUBLIC_ORIGIN` (demo default
@@ -59,7 +61,9 @@ Below, `myproduct` is the demo's product name.
 Installations made before product names (0.4.10 and older) have no product in
 their installed metadata. This release refuses them with a message naming the
 file; there is no migration. Remove such an installation with its own releases,
-or install on a new service user.
+or install on a new service user. Installations in the earlier service-home
+layout (`/var/lib/<user>` as home) are not migrated to the backlog 64 layout
+either; production commands refuse product Quadlets found in the login home.
 
 Platform owns the HTTPS proxy, web TLS and public route imports. Identity owns
 IdentityServer, its PostgreSQL database, signing keys, API secret, demo users,
@@ -191,11 +195,11 @@ collect external local inputs from them. A component's whole `files/` directory
 is still packaged, including harmless dev-only files stored there; selection
 for container delivery is separate from packaging.
 
-From a verified, unpacked bundle, run as the service user:
+From a protected published release, run as the service user:
 
 ```sh
 as_product bash "$release/deploy" init-config platform
-# Or, from the release directory as myproduct: ./deploy init-config platform
+# Or, from the release directory as the service user: ./deploy init-config platform
 ```
 
 Only components included in that bundle may be initialized. The command writes
@@ -251,7 +255,7 @@ Secret references are allowed only in `SECRET_TEMPLATES`. See
 [ConfigMap inline values](docs/COMPONENTS.md#configmap-inline-values).
 
 The examples in `examples/` and the registry acceptance test still use one
-explicit `config.yaml` (and `~/config.yaml` when installed). The product itself
+explicit `config.yaml` (and `/var/lib/<product>/state/config.yaml` when installed). The product itself
 does not; it uses the component config model described above. Older acceptance
 reports under `~/podman-offline-acceptance-runs/` may still mention the old
 configuration names; those reports are kept unchanged.
@@ -287,7 +291,8 @@ first finding of each component; a placeholder or YAML file that cannot be read
 while dev config is assembled stops the run, as it stops `prepare`. It writes
 nothing, generates no secret, reads no credential contents and runs no Podman
 or systemd command; `prepare` and `install` start with the same checks. In an
-unpacked bundle it runs as the service user and needs no runtime directory. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
+unpacked bundle it runs as the service user, reads the bootstrap file and checks
+the prepared installation root, but needs no runtime directory. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
 components in dependency order, followed by `podman kube play`. Run
 `dev/dev.sh down` before removing a component from the catalog: it stops what
 the last prepare rendered.
@@ -306,7 +311,7 @@ the same guard before image operations. See [verification](acceptance/MANIFEST-S
 Run `./deploy prepare` from the source checkout; product bundles reject dev
 prepare and use persistent config through install. Standalone fixtures retain
 their explicit prepare flow; in a release without `components/`, `./deploy
-install` validates `manifests/` against `~/config.yaml`, loads
+install` validates `manifests/` against `/var/lib/myproduct/state/config.yaml`, loads
 `images/images.tar` and runs one `myproduct.service` (see the
 `install_standalone` docstring for the order). Component prepare merges common defaults, component
 defaults and optional `config/dev.yaml`.
@@ -453,8 +458,9 @@ and remaining historical references.
 Invalid values are rejected with the config path and field name; their contents
 are never included in the error.
 
-Prod reads `~/platform/config.yaml`, `~/identity/config.yaml`, `~/app1/config.yaml`, `~/app2/config.yaml` and
-`~/help/config.yaml`. Relative `SECRET_FILES`/`VOLUME_FILES` paths are resolved
+Prod reads `<state>/platform/config.yaml`, `<state>/identity/config.yaml`,
+`<state>/app1/config.yaml`, `<state>/app2/config.yaml` and `<state>/help/config.yaml`,
+where `<state>` is `/var/lib/<product>/state` (backlog 64). Relative `SECRET_FILES`/`VOLUME_FILES` paths are resolved
 from that config's directory; absolute paths and `~` are supported. Config keys
 are strings, ordinary values are text/integers and `HTTPS_PORT` is an integer.
 Duplicate YAML keys, inline placeholders outside the allowed fields, unresolved
@@ -537,20 +543,26 @@ Back these files up with the database and other persistent state. See the
 There is no migration, fallback or automatic rewrite of persistent config.
 
 ```text
-/var/lib/myproduct/                         service-user home, 0700
-├── platform/, identity/, app1/, app2/, help/
-│   ├── config.yaml                        0600, retained across releases
-│   ├── credentials/                       0700, passwords/keys/certificates retained
-│   └── files/                             0700; import archives 0600
-├── PKI/private/                           0700; shared demo CA
-├── routes/<component>.conf                public route registrations
-├── clients/<component>/                   public OIDC metadata/certificate
-├── metadata/<component>.json              installed descriptor (dependencies, roles), 0600
-├── installed/<component>                  installed version, written last, 0600
-├── .config/containers/systemd/             scoped .kube/.yaml + shared .network
-├── .local/share/containers/storage/        images, DB data and secret volumes
+~/.myproduct/myproduct.env                  login home: bootstrap file only (0700/0600)
 
-/opt/myproduct/releases/myproduct-<bundle>-<version>/  root-owned code/manifests/images
+/var/lib/myproduct/                         installation root, root-owned 0755
+├── releases/myproduct-<bundle>-<version>/  root-owned code/manifests/images (release.py)
+├── keyring.gpg, .release.lock              root-owned release authentication
+├── config/                                 service user, 0700; XDG_CONFIG_HOME
+│   └── containers/systemd/                 scoped .kube/.yaml + shared .network
+├── storage/                                service user, 0700; XDG_DATA_HOME
+│   └── containers/storage/                 images, DB data and secret volumes
+└── state/                                  service user, 0700
+    ├── platform/, identity/, app1/, app2/, help/
+    │   ├── config.yaml                    0600, retained across releases
+    │   ├── credentials/                   0700, passwords/keys/certificates retained
+    │   └── files/                         0700; import archives 0600
+    ├── PKI/private/                       0700; shared demo CA
+    ├── routes/<component>.conf            public route registrations
+    ├── clients/<component>/               public OIDC metadata/certificate
+    ├── metadata/<component>.json          installed descriptor (dependencies, roles), 0600
+    ├── installed/<component>              installed version, written last, 0600
+    └── pending-operation.json             retry record while an operation is unfinished
 ```
 
 Proxy and identity consume imported volumes, not host bind mounts. The renderer
@@ -636,12 +648,12 @@ After the usual signature/checksum verification and unpacking, run as the servic
 user (the release directories may be anywhere accessible):
 
 ```sh
-/opt/myproduct/releases/myproduct-sts-1.0.0/deploy init-config sts
-/opt/myproduct/releases/myproduct-sts-1.0.0/deploy validate
-/opt/myproduct/releases/myproduct-sts-1.0.0/deploy install
+/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy init-config sts
+/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy validate
+/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy install
 # A later verified/unpacked release, with the same persistent config:
-/opt/myproduct/releases/myproduct-sts-1.0.1/deploy validate
-/opt/myproduct/releases/myproduct-sts-1.0.1/deploy install
+/var/lib/myproduct/releases/myproduct-sts-1.0.1/deploy validate
+/var/lib/myproduct/releases/myproduct-sts-1.0.1/deploy install
 ```
 
 The app1 demo runs a read-only seed PVC in `seed-database` after
@@ -949,10 +961,12 @@ deploy and Podman do not infer a file's purpose from the name `session-key`.
 
 ## First production installation
 
-For the planned existing-login-user installation with storage outside the home,
-see the [short production-flow draft](docs/PRODUCTION-INSTALL.md) and backlog
-item 64. That layout is not implemented yet; the current procedure below still
-uses the service-home model.
+**Operator guide:** follow the short Norwegian
+[production installation guide](docs/PRODUCTION-INSTALL.md) (backlog 64). It
+installs as an existing login account whose home only holds
+`~/.<product>/<product>.env`; everything else lives under `/var/lib/<product>`.
+This section is the reference behind it. The guide's real OL9 acceptance run is
+still pending; see [verification](acceptance/PRODUCTION-LAYOUT.md).
 
 Run as the operator with sudo. Install the `platform` bundle first.
 For an app installation, install `identity` next, then `app1` and/or `app2` in
@@ -1002,7 +1016,8 @@ excluding CWD, PYTHONPATH and user site packages from privileged execution:
 release_tool() {
     gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - "$@"
 }
-product_name=myproduct  # product: in bundles.yaml; also the service user
+product_name=myproduct  # product: in bundles.yaml; names /var/lib/<product>
+service_user=produser   # an existing login account, chosen explicitly
 bundle=platform
 version=0.4.11
 archive="$PWD/$product_name-$bundle-$version-offline.tar.gz"
@@ -1013,12 +1028,15 @@ release_tool provision-key --product "$product_name" --keyring "$PWD/bundle-sign
     --key-sha256 "$bundle_key_sha256"
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
     --archive "$archive" --signature "$archive.asc"
-release="/opt/$product_name/releases/$product_name-$bundle-$version"
-sudo bash "$release/scripts/prepare-host.sh" --port 8443
+release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
+sudo bash "$release/scripts/prepare-host.sh" --port 8443 --user "$service_user"
+# As the service user (its own login or sudo -iu): the bootstrap file.
+sudo -iu "$service_user" bash -c 'umask 077; mkdir -p ~/.'"$product_name"' &&
+    printf "INSTALL_ROOT=/var/lib/%s\n" '"$product_name"' > ~/.'"$product_name/$product_name"'.env'
 ```
 
 The helper snapshots the archive/signature into a private directory under the
-protected `/opt/<product>` anchor and verifies that exact copy before extraction.
+protected `/var/lib/<product>` anchor and verifies that exact copy before extraction.
 It rejects links, special files, ambiguous members, unexpected inventory and
 identity mismatches. It publishes a complete root-owned release atomically and
 retains authenticated inventory/provenance and device/inode/mtime bindings in `.release.json`.
@@ -1035,7 +1053,7 @@ signed archive resumes trust enrollment; different bytes for the same identity
 are refused. A per-product lock serializes publication, trust and retirement.
 After an interrupted process, incomplete `.staging-*` directories are untrusted
 root-only scratch; they are never reused as releases and may be removed by an
-administrator when no helper process is running. `/opt` needs space for the
+administrator when no helper process is running. `/var/lib` needs space for the
 archive and extracted release at the same time.
 
 The protected layout supports the existing `integrity = none` baseline: the
@@ -1047,18 +1065,25 @@ other/ambiguous strategies; it never changes global integrity policy. Current
 OL9 lab coverage must be recorded for the actual setting; a stronger setting
 requires its own startup/upgrade verification.
 
-prepare-host creates the system user named after the product (`myproduct` in
-the demo) with home `/var/lib/<user>` and nologin shell, allocates noncolliding subuid/subgid ranges, enables linger
-and opens the HTTPS port permanently. SELinux stays Enforcing. Storage outside
-the normal home uses Podman's [troubleshooting guide, point 11](https://github.com/containers/podman/blob/v5.8.2/troubleshooting.md#11-podman-run-fails-with-cannot-open-shared-object-file):
-`/var/lib/containers` is mapped to `/var/lib/<user>/.local/share/containers`.
+prepare-host requires `--user` naming an existing non-root account and never
+changes its home, shell or login. Under the root-owned `/var/lib/<product>`
+(0755) it creates the account's `state/`, `config/` and `storage/` (0700), keeps
+existing non-overlapping subuid/subgid ranges (adding one only when missing),
+enables linger and opens the HTTPS port permanently. It installs the root-owned
+drop-in `/etc/systemd/system/user@<uid>.service.d/podman-offline-<product>.conf`
+with `XDG_CONFIG_HOME=/var/lib/<product>/config` and
+`XDG_DATA_HOME=/var/lib/<product>/storage`, and restarts a running user manager
+once so the Quadlet generator, every service and boot-time starts use that
+Podman configuration and storage. A changed drop-in or a second product for the
+same account is refused. SELinux stays Enforcing. Storage outside the normal home uses Podman's [troubleshooting guide, point 11](https://github.com/containers/podman/blob/v5.8.2/troubleshooting.md#11-podman-run-fails-with-cannot-open-shared-object-file):
+`/var/lib/containers` is mapped to `/var/lib/<product>/storage/containers`.
 Unexpected existing equivalences fail instead of being deleted automatically.
 Recursive restorecon excludes storage; only the storage directory itself is
 restored nonrecursively. Never run recursive or force restorecon on filled storage.
 
 Host preparation can be repeated after an interrupted preparation or to open a
 new HTTPS port (it does not close previously opened ports). Keep both host setup
-helpers together in the verified release. Below the home, directory/lock creation
+helpers together in the verified release. Below the account's directories, directory/lock creation
 and both `restorecon` operations run as the service UID/GID through RPM-provided
 `setpriv` (util-linux), with no supplementary groups or capabilities and with
 privilege acquisition disabled. Managed directory paths and the CNI lock refuse
@@ -1068,19 +1093,21 @@ regular CNI locks are preserved without replacement or truncation.
 If preparation refuses a path or cannot relabel it, inspect the named path before
 retrying. There is no automatic root ownership repair or root relabel fallback.
 Earlier valid steps can remain after failure; retry after correcting the unsafe
-condition. If the service account is suspected compromised, inspect its home
-before rerunning host preparation. This limits host-preparation authority; it is
+condition. If the service account is suspected compromised, inspect its
+directories under `/var/lib/<product>` before rerunning host preparation. This limits host-preparation authority; it is
 not recovery from a compromised account. The current change's OL9 Enforcing and
 fapolicyd checks are still pending; see [verification](acceptance/PREPARE-HOST.md).
 
 Use these helpers for subsequent commands:
 
 ```sh
-# Run commands as the service user from its home and systemd runtime.
+# Run commands as the service user from its home and systemd runtime, with the
+# production Podman settings (the same values the user manager has).
 as_product() {
-    sudo -H -u "$product_name" bash -c '
+    sudo -H -u "$service_user" env PRODUCT_ROOT="/var/lib/$product_name" bash -c '
         cd "$HOME" || exit
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export XDG_CONFIG_HOME="$PRODUCT_ROOT/config" XDG_DATA_HOME="$PRODUCT_ROOT/storage"
         exec "$@"
     ' bash "$@"
 }
@@ -1095,7 +1122,8 @@ import yaml
 
 def main():
     """Check each installed Pod container without printing private inspect fields."""
-    paths = sorted((pathlib.Path.home() / ".config/containers/systemd").glob(os.environ["PRODUCT_NAME"] + "-*.yaml"))
+    units = pathlib.Path("/var/lib", os.environ["PRODUCT_NAME"], "config/containers/systemd")
+    paths = sorted(units.glob(os.environ["PRODUCT_NAME"] + "-*.yaml"))
     if not paths:
         raise SystemExit("No installed component manifests")
     for path in paths:
@@ -1136,24 +1164,26 @@ private configuration, credentials, shell wrappers or image archives.
 ```sh
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
     --archive "$archive" --signature "$archive.asc"
-release="/opt/$product_name/releases/$product_name-$bundle-$version"
+release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
+state="/var/lib/$product_name/state"
 # Start with bundle=platform, then identity, then app1/app2; help needs only platform.
 as_product bash "$release/deploy" init-config "$bundle"
-sudoedit -u "$product_name" "/var/lib/$product_name/$bundle/config.yaml"
+sudoedit -u "$service_user" "$state/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
 # Demo only: dev/generate-certificates.sh copied from the source checkout.
-as_product bash -s -- --root "/var/lib/$product_name" "$bundle" myproduct-proxy < generate-certificates.sh
-sudoedit -u "$product_name" "/var/lib/$product_name/$bundle/config.yaml"
-sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
-sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
-sudo systemctl --user -M "$product_name@" status "$product_name-$bundle.service"
+as_product bash -s -- --root "$state" "$bundle" myproduct-proxy < generate-certificates.sh
+sudoedit -u "$service_user" "$state/$bundle/config.yaml"
+sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
+sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+sudo systemctl --user -M "$service_user@" status "$product_name-$bundle.service"
 ```
 
 Set IP_ADDRESS in platform to the target's host IP. Set PUBLIC_ORIGIN/HTTPS_PORT
 consistently in each component; use the DNS name passed to the certificate
 script. The proxy pod's hostname is derived from PUBLIC_ORIGIN, so app pods
 resolve that same HTTPS name internally. Each install validates the user database
-home and runtime, renders, loads/verifies images, writes component imports/units
+home, the bootstrap file and installation root, the runtime and the user
+manager's `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, renders, loads/verifies images, writes component imports/units
 and calls `systemctl --user`. It then waits up to 150 s until every app
 container of the restarted units is running and, where it has a health check,
 healthy; an unhealthy container or the timeout fails the install with the
@@ -1177,7 +1207,7 @@ while retaining the other app's service/data.
 ## Upgrade and uninstall
 
 Identity can be upgraded alone: transfer the newer Identity archive/checksum,
-verify/unpack/trust it, retain `~/identity/config.yaml` and all credentials, and
+verify/unpack/trust it, retain `<state>/identity/config.yaml` and all credentials, and
 install from that bundle. Verify new running image/content, login, both apps'
 retained data and database operations before retiring old Identity trust. An
 unchanged Identity route leaves platform running; app services remain running.
@@ -1187,7 +1217,7 @@ must allow the requested version.
 Failed lifecycle commands can be repeated from the same component's verified,
 trusted bundle. Retry `./deploy install`, or repeat `./deploy uninstall` with
 exactly the original `--delete-data` choice. The private
-`~/pending-operation.json` records unfinished registration owners or the scoped
+`<state>/pending-operation.json` records unfinished registration owners or the scoped
 uninstall plan before relevant changes. Required imports are rebuilt and owners
 restart until the existing `is-active` check succeeds. Confirmed owners are
 removed from pending work individually; uninstall remains resumable after its
@@ -1218,8 +1248,8 @@ success remove the old own trust entry, leaving other bundles' trust untouched:
 ```sh
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
     --archive "$archive" --signature "$archive.asc"
-release="/opt/$product_name/releases/$product_name-$bundle-$version"
-sudo -H -u "$product_name" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
+sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
 as_product podman ps
 healthy
 # Complete the required HTTPS/application e2e checks BEFORE retiring the old release.
@@ -1259,11 +1289,14 @@ Podman Secret contents also remain in named volumes after down/stop; removed
 Secret keys can remain there. The private home/storage restricts host access.
 Explicit own-data deletion removes those volumes too. Never enable KubeDownForce:
 it can delete database volumes. At final host removal, an administrator uninstalls
-all components, removes the selected product's scoped trust and protected
-`/opt/<product>` tree, disables linger with `loginctl disable-linger <user>`,
-removes the storage fcontext equivalence with
-`semanage fcontext -d /var/lib/<user>/.local/share/containers`, and optionally
-`userdel -r <user>`. These are destructive operator choices, not bundle install steps.
+all components, removes the selected product's scoped trust and the
+`/var/lib/<product>` tree, the `user@<uid>.service.d/podman-offline-<product>.conf`
+drop-in and the account's `~/.<product>/` directory, disables linger with
+`loginctl disable-linger <user>` when nothing else needs it, and removes the
+storage fcontext equivalence with
+`semanage fcontext -d /var/lib/<product>/storage/containers`. The login account
+itself is the organisation's and is kept. These are destructive operator
+choices, not bundle install steps.
 
 fapolicyd's subject cache must be large enough that processes are not evicted
 while they start: an early eviction can make rule `deny_audit perm=any

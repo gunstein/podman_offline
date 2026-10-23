@@ -12,7 +12,7 @@ component names. The five shipped components (`platform`, `identity`, `app1`,
 | --- | --- | --- | --- |
 | Source checkout | `bundles.yaml` (the catalog) | you | `./deploy validate`, `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
 | Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `validate`, `install`, `uninstall` |
-| Target host | `/var/lib/<product>/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
+| Target host | `/var/lib/<product>/state/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
 
 `deployment/catalog.py` validates all three with the same rules. The compiled
 descriptor adds what the target cannot look up: the component's version and the
@@ -45,8 +45,9 @@ service is touched. Errors name `bundles.yaml`, the component and the field.
 ### Product name
 
 `product:` names everything the installation creates: the bundle archives
-`<product>-<id>-<version>-offline.tar.gz`, the default service user and home
-`/var/lib/<product>`, the units `<product>-<id>.service` with their Quadlet
+`<product>-<id>-<version>-offline.tar.gz`, the installation root
+`/var/lib/<product>` with the bootstrap file `~/.<product>/<product>.env` of the
+explicitly chosen runtime account (backlog 64), the units `<product>-<id>.service` with their Quadlet
 files, and the shared network `<product>`. It is compiled into every
 `bundle.yaml` and installed metadata, so the target needs no other setting;
 install and uninstall refuse a bundle whose product differs from the installed
@@ -384,7 +385,7 @@ would pass some checks and skip others.
 ## Installed state
 
 ```text
-/var/lib/<product>/
+/var/lib/<product>/state/
 ├── <id>/config.yaml        authoritative config (init-config, then you)
 ├── metadata/<id>.json      compiled descriptor, written before registrations
 ├── installed/<id>          version, written last: the install is complete
@@ -392,6 +393,10 @@ would pass some checks and skip others.
 ├── clients/<id>/           registered public client files
 └── pending-operation.json  unfinished owner work for a retry
 ```
+
+Quadlets live in `/var/lib/<product>/config/containers/systemd/` and Podman
+storage in `/var/lib/<product>/storage/`; see
+[the production layout](PRODUCTION-INSTALL.md).
 
 `installed/<id>` without `metadata/<id>.json` is an error. Metadata without the
 marker is an unfinished install that a retry completes. Removing a component
@@ -413,7 +418,7 @@ the declaration it expected) without writing anything or calling Podman.
 
 `dev/demo-credentials.sh` runs `dev/generate-certificates.sh` for the five
 demo components. Another product prepares its own credentials in
-`build/dev/<id>/` (dev) or `/var/lib/<product>/<id>/` (production) before
+`build/dev/<id>/` (dev) or `/var/lib/<product>/state/<id>/` (production) before
 prepare or install.
 
 ## Example: add a service with an external image

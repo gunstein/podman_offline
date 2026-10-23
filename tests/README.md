@@ -72,8 +72,9 @@ acceptance-harness tests. Inventory counts do not imply real runtime verificatio
 # Host preparation boundary (backlog 46)
 
 `test_prepare_host.py` covers argument/product behavior, SELinux-rule ordering,
-the real shell helper's privilege-drop arguments, failure stopping and refusal
-of a symlink home before root chmod. `test_prepare_home.py` exercises the actual
+the real shell helper's privilege-drop arguments, failure stopping, refusal of a
+linked root or foreign `state/` before root chown/chmod and the `user@<uid>`
+drop-in (backlog 64). `test_prepare_home.py` exercises the actual
 helper, extracted from its here-document in `prepare-host.sh`, on disposable
 filesystem trees: all managed directory links, dangling
 links, special/wrong-owner objects, retained CNI lock bytes/inode, atomic lock
@@ -90,6 +91,18 @@ The separate acceptance probe records and checks real dropped identities,
 groups, capabilities and SELinux context, then tests malicious outside targets
 and repeat preparation on the resettable lab. See
 [verification and outstanding lab gates](../acceptance/PREPARE-HOST.md).
+
+# Production layout outside the login home (backlog 64)
+
+`test_layout.py` covers the bootstrap file `~/.<product>/<product>.env`
+(format, private modes, links, values that look like commands, errors without
+values), the root and account-directory checks, refusal of product Quadlets in
+the login home, the user manager comparison and that source dev never reads the
+file. Other lifecycle tests replace `layout.select` and use the fixture home as
+`common.STATE`; `test_wrappers.py` runs the real selection in fresh processes
+against a miniature `/var/lib/<product>` and checks the login home, Podman's
+`XDG_*` per command and the guide shipped in releases. Real Podman/systemd
+behavior is in [the verification report](../acceptance/PRODUCTION-LAYOUT.md).
 
 # Component dev configuration (backlog 56)
 

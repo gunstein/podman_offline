@@ -1,6 +1,10 @@
 # Protected releases (backlog 54)
 
 Implementation on branch `feature/protected-releases`, based on `a37f4e4`.
+Backlog 64 moved the protected anchor from `/opt/<product>` to the root-owned
+installation root `/var/lib/<product>` (releases in `releases/`, keyring and
+lock beside it); `/opt` below describes the item 54 implementation as reviewed.
+See [production layout verification](PRODUCTION-LAYOUT.md).
 Real OL9/SELinux/fapolicyd verification of this change is **pending**. Earlier
 CLEAN PASS for host preparation or Secret delivery does not verify this boundary.
 

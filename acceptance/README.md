@@ -98,11 +98,14 @@ keyring before the checksum and unpacking. Readiness now requires `gpg` and
 
 # Product name (backlog 27)
 
-`product:` in `bundles.yaml` now names the service user, units, network and
+`product:` in `bundles.yaml` names the installation root, units, network and
 archives. `remote.sh` takes the product name as its 13th argument (exported as
 `PRODUCT_NAME` for its Python steps); every scenario passes `myproduct` except
 `--renamed-product`, whose generated catalog declares `product: shop`, so that
-run installs under the service user `shop` with `shop-*` units and archives.
+run installs under `/var/lib/shop` with `shop-*` units and archives. Since
+backlog 64 the runtime account is a separate ordinary login account,
+`<product>-ops` (`myproduct-ops`, `shop-ops`), with home `/home/<account>`;
+see [production layout verification](PRODUCTION-LAYOUT.md).
 
 ---
 
@@ -347,7 +350,7 @@ Python standard library. VM-1 uses a separate venv for the HTTP tests.
    is relaxed, as in the inspiration repo's client. The token is sent only in an HTTP header.
 5. Check that both VMs are clean: no pods, containers, volumes or
    Secrets in either rootless or rootful storage; no
-   `/etc/containers/systemd/myproduct.*`; no user `myproduct` or
+   `/etc/containers/systemd/myproduct.*`; no account `myproduct-ops` or
    `/var/lib/myproduct`. These state requirements are checked after rollback,
    before isolation/installation (an earlier failed run may remain before rollback). Do not put the lab VMs under Proxmox HA.
    Shut the VMs down cleanly, take the snapshot `clean-agent` and start them again. The snapshot
@@ -526,7 +529,7 @@ the created probe account and disposable fixture tree.
 
 `07-host-path-safety` on PROD runs after installation and before persistent
 baselines (also for renamed `shop`). It temporarily replaces managed CNI paths
-with disposable links as the service user, requires the complete host script to
+under `/var/lib/<product>/config` with disposable links as the runtime account, requires the complete host script to
 refuse them, restores each path, and runs a normal complete preparation. Container
 IDs, volume identities and selected storage/volume labels must remain unchanged;
 `07-healthy-host-repeat` then checks the real running consumers. The helper is
@@ -585,11 +588,14 @@ or its CA/credentials and remains offline. No test container is left behind.
 
 ## Prod operator and audit evidence
 
-Prod runs as the lab user with sudo exactly as in the product's [README](../README.md):
-temporary unpacking, prepare-host, a release under /var/lib/myproduct, inner
-checksums as root and trust of deploy.py only, certificates as myproduct,
-per-component config created exclusively with mode 0600,
-and install as myproduct. The user's HOME is set with sudo -H, and bash changes the working directory as
+Prod runs as the lab user with sudo as in the product's [README](../README.md)
+and [operator guide](../docs/PRODUCTION-INSTALL.md): protected publication under
+`/var/lib/myproduct/releases`, the ordinary login account `myproduct-ops` created
+for the disposable VM, prepare-host with `--user`, the bootstrap file written by
+that account, its home then made read-only (0555), certificates and
+per-component config (mode 0600) under `/var/lib/myproduct/state`, and install
+as `myproduct-ops`. `as_product` exports the documented `XDG_CONFIG_HOME` and
+`XDG_DATA_HOME` for Podman diagnostics. The user's HOME is set with sudo -H, and bash changes the working directory as
 the service user before install and Podman. This is needed when the operator's
 home is 0700; sudo -H alone keeps the inaccessible working directory. No rootful
 product resources may be created. Step 07 checks ownership/mode, SELinux labels,
@@ -601,7 +607,13 @@ selinux.matchpathcon using stat.S_IFMT(os.lstat(path).st_mode) for existing
 paths. Only the two explicit policy probes use mode 0. An lstat error gives
 FAIL without a fallback lookup; link targets are not followed. Overlay, overlay-layers and overlay-images are ro, while
 overlay-containers is container_var_lib_t and volume content container_file_t.
-Outside storage, an empty restorecon -n -v -R -e <storage> /var/lib/myproduct is required.
+Outside storage, an empty restorecon -n -v -R -e <storage> over `state/`, `config/` and `storage/` is required.
+Step 07 (`check`, also after reboot) requires the user manager's
+`XDG_CONFIG_HOME`/`XDG_DATA_HOME`, every installed unit's `SourcePath` under
+`/var/lib/<product>/config/containers/systemd`, the Podman graphroot and every
+container's `UpperDir` under `/var/lib/<product>/storage`.
+`09-home-unchanged` and `10-home-unchanged` compare the login home's name/type/size/mode
+inventory with the one recorded after bootstrap.
 The storage dry run is logged separately and every line must be classified with [the rules and
 the run-6 table](SELINUX-DIAGNOSIS.md). Unknown lines give FAIL.
 No AVC/USER_AVC/FANOTIFY since the start is allowed. No labels are repaired in
@@ -658,8 +670,8 @@ Other missing fields or malformed output fail the diagnostic check.
 
 ## Persistent state and upgrade
 
-The first installation writes config, generated-certificates and PKI directly into
-`/var/lib/myproduct`, outside the releases. Step 07 keeps the CA certificate's
+The first installation writes config, generated-certificates and PKI into
+`/var/lib/myproduct/state`, outside the releases. Step 07 keeps the CA certificate's
 SHA256 fingerprint (DER) and the file hashes for config, certificates, passwords and CA
 only in memory for comparison. The evidence shows file names and “same/changed”,
 without hash values or file content.

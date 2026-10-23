@@ -47,16 +47,17 @@ user with the helper copied from the source checkout and supplied on stdin
 
 ```bash
 product=myproduct
+service_user=produser   # the runtime login account (backlog 64)
 id=my-identity
-root=/var/lib/$product
-as_product() { sudo -n -H -u "$product" "$@"; }
+root=/var/lib/$product/state
+as_product() { sudo -n -H -u "$service_user" "$@"; }
 # 1. Password file, once: an empty private file owned by the service user,
 #    then edited by hand with sudoedit.
 d="$root/$id/credentials/signing"
 as_product mkdir -p "$d"
 as_product chmod 700 "$root/$id" "$root/$id/credentials" "$d"
 as_product test -e "$d/pfx-password" || as_product install -m 0600 /dev/null "$d/pfx-password"
-sudoedit -u "$product" "$d/pfx-password"   # the expected password, on one line
+sudoedit -u "$service_user" "$d/pfx-password"   # the expected password, on one line
 # 2. Proxy TLS pair; this first command creates the production CA.
 as_product bash -s -- --root "$root" \
   --ca-subject '/C=NO/O=Example Organisation/CN=Production CA' --ca-days 3650 --cert-days 365 \
@@ -227,7 +228,7 @@ Dev provisioning uses `--root build/dev`; relative SECRET_FILES paths then resol
 under `build/dev/<component>/`. Run `./deploy validate` and `./dev/dev.sh up` after
 images and all other credentials are present.
 
-Production uses the same relative layout under `/var/lib/<product>/<component>/`.
+Production uses the same relative layout under `/var/lib/<product>/state/<component>/`.
 Replace `myproduct` below with the product name. After `init-config`, prepare
 the password/external material there as the service user (commands in
 [Complete provisioning](#complete-provisioning-for-a-product-with-its-own-identity-image)),
@@ -235,7 +236,7 @@ then the current explicit stdin delivery works without a checkout:
 
 ```bash
 # Run as the product service user, with the script supplied on stdin:
-bash -s -- --root /var/lib/myproduct --component my-identity --purpose signing --pfx \
+bash -s -- --root /var/lib/myproduct/state --component my-identity --purpose signing --pfx \
   < /path/to/generate-certificates.sh
 ```
 
@@ -282,7 +283,7 @@ OpenSSL references: [1.1.1 pkcs12](https://docs.openssl.org/1.1.1/man1/pkcs12/),
 Set public issuance settings before the component arguments, for example:
 
 ```sh
-bash dev/generate-certificates.sh --root /var/lib/myproduct \
+bash dev/generate-certificates.sh --root /var/lib/myproduct/state \
   --ca-subject '/C=NO/O=Example Organisation/CN=Production CA' \
   --ca-days 3650 --cert-days 365 \
   --component my-identity --purpose signing --pfx
