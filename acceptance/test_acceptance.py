@@ -12,6 +12,7 @@ import shlex
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import types
 import unittest
@@ -1183,6 +1184,76 @@ install_checked() { sudo -n -H -u "$product_name" bash -c 'cd "$1" && exec bash 
         self.assertIn('podman run --rm --pull=never --network=none "$image"', block)
         self.assertIn("audit_events check", block)
         self.assertNotIn("podman pull", block)
+
+    def test_registry_fixture_checksums_stream_python_and_extract_only_images(self):
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        block = shell_code(remote, action="registry-offline")
+        for failure in (None, "modified-python", "unlisted-python", "missing-image"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                base = Path(directory)
+                registry = base / "registry"
+                registry.mkdir()
+                files = {
+                    "scripts/release.py": b"untrusted Python must never be opened",
+                    "images/images.tar": b"image archive",
+                    "images/images.txt": b"127.0.0.1:5000/acceptance/busybox:1.37.0\n",
+                }
+                checksums = "".join(
+                    hashlib.sha256(value).hexdigest() + "  " + name + "\n"
+                    for name, value in files.items()
+                )
+                if failure == "modified-python":
+                    files["scripts/release.py"] = b"changed after checksums"
+                elif failure == "unlisted-python":
+                    files["scripts/extra.py"] = b"unlisted"
+                elif failure == "missing-image":
+                    del files["images/images.tar"]
+                files["checksums.sha256"] = checksums.encode()
+                archive = registry / "myproduct-0.0.0-offline.tar.gz"
+                with tarfile.open(str(archive), "w:gz") as output:
+                    for name, value in files.items():
+                        member = tarfile.TarInfo("myproduct-0.0.0/" + name)
+                        member.size = len(value)
+                        output.addfile(member, io.BytesIO(value))
+                archive.with_name(archive.name + ".sha256").write_text(
+                    hashlib.sha256(archive.read_bytes()).hexdigest()
+                    + "  "
+                    + archive.name
+                    + "\n"
+                )
+                prefix = """set -euo pipefail
+base=$1
+run_started=0
+healthy() { :; }
+audit_events() { :; }
+as_product() {
+    printf '%s\\n' "$*" >> "$base/podman-calls"
+    if [[ $2 == run ]]; then printf registry-offline-ok; fi
+}
+"""
+                result = subprocess.run(
+                    ["bash", "-s", "--", str(base)],
+                    input=prefix + block,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if failure:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("checksum inventory mismatch", result.stderr)
+                    self.assertFalse((base / "podman-calls").exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(
+                        "checksums verified from archive streams", result.stdout
+                    )
+                    self.assertTrue(
+                        (registry / "myproduct-0.0.0/images/images.tar").is_file()
+                    )
+                    self.assertFalse((registry / "myproduct-0.0.0/scripts").exists())
 
     def test_launcher_denial_stops_before_markers_hang_or_reboot(self):
         """Stop immediately at the first pre-reboot launcher audit failure."""

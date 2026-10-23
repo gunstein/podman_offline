@@ -126,8 +126,10 @@ never changes global integrity policy. Stronger settings need their own startup
 and upgrade verification. No fapolicyd/SELinux allow rules are added.
 
 The registry-offline archive is a data-only fixture: an unprivileged operator
-checks/extracts it and streams image data to rootless Podman. Root no longer
-checksums its operator-writable extraction. Historical removed legacy scenarios
+checks its outer checksum, verifies every inner checksum directly from the
+compressed archive streams, extracts only the two `images/` data files and streams
+image data to rootless Podman. Neither root nor the operator reopens extracted
+Python for checksums; no Python payload is extracted or enrolled for this fixture. Historical removed legacy scenarios
 retain their pinned layouts; they are not current deployment paths.
 
 ## Current local evidence
@@ -309,3 +311,38 @@ The operator reports all 410 platform tests and 237 harness tests passed at
 coverage. The strengthened chcon/restorecon and gpgv paths have not run on OL9
 here; start with `--platform-help-only`, then run all six matrix scenarios before
 closing item 54.
+
+
+## First supplied OL9 run: registry fixture blocked (2026-10-23)
+
+The operator supplied evidence for `release54-20261023-055311-app1`, revision
+`7bb05dd`, on OL9.8 with SELinux Enforcing, fapolicyd 1.4.5 active, Podman 5.8.2,
+systemd 252 and host Python 3.9.25. All five component installations/health checks,
+host-path safety and `07-release-safety` passed. This verifies only that revision's
+probe; it predates the forced chcon/restorecon and typed gpgv refinements.
+
+The run is **NOT CLEAN**: `07-registry-offline` failed because fapolicyd denied
+`sha256sum` opening the extracted, untrusted `scripts/release.py`, even as the
+unprivileged operator. Outer archive checksum passed. Removing root authority
+from that inner checksum operation was insufficient. Later lifecycle, upgrade
+and retirement steps were not tested; the full matrix remains outstanding.
+
+The fixture now verifies the complete inner file inventory and hashes from the
+compressed tar streams via controller-supplied stdin code, then extracts only
+`images/images.tar` and `images/images.txt`. It never opens an extracted Python
+file, never enrolls fixture code, and preserves the offline registry-name/load/run
+checks and audit gate. This changes only the lab data fixture; production signed
+publication and trust remain in the protected helper.
+
+The regression runs the actual shell action with real tar/checksum commands and
+stubbed Podman/health/audit calls. A valid archive containing untrusted Python
+passes without extracting that Python; modified Python, an unlisted file or a
+missing image fail before Podman loading even when the outer archive checksum is
+recomputed. Real fapolicyd verification of this fix still requires a new lab run.
+
+
+Local follow-up checks: 240 acceptance-harness tests passed; Ruff lint/format on
+the changed Python, Bash syntax, Pyright (0 errors/0 warnings) and `git diff
+--check` passed. Success/rejection flow was rechecked: full archive inventory
+before image extraction/loading, no fixture Python execution, unchanged service
+user and production trust boundary. These checks do not claim an OL9 rerun.

@@ -1489,8 +1489,50 @@ publish-release)
 registry-offline)
     cd "$base/registry"
     sha256sum -c myproduct-0.0.0-offline.tar.gz.sha256
-    tar xzf myproduct-0.0.0-offline.tar.gz
-    (cd myproduct-0.0.0 && sha256sum -c --quiet checksums.sha256)
+    # Even an unprivileged checksum reader cannot open untrusted Python under
+    # fapolicyd. Verify every member from compressed archive streams instead.
+    python3 - myproduct-0.0.0-offline.tar.gz <<'REGISTRY_CHECKSUMS'
+import hashlib
+from pathlib import PurePosixPath
+import re
+import sys
+import tarfile
+
+root = "myproduct-0.0.0"
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    members = archive.getmembers()
+    names = [member.name for member in members]
+    if len(names) != len(set(names)) or any(
+        not (member.isdir() or member.isreg()) or member.issparse()
+        or not re.fullmatch(r"[A-Za-z0-9_+@./-]+", member.name)
+        or any(part in ("", ".", "..") for part in member.name.split("/"))
+        or PurePosixPath(member.name).parts[0] != root
+        for member in members
+    ):
+        raise SystemExit("FAIL: unsafe registry fixture archive")
+    expected = {}
+    with archive.extractfile(root + "/checksums.sha256") as checksums:
+        for line in checksums.read().decode("utf-8").splitlines():
+            match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+            if match is None or match.group(2) in expected:
+                raise SystemExit("FAIL: invalid registry fixture checksum list")
+            expected[match.group(2)] = match.group(1)
+    observed = {}
+    for member in members:
+        if not member.isreg() or member.name == root + "/checksums.sha256":
+            continue
+        digest = hashlib.sha256()
+        with archive.extractfile(member) as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        observed[str(PurePosixPath(member.name).relative_to(root))] = digest.hexdigest()
+    if expected != observed:
+        raise SystemExit("FAIL: registry fixture checksum inventory mismatch")
+print("PASS: complete registry fixture checksums verified from archive streams")
+REGISTRY_CHECKSUMS
+    # This fixture consumes only images; never extract or execute its Python.
+    tar xzf myproduct-0.0.0-offline.tar.gz -- \
+        myproduct-0.0.0/images/images.tar myproduct-0.0.0/images/images.txt
     as_product podman load -i /dev/stdin < myproduct-0.0.0/images/images.tar
     image=$(cat myproduct-0.0.0/images/images.txt)
     [[ $image =~ ^127\.0\.0\.1:[0-9]+/acceptance/busybox:1\.37\.0$ ]]

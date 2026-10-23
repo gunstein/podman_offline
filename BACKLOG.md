@@ -5550,6 +5550,15 @@ ReleaseError. Current-change lab coverage is still pending. The operator reports
 checks: 21 release and 239 harness tests passed; Pyright 0 errors/0 warnings and
 Vermin Python 3.6 compatibility passed. Real OL9 verification remains pending.
 
+First supplied real run (2026-10-23): `release54-20261023-055311-app1`
+at `7bb05dd` passed component installation/health and the then-current release
+safety probe, but was NOT CLEAN at `07-registry-offline`: fapolicyd denied the
+unprivileged checksum reader access to extracted `scripts/release.py`. The data
+fixture now checks the full inventory from compressed tar streams and extracts
+only image data. Regression checks modified/unlisted/missing payload refusal
+before Podman loading; current lab rerun and full matrix remain required. See
+[the dated verification report](acceptance/PROTECTED-RELEASES.md) for exact scope.
+
 ### Problem
 
 The README operator recipe unpacks a release as the service user into
