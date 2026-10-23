@@ -350,7 +350,7 @@ class ProductFixture(DeployFixture):
         name = deploy.bundle_descriptor()["name"]
         deploy.init_config(name)
         if configure:
-            configure(common.HOME / name)
+            configure(common.STATE / name)
         self.process.reset_mock()
         deploy.install()
         return self.restarts()

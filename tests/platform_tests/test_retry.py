@@ -13,7 +13,7 @@ from helpers.retry_lifecycle import RetryFixture
 class RetryTests(RetryFixture):
     def test_template_secret_survives_failure_and_retry_in_new_processes(self):
         self.actual_app_credentials()
-        config_path = common.HOME / "app1/config.yaml"
+        config_path = common.STATE / "app1/config.yaml"
         config = yaml.safe_load(config_path.read_text())
         config["SECRET_TEMPLATES"] = {
             "app1-connection": {
@@ -34,7 +34,7 @@ class RetryTests(RetryFixture):
         manifest.write_text(yaml.safe_dump(pod))
         self.before = self.protected()
         self.attempt()
-        password = (common.HOME / "app1/credentials/database/password").read_bytes()
+        password = (common.STATE / "app1/credentials/database/password").read_bytes()
         self.write("components/app1/VERSION", "1.2.4\n")
         self.changed()
         self.attempt(expected=1, failure=service("app1"))
@@ -74,7 +74,7 @@ class RetryTests(RetryFixture):
                     set(self.pending()["owners"]), {"identity", "platform"}
                 )
                 self.assertEqual(
-                    self.mode(common.HOME / "pending-operation.json"), 0o600
+                    self.mode(common.STATE / "pending-operation.json"), 0o600
                 )
                 self.assert_finished(self.attempt(), ["app1", "identity", "platform"])
                 self.assert_imports(True)
@@ -134,24 +134,24 @@ class RetryTests(RetryFixture):
                 self.assert_finished(self.attempt(), ["app1"] + expected)
 
     def test_unhealthy_first_install_writes_no_marker_and_the_retry_finishes(self):
-        (common.HOME / "installed/app1").unlink()
-        (common.HOME / "metadata/app1.json").unlink()
+        (common.STATE / "installed/app1").unlink()
+        (common.STATE / "metadata/app1.json").unlink()
         self.attempt(expected=1, unhealthy="app1")
-        self.assertTrue((common.HOME / "metadata/app1.json").is_file())
-        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.assertTrue((common.STATE / "metadata/app1.json").is_file())
+        self.assertFalse((common.STATE / "installed/app1").exists())
         self.attempt()
-        self.assertTrue((common.HOME / "installed/app1").is_file())
+        self.assertTrue((common.STATE / "installed/app1").is_file())
 
     def test_import_failure_rebuilds_actual_archives_with_identical_registrations(self):
         self.changed()
-        old = (common.HOME / "identity/files/identity-clients.tar").read_bytes()
+        old = (common.STATE / "identity/files/identity-clients.tar").read_bytes()
         self.attempt(expected=1, archive_failure="identity")
         self.assertEqual(
-            (common.HOME / "identity/files/identity-clients.tar").read_bytes(), old
+            (common.STATE / "identity/files/identity-clients.tar").read_bytes(), old
         )
         self.assert_finished(self.attempt(), ["app1", "identity", "platform"])
         self.assertNotEqual(
-            (common.HOME / "identity/files/identity-clients.tar").read_bytes(), old
+            (common.STATE / "identity/files/identity-clients.tar").read_bytes(), old
         )
         self.assert_imports(True)
 
@@ -165,7 +165,7 @@ class RetryTests(RetryFixture):
 
     def test_partial_public_client_write_resumes_from_the_incoming_descriptor(self):
         self.changed()
-        (common.HOME / "clients/app1/client.crt").unlink()
+        (common.STATE / "clients/app1/client.crt").unlink()
         self.attempt(expected=1, write_failure="clients/app1/client.crt")
         self.assert_finished(self.attempt(), ["app1", "identity", "platform"])
         self.assert_imports(True)
@@ -174,10 +174,10 @@ class RetryTests(RetryFixture):
         """Metadata is written before registrations and services; the marker last."""
         # Start without installed dependents, as on a first Identity installation.
         for component in ("app1", "app2"):
-            (common.HOME / "installed" / component).unlink()
+            (common.STATE / "installed" / component).unlink()
         self.before = self.protected()
-        marker = common.HOME / "installed/identity"
-        metadata = common.HOME / "metadata/identity.json"
+        marker = common.STATE / "installed/identity"
+        metadata = common.STATE / "metadata/identity.json"
         for first_install in (True, False):
             for target in ("metadata/identity.json", "installed/identity"):
                 for interrupted in (False, True):
@@ -240,7 +240,7 @@ class RetryTests(RetryFixture):
         self.assertNotIn(service("app1", "stop"), events)
         self.assert_finished(events, ["platform"])
         self.assert_imports(False)
-        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.assertFalse((common.STATE / "installed/app1").exists())
         self.assertFalse(any(event[:2] == ["podman", "volume"] for event in events))
 
     def test_uninstall_import_failure_retries_before_owner_restart(self):
@@ -271,8 +271,8 @@ class RetryTests(RetryFixture):
         self.assertEqual(
             json.loads((self.root / "host-volumes.json").read_text()), volumes[2:]
         )
-        self.assertFalse((common.HOME / "app1").exists())
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertFalse((common.STATE / "app1").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
         after = self.protected()
         self.assertEqual(
             after,
@@ -320,7 +320,7 @@ class RetryTests(RetryFixture):
         self.assertEqual(
             json.loads((self.root / "host-volumes.json").read_text()), volumes[3:]
         )
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
         self.assertEqual(
             self.protected(),
             {
@@ -333,37 +333,37 @@ class RetryTests(RetryFixture):
     def test_uninstall_retry_after_marker_and_data_are_already_gone(self):
         self.write("host-volumes.json", '["app1-data", "app1-session"]')
         self.attempt("uninstall", expected=1, delete_data=True, clear_failure=True)
-        self.assertFalse((common.HOME / "installed/app1").exists())
-        self.assertFalse((common.HOME / "app1").exists())
+        self.assertFalse((common.STATE / "installed/app1").exists())
+        self.assertFalse((common.STATE / "app1").exists())
         self.assertEqual(self.pending()["owners"], [])
         events = self.attempt("uninstall", delete_data=True)
         self.assertNotIn(service("app1", "stop"), events)
         self.assertFalse(
             any(event[:3] == ["podman", "volume", "rm"] for event in events)
         )
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
 
     def test_unfinished_first_install_names_the_retry_for_uninstall(self):
         """Metadata without a marker: uninstall explains, and the retry finishes."""
-        (common.HOME / "installed/app1").unlink()
-        (common.HOME / "metadata/app1.json").unlink()
+        (common.STATE / "installed/app1").unlink()
+        (common.STATE / "metadata/app1.json").unlink()
         events = self.attempt(expected=1, failure=service("app1"))
-        self.assertTrue((common.HOME / "metadata/app1.json").is_file())
-        self.assertFalse((common.HOME / "installed/app1").exists())
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertTrue((common.STATE / "metadata/app1.json").is_file())
+        self.assertFalse((common.STATE / "installed/app1").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
         events = self.attempt("uninstall", expected=1)
         self.assertEqual(events[-1][:2], ["error", "DeployError"])
         self.assertIn("app1 has an unfinished first install", events[-1][2])
         self.assertIn("Run ./deploy install from its bundle again", events[-1][2])
         self.assertEqual([event for event in events if event[0] != "error"], [])
         self.attempt()
-        self.assertTrue((common.HOME / "installed/app1").is_file())
+        self.assertTrue((common.STATE / "installed/app1").is_file())
         self.attempt("uninstall")
-        self.assertFalse((common.HOME / "metadata/app1.json").exists())
+        self.assertFalse((common.STATE / "metadata/app1.json").exists())
 
     def test_flag_conflicts_installs_and_dependencies_refuse_during_uninstall(self):
         self.attempt("uninstall", expected=1, failure=service("app1", "stop"))
-        before = (common.HOME / "pending-operation.json").read_bytes()
+        before = (common.STATE / "pending-operation.json").read_bytes()
         for action, options in (
             ("uninstall", {"delete_data": True}),
             ("install", {}),
@@ -373,13 +373,13 @@ class RetryTests(RetryFixture):
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0][0], "error")
             self.assertEqual(
-                (common.HOME / "pending-operation.json").read_bytes(), before
+                (common.STATE / "pending-operation.json").read_bytes(), before
             )
         self.select("identity")
         # Model an uninstalling dependency: start its pending record in a fresh fixture state.
         state = self.pending()
         state.update(component="identity", owners=[], volumes=[])
-        (common.HOME / "pending-operation.json").write_text(json.dumps(state))
+        (common.STATE / "pending-operation.json").write_text(json.dumps(state))
         self.select("app1")
         events = self.attempt(expected=1)
         self.assertIn("Pending uninstall for identity", events[0][-1])
@@ -387,14 +387,14 @@ class RetryTests(RetryFixture):
     def test_uninstall_cannot_discard_pending_install_or_another_components_work(self):
         self.changed()
         self.attempt(expected=1, failure=service("app1"))
-        before = (common.HOME / "pending-operation.json").read_bytes()
+        before = (common.STATE / "pending-operation.json").read_bytes()
         self.attempt("uninstall", expected=1)
         self.select("identity")
         self.attempt(expected=1)
-        self.assertEqual((common.HOME / "pending-operation.json").read_bytes(), before)
+        self.assertEqual((common.STATE / "pending-operation.json").read_bytes(), before)
 
     def test_invalid_or_symlinked_pending_state_refuses_before_host_calls(self):
-        path = common.HOME / "pending-operation.json"
+        path = common.STATE / "pending-operation.json"
         invalid = [
             "{",
             "[]",
@@ -431,10 +431,10 @@ class RetryTests(RetryFixture):
         self.attempt(
             "uninstall", expected=1, delete_data=True, volume_check_error="app1-data"
         )
-        self.assertTrue((common.HOME / "pending-operation.json").exists())
+        self.assertTrue((common.STATE / "pending-operation.json").exists())
         self.assertEqual(
             json.loads((self.root / "host-volumes.json").read_text()),
             ["app1-data", "app1-session"],
         )
         self.attempt("uninstall", delete_data=True)
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())

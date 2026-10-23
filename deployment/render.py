@@ -154,7 +154,7 @@ def component_defaults(component, overrides=None, dev=False):
     paths = [path for path in paths if path.exists() or path.is_symlink()]
     config = merge_config(*paths, overrides=overrides)
     materialized = (
-        (common.BUILD / "dev" if dev else common.HOME) / component / "config.yaml"
+        (common.BUILD / "dev" if dev else common.STATE) / component / "config.yaml"
     )
     validate_component_config(config, component, materialized)
     return config

@@ -222,7 +222,7 @@ class ComponentDevTests(ProductFixture):
         self.use_root(release)
         self.process.reset_mock()
         deploy.init_config("worker")
-        config_path = common.HOME / "worker/config.yaml"
+        config_path = common.STATE / "worker/config.yaml"
         before = config_path.read_bytes()
         self.assertEqual(rendering.load_config(config_path)["CHOICE"], "production")
         self.assertEqual(validation.validate_bundle()[1], [])

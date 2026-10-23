@@ -39,7 +39,7 @@ class DatabaseTests(DeployFixture):
             self.root / "config",
             ignore=shutil.ignore_patterns("dev.yaml"),
         )
-        self.path = common.HOME / "app1/config.yaml"
+        self.path = common.STATE / "app1/config.yaml"
         self.settings = rendering.component_defaults("app1")
         self.password = self.path.parent / "credentials/database/password"
         self.manifests = common.ROOT / "components/app1/manifests"
@@ -70,7 +70,7 @@ class DatabaseTests(DeployFixture):
         passwords = []
         for component in ("app1", "app2"):
             config = rendering.component_defaults(component)
-            base = common.HOME / component
+            base = common.STATE / component
             deploy.check_manifests(
                 rendering.effective_config(config, base / "config.yaml", component),
                 base / "config.yaml",
@@ -122,7 +122,7 @@ class DatabaseTests(DeployFixture):
     def install_dependencies(self):
         """Record installed platform/Identity 0.4.0 that the app1 bundle accepts."""
         for name in ("platform", "identity"):
-            mark_installed(self.root, common.HOME, name, "0.4.0", self.range)
+            mark_installed(self.root, common.STATE, name, "0.4.0", self.range)
 
     @property
     def range(self):
@@ -142,12 +142,12 @@ class DatabaseTests(DeployFixture):
             "home/app1/credentials/todo/todo-client.crt",
             "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
         )
-        before = {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
+        before = {p: p.read_bytes() for p in common.STATE.rglob("*") if p.is_file()}
         self.process.return_value = subprocess.CompletedProcess([], 0)
         with self.assertRaisesRegex(common.DeployError, "existing volume app1-data"):
             deploy.install_components()
         self.assertEqual(
-            before, {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
+            before, {p: p.read_bytes() for p in common.STATE.rglob("*") if p.is_file()}
         )
         self.assertEqual(self.process.call_count, 1)
         self.assertFalse(self.password.exists())
@@ -174,7 +174,7 @@ class DatabaseTests(DeployFixture):
                         "home/" + component + "/config.yaml", yaml.safe_dump(legacy)
                     )
                     before = {
-                        p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()
+                        p: p.read_bytes() for p in common.STATE.rglob("*") if p.is_file()
                     }
                     write_descriptor(self.root, component, self.range)
                     self.process.reset_mock()
@@ -185,7 +185,7 @@ class DatabaseTests(DeployFixture):
                         before,
                         {
                             p: p.read_bytes()
-                            for p in common.HOME.rglob("*")
+                            for p in common.STATE.rglob("*")
                             if p.is_file()
                         },
                     )
@@ -309,9 +309,9 @@ class DatabaseTests(DeployFixture):
             self.assertIn(
                 "credentials/" + relative + "/password",
                 [
-                    str(path.relative_to(common.HOME / component))
+                    str(path.relative_to(common.STATE / component))
                     for path in rendering.generated_secret_paths(
-                        config, common.HOME / component
+                        config, common.STATE / component
                     )
                 ],
             )

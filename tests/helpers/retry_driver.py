@@ -23,6 +23,7 @@ def main():
     vars(common).update(
         ROOT=root,
         HOME=home,
+        STATE=home,
         BUILD=root / "build",
         QUADLET_DIR=home / ".config/containers/systemd",
         QUADLET_TEMPLATE=root / "quadlet/template.kube",

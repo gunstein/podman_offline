@@ -35,7 +35,7 @@ class DemoConfigTests(ConfigFixture):
                     dev_source.read_bytes(),
                 )
             self.select(component)
-            target = common.HOME / component / "config.yaml"
+            target = common.STATE / component / "config.yaml"
             if target.exists():
                 target.unlink()
             deploy.init_config(component)

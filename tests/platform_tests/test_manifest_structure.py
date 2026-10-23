@@ -135,7 +135,7 @@ class ManifestStructureTests(ProductFixture):
         relocated = self.root / "relocated-release"
         shutil.move(str(release), str(relocated))
         self.install(relocated)
-        sibling = common.HOME / "sibling/state"
+        sibling = common.STATE / "sibling/state"
         sibling.parent.mkdir()
         sibling.write_bytes(b"unrelated")
         # Move a valid reference out of the init container; its Secret/key exist.

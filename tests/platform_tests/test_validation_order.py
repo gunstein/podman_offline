@@ -30,30 +30,30 @@ class ProductValidationOrderTests(ProductFixture):
     def test_install_validates_before_preflight_generation_or_writes(self):
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         self.install(releases["gateway"])
         self.install(releases["login-service"])
         release = releases["orders"]
         self.use_root(release)
         deploy.init_config("orders")
-        password = common.HOME / "orders/credentials/database/password"
+        password = common.STATE / "orders/credentials/database/password"
         for case in CASES:
             with self.subTest(case=case):
                 documents, message = broken_orders(case)
                 self.write_orders(release, documents)
-                before = self.files_under(common.HOME)
+                before = self.files_under(common.STATE)
                 self.process.reset_mock()
                 with self.assertRaisesRegex(common.DeployError, message):
                     deploy.install()
                 # Not even the database volume check: it follows validation.
                 self.assertEqual(self.commands(), [])
-                self.assertEqual(self.files_under(common.HOME), before)
+                self.assertEqual(self.files_under(common.STATE), before)
                 self.assertFalse(password.exists())
 
     def test_install_renders_once_and_writes_what_it_validated(self):
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         for name in ("gateway", "login-service"):
             self.install(releases[name])
         results = []
@@ -71,7 +71,7 @@ class ProductValidationOrderTests(ProductFixture):
             catalog.component_paths("orders")[2].read_text(), results[0][0]
         )
         self.assertTrue(
-            (common.HOME / "orders/credentials/database/password").is_file()
+            (common.STATE / "orders/credentials/database/password").is_file()
         )
 
     def test_dev_prepare_validates_every_component_before_any_write(self):
@@ -102,19 +102,19 @@ class RegistrationValidationOrderTests(ProductFixture):
     def test_install_validates_registrations_before_host_commands(self):
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         self.install(releases["gateway"])
         self.install(releases["login-service"])
         release = releases["orders"]
         self.use_root(release)
         deploy.init_config("orders")
         (release / "components/orders/client.yaml").write_text(self.BROKEN)
-        before = self.files_under(common.HOME)
+        before = self.files_under(common.STATE)
         self.process.reset_mock()
         with self.assertRaisesRegex(common.DeployError, "Invalid public client"):
             deploy.install()
         self.assertEqual(self.commands(), [])
-        self.assertEqual(self.files_under(common.HOME), before)
+        self.assertEqual(self.files_under(common.STATE), before)
 
     def test_dev_prepare_validates_registrations_before_any_write(self):
         dev = common.BUILD / "dev"
@@ -196,13 +196,13 @@ class StandaloneValidationOrderTests(DeployFixture):
         (self.root / "images/images.tar").unlink()
         with self.assertRaisesRegex(common.DeployError, "Missing image archive"):
             deploy.install()
-        self.assertFalse((common.HOME / "credentials").exists())
+        self.assertFalse((common.STATE / "credentials").exists())
         self.process.assert_not_called()
 
     def test_install_validates_before_generation_or_host_commands(self):
         self.install_fixture()
         self.broken_fixture()
-        config = common.HOME / "config.yaml"
+        config = common.STATE / "config.yaml"
         with self.assertRaisesRegex(common.DeployError, "undefined volume"):
             deploy.install()
         self.assertFalse((config.parent / "credentials").exists())

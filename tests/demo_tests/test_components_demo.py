@@ -95,9 +95,9 @@ class DemoComponentTests(ComponentFixture):
                 "build/dev/" + component + "/credentials/" + relative + "/password",
                 b"retained-db-password\n",
             )
-        before = (common.HOME / "app1/config.yaml").read_bytes()
+        before = (common.STATE / "app1/config.yaml").read_bytes()
         deploy.prepare()
-        self.assertEqual((common.HOME / "app1/config.yaml").read_bytes(), before)
+        self.assertEqual((common.STATE / "app1/config.yaml").read_bytes(), before)
         self.assertTrue((common.BUILD / "dev/clients/app2/client.json").exists())
         docs = list(yaml.safe_load_all((common.BUILD / "install.yaml").read_text()))
         self.assertEqual(sum(doc["kind"] == "Pod" for doc in docs), 8)

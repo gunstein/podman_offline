@@ -8,6 +8,7 @@ import pwd
 import re
 from pathlib import Path
 
+# The account's registered home: its identity and the bootstrap file only.
 HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
@@ -21,18 +22,24 @@ STANDALONE_PRODUCT = "myproduct"
 
 # quadlet/template.kube and template.network; {product} and {name} are filled in.
 QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
-QUADLET_DIR = HOME / ".config/containers/systemd"
-QUADLET_TARGET = QUADLET_DIR / (STANDALONE_PRODUCT + ".kube")
-QUADLET_YAML = QUADLET_DIR / (STANDALONE_PRODUCT + ".yaml")
+
+# Production paths under the installation root. layout.select() assigns them
+# for production commands only; source dev and bundle building never do.
+# STATE holds component config/credentials, installed metadata and markers,
+# registrations and the pending-operation record.
+STATE: Path = None  # type: ignore[assignment]
+QUADLET_DIR: Path = None  # type: ignore[assignment]
+QUADLET_TARGET: Path = None  # type: ignore[assignment]
+QUADLET_YAML: Path = None  # type: ignore[assignment]
+# Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
+# start, so they stay in the persistent state directory.
+FILES_DIR: Path = None  # type: ignore[assignment]
 SERVICE = STANDALONE_PRODUCT + ".service"
 
 SECRET_FILES = "SECRET_FILES"
 SECRET_TEMPLATES = "SECRET_TEMPLATES"
 VOLUME_FILES = "VOLUME_FILES"
 
-# Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
-# start, so they must stay in the service user's home directory.
-FILES_DIR = HOME / "files"
 IMPORT_SOURCE = "volume.podman.io/import-source"
 
 ID = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")

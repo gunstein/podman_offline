@@ -47,12 +47,12 @@ class MinimalWorkerTests(ProductFixture):
         shutil.rmtree(self.source)
         self.assertEqual(self.install(releases["worker"]), ["worker"])
         for name in ("routes", "clients", "metadata/gateway.json"):
-            self.assertFalse((common.HOME / name).exists())
+            self.assertFalse((common.STATE / name).exists())
         self.process.reset_mock()
         deploy.uninstall(delete_data=True)
         self.assertEqual(self.restarts(), [])
-        self.assertFalse((common.HOME / "installed/worker").exists())
-        self.assertFalse((common.HOME / "metadata/worker.json").exists())
+        self.assertFalse((common.STATE / "installed/worker").exists())
+        self.assertFalse((common.STATE / "metadata/worker.json").exists())
 
 
 class ProductNameTests(ProductFixture):
@@ -60,15 +60,15 @@ class ProductNameTests(ProductFixture):
 
     def installed_names(self):
         return sorted(
-            str(path.relative_to(common.HOME))
-            for path in common.HOME.rglob("*")
+            str(path.relative_to(common.STATE))
+            for path in common.STATE.rglob("*")
             if path.is_file()
         )
 
     def installed_files(self):
         """Every file under the service home with its bytes."""
         return {
-            name: (common.HOME / name).read_bytes() for name in self.installed_names()
+            name: (common.STATE / name).read_bytes() for name in self.installed_names()
         }
 
     def other_product_release(self):
@@ -109,7 +109,7 @@ class ProductNameTests(ProductFixture):
         )
         for name in self.installed_names():
             self.assertNotIn("myproduct", name)
-            self.assertNotIn("myproduct", (common.HOME / name).read_text())
+            self.assertNotIn("myproduct", (common.STATE / name).read_text())
         self.assertNotIn("myproduct", str(self.commands()))
         self.process.reset_mock()
         deploy.uninstall()
@@ -146,8 +146,8 @@ class ProductNameTests(ProductFixture):
         ):
             with self.assertRaises(OSError):
                 deploy.uninstall()
-        self.assertFalse((common.HOME / "metadata/worker.json").exists())
-        record = (common.HOME / "pending-operation.json").read_bytes()
+        self.assertFalse((common.STATE / "metadata/worker.json").exists())
+        record = (common.STATE / "pending-operation.json").read_bytes()
         self.assertIn(b'"product": "hubbabubba"', record)
         self.other_product_release()
         with self.assertRaisesRegex(
@@ -157,11 +157,11 @@ class ProductNameTests(ProductFixture):
         ):
             deploy.uninstall()
         self.assertEqual(self.commands(), [])
-        self.assertEqual((common.HOME / "pending-operation.json").read_bytes(), record)
+        self.assertEqual((common.STATE / "pending-operation.json").read_bytes(), record)
         # The product's own bundle still finishes the uninstall.
         self.use_root(release)
         deploy.uninstall()
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
 
 
 class ClientIdentityTests(ProductFixture):
@@ -242,7 +242,7 @@ class SharedSettingTests(ProductFixture):
         return product
 
     def edit(self, component, **values):
-        path = common.HOME / component / "config.yaml"
+        path = common.STATE / component / "config.yaml"
         config = yaml.safe_load(path.read_text())
         config.update(values)
         for key in [key for key, value in values.items() if value is None]:
@@ -271,7 +271,9 @@ class SharedSettingTests(ProductFixture):
     def test_init_config_inherits_and_install_refuses_a_mismatch(self):
         self.product()
         releases = self.install_gateway_and_init_login()
-        config = yaml.safe_load((common.HOME / "login-service/config.yaml").read_text())
+        config = yaml.safe_load(
+            (common.STATE / "login-service/config.yaml").read_text()
+        )
         self.assertEqual(config["SHOP_REGION"], "nordic")
         self.assertEqual(config["LOCAL_NOTE"], "login")  # Unshared: its own value.
         self.edit("login-service", SHOP_REGION="eu")
@@ -291,7 +293,7 @@ class SharedSettingTests(ProductFixture):
         self.edit("login-service", SHOP_REGION="nordic", LOCAL_NOTE="different")
         self.use_root(releases["login-service"])
         deploy.install()
-        self.assertTrue((common.HOME / "installed/login-service").is_file())
+        self.assertTrue((common.STATE / "installed/login-service").is_file())
 
     def test_owner_must_define_what_it_shares(self):
         self.product()
@@ -309,7 +311,7 @@ class SharedSettingTests(ProductFixture):
         self.install_gateway_and_init_login()
         self.edit("login-service", SHOP_REGION="nordic")
         deploy.install()
-        before = (common.HOME / "metadata/gateway.json").read_bytes()
+        before = (common.STATE / "metadata/gateway.json").read_bytes()
         shutil.rmtree(self.source)
         self.product(shares=(), version="1.0.1")
         release = self.build_and_unpack()["gateway"]
@@ -322,7 +324,7 @@ class SharedSettingTests(ProductFixture):
         ):
             deploy.install()
         self.assertEqual(self.commands(), [])
-        self.assertEqual((common.HOME / "metadata/gateway.json").read_bytes(), before)
+        self.assertEqual((common.STATE / "metadata/gateway.json").read_bytes(), before)
 
 
 class ServiceChangeTests(ProductFixture):
@@ -427,7 +429,7 @@ class ServiceChangeTests(ProductFixture):
     def test_removed_source_keeps_installed_service_until_explicit_uninstall(self):
         self.add_reports()
         releases = self.build_and_unpack()
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         for name in ("gateway", "login-service", "orders", "reports"):
             self.install(releases[name])
         self.use_root(self.source)
@@ -440,7 +442,7 @@ class ServiceChangeTests(ProductFixture):
             "metadata/reports.json",
             "routes/reports.conf",
         ):
-            self.assertTrue((common.HOME / path).is_file(), path)
+            self.assertTrue((common.STATE / path).is_file(), path)
         current = (self.source / "dist/current-bundles.txt").read_text().split()
         orders = [name for name in current if name.startswith("myproduct-orders-")]
         self.assertEqual(len(orders), 1)
@@ -458,14 +460,14 @@ class ServiceChangeTests(ProductFixture):
         self.process.reset_mock()
         deploy.install()
         self.assertEqual(self.restarts(), ["orders"])
-        self.assertTrue((common.HOME / "routes/reports.conf").is_file())
+        self.assertTrue((common.STATE / "routes/reports.conf").is_file())
         # Explicit, scoped uninstall from the retained reports bundle.
         shutil.rmtree(self.source)
         self.use_root(releases["reports"])
         self.process.reset_mock()
         deploy.uninstall()
         self.assertEqual(self.restarts(), ["gateway"])
-        self.assertFalse((common.HOME / "routes/reports.conf").exists())
-        self.assertFalse((common.HOME / "installed/reports").exists())
-        self.assertTrue((common.HOME / "installed/orders").is_file())
-        self.assertTrue((common.HOME / "clients/orders/client.json").is_file())
+        self.assertFalse((common.STATE / "routes/reports.conf").exists())
+        self.assertFalse((common.STATE / "installed/reports").exists())
+        self.assertTrue((common.STATE / "installed/orders").is_file())
+        self.assertTrue((common.STATE / "clients/orders/client.json").is_file())

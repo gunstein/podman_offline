@@ -1,7 +1,9 @@
 """Privileged offline release publication. Run authenticated code via stdin, Python 3.6.
 
-Never import code from an incoming archive. /opt and the independent keyring are
-root controlled; service-owned configuration belongs outside this tree.
+Never import code from an incoming archive. /var/lib/<product> (the root-owned
+installation root, backlog 64) and the independent keyring are root controlled;
+releases/ beneath it is root-only. The account's state/, config/ and storage/
+siblings are never read or written here.
 """
 # ruff: noqa: UP021, UP022
 # Host Python 3.6 requires PIPE/universal_newlines, not capture_output/text.
@@ -24,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-BASE = Path("/opt")
+BASE = Path("/var/lib")
 OWNER = 0
 TRUST_DIR = Path("/etc/fapolicyd/trust.d")
 RECORD = ".release.json"
@@ -396,7 +398,7 @@ def publish(root, archive, signature, product, component, version):
     ancestors(keyring.parent)
     protected(keyring)
     final = root / "releases" / name
-    # Keep image-sized staging on /opt, not /run's small tmpfs. Lock serializes
+    # Keep image-sized staging under /var/lib, not /run's small tmpfs. Lock serializes
     # publication and trust for this product; root is the only writer here.
     with tempfile.TemporaryDirectory(prefix=".staging-", dir=str(root)) as directory:
         stage = Path(directory)

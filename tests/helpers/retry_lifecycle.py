@@ -48,8 +48,8 @@ class RetryFixture(ComponentFixture):
 
     def protected(self):
         return {
-            str(path.relative_to(common.HOME)): (path.read_bytes(), path.stat().st_mode)
-            for path in common.HOME.rglob("*")
+            str(path.relative_to(common.STATE)): (path.read_bytes(), path.stat().st_mode)
+            for path in common.STATE.rglob("*")
             if path.is_file()
             and (
                 "credentials/" in str(path)
@@ -92,7 +92,7 @@ class RetryFixture(ComponentFixture):
         return evidence["events"]
 
     def pending(self):
-        return json.loads((common.HOME / "pending-operation.json").read_text())
+        return json.loads((common.STATE / "pending-operation.json").read_text())
 
     def actual_app_credentials(self, source=None):
         """Use declarative fixture inputs, or an explicit demo source for demo tests."""
@@ -134,10 +134,10 @@ class RetryFixture(ComponentFixture):
             ],
             [service(owner) for owner in owners],
         )
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
         for owner in owners:
             if owner in ("identity", "platform"):
-                archive = ["archives", str(common.HOME / owner / "files")]
+                archive = ["archives", str(common.STATE / owner / "files")]
                 self.assertLess(events.index(archive), events.index(service(owner)))
         self.assertEqual(self.protected(), self.before)
 
@@ -147,7 +147,7 @@ class RetryFixture(ComponentFixture):
             ("identity", "identity-clients", "installed.json"),
         ):
             with tarfile.open(
-                str(common.HOME / owner / "files" / (group + ".tar"))
+                str(common.STATE / owner / "files" / (group + ".tar"))
             ) as archive:
                 stream = archive.extractfile(index)
                 self.assertIsNotNone(stream)

@@ -15,8 +15,11 @@ class IdentityTests(ComponentFixture):
 
     def snapshot(self):
         return {
-            str(path.relative_to(common.HOME)): (path.read_bytes(), path.stat().st_mode)
-            for path in common.HOME.rglob("*")
+            str(path.relative_to(common.STATE)): (
+                path.read_bytes(),
+                path.stat().st_mode,
+            )
+            for path in common.STATE.rglob("*")
             if path.is_file()
         }
 
@@ -49,7 +52,7 @@ class IdentityTests(ComponentFixture):
             )
         }
         route = self.root / "components/app1/route.conf"
-        certificate = common.HOME / "app1/credentials/todo/todo-client.crt"
+        certificate = common.STATE / "app1/credentials/todo/todo-client.crt"
         for index, (route_changed, client_changed) in enumerate(
             ((False, False), (True, False), (False, True), (True, True))
         ):
@@ -83,8 +86,8 @@ class IdentityTests(ComponentFixture):
                     self.assertEqual(before[name] != after[name], changed)
 
     def test_help_works_without_identity_and_has_no_identity_side_effects(self):
-        (common.HOME / "installed/identity").unlink()
-        shutil.rmtree(common.HOME / "identity")
+        (common.STATE / "installed/identity").unlink()
+        shutil.rmtree(common.STATE / "identity")
         for path in catalog.component_paths("identity")[2:]:
             path.unlink()
         self.component_manifest("help")
@@ -99,13 +102,13 @@ class IdentityTests(ComponentFixture):
         self.assertEqual(
             self.restarts(), ["myproduct-help.service", "myproduct-platform.service"]
         )
-        self.assertFalse((common.HOME / "identity").exists())
-        self.assertFalse((common.HOME / "installed/identity").exists())
+        self.assertFalse((common.STATE / "identity").exists())
+        self.assertFalse((common.STATE / "installed/identity").exists())
 
     def test_missing_or_incompatible_identity_refuses_app_before_any_mutation(self):
         for version in (None, "0.9.0", "2.0.0"):
             with self.subTest(version=version):
-                marker = common.HOME / "installed/identity"
+                marker = common.STATE / "installed/identity"
                 if marker.exists():
                     marker.unlink()
                 if version:
@@ -174,19 +177,19 @@ class IdentityTests(ComponentFixture):
             self.restarts(),
             ["myproduct-identity.service", "myproduct-platform.service"],
         )
-        self.assertFalse((common.HOME / "clients/app1").exists())
-        self.assertFalse((common.HOME / "routes/app1.conf").exists())
-        self.assertIn("identity", (common.HOME / "routes/identity.conf").read_text())
+        self.assertFalse((common.STATE / "clients/app1").exists())
+        self.assertFalse((common.STATE / "routes/app1.conf").exists())
+        self.assertIn("identity", (common.STATE / "routes/identity.conf").read_text())
         self.mark_installed("help", "1.2.3")
         self.select("identity")
-        before = (common.HOME / "identity/config.yaml").read_bytes()
+        before = (common.STATE / "identity/config.yaml").read_bytes()
         self.process.reset_mock()
         deploy.uninstall()
         self.assertEqual(self.restarts(), ["myproduct-platform.service"])
-        self.assertEqual((common.HOME / "identity/config.yaml").read_bytes(), before)
-        self.assertFalse((common.HOME / "routes/identity.conf").exists())
-        self.assertTrue((common.HOME / "installed/help").exists())
-        self.assertTrue((common.HOME / "installed/platform").exists())
+        self.assertEqual((common.STATE / "identity/config.yaml").read_bytes(), before)
+        self.assertFalse((common.STATE / "routes/identity.conf").exists())
+        self.assertTrue((common.STATE / "installed/help").exists())
+        self.assertTrue((common.STATE / "installed/platform").exists())
 
     def test_identity_delete_data_removes_only_its_declared_volumes_and_state(self):
         self.select("identity")
@@ -216,7 +219,7 @@ class IdentityTests(ComponentFixture):
             if call[0][0][:3] == ["podman", "volume", "rm"]
         ]
         self.assertEqual(removed, list(volumes))
-        self.assertFalse((common.HOME / "identity").exists())
+        self.assertFalse((common.STATE / "identity").exists())
         after = self.snapshot()
         for name, value in before.items():
             if name.startswith(("platform/", "app1/", "PKI/")) or name.endswith(

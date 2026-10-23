@@ -69,14 +69,14 @@ class ConfigTests(ConfigFixture):
 
     def test_init_modes_references_and_no_secret_or_image_operations(self):
         """Initialize complete config and private directories, without creating input files."""
-        shutil.rmtree(common.HOME / "platform")
+        shutil.rmtree(common.STATE / "platform")
         self.write(
             "components/platform/config.defaults.yaml",
             "SECRET_FILES:\n  platform-token:\n  - path: private\n    generate:\n    - token\n",
         )
         self.select("platform")
         deploy.init_config("platform")
-        target = common.HOME / "platform/config.yaml"
+        target = common.STATE / "platform/config.yaml"
         config = rendering.load_config(target)
         self.assertEqual(config["PUBLIC_ORIGIN"], "https://defaults.test:8443")
         self.assertEqual(
@@ -101,7 +101,7 @@ class ConfigTests(ConfigFixture):
         """Reject unbundled components, symlinked files and any symlink ancestor."""
         with self.assertRaisesRegex(common.DeployError, "not included"):
             deploy.init_config("help")
-        target = common.HOME / "platform/config.yaml"
+        target = common.STATE / "platform/config.yaml"
         target.unlink()
         target.symlink_to(self.root / "absent")
         with self.assertRaisesRegex(common.DeployError, "symlinked"):
@@ -115,8 +115,9 @@ class ConfigTests(ConfigFixture):
             deploy.init_config("platform")
         target.parent.unlink()
         alias = self.root / "alias"
-        alias.symlink_to(common.HOME, target_is_directory=True)
+        alias.symlink_to(common.STATE, target_is_directory=True)
         self.stack.enter_context(mock.patch.object(common, "HOME", alias))
+        self.stack.enter_context(mock.patch.object(common, "STATE", alias))
         self.stack.enter_context(mock.patch.dict(os.environ, {"HOME": str(alias)}))
         with self.assertRaisesRegex(common.DeployError, "symlinked"):
             self.select("platform")
@@ -128,16 +129,16 @@ class ConfigTests(ConfigFixture):
             "home/platform/config.yaml",
             "HTTPS_PORT: 9443\nPUBLIC_ORIGIN: https://installed.test:9443\nCHOICE: private-platform\n",
         )
-        (common.HOME / "app1/config.yaml").unlink()
+        (common.STATE / "app1/config.yaml").unlink()
         deploy.init_config("app1")
-        config = rendering.load_config(common.HOME / "app1/config.yaml")
+        config = rendering.load_config(common.STATE / "app1/config.yaml")
         self.assertEqual(config["PUBLIC_ORIGIN"], "https://installed.test:9443")
         self.assertEqual(config["HTTPS_PORT"], 9443)
         self.assertEqual(config["CHOICE"], "component")
 
     def test_invalid_existing_platform_never_falls_back_to_defaults(self):
         """A present but unusable platform config is an operator error."""
-        (common.HOME / "app1/config.yaml").unlink()
+        (common.STATE / "app1/config.yaml").unlink()
         for contents in (
             "",
             "HTTPS_PORT: 8443\n",
@@ -148,20 +149,20 @@ class ConfigTests(ConfigFixture):
                 deploy.init_config("app1")
             self.assertIn("platform/config.yaml", str(failure.exception))
             self.assertNotIn("secret-invalid", str(failure.exception))
-            self.assertFalse((common.HOME / "app1/config.yaml").exists())
+            self.assertFalse((common.STATE / "app1/config.yaml").exists())
 
         self.write("home/installed/platform", "1.0.0\n")
-        (common.HOME / "platform/config.yaml").unlink()
+        (common.STATE / "platform/config.yaml").unlink()
         with self.assertRaisesRegex(
             common.DeployError, "platform/config.yaml.*restore installed platform"
         ):
             deploy.init_config("app1")
-        self.assertFalse((common.HOME / "app1/config.yaml").exists())
+        self.assertFalse((common.STATE / "app1/config.yaml").exists())
 
     def test_production_defaults_changes_do_not_change_effective_config(self):
         """Install never reads new defaults or rewrites either persistent file."""
         paths = [
-            common.HOME / name / "config.yaml"
+            common.STATE / name / "config.yaml"
             for name in ("platform", "identity", "app1")
         ]
         before = {p: p.read_bytes() for p in paths}
@@ -190,8 +191,8 @@ class ConfigTests(ConfigFixture):
         ) as failure:
             deploy.install()
         self.assertNotIn("sensitive-default", str(failure.exception))
-        self.assertFalse((common.HOME / "platform/private/token").exists())
-        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.assertFalse((common.STATE / "platform/private/token").exists())
+        self.assertFalse((common.STATE / "installed/app1").exists())
         self.process.assert_not_called()
         self.assertTrue(path.exists())
 
@@ -206,7 +207,7 @@ class ConfigTests(ConfigFixture):
         for dev in (False, True):
             with self.subTest(dev=dev):
                 base = (
-                    common.BUILD / "dev/platform" if dev else common.HOME / "platform"
+                    common.BUILD / "dev/platform" if dev else common.STATE / "platform"
                 )
                 config = rendering.component_defaults("platform", dev=dev)
                 for directory, name, contents in (
@@ -242,7 +243,7 @@ class ConfigTests(ConfigFixture):
             ):
                 deploy.install()
             self.assertEqual(path.read_bytes(), before)
-            self.assertFalse((common.HOME / "installed/app1").exists())
+            self.assertFalse((common.STATE / "installed/app1").exists())
             self.process.assert_not_called()
 
     def test_help_init_inherits_shared_values_without_bundled_platform(self):
@@ -255,7 +256,7 @@ class ConfigTests(ConfigFixture):
             "PUBLIC_ORIGIN: https://installed.test:9443\nHTTPS_PORT: 9443\n",
         )
         deploy.init_config("help")
-        config = rendering.load_config(common.HOME / "help/config.yaml")
+        config = rendering.load_config(common.STATE / "help/config.yaml")
         self.assertEqual(config["PUBLIC_ORIGIN"], "https://installed.test:9443")
         self.assertEqual(config["HTTPS_PORT"], 9443)
         self.process.assert_not_called()

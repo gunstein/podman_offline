@@ -83,7 +83,7 @@ class ComponentFileTests(ProductFixture):
         shutil.move(str(self.releases), str(relocated))
         first, second = relocated / first.name, relocated / second.name
         self.install(first)
-        persistent = common.HOME / "processor/config.yaml"
+        persistent = common.STATE / "processor/config.yaml"
         self.assertEqual(rendering.load_config(persistent), config)
         retained = persistent.read_bytes()
         self.assert_archive(b"first release\n")
@@ -159,11 +159,11 @@ class ComponentFileTests(ProductFixture):
                 with self.assertRaises(common.DeployError):
                     deploy.install()
             deploy.install()
-            retained = (common.HOME / "processor/config.yaml").read_bytes()
+            retained = (common.STATE / "processor/config.yaml").read_bytes()
             self.use_root(second)
             deploy.install()
             self.assertEqual(
-                (common.HOME / "processor/config.yaml").read_bytes(), retained
+                (common.STATE / "processor/config.yaml").read_bytes(), retained
             )
             deploy.uninstall()
         self.assertEqual(
@@ -174,11 +174,11 @@ class ComponentFileTests(ProductFixture):
                 if path.is_file()
             },
         )
-        self.assertTrue((common.HOME / "processor/config.yaml").exists())
+        self.assertTrue((common.STATE / "processor/config.yaml").exists())
 
     def assert_archive(self, expected):
         with tarfile.open(
-            str(common.HOME / "processor/files/processor-seed.tar")
+            str(common.STATE / "processor/files/processor-seed.tar")
         ) as archive:
             stream = archive.extractfile("reference.sql")
             assert stream is not None

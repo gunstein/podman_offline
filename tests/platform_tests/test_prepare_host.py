@@ -1,5 +1,6 @@
 """Test host validation and idempotent labels using shell stubs, without root."""
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -14,18 +15,19 @@ class HostLabelTests(unittest.TestCase):
             Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
         ).read_text()
         block = script[
-            script.index("# SELinux: storage needs") : script.index(
-                "loginctl enable-linger"
+            script.index("# SELinux: Podman storage") : script.index(
+                "# The user's systemd manager"
             )
         ]
         stubs = r"""
-user=myproduct
-service_home=/var/lib/myproduct
+user=operator1
+install_root=/var/lib/myproduct
+container_home=$install_root/storage/containers
 die() { echo "ERROR: $*" >&2; exit 1; }
 semanage() {
     if [[ $* == 'fcontext -l -C' ]]; then
-        [[ $old == 0 ]] || echo "$service_home = /home"
-        [[ $correct == 0 ]] || echo "$service_home/.local/share/containers = /var/lib/containers"
+        [[ $old == 0 ]] || echo "$install_root = /home"
+        [[ $correct == 0 ]] || echo "$install_root/storage/containers = /var/lib/containers"
         return 0
     fi
     echo "semanage $*"
@@ -33,7 +35,7 @@ semanage() {
     correct=1
 }
 id() { echo myproduct; }
-prepare_service_home() { echo "prepare_service_home"; }
+prepare_install_directories() { echo "prepare_install_directories"; }
 """
         settings = f"old={int(old)}; correct={int(correct)}; conflict={int(conflict)}\n"
         return subprocess.run(
@@ -49,14 +51,14 @@ prepare_service_home() { echo "prepare_service_home"; }
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(result.stdout.count("semanage fcontext -a"), 1)
         self.assertIn(
-            "-e /var/lib/containers /var/lib/myproduct/.local/share/containers",
+            "-e /var/lib/containers /var/lib/myproduct/storage/containers",
             result.stdout,
         )
         self.assertLess(
             result.stdout.index("fcontext -a"),
-            result.stdout.index("prepare_service_home"),
+            result.stdout.index("prepare_install_directories"),
         )
-        self.assertEqual(result.stdout.count("prepare_service_home"), 2)
+        self.assertEqual(result.stdout.count("prepare_install_directories"), 2)
 
     def test_old_home_rule_requires_manual_removal(self):
         result = self.run_labels(old=True)
@@ -65,7 +67,7 @@ prepare_service_home() { echo "prepare_service_home"; }
         self.assertIn("Remove it manually", result.stdout)
         self.assertNotIn("fcontext -d", result.stdout)
         self.assertNotIn("restorecon", result.stdout)
-        self.assertNotIn("prepare_service_home", result.stdout)
+        self.assertNotIn("prepare_install_directories", result.stdout)
 
     def test_existing_rule_is_not_added_again(self):
         result = self.run_labels(correct=True)
@@ -76,7 +78,7 @@ prepare_service_home() { echo "prepare_service_home"; }
         result = self.run_labels(conflict=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("restorecon", result.stdout)
-        self.assertNotIn("prepare_service_home", result.stdout)
+        self.assertNotIn("prepare_install_directories", result.stdout)
 
 
 class HostBoundaryTests(unittest.TestCase):
@@ -93,8 +95,8 @@ class HostBoundaryTests(unittest.TestCase):
 source "$1"
 service_uid=12345
 service_gid=12346
-service_home=/var/lib/svc-orders
-container_home=$service_home/.local/share/containers
+install_root=/var/lib/orders
+container_home=$install_root/storage/containers
 calls=0
 failure=$2
 # The function's arguments are independent of this shell's positional args.
@@ -103,7 +105,7 @@ setpriv() {
     printf '%s\n' "setpriv $*"
     [[ $calls != "$failure" ]]
 }
-prepare_service_home
+prepare_install_directories
 echo later-host-actions
 """,
                 "probe",
@@ -127,11 +129,11 @@ echo later-host-actions
         self.assertEqual(
             lines,
             [
-                prefix + "python3 -B - /var/lib/svc-orders",
+                prefix + "python3 -B - /var/lib/orders",
                 prefix
-                + "restorecon -R -e /var/lib/svc-orders/.local/share/containers/storage /var/lib/svc-orders",
-                prefix
-                + "restorecon /var/lib/svc-orders/.local/share/containers/storage",
+                + "restorecon -R -e /var/lib/orders/storage/containers/storage "
+                + "/var/lib/orders/state /var/lib/orders/config /var/lib/orders/storage",
+                prefix + "restorecon /var/lib/orders/storage/containers/storage",
                 "later-host-actions",
             ],
         )
@@ -142,44 +144,147 @@ echo later-host-actions
                 result = self.run_home(failure)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout.count("setpriv --"), failure)
-                self.assertIn("inspect /var/lib/svc-orders", result.stdout)
+                self.assertIn("inspect /var/lib/orders", result.stdout)
                 self.assertNotIn("later-host-actions", result.stdout)
 
-    def test_home_link_is_refused_before_root_chmod(self):
+    def run_root_block(self, prepare):
+        """Run the root/account-directory checks against a disposable anchor."""
         script = (
             Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
         ).read_text()
         block = script[
-            script.index("# /var/lib is the root-controlled anchor.") : script.index(
+            script.index("if [[ ! -e $install_root") : script.index(
                 "# Keep ID mappings"
             )
         ]
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
+            root = base / "orders"
             outside = base / "outside"
             outside.mkdir(mode=0o755)
-            home = base / "home"
-            home.symlink_to(outside)
+            prepare(root, outside)
             result = subprocess.run(
                 [
                     "bash",
                     "-eu",
                     "-c",
-                    'service_home=$1\nservice_uid=$2\nuser=svc\ndie() { echo "ERROR: $*"; exit 1; }\nchmod() { echo privileged-chmod; }\n'
-                    + block,
+                    "install_root=$1\nservice_uid=$2\nservice_gid=$2\nuser=operator1\nproduct=orders\n"
+                    'die() { echo "ERROR: $*"; exit 1; }\n'
+                    'stat() { if [[ $1 == -c && $2 == %u && $3 == "$install_root" ]]; then echo 0; else command stat "$@"; fi; }\n'
+                    'getfacl() { :; }\nchown() { echo "chown $*"; }\nchmod() { echo "chmod $*"; }\n'
+                    + block.replace("/etc/systemd/system", str(base / "etc")),
                     "probe",
-                    str(home),
-                    str(outside.stat().st_uid),
+                    str(root),
+                    str(os.geteuid()),
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 check=False,
             )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("symlink home", result.stdout)
-            self.assertNotIn("privileged-chmod", result.stdout)
-            self.assertEqual(outside.stat().st_mode & 0o777, 0o755)
+            return result, sorted(path.name for path in outside.iterdir())
+
+    def test_root_link_or_foreign_state_is_refused_before_changes(self):
+        def link(root, outside):
+            root.symlink_to(outside)
+
+        def foreign(root, outside):
+            root.mkdir(mode=0o755)
+            (root / "state").symlink_to(outside)
+
+        for prepare, message in (
+            (link, "must be a root-owned directory"),
+            (foreign, "belongs to another account"),
+        ):
+            with self.subTest(case=prepare.__name__):
+                result, outside = self.run_root_block(prepare)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout)
+                self.assertNotIn("chown", result.stdout)
+                self.assertNotIn("chmod", result.stdout)
+                self.assertEqual(outside, [])
+
+    def test_fresh_root_creates_only_the_three_account_directories(self):
+        def fresh(root, outside):
+            pass
+
+        result, _ = self.run_root_block(fresh)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for name in ("state", "config", "storage"):
+            self.assertIn("chown -h ", result.stdout)
+            self.assertIn("chmod 0700 ", result.stdout)
+            self.assertIn("/orders/" + name, result.stdout)
+
+
+class HostUserManagerTests(unittest.TestCase):
+    """The persistent drop-in is the one place services get their storage."""
+
+    def run_dropin(self, existing=None, other=False, active=False):
+        script = (
+            Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+        ).read_text()
+        guard = script[
+            script.index("dropin_dir=/etc") : script.index(
+                "# The root creates the account's directories"
+            )
+        ]
+        block = script[
+            script.index("# The user's systemd manager") : script.index(
+                "loginctl enable-linger"
+            )
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            etc = Path(directory)
+            dropins = etc / "user@4321.service.d"
+            dropins.mkdir()
+            if existing is not None:
+                (dropins / "podman-offline-orders.conf").write_text(existing)
+            if other:
+                (dropins / "podman-offline-shop.conf").write_text("")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-eu",
+                    "-c",
+                    "service_uid=4321\nuser=operator1\nproduct=orders\n"
+                    "install_root=/var/lib/orders\nactive=$1\n"
+                    'die() { echo "ERROR: $*"; exit 1; }\n'
+                    'systemctl() { echo "systemctl $*"; [[ $1 != is-active || $active == 1 ]]; }\n'
+                    + (guard + block).replace("/etc/systemd/system", str(etc)),
+                    "probe",
+                    "1" if active else "0",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                check=False,
+            )
+            written = dropins / "podman-offline-orders.conf"
+            return result, written.read_text() if written.exists() else None
+
+    def test_fresh_dropin_sets_both_variables_and_restarts_a_running_manager(self):
+        result, text = self.run_dropin(active=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        assert text is not None
+        self.assertIn(
+            "Environment=XDG_CONFIG_HOME=/var/lib/orders/config "
+            "XDG_DATA_HOME=/var/lib/orders/storage",
+            text,
+        )
+        self.assertIn("systemctl restart user@4321.service", result.stdout)
+        repeated, _ = self.run_dropin(existing=text, active=True)
+        self.assertEqual(repeated.returncode, 0, repeated.stdout)
+        self.assertNotIn("restart", repeated.stdout)
+
+    def test_changed_dropin_or_second_product_is_refused(self):
+        result, text = self.run_dropin(existing="[Service]\nEnvironment=X=1\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("differs from the expected settings", result.stdout)
+        self.assertEqual(text, "[Service]\nEnvironment=X=1\n")
+        result, text = self.run_dropin(other=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already runs another product", result.stdout)
+        self.assertIsNone(text)
 
 
 class HostPortTests(unittest.TestCase):
@@ -207,7 +312,7 @@ class HostPortTests(unittest.TestCase):
                     "-c",
                     'die() { echo "ERROR: $*"; exit 1; }\n'
                     + block
-                    + 'echo "user=$user port=$port"\n',
+                    + 'echo "user=$user port=$port product=$product"\n',
                     str(release / "scripts/prepare-host.sh"),
                 ]
                 + args,
@@ -217,9 +322,11 @@ class HostPortTests(unittest.TestCase):
                 universal_newlines=True,
             )
 
-    def test_required_port_and_bounds(self):
+    def test_required_port_account_and_bounds(self):
         for args, valid in (
             ([], False),
+            (["--port", "8443"], False),
+            (["--user", "operator1"], False),
             (["--port", "1024"], True),
             (["--port", "65535"], True),
             (["--port", "8443"], True),
@@ -235,30 +342,38 @@ class HostPortTests(unittest.TestCase):
             (["--port", "8443", "--user", "a", "--user", "b"], False),
         ):
             with self.subTest(args=args):
+                if valid:
+                    args = args + ["--user", "operator1"]
                 result = self.run_arguments(args)
                 self.assertEqual(result.returncode == 0, valid, result.stdout)
                 if not valid:
                     self.assertIn("ERROR:", result.stdout)
 
-    def test_service_user_defaults_to_the_bundle_product(self):
-        """A renamed product needs no extra argument; --user overrides it."""
+    def test_account_is_explicit_and_independent_of_the_product(self):
+        """The product names the root; the account is any existing login name."""
         cases = (
-            ([], None, "user=myproduct port=8443"),
-            ([], "hubbabubba", "user=hubbabubba port=8443"),
-            ([], "on", "user=on port=8443"),
-            ([], "null", "user=null port=8443"),
-            (["--user", "svc-shop"], "hubbabubba", "user=svc-shop port=8443"),
+            (
+                ["--user", "operator1"],
+                None,
+                "user=operator1 port=8443 product=myproduct",
+            ),
+            (
+                ["--user", "Ops.User"],
+                "hubbabubba",
+                "user=Ops.User port=8443 product=hubbabubba",
+            ),
+            (["--user", "svc-shop"], "on", "user=svc-shop port=8443 product=on"),
         )
         for extra, product, expected in cases:
             with self.subTest(extra=extra, product=product):
                 result = self.run_arguments(["--port", "8443"] + extra, product)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(result.stdout.strip(), expected)
-        for user in ("Shop", "1shop", "shop_", "a" * 33, "shop;id"):
+        for user in ("1shop", "a" * 33, "shop;id", "../x", ""):
             with self.subTest(user=user):
                 result = self.run_arguments(["--port", "8443", "--user", user])
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Invalid service user", result.stdout)
+                self.assertIn("ERROR", result.stdout)
 
 
 class HostFapolicydTests(unittest.TestCase):
@@ -268,7 +383,11 @@ class HostFapolicydTests(unittest.TestCase):
         script = (
             Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
         ).read_text()
-        block = script[script.index("# fapolicyd:") : script.index("service_home=")]
+        block = script[
+            script.index("# fapolicyd:") : script.index(
+                "# The account must already exist"
+            )
+        ]
         with tempfile.TemporaryDirectory() as directory:
             conf = Path(directory) / "fapolicyd.conf"
             if content is not None:

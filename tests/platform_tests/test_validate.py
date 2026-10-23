@@ -208,7 +208,7 @@ class BundleValidationTests(ProductFixture):
         self.write_product(RENAMED)
         self.releases_by_name = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
 
     def validate(self, release, pattern=None):
         self.use_root(release)
@@ -268,13 +268,13 @@ class BundleAgreementTests(ProductFixture):
         self.write_product(RENAMED)
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         for name in ("gateway", "login-service"):
             self.install(releases[name])
         self.orders = releases["orders"]
         self.use_root(self.orders)
         deploy.init_config("orders")
-        self.config = common.HOME / "orders/config.yaml"
+        self.config = common.STATE / "orders/config.yaml"
 
     def both(self, install_pattern, validate_pattern=None):
         """install refuses before writing; validate refuses too and runs no command.
@@ -317,7 +317,7 @@ class BundleAgreementTests(ProductFixture):
         )
         # Decided by install_checks, before any component is validated.
         self.both("generated file 'bad name' must be one file name", "^SECRET_FILES")
-        self.assertFalse((common.HOME / "orders/credentials/database").exists())
+        self.assertFalse((common.STATE / "orders/credentials/database").exists())
 
     def test_existing_volume_keeps_the_restore_message_on_install(self):
         """F1: install asks Podman first; validate names both remedies without it."""

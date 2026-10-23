@@ -24,24 +24,36 @@ import subprocess
 import sys
 from pathlib import Path
 import tempfile
-os.getuid = os.geteuid = lambda: 1000
-pwd.getpwuid = lambda uid: pwd.struct_passwd(("fixture", "x", 1000, 1000, "", os.environ["FIXTURE_HOME"], "/bin/bash"))
+uid = int(os.environ["FIXTURE_UID"])
+os.getuid = os.geteuid = lambda: uid
+pwd.getpwuid = lambda uid: pwd.struct_passwd(("fixture", "x", uid, uid, "", os.environ["FIXTURE_HOME"], "/bin/bash"))
+user_runtime = "/run/user/" + str(uid)
 is_dir = Path.is_dir
-Path.is_dir = lambda path: True if str(path) == "/run/user/1000" else is_dir(path)
+Path.is_dir = lambda path: True if str(path) == user_runtime else is_dir(path)
 temporary_directory = tempfile.TemporaryDirectory
 runtime = os.environ["XDG_RUNTIME_DIR"]
-os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
+os.environ["XDG_RUNTIME_DIR"] = user_runtime
 def staging(*args, **kwargs):
-    if kwargs.get("dir") == "/run/user/1000":
+    if kwargs.get("dir") == user_runtime:
         kwargs["dir"] = runtime
     return temporary_directory(*args, **kwargs)
 tempfile.TemporaryDirectory = staging
+if "FIXTURE_ANCHOR" in os.environ:
+    # The fixture's root-owned anchor is a temporary directory of this runner.
+    from deployment import layout
+    layout.ANCHOR = Path(os.environ["FIXTURE_ANCHOR"])
+    layout.TRUSTED_TOP = layout.ANCHOR.parent
+    layout.ROOT_UID = os.stat(os.environ["FIXTURE_ANCHOR"]).st_uid
 
 def command(args, **kwargs):
     if args[0] not in ("podman", "systemctl"):
         raise AssertionError("Unexpected host command")
     with open(os.environ["FIXTURE_COMMANDS"], "a") as stream:
         stream.write(json.dumps(args) + "\\n")
+    with open(os.environ["FIXTURE_COMMANDS"] + ".storage", "a") as stream:
+        stream.write(json.dumps([args, os.environ.get("XDG_DATA_HOME"), os.environ.get("XDG_CONFIG_HOME")]) + "\\n")
+    if args == ["systemctl", "--user", "show-environment"]:
+        return subprocess.CompletedProcess(args, 0, stdout=os.environ["FIXTURE_MANAGER_ENV"], stderr="")
     if args[:2] == ["podman", "save"]:
         Path(args[4]).write_bytes(b"fixture image archive")
     if args[:3] == ["podman", "container", "inspect"]:
@@ -63,6 +75,32 @@ class WrapperTests(unittest.TestCase):
             ]
             for path in (source, caller, home, shim, root / "runtime"):
                 path.mkdir()
+            # A real production layout in miniature: the login home holds only
+            # the bootstrap file; state, Quadlets and storage use the root.
+            uid = os.geteuid() or 1000
+            anchor = root / "var-lib"
+            install = anchor / "myproduct"
+            state = install / "state"
+            for path in (anchor, install):
+                path.mkdir(mode=0o755)
+            for name in ("state", "config", "storage"):
+                (install / name).mkdir(mode=0o700)
+            bootstrap = home / ".myproduct/myproduct.env"
+            bootstrap.parent.mkdir(mode=0o700)
+            bootstrap.write_text(
+                "# installation settings\nAPP_SETTING=$(touch "
+                + str(root / "executed")
+                + ")\nINSTALL_ROOT='"
+                + str(install)
+                + "'\n"
+            )
+            bootstrap.chmod(0o600)
+            os.chmod(str(home), 0o755)
+            if os.geteuid() == 0:
+                for path in [home, bootstrap.parent, bootstrap] + [
+                    install / name for name in ("state", "config", "storage")
+                ]:
+                    os.chown(str(path), uid, uid)
             for name in (
                 "deploy",
                 "bundle.py",
@@ -146,6 +184,9 @@ class WrapperTests(unittest.TestCase):
                 os.environ,
                 HOME=str(home),
                 FIXTURE_HOME=str(home),
+                FIXTURE_UID=str(uid),
+                FIXTURE_ANCHOR=str(anchor),
+                FIXTURE_MANAGER_ENV=f"XDG_CONFIG_HOME={install}/config\nXDG_DATA_HOME={install}/storage\n",
                 FIXTURE_COMMANDS=str(commands),
                 XDG_RUNTIME_DIR=str(root / "runtime"),
             )
@@ -219,21 +260,21 @@ class WrapperTests(unittest.TestCase):
             run(identity_release, "deploy", "install")
             run(release, "deploy", "init-config", "app1")
             # Persistent settings override deliberately different release defaults.
-            config = home / "app1/config.yaml"
+            config = state / "app1/config.yaml"
             config_before = config.read_bytes()
             (release / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://changed.test:443\nHTTPS_PORT: 443\n"
             )
             run(release, "deploy", "install")
             self.assertEqual(config.read_bytes(), config_before)
-            self.assertIn("fixture.test", (home / "platform/config.yaml").read_text())
-            self.assertEqual((home / "installed/app1").read_text().strip(), version)
+            self.assertIn("fixture.test", (state / "platform/config.yaml").read_text())
+            self.assertEqual((state / "installed/app1").read_text().strip(), version)
             run(release, "deploy", "uninstall")
             for folder in (source, extracted):
                 self.assertFalse(list(folder.rglob("__pycache__")))
                 self.assertFalse(list(folder.rglob("*.pyc")))
-            self.assertFalse((home / "installed/app1").exists())
-            self.assertTrue((home / "installed/platform").exists())
+            self.assertFalse((state / "installed/app1").exists())
+            self.assertTrue((state / "installed/platform").exists())
             self.assertEqual(config.read_bytes(), config_before)
             calls = [json.loads(line) for line in commands.read_text().splitlines()]
             self.assertIn(
@@ -243,3 +284,40 @@ class WrapperTests(unittest.TestCase):
                 sorted(path.name for path in caller.iterdir()), ["config.yaml"]
             )
             self.assertEqual((caller / "config.yaml").read_bytes(), before)
+            # Only the bootstrap file is in the login home; the unknown,
+            # command-like setting was never executed.
+            self.assertEqual(
+                sorted(str(path.relative_to(home)) for path in home.rglob("*")),
+                [".myproduct", ".myproduct/myproduct.env"],
+            )
+            self.assertFalse((root / "executed").exists())
+            self.assertTrue(
+                (
+                    install / "config/containers/systemd/myproduct-platform.kube"
+                ).is_file()
+            )
+            storage = [
+                json.loads(line)
+                for line in (root / "commands.jsonl.storage").read_text().splitlines()
+            ]
+            # Bundle building never inherits production storage; every
+            # production Podman command uses the installation storage.
+            self.assertIn(
+                [
+                    ["podman", "load", "-i", str(release / "images/images.tar")],
+                    str(install / "storage"),
+                    str(install / "config"),
+                ],
+                storage,
+            )
+            for args, data, config_home in storage:
+                if args[0] != "podman":
+                    continue
+                if args[1] in ("save", "pull"):
+                    self.assertEqual((data, config_home), (None, None), args)
+                else:
+                    self.assertEqual(
+                        (data, config_home),
+                        (str(install / "storage"), str(install / "config")),
+                        args,
+                    )

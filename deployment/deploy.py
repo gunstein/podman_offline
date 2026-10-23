@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, health, registrations
+from . import catalog, common, health, layout, registrations
 from . import render as rendering
 
 
@@ -26,7 +26,7 @@ def init_config(component):
         )
     registrations.check_pending("init-config", component, descriptor["product"])
     check_dependencies_installed(descriptor)
-    target = common.HOME / component / "config.yaml"
+    target = common.STATE / component / "config.yaml"
     for path in [target] + list(target.parents):
         if path.is_symlink():
             raise common.DeployError(f"Refuse symlinked config path: {path}")
@@ -44,7 +44,7 @@ def init_config(component):
             raise common.DeployError(
                 f"Missing {source_path}; restore installed {source} config before initializing {component}"
             )
-        owner = catalog.load_installed_metadata(common.HOME)[source]
+        owner = catalog.load_installed_metadata(common.STATE)[source]
         overrides = public_settings(
             rendering.load_config(source_path), source_path, shared_keys(owner)
         )
@@ -496,7 +496,11 @@ def run(*args):
 
 
 def service_user():
-    """Refuse root and a HOME that is not the service user's; reads only."""
+    """Check the account, then select the production paths; reads only.
+
+    Refuses root, a HOME that is not the account's registered home and the
+    source checkout, then reads ~/.<product>/<product>.env (layout.select).
+    """
     if os.geteuid() == 0:
         raise common.DeployError("Run install as the service user, not as root")
 
@@ -506,11 +510,24 @@ def service_user():
             f"HOME={configured_home!r} differs from the home directory {common.HOME} in "
             "the user database. Run install with the service user's HOME"
         )
+    if (common.ROOT / "components").is_dir() and not (
+        common.ROOT / "bundle.yaml"
+    ).is_file():
+        # Source dev never reads production bootstrap settings.
+        raise common.DeployError(
+            "Run production commands from an unpacked component bundle, not the "
+            "source checkout"
+        )
+    return layout.select(catalog.product_name(common.ROOT))
 
 
 def production_environment():
-    """Validate the service user and set its runtime before rendering or commands."""
-    service_user()
+    """Validate the service user, paths and runtime before rendering or commands.
+
+    The user manager check (systemctl --user show-environment) is a read-only
+    host query; it confirms services use the same storage as this process.
+    """
+    root = service_user()
     runtime = Path(f"/run/user/{os.geteuid()}")
     configured_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if configured_runtime is not None and configured_runtime != str(runtime):
@@ -524,6 +541,7 @@ def production_environment():
             "with loginctl enable-linger and check that the user instance is running"
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
+    layout.check_user_manager(root)
 
 
 def install_standalone():
@@ -531,11 +549,11 @@ def install_standalone():
 
     install() calls this for a release that has neither bundle.yaml nor
     components/, such as a fixture under examples/ (examples/VM-CHECKLIST.md).
-    It reads the service user's ~/config.yaml (not ~/.config/...) and the
+    It reads config.yaml in the state directory (common.STATE) and the
     release's manifests/ and images/images.tar, in this order:
 
-    1. production_environment() (service user, HOME, runtime directory), then
-       ~/config.yaml must exist.
+    1. production_environment() (service user, HOME, installation paths,
+       runtime directory), then STATE/config.yaml must exist.
     2. check_manifests(): kinds, placeholders, pull policy, mounts and links
        of the effective manifests, then the database preflight; images.tar
        must exist and every container needs a fully qualified image.
@@ -553,7 +571,7 @@ def install_standalone():
     provide; a failing systemctl or podman command raises CalledProcessError.
     """
     production_environment()
-    config_path = common.HOME / "config.yaml"
+    config_path = common.STATE / "config.yaml"
     if not config_path.exists():
         raise common.DeployError(f"Missing {config_path}")
     config = rendering.load_config(config_path)
@@ -605,7 +623,7 @@ def bundle_descriptor():
 def check_dependencies_installed(descriptor):
     """Every declared dependency must be installed in a compatible version."""
     for dependency, requirement in descriptor["requires"].items():
-        version = catalog.installed_version(common.HOME, dependency)
+        version = catalog.installed_version(common.STATE, dependency)
         if version is None:
             raise common.DeployError(
                 "Install the separate "
@@ -619,7 +637,7 @@ def check_dependencies_installed(descriptor):
 def check_dependents(descriptor, installed):
     """Installed dependents keep their recorded requirement on this component."""
     component = descriptor["name"]
-    for name in catalog.dependents(installed, common.HOME, component):
+    for name in catalog.dependents(installed, common.STATE, component):
         check_version_requirement(
             component,
             descriptor["version"],
@@ -650,7 +668,7 @@ def install_needed(descriptor):
     if descriptor["upgrade"] == "always":
         return True
     component = descriptor["name"]
-    installed = catalog.installed_version(common.HOME, component)
+    installed = catalog.installed_version(common.STATE, component)
     if installed is None:
         return True
     requested = catalog.version_number(descriptor["version"])
@@ -826,7 +844,7 @@ def write_installed_metadata(descriptor):
     bundle may need this descriptor before the completion marker exists.
     """
     write_install_record(
-        catalog.metadata_path(common.HOME, descriptor["name"]),
+        catalog.metadata_path(common.STATE, descriptor["name"]),
         json.dumps(descriptor, sort_keys=True) + "\n",
     )
 
@@ -834,7 +852,7 @@ def write_installed_metadata(descriptor):
 def write_installed_marker(descriptor):
     """Publish the version last; it confirms the install completed."""
     write_install_record(
-        common.HOME / "installed" / descriptor["name"], descriptor["version"] + "\n"
+        common.STATE / "installed" / descriptor["name"], descriptor["version"] + "\n"
     )
 
 
@@ -892,7 +910,7 @@ def install_checks():
     descriptor = bundle_descriptor()
     name = descriptor["name"]
     pending = registrations.check_pending("install", name, descriptor["product"])
-    installed = catalog.load_installed_metadata(common.HOME)
+    installed = catalog.load_installed_metadata(common.STATE)
     check_same_product(descriptor["product"], installed)
     known = dict(installed)
     known[name] = descriptor
@@ -980,8 +998,8 @@ def uninstall_plan(component, delete_data, installed, product):
     whose registration of this component must be rebuilt after removal.
     """
     _, _, output, _ = catalog.component_paths(component)
-    route = common.HOME / "routes" / (component + ".conf")
-    client = common.HOME / "clients" / component
+    route = common.STATE / "routes" / (component + ".conf")
+    client = common.STATE / "clients" / component
     documents = rendering.load_yaml_all(output)
     rendering.check_component_names(documents, component, output)
     volumes = sorted(
@@ -1039,7 +1057,7 @@ def uninstall_plan(component, delete_data, installed, product):
             owner
             for owner in owners
             if owner not in (None, component)
-            and catalog.installed_version(common.HOME, owner)
+            and catalog.installed_version(common.STATE, owner)
         ),
     }
 
@@ -1055,9 +1073,9 @@ def uninstall(component=None, delete_data=False):
     state = registrations.check_pending(
         "uninstall", component, descriptor["product"], delete_data
     )
-    marker = common.HOME / "installed" / component
+    marker = common.STATE / "installed" / component
     if state is None and not marker.is_file():
-        if catalog.metadata_path(common.HOME, component).is_file():
+        if catalog.metadata_path(common.STATE, component).is_file():
             # Metadata is written before the units and the marker last, so this
             # is a first install that stopped. Finishing it is the one recovery.
             raise common.DeployError(
@@ -1067,23 +1085,23 @@ def uninstall(component=None, delete_data=False):
                 "install keeps failing, fix the cause it reports first"
             )
         raise common.DeployError(f"Component {component} is not installed")
-    installed = catalog.load_installed_metadata(common.HOME)
+    installed = catalog.load_installed_metadata(common.STATE)
     check_same_product(descriptor["product"], installed)
-    dependents = catalog.dependents(installed, common.HOME, component)
+    dependents = catalog.dependents(installed, common.STATE, component)
     if dependents:
         raise common.DeployError(
             component.title() + " is still required by: " + ", ".join(dependents)
         )
     _, _, output, quadlet = catalog.component_paths(component)
-    route = common.HOME / "routes" / (component + ".conf")
-    client = common.HOME / "clients" / component
+    route = common.STATE / "routes" / (component + ".conf")
+    client = common.STATE / "clients" / component
     for path in (
         output,
         quadlet,
         route,
         client,
         marker,
-        catalog.metadata_path(common.HOME, component),
+        catalog.metadata_path(common.STATE, component),
     ):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
             raise common.DeployError("Refuse symlinked uninstall state or output paths")
@@ -1111,7 +1129,7 @@ def uninstall(component=None, delete_data=False):
             for owner in list(state["owners"]):
                 catalog.component_paths(owner)
                 if owner not in installed or not catalog.installed_version(
-                    common.HOME, owner
+                    common.STATE, owner
                 ):
                     raise common.DeployError(
                         "Pending registration owner is not installed: " + owner
@@ -1135,10 +1153,10 @@ def uninstall(component=None, delete_data=False):
                 run("podman", "volume", "rm", name)
             elif result.returncode != 1:
                 raise common.DeployError(f"Cannot check volume {name} before deletion")
-        if (common.HOME / component).exists():
-            shutil.rmtree(common.HOME / component)
+        if (common.STATE / component).exists():
+            shutil.rmtree(common.STATE / component)
     # Marker first: metadata without a marker is an unfinished install, never the reverse.
-    for path in (marker, catalog.metadata_path(common.HOME, component)):
+    for path in (marker, catalog.metadata_path(common.STATE, component)):
         if path.exists():
             path.unlink()
     registrations.clear_pending()

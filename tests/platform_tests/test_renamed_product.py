@@ -73,19 +73,21 @@ class RenamedProductTests(RenamedFixture):
             restarts["inventory"], ["inventory", "login-service", "gateway"]
         )
         self.assertEqual(restarts["manual"], ["manual", "gateway"])
-        installed = catalog.load_installed_metadata(common.HOME)
+        installed = catalog.load_installed_metadata(common.STATE)
         self.assertEqual(installed["orders"]["clients"], "login-service")
         self.assertEqual(installed["gateway"]["accepts"], {"routes": "gateway-routes"})
-        index = json.loads((common.HOME / "clients/orders/client.json").read_text())
+        index = json.loads((common.STATE / "clients/orders/client.json").read_text())
         self.assertEqual(index["Id"], "orders-web")
-        orders_config = yaml.safe_load((common.HOME / "orders/config.yaml").read_text())
+        orders_config = yaml.safe_load(
+            (common.STATE / "orders/config.yaml").read_text()
+        )
         self.assertEqual(orders_config["PUBLIC_ORIGIN"], "https://shop.test:9443")
         self.assertTrue(
-            (common.HOME / "orders/credentials/database/password").is_file()
+            (common.STATE / "orders/credentials/database/password").is_file()
         )
         for name in DEMO_NAMES:
-            self.assertFalse((common.HOME / name).exists())
-            self.assertFalse((common.HOME / "installed" / name).exists())
+            self.assertFalse((common.STATE / name).exists())
+            self.assertFalse((common.STATE / "installed" / name).exists())
 
     def test_exact_restart_sets_and_sibling_isolation(self):
         releases, _ = self.install_all()
@@ -93,11 +95,11 @@ class RenamedProductTests(RenamedFixture):
         self.use_root(orders)
         sibling = {
             path: path.read_bytes()
-            for path in (common.HOME / "inventory").rglob("*")
+            for path in (common.STATE / "inventory").rglob("*")
             if path.is_file()
         }
-        sibling_client = (common.HOME / "clients/inventory/client.json").read_bytes()
-        certificate = common.HOME / "orders/credentials/client/client.crt"
+        sibling_client = (common.STATE / "clients/inventory/client.json").read_bytes()
+        certificate = common.STATE / "orders/credentials/client/client.crt"
         for index, (route_changed, client_changed, expected) in enumerate(
             (
                 (False, False, ["orders"]),
@@ -123,13 +125,14 @@ class RenamedProductTests(RenamedFixture):
         self.assertEqual(
             {
                 path: path.read_bytes()
-                for path in (common.HOME / "inventory").rglob("*")
+                for path in (common.STATE / "inventory").rglob("*")
                 if path.is_file()
             },
             sibling,
         )
         self.assertEqual(
-            (common.HOME / "clients/inventory/client.json").read_bytes(), sibling_client
+            (common.STATE / "clients/inventory/client.json").read_bytes(),
+            sibling_client,
         )
 
     def test_uninstall_keeps_sibling_client_and_reverse_dependencies(self):
@@ -143,10 +146,10 @@ class RenamedProductTests(RenamedFixture):
         self.process.reset_mock()
         deploy.uninstall()
         self.assertEqual(self.restarts(), ["login-service", "gateway"])
-        self.assertFalse((common.HOME / "clients/inventory").exists())
-        self.assertTrue((common.HOME / "clients/orders/client.json").is_file())
-        self.assertTrue((common.HOME / "inventory/config.yaml").is_file())
-        self.assertFalse((common.HOME / "metadata/inventory.json").exists())
+        self.assertFalse((common.STATE / "clients/inventory").exists())
+        self.assertTrue((common.STATE / "clients/orders/client.json").is_file())
+        self.assertTrue((common.STATE / "inventory/config.yaml").is_file())
+        self.assertFalse((common.STATE / "metadata/inventory.json").exists())
         # The gateway's newer release must still satisfy installed dependents.
         gateway = releases["gateway"]
         descriptor = yaml.safe_load((gateway / "bundle.yaml").read_text())
@@ -172,10 +175,10 @@ class RenamedProductTests(RenamedFixture):
         ]
         status, events = self.attempt(releases["orders"], failure=failure)
         self.assertEqual(status, 1)
-        pending = json.loads((common.HOME / "pending-operation.json").read_text())
+        pending = json.loads((common.STATE / "pending-operation.json").read_text())
         self.assertEqual(pending["component"], "orders")
         self.assertEqual(pending["owners"], ["gateway", "login-service"])
-        self.assertFalse((common.HOME / "installed/orders").exists())
+        self.assertFalse((common.STATE / "installed/orders").exists())
         status, events = self.attempt(releases["orders"])
         self.assertEqual(status, 0, events)
         restarted = [
@@ -191,8 +194,8 @@ class RenamedProductTests(RenamedFixture):
                 "myproduct-gateway.service",
             ],
         )
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
-        self.assertEqual((common.HOME / "installed/orders").read_text(), "1.0.0\n")
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
+        self.assertEqual((common.STATE / "installed/orders").read_text(), "1.0.0\n")
 
     def test_pending_owner_work_finishes_with_a_release_that_drops_the_role(self):
         """Unfinished gateway work is completed even if the next release has no route."""
@@ -203,7 +206,7 @@ class RenamedProductTests(RenamedFixture):
         failure = ["systemctl", "--user", "restart", "myproduct-gateway.service"]
         status, _ = self.attempt(manual, failure=failure)
         self.assertEqual(status, 1)
-        pending = json.loads((common.HOME / "pending-operation.json").read_text())
+        pending = json.loads((common.STATE / "pending-operation.json").read_text())
         self.assertEqual(pending["owners"], ["gateway"])
         # A newer manual release no longer declares a route.
         descriptor = yaml.safe_load((manual / "bundle.yaml").read_text())
@@ -216,8 +219,8 @@ class RenamedProductTests(RenamedFixture):
         self.assertIn(
             ["systemctl", "--user", "restart", "myproduct-gateway.service"], events
         )
-        self.assertFalse((common.HOME / "pending-operation.json").exists())
-        self.assertEqual((common.HOME / "installed/manual").read_text(), "1.0.1\n")
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
+        self.assertEqual((common.STATE / "installed/manual").read_text(), "1.0.1\n")
 
     def test_lost_password_with_existing_renamed_volume_is_refused(self):
         """The renamed database volume is inspected by its name before any write."""
@@ -225,7 +228,7 @@ class RenamedProductTests(RenamedFixture):
         self.use_root(releases["orders"])
         deploy.init_config("orders")
         self.volumes.add("orders-data")
-        before = self.files_under(common.HOME)
+        before = self.files_under(common.STATE)
         self.process.reset_mock()
         with self.assertRaisesRegex(
             common.DeployError,
@@ -236,7 +239,7 @@ class RenamedProductTests(RenamedFixture):
         self.assertEqual(
             self.commands(), [["podman", "volume", "exists", "orders-data"]]
         )
-        self.assertEqual(self.files_under(common.HOME), before)
+        self.assertEqual(self.files_under(common.STATE), before)
 
 
 class UnsupportedKindTests(ProductFixture):
@@ -249,7 +252,7 @@ class UnsupportedKindTests(ProductFixture):
     def test_unsupported_kinds_in_a_release_fail_before_host_commands(self):
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         self.install(releases["gateway"])
         self.install(releases["login-service"])
         release = releases["orders"]
@@ -276,7 +279,7 @@ class UnsupportedKindTests(ProductFixture):
                 self.use_root(release)
                 deploy.init_config("orders")
                 self.volumes.add("orders-data")
-                before = self.files_under(common.HOME)
+                before = self.files_under(common.STATE)
                 self.process.reset_mock()
                 with self.assertRaisesRegex(
                     common.DeployError,
@@ -284,4 +287,4 @@ class UnsupportedKindTests(ProductFixture):
                 ):
                     deploy.install()
                 self.assertEqual(self.commands(), [])
-                self.assertEqual(self.files_under(common.HOME), before)
+                self.assertEqual(self.files_under(common.STATE), before)

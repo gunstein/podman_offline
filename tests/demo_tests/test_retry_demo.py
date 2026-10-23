@@ -37,9 +37,9 @@ class DemoRetryTests(RetryFixture):
         for name, value in secret["data"].items():
             self.assertEqual(
                 base64.b64decode(value),
-                (common.HOME / "app1/credentials/todo" / name).read_bytes(),
+                (common.STATE / "app1/credentials/todo" / name).read_bytes(),
             )
-        self.assertFalse((common.HOME / "app1/files/app1-signing.tar").exists())
+        self.assertFalse((common.STATE / "app1/files/app1-signing.tar").exists())
         self.assertEqual(
             catalog.component_paths("app1")[2].stat().st_mode & 0o777, 0o600
         )
@@ -66,7 +66,7 @@ class DemoRetryTests(RetryFixture):
             "uninstall", expected=1, delete_data=True, failure=service("identity")
         )
         self.attempt("uninstall", delete_data=True)
-        self.assertFalse((common.HOME / "app1").exists())
+        self.assertFalse((common.STATE / "app1").exists())
         self.assertEqual(json.loads(volumes.read_text()), ["app2-data", "app2-signing"])
         self.assertEqual(
             {

@@ -386,7 +386,7 @@ class TemplateLifecycleTests(ProductFixture):
     def test_init_config_allows_declared_operator_source_before_delivery(self):
         self.operator_release()
         deploy.init_config("worker")
-        config = common.HOME / "worker/config.yaml"
+        config = common.STATE / "worker/config.yaml"
         self.assertEqual(self.mode(config), 0o600)
         self.assertEqual(
             yaml.safe_load(config.read_text()),
@@ -399,7 +399,7 @@ class TemplateLifecycleTests(ProductFixture):
         self.operator_release()
         # Model the persistent config independently of init-config so this
         # regression also reaches validate on the pre-fix implementation.
-        config = common.HOME / "worker/config.yaml"
+        config = common.STATE / "worker/config.yaml"
         config.parent.mkdir(parents=True)
         config.write_text(yaml.safe_dump(self.operator_product()["worker"]["defaults"]))
         before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
@@ -433,7 +433,7 @@ class TemplateLifecycleTests(ProductFixture):
         )
         self.assertEqual(self.mode(output), 0o600)
         self.assertEqual(
-            (common.HOME / "worker/credentials/api/token").read_bytes(),
+            (common.STATE / "worker/credentials/api/token").read_bytes(),
             b"OperatorToken\n\n",
         )
         self.assertNotIn("OperatorToken", self.stdout.getvalue())
@@ -448,12 +448,12 @@ class TemplateLifecycleTests(ProductFixture):
         ) as error:
             deploy.init_config("worker")
         self.assertNotIn("OperatorToken", str(error.exception))
-        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.assertFalse((common.STATE / "worker/config.yaml").exists())
         self.process.assert_not_called()
 
     def test_init_config_refuses_known_directory_without_referenced_key(self):
         self.operator_release()
-        directory = common.HOME / "worker/credentials/api/token"
+        directory = common.STATE / "worker/credentials/api/token"
         directory.mkdir(parents=True)
         (directory / "other").write_text("OperatorToken")
         with self.assertRaisesRegex(
@@ -462,7 +462,7 @@ class TemplateLifecycleTests(ProductFixture):
         ) as error:
             deploy.init_config("worker")
         self.assertNotIn("OperatorToken", str(error.exception))
-        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.assertFalse((common.STATE / "worker/config.yaml").exists())
         self.process.assert_not_called()
 
     def test_install_upgrade_failure_retry_and_retention(self):
@@ -492,13 +492,13 @@ class TemplateLifecycleTests(ProductFixture):
         self.write_product(product)
         releases = self.build_and_unpack()
         self.install(releases["worker"])
-        password = common.HOME / "worker/credentials/db/password"
+        password = common.STATE / "worker/credentials/db/password"
         before = password.read_bytes()
         output = catalog.component_paths("worker")[2]
         initial = output.read_bytes()
         self.install(releases["worker"])
         self.assertEqual(initial, output.read_bytes())
-        config_path = common.HOME / "worker/config.yaml"
+        config_path = common.STATE / "worker/config.yaml"
         config = yaml.safe_load(config_path.read_text())
         config["HOST"] = "second-host"
         config_path.write_text(yaml.safe_dump(config))
@@ -721,14 +721,14 @@ class ConfigMapLifecycleTests(ProductFixture):
             )
 
         self.assertEqual(endpoint(), "http://worker.test:8080")
-        config_path = common.HOME / "worker/config.yaml"
+        config_path = common.STATE / "worker/config.yaml"
         config = yaml.safe_load(config_path.read_text())
         config.update(API_HOST="changed.test", API_PORT=9090)
         config_path.write_text(yaml.safe_dump(config))
         self.install(releases["worker"])
         self.assertEqual(endpoint(), "http://changed.test:9090")
         self.assertEqual(self.mode(output), 0o600)
-        self.assertFalse((common.HOME / "worker/credentials").exists())
+        self.assertFalse((common.STATE / "worker/credentials").exists())
 
     def test_init_config_refuses_missing_inline_key_before_writing(self):
         product = self.product()
@@ -739,14 +739,14 @@ class ConfigMapLifecycleTests(ProductFixture):
         self.process.reset_mock()
         with self.assertRaisesRegex(common.DeployError, "API_PORT"):
             deploy.init_config("worker")
-        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.assertFalse((common.STATE / "worker/config.yaml").exists())
         self.process.assert_not_called()
         product = self.product()
         product["worker"]["manifests"][0]["metadata"] = None
         self.write_product(product)
         with self.assertRaisesRegex(common.DeployError, "metadata must be a map"):
             rendering.component_defaults("worker")
-        self.assertFalse((common.HOME / "worker/config.yaml").exists())
+        self.assertFalse((common.STATE / "worker/config.yaml").exists())
 
 
 class InitSecretLifecycleTests(ProductFixture):
@@ -833,9 +833,9 @@ class InitSecretLifecycleTests(ProductFixture):
         self.install(release, configure=provide)
         output = catalog.component_paths("worker")[2]
         self.assert_connection(output, "retained.invalid")
-        before = (common.HOME / "worker/credentials/password").read_bytes()
+        before = (common.STATE / "worker/credentials/password").read_bytes()
         self.install(release)
         self.assert_connection(output, "retained.invalid")
         self.assertEqual(
-            (common.HOME / "worker/credentials/password").read_bytes(), before
+            (common.STATE / "worker/credentials/password").read_bytes(), before
         )

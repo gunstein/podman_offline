@@ -33,7 +33,7 @@ def registration_stage(components, directory, known, home=None, configs=None):
     configs (dev) maps each component to its config before it is written; dev
     registrations then come only from the catalog, so existing ones are ignored.
     """
-    home = home or common.HOME
+    home = home or common.STATE
     owners = catalog.role_owners(known, "registration owners")
     for name in catalog.ROLE_FILES:
         source = home / name
@@ -285,7 +285,7 @@ def write_registrations(updates, home=None, removals=()):
     Unchanged files are kept. Callers record owner work first (save_pending),
     because a deleted registration no longer shows that its owner must restart.
     """
-    home = home or common.HOME
+    home = home or common.STATE
     if any(
         (home / relative).is_symlink() for relative in list(updates) + list(removals)
     ):
@@ -329,7 +329,7 @@ def registration_changes(updates, owners, home=None, removals=()):
     """
     changed = {owners[relative.split("/", 1)[0]] for relative in removals}
     for relative, data in updates.items():
-        target = (home or common.HOME) / relative
+        target = (home or common.STATE) / relative
         if target.is_symlink():
             raise common.DeployError("Refuse symlinked public registration output")
         if not target.is_file() or target.read_bytes() != data:
@@ -357,7 +357,7 @@ def apply_registration_updates(component, product, updates, removals, owners):
 
 def pending_path():
     """Keep retry metadata outside releases; never traverse a symlinked state path."""
-    path = common.HOME / "pending-operation.json"
+    path = common.STATE / "pending-operation.json"
     if any(parent.is_symlink() for parent in [path] + list(path.parents)):
         raise common.DeployError("Refuse symlinked pending-operation state")
     return path
@@ -470,7 +470,7 @@ def check_pending(operation, component, product, delete_data=False):
 
 def sync_pending_directory():
     """Make journal replacement/removal durable before proceeding to side effects."""
-    descriptor = os.open(str(common.HOME), os.O_RDONLY | os.O_DIRECTORY)
+    descriptor = os.open(str(common.STATE), os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(descriptor)
     finally:
@@ -480,7 +480,7 @@ def sync_pending_directory():
 def save_pending(state):
     """Atomically replace private metadata; an interrupted write retains the old record."""
     path = pending_path()
-    descriptor, temporary = tempfile.mkstemp(prefix=".pending-", dir=str(common.HOME))
+    descriptor, temporary = tempfile.mkstemp(prefix=".pending-", dir=str(common.STATE))
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(state, stream, sort_keys=True)

@@ -16,8 +16,11 @@ class PlatformSafetyTests(ComponentFixture):
 
     def snapshot(self):
         return {
-            str(path.relative_to(common.HOME)): (path.read_bytes(), path.stat().st_mode)
-            for path in common.HOME.rglob("*")
+            str(path.relative_to(common.STATE)): (
+                path.read_bytes(),
+                path.stat().st_mode,
+            )
+            for path in common.STATE.rglob("*")
             if path.is_file()
         }
 
@@ -29,7 +32,7 @@ class PlatformSafetyTests(ComponentFixture):
             "components/app1/config.defaults.yaml",
         ):
             self.write(name, (repo / name).read_bytes())
-        target = common.HOME / "app1/config.yaml"
+        target = common.STATE / "app1/config.yaml"
         target.unlink()
         self.process.reset_mock()
         deploy.init_config("app1")
@@ -37,7 +40,7 @@ class PlatformSafetyTests(ComponentFixture):
         deploy.init_config("app1")
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
-        self.assertFalse((common.HOME / "app1/credentials").exists())
+        self.assertFalse((common.STATE / "app1/credentials").exists())
         self.process.assert_not_called()
 
     def test_apps_never_embed_platform_and_missing_dependency_writes_nothing(self):
@@ -50,7 +53,7 @@ class PlatformSafetyTests(ComponentFixture):
                 )
                 self.select(name)
                 self.assertEqual(deploy.bundle_descriptor()["name"], name)
-                marker = common.HOME / "installed/platform"
+                marker = common.STATE / "installed/platform"
                 if marker.exists():
                     marker.unlink()
                 before = self.snapshot()
@@ -72,7 +75,7 @@ class PlatformSafetyTests(ComponentFixture):
         self,
     ):
         deploy.install()
-        requirement = common.HOME / "metadata/app1.json"
+        requirement = common.STATE / "metadata/app1.json"
         self.assertEqual(
             json.loads(requirement.read_text())["requires"],
             {
@@ -128,8 +131,8 @@ class PlatformSafetyTests(ComponentFixture):
             )
         )
         deploy.install()
-        (common.HOME / "installed/identity").unlink()
-        sibling = (common.HOME / "app1/config.yaml").read_bytes()
+        (common.STATE / "installed/identity").unlink()
+        sibling = (common.STATE / "app1/config.yaml").read_bytes()
         self.process.reset_mock()
         self.process.return_value = subprocess.CompletedProcess([], 0)
         deploy.uninstall("platform", delete_data=True)
@@ -145,8 +148,8 @@ class PlatformSafetyTests(ComponentFixture):
                 ["podman", "volume", "rm", "platform-routes"],
             ],
         )
-        self.assertEqual((common.HOME / "app1/config.yaml").read_bytes(), sibling)
-        self.assertFalse((common.HOME / "platform").exists())
+        self.assertEqual((common.STATE / "app1/config.yaml").read_bytes(), sibling)
+        self.assertFalse((common.STATE / "platform").exists())
         self.assertTrue((common.QUADLET_DIR / "myproduct.network").exists())
 
     def test_invalid_mounted_config_map_refuses_before_uninstall_side_effects(self):

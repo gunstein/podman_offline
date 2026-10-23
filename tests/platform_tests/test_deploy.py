@@ -496,8 +496,8 @@ class GeneratedSecretTests(DeployFixture):
         prod_config = dict(self.config)
         prod_config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
         self.write("home/config.yaml", yaml.safe_dump(prod_config))
-        rendering.generate_secrets(self.config, common.HOME)
-        prod_path = common.HOME / "credentials/app/key"
+        rendering.generate_secrets(self.config, common.STATE)
+        prod_path = common.STATE / "credentials/app/key"
         before = prod_path.read_bytes()
         deploy.install()
         deploy.install()
@@ -886,8 +886,8 @@ class CommandTests(DeployFixture):
         def readonly_open(path, mode="r", *args, **kwargs):
             if (
                 self.root in path.parents
-                and common.HOME not in path.parents
-                and path != common.HOME
+                and common.STATE not in path.parents
+                and path != common.STATE
                 and any(flag in mode for flag in "wax+")
             ):
                 raise AssertionError("write outside standalone persistent home")
@@ -896,8 +896,8 @@ class CommandTests(DeployFixture):
         def readonly_mkdir(path, *args, **kwargs):
             if (
                 self.root in path.parents
-                and common.HOME not in path.parents
-                and path != common.HOME
+                and common.STATE not in path.parents
+                and path != common.STATE
             ):
                 raise AssertionError("mkdir in standalone release")
             return original_mkdir(path, *args, **kwargs)
@@ -989,11 +989,9 @@ class CommandTests(DeployFixture):
                 module = runpy.run_path(common.__file__, run_name="rootless_paths_test")
         account.assert_called_once_with(os.getuid())
         self.assertEqual(module["HOME"], home)
-        self.assertEqual(module["QUADLET_DIR"], home / ".config/containers/systemd")
-        self.assertEqual(
-            module["QUADLET_YAML"], home / ".config/containers/systemd/myproduct.yaml"
-        )
-        self.assertEqual(module["FILES_DIR"], home / "files")
+        # Production paths come only from layout.select(), never from the home.
+        for name in ("STATE", "QUADLET_DIR", "QUADLET_YAML", "FILES_DIR"):
+            self.assertIsNone(module[name])
 
     def test_install_rejects_mismatched_home_before_any_action(self):
         self.install_fixture()

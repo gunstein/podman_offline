@@ -147,16 +147,16 @@ class LifecycleAgreementTests(ProductFixture):
             (common.BUILD / "dev/orders/credentials/database/password").exists()
         )
         releases = self.build_and_unpack()
-        self.provide_credentials(product, common.HOME)
+        self.provide_credentials(product, common.STATE)
         for name in ("gateway", "login-service"):
             self.install(releases[name])
         self.process.reset_mock()
         with self.assertRaisesRegex(common.DeployError, pattern):
             self.install(releases["orders"])
         self.assertFalse(
-            (common.HOME / "orders/credentials/database/password").exists()
+            (common.STATE / "orders/credentials/database/password").exists()
         )
-        self.assertFalse((common.HOME / "installed/orders").exists())
+        self.assertFalse((common.STATE / "installed/orders").exists())
 
 
 if __name__ == "__main__":

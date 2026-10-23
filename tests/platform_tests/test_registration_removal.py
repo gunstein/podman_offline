@@ -34,9 +34,9 @@ class RegistrationRemovalTests(ProductFixture):
         return {
             str(path): path.read_bytes()
             for path in (
-                list((common.HOME / component).rglob("*"))
-                + [common.HOME / "routes" / (component + ".conf")]
-                + list((common.HOME / "clients" / component).rglob("*"))
+                list((common.STATE / component).rglob("*"))
+                + [common.STATE / "routes" / (component + ".conf")]
+                + list((common.STATE / "clients" / component).rglob("*"))
             )
             if path.is_file()
         }
@@ -55,7 +55,7 @@ class RegistrationRemovalTests(ProductFixture):
 
     def imported(self, owner, volume, member):
         """Read one file from the import archive an owner receives."""
-        path = common.HOME / owner / "files" / (volume + ".tar")
+        path = common.STATE / owner / "files" / (volume + ".tar")
         with tarfile.open(str(path)) as tar:
             stream = tar.extractfile(member)
             assert stream is not None, member
@@ -72,8 +72,8 @@ class RegistrationRemovalTests(ProductFixture):
     def assert_siblings_kept(self):
         self.assertEqual(self.snapshot("orders"), self.sibling)
         self.assertIn("orders/client.json", self.client_index())
-        self.assertTrue((common.HOME / "routes/orders.conf").is_file())
-        self.assertTrue((common.HOME / "routes/manual.conf").is_file())
+        self.assertTrue((common.STATE / "routes/orders.conf").is_file())
+        self.assertTrue((common.STATE / "routes/manual.conf").is_file())
         self.assertIn("/orders/", self.route_index())
         self.assertIn("/manual/", self.route_index())
 
@@ -90,9 +90,9 @@ class RegistrationRemovalTests(ProductFixture):
                 self.process.reset_mock()
                 deploy.install()
                 self.assertEqual(self.restarts(), expected)
-                self.assertEqual((common.HOME / ROUTE).exists(), "routes" not in roles)
+                self.assertEqual((common.STATE / ROUTE).exists(), "routes" not in roles)
                 self.assertEqual(
-                    (common.HOME / CLIENT).exists(), "clients" not in roles
+                    (common.STATE / CLIENT).exists(), "clients" not in roles
                 )
                 self.assertEqual(
                     "inventory/client.json" in self.client_index(),
@@ -100,9 +100,9 @@ class RegistrationRemovalTests(ProductFixture):
                 )
                 self.assertEqual("/stock/" in self.route_index(), "routes" not in roles)
                 self.assert_siblings_kept()
-                self.assertFalse((common.HOME / "pending-operation.json").exists())
+                self.assertFalse((common.STATE / "pending-operation.json").exists())
                 self.assertEqual(
-                    (common.HOME / "installed/inventory").read_text(), "1.0.1\n"
+                    (common.STATE / "installed/inventory").read_text(), "1.0.1\n"
                 )
 
     def test_repeating_the_same_release_changes_nothing_more(self):
@@ -150,9 +150,9 @@ class RegistrationRemovalTests(ProductFixture):
                 status, _ = self.attempt(self.inventory, **failure)
                 self.assertNotEqual(status, 0)
                 # The record keeps the work, however much was already deleted.
-                self.assertFalse((common.HOME / CLIENT).exists())
+                self.assertFalse((common.STATE / CLIENT).exists())
                 pending = json.loads(
-                    (common.HOME / "pending-operation.json").read_text()
+                    (common.STATE / "pending-operation.json").read_text()
                 )
                 self.assertEqual(pending["component"], "inventory")
                 self.assertEqual(pending["owners"], owners)
@@ -164,10 +164,10 @@ class RegistrationRemovalTests(ProductFixture):
                     if event[:3] == ["systemctl", "--user", "restart"]
                 ]
                 self.assertEqual(restarted, retry)
-                self.assertFalse((common.HOME / ROUTE).exists())
+                self.assertFalse((common.STATE / ROUTE).exists())
                 self.assertNotIn("inventory/client.json", self.client_index())
                 self.assertNotIn("/stock/", self.route_index())
-                self.assertFalse((common.HOME / "pending-operation.json").exists())
+                self.assertFalse((common.STATE / "pending-operation.json").exists())
                 self.assert_siblings_kept()
 
     def test_uninstall_after_an_upgrade_removed_the_registrations(self):
@@ -177,7 +177,7 @@ class RegistrationRemovalTests(ProductFixture):
         deploy.uninstall()
         # Nothing of inventory is registered any more, so no owner restarts.
         self.assertEqual(self.restarts(), [])
-        self.assertFalse((common.HOME / "installed/inventory").exists())
+        self.assertFalse((common.STATE / "installed/inventory").exists())
         self.assert_siblings_kept()
 
     def test_another_component_without_files_is_never_removed(self):
@@ -185,8 +185,8 @@ class RegistrationRemovalTests(ProductFixture):
         self.use_root(self.releases["orders"])
         self.process.reset_mock()
         deploy.install()
-        self.assertTrue((common.HOME / ROUTE).is_file())
-        self.assertTrue((common.HOME / CLIENT / "client.json").is_file())
+        self.assertTrue((common.STATE / ROUTE).is_file())
+        self.assertTrue((common.STATE / CLIENT / "client.json").is_file())
         self.assertIn("inventory/client.json", self.client_index())
         self.assertIn("/stock/", self.route_index())
 

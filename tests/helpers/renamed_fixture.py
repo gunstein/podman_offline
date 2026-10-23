@@ -22,7 +22,7 @@ class RenamedFixture(ProductFixture):
         """Build, delete the source checkout, then install offline in dependency order."""
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         restarts = {}
         for name in ("gateway", "login-service", "orders", "inventory", "manual"):
             restarts[name] = self.install(releases[name])
@@ -32,7 +32,7 @@ class RenamedFixture(ProductFixture):
         """Run one install in a fresh interpreter against the same persistent home."""
         parameters = dict(
             root=str(release),
-            home=str(common.HOME),
+            home=str(common.STATE),
             source=str(SOURCE),
             record=str(self.root / "attempt.json"),
             action="install",
@@ -53,7 +53,7 @@ class RenamedFixture(ProductFixture):
         """Build, delete the source and install the gateway and login-service."""
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(RENAMED, common.HOME)
+        self.provide_credentials(RENAMED, common.STATE)
         for name in ("gateway", "login-service"):
             self.install(releases[name])
         return releases

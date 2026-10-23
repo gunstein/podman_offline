@@ -49,12 +49,12 @@ class ComponentFixture(DeployFixture):
 
     def mark_installed(self, component, version):
         """Record a completed install of a component this test does not install."""
-        mark_installed(self.root, common.HOME, component, version)
-        return common.HOME / "installed" / component
+        mark_installed(self.root, common.STATE, component, version)
+        return common.STATE / "installed" / component
 
     def known(self):
         """Installed metadata plus the selected bundle, as install_components builds it."""
-        known = catalog.load_installed_metadata(common.HOME)
+        known = catalog.load_installed_metadata(common.STATE)
         descriptor = deploy.bundle_descriptor()
         known[descriptor["name"]] = descriptor
         return known

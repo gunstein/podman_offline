@@ -434,7 +434,7 @@ def unit_name(component):
 
 def component_paths(component, home=None):
     """Return one component's persistent config, archives and Quadlet paths."""
-    base = (home or common.HOME).resolve()
+    base = (home or common.STATE).resolve()
     state = base / component
     unit = unit_name(component)
     paths = [

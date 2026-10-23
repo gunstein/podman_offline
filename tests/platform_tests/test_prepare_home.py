@@ -53,7 +53,7 @@ class HomeFilesystemTests(unittest.TestCase):
         lock = self.home / HOME.LOCK
         lock.write_bytes(b"existing lock")
         inode = lock.stat().st_ino
-        storage = self.home / ".local/share/containers/storage"
+        storage = self.home / "storage/containers/storage"
         data = storage / "retained"
         data.write_bytes(b"container data")
         data.chmod(0o644)
@@ -83,10 +83,10 @@ class HomeFilesystemTests(unittest.TestCase):
                     target.unlink()
 
     def test_existing_file_in_directory_chain_refused(self):
-        (self.home / ".config").write_bytes(b"not a directory")
+        (self.home / "config").write_bytes(b"not a directory")
         with self.assertRaises(OSError):
             HOME.prepare(str(self.home))
-        self.assertFalse((self.home / ".local").exists())
+        self.assertFalse((self.home / "storage").exists())
 
     def test_existing_lock_links_fifo_and_directory_refused(self):
         HOME.prepare(str(self.home))
@@ -111,25 +111,22 @@ class HomeFilesystemTests(unittest.TestCase):
                     lock.touch()
 
     def test_wrong_owner_refused_before_chmod(self):
-        (self.home / ".config").mkdir(mode=0o755)
+        (self.home / "config").mkdir(mode=0o755)
         original = HOME.os.geteuid()
-        with mock.patch.object(
-            HOME.os, "geteuid", side_effect=[original, original + 1]
-        ):
-            with self.assertRaisesRegex(
-                ValueError, "owned by another user: .*\\.config"
-            ):
+        # The root-owned installation root itself has no owner check here.
+        with mock.patch.object(HOME.os, "geteuid", return_value=original + 1):
+            with self.assertRaisesRegex(ValueError, "owned by another user: .*config"):
                 HOME.prepare(str(self.home))
-        self.assertEqual(stat.S_IMODE((self.home / ".config").stat().st_mode), 0o755)
-        self.assertFalse((self.home / ".local").exists())
+        self.assertEqual(stat.S_IMODE((self.home / "config").stat().st_mode), 0o755)
+        self.assertFalse((self.home / "storage").exists())
 
     def test_directory_swap_before_open_is_refused_without_target_changes(self):
         real_open = os.open
         before = self.snapshot()
 
         def replace(path, flags, *args, **kwargs):
-            if path == ".config" and not (self.home / ".config").exists():
-                (self.home / ".config").symlink_to(self.outside)
+            if path == "config" and not (self.home / "config").exists():
+                (self.home / "config").symlink_to(self.outside)
             return real_open(path, flags, *args, **kwargs)
 
         with mock.patch.object(HOME.os, "open", side_effect=replace):
@@ -145,8 +142,8 @@ class HomeFilesystemTests(unittest.TestCase):
 
         def replace(descriptor, mode):
             if not replaced:
-                (self.home / ".config").rename(self.home / ".config-held")
-                (self.home / ".config").symlink_to(self.outside)
+                (self.home / "config").rename(self.home / "config-held")
+                (self.home / "config").symlink_to(self.outside)
                 replaced.append(True)
             real_chmod(descriptor, mode)
 
@@ -182,10 +179,10 @@ class HomeFilesystemTests(unittest.TestCase):
                 self.assertEqual(self.snapshot(), before)
 
     def test_retry_after_refusal(self):
-        (self.home / ".config").symlink_to(self.outside)
+        (self.home / "config").symlink_to(self.outside)
         with self.assertRaises(OSError):
             HOME.prepare(str(self.home))
-        (self.home / ".config").unlink()
+        (self.home / "config").unlink()
         HOME.prepare(str(self.home))
         self.assertTrue((self.home / HOME.LOCK).is_file())
 
@@ -195,7 +192,7 @@ class HomeFilesystemTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(SystemExit, "non-root"):
                 HOME.main()
-        self.assertFalse((self.home / ".config").exists())
+        self.assertFalse((self.home / "config").exists())
 
     def test_python_command_on_stdin_does_not_write_bytecode(self):
         result = subprocess.run(

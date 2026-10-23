@@ -12,7 +12,7 @@ from unittest import mock
 
 import bundle
 import yaml
-from deployment import common, health
+from deployment import common, health, layout
 from deployment import render as rendering
 
 
@@ -32,6 +32,9 @@ class DeployFixture(unittest.TestCase):
         os.environ.pop(bundle.SIGNING_KEY, None)
         paths = {
             "HOME": self.root / "home",
+            # Production state shares the fixture home; layout.select is
+            # replaced below and tested separately (test_layout.py).
+            "STATE": self.root / "home",
             "ROOT": self.root,
             "CONFIG": self.root / "config.yaml",
             "MANIFESTS": self.root / "manifests",
@@ -46,6 +49,10 @@ class DeployFixture(unittest.TestCase):
         }
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(common, name, path))
+        self.stack.enter_context(
+            mock.patch.object(layout, "select", return_value=self.root / "install")
+        )
+        self.stack.enter_context(mock.patch.object(layout, "check_user_manager"))
         self.process = self.stack.enter_context(mock.patch.object(subprocess, "run"))
         # Containers report healthy unless a test says otherwise (backlog 34).
         self.container_state = self.stack.enter_context(

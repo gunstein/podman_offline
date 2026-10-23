@@ -87,8 +87,9 @@ def validate_catalog():
 def validate_bundle():
     """Validate this bundle's component as install would, without the volume query.
 
-    Needs the service user (not root, its own HOME) but no runtime directory,
-    so it also works before linger is enabled.
+    Needs the service user (not root, its own HOME) and its bootstrap file
+    with a prepared installation root (layout.select), but no runtime
+    directory or user manager, so it also works before linger is enabled.
     """
     deploy.service_user()
     descriptor, known, config, config_path, render = deploy.install_checks()

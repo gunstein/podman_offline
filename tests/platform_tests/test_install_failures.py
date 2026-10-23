@@ -15,7 +15,7 @@ class InstallFailureTests(ComponentFixture):
         super().setUp()
         self.registration_fixture()
         for component in ("platform", "app1"):
-            path = common.HOME / component / "config.yaml"
+            path = common.STATE / component / "config.yaml"
             config = yaml.safe_load(path.read_text())
             config["VOLUME_FILES"] = {component + "-payload": [{"path": "payload"}]}
             config["SECRET_FILES"] = {
@@ -72,8 +72,8 @@ class InstallFailureTests(ComponentFixture):
     def snapshot(self):
         """Include contents and modes, and detect newly added/deleted files."""
         return {
-            str(path.relative_to(common.HOME)): (path.read_bytes(), self.mode(path))
-            for path in common.HOME.rglob("*")
+            str(path.relative_to(common.STATE)): (path.read_bytes(), self.mode(path))
+            for path in common.STATE.rglob("*")
             if path.is_file()
         }
 
@@ -82,7 +82,7 @@ class InstallFailureTests(ComponentFixture):
             if args == failure:
                 raise subprocess.CalledProcessError(exit_code, args)
 
-        (common.HOME / "routes/app1.conf").write_bytes(
+        (common.STATE / "routes/app1.conf").write_bytes(
             self.before["routes/app1.conf"][0]
         )
         self.process.side_effect = command
@@ -153,7 +153,7 @@ class InstallFailureTests(ComponentFixture):
                     self.before["app1/files/app1-payload.tar"],
                 )
                 self.assertIn(
-                    "return 201", (common.HOME / "routes/app1.conf").read_text()
+                    "return 201", (common.STATE / "routes/app1.conf").read_text()
                 )
                 calls = [call[0][0] for call in self.process.call_args_list]
                 self.assertEqual(calls[-1], failure)

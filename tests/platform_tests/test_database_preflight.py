@@ -87,20 +87,20 @@ class ConfiguredDatabaseTests(ProductFixture):
     def test_install_checks_the_configured_volume(self):
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
-        self.provide_credentials(self.product, common.HOME)
+        self.provide_credentials(self.product, common.STATE)
         for name in ("gateway", "login-service"):
             self.install(releases[name])
         self.use_root(releases["orders"])
         deploy.init_config("orders")
         self.volumes.add("orders-data")
-        before = self.files_under(common.HOME)
+        before = self.files_under(common.STATE)
         self.process.reset_mock()
         with self.assertRaisesRegex(common.DeployError, "existing volume orders-data"):
             deploy.install()
         self.assertEqual(
             self.commands(), [["podman", "volume", "exists", "orders-data"]]
         )
-        self.assertEqual(self.files_under(common.HOME), before)
+        self.assertEqual(self.files_under(common.STATE), before)
 
 
 class UnsupportedPasswordSettingTests(ProductFixture):

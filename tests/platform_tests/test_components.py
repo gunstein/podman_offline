@@ -44,7 +44,7 @@ class ComponentTests(ComponentFixture):
         self.component_manifest("platform", "wrong-pod")
         with self.assertRaisesRegex(common.DeployError, "10-pod.yaml.*platform-"):
             deploy.install()
-        self.assertFalse((common.HOME / "platform/generated/token").exists())
+        self.assertFalse((common.STATE / "platform/generated/token").exists())
         self.process.assert_not_called()
 
     def test_app_prefix_error_prevents_platform_secret_generation(self):
@@ -59,7 +59,7 @@ class ComponentTests(ComponentFixture):
         )
         with self.assertRaisesRegex(common.DeployError, "config.yaml.*app1-"):
             deploy.install()
-        self.assertFalse((common.HOME / "platform/generated/token").exists())
+        self.assertFalse((common.STATE / "platform/generated/token").exists())
         self.process.assert_not_called()
 
     def test_config_group_names_are_checked_before_generated_files(self):
@@ -71,7 +71,7 @@ class ComponentTests(ComponentFixture):
         self.select("platform")
         with self.assertRaisesRegex(common.DeployError, "config.yaml.*platform-"):
             deploy.install()
-        self.assertFalse((common.HOME / "platform/generated/token").exists())
+        self.assertFalse((common.STATE / "platform/generated/token").exists())
 
     def test_install_writes_only_selected_component_services_and_state(self):
         """Keep app2 state and units unchanged while installing platform and app1."""
@@ -110,12 +110,12 @@ class ComponentTests(ComponentFixture):
         with self.assertRaisesRegex(common.DeployError, "unavailable"):
             deploy.install()
         self.assertEqual(old.read_text(), "old yaml")
-        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.assertFalse((common.STATE / "installed/app1").exists())
 
     def test_help_requires_installed_platform_before_image_commands(self):
         """Reject a help-only bundle on an empty host without any image operation."""
         self.select("help")
-        (common.HOME / "installed/platform").unlink()
+        (common.STATE / "installed/platform").unlink()
         self.component_manifest("help")
         self.write(
             "home/help/config.yaml",
@@ -134,7 +134,7 @@ class ComponentTests(ComponentFixture):
             "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
         )
         deploy.install()
-        self.assertEqual((common.HOME / "installed/platform").read_text(), "1.0.0\n")
+        self.assertEqual((common.STATE / "installed/platform").read_text(), "1.0.0\n")
         self.assertTrue(catalog.component_paths("platform")[2].is_file())
         calls = [call[0][0] for call in self.process.call_args_list]
         self.assertNotIn(
@@ -144,7 +144,7 @@ class ComponentTests(ComponentFixture):
     def test_platform_version_missing_equal_newer_and_older(self):
         """Apply all four platform version decisions without touching running services."""
         descriptor = self.select("platform")
-        (common.HOME / "installed/platform").unlink()
+        (common.STATE / "installed/platform").unlink()
         self.assertTrue(deploy.install_needed(dict(descriptor, version="1.0.0")))
         self.write("home/installed/platform", "1.2.3\n")
         self.assertFalse(deploy.install_needed(dict(descriptor, version="1.2.3")))
@@ -200,17 +200,17 @@ class ComponentTests(ComponentFixture):
     def test_prefix_ambiguous_component_ids_are_refused_before_any_change(self):
         """An installed app1-tools and an incoming app1 would share resource names."""
         self.select("app1")
-        descriptor = mark_installed(self.root, common.HOME, "app2", "1.2.3")
+        descriptor = mark_installed(self.root, common.STATE, "app2", "1.2.3")
         descriptor["name"] = "app1-tools"
         for path, text in (
             (
-                catalog.metadata_path(common.HOME, "app1-tools"),
+                catalog.metadata_path(common.STATE, "app1-tools"),
                 json.dumps(descriptor, sort_keys=True),
             ),
-            (common.HOME / "installed/app1-tools", "1.2.3\n"),
+            (common.STATE / "installed/app1-tools", "1.2.3\n"),
         ):
             path.write_text(text, encoding="utf-8")
-        before = {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}
+        before = {p: p.read_bytes() for p in common.STATE.rglob("*") if p.is_file()}
         self.process.reset_mock()
         with self.assertRaisesRegex(
             common.DeployError, "component app1-tools starts with app1-"
@@ -218,7 +218,7 @@ class ComponentTests(ComponentFixture):
             deploy.install()
         self.process.assert_not_called()
         self.assertEqual(
-            {p: p.read_bytes() for p in common.HOME.rglob("*") if p.is_file()}, before
+            {p: p.read_bytes() for p in common.STATE.rglob("*") if p.is_file()}, before
         )
 
     def test_platform_downgrade_fails_before_any_command_or_generated_file(self):
@@ -232,7 +232,7 @@ class ComponentTests(ComponentFixture):
         with self.assertRaisesRegex(common.DeployError, "downgrade refused"):
             deploy.install()
         self.process.assert_not_called()
-        self.assertFalse((common.HOME / "platform/generated/token").exists())
+        self.assertFalse((common.STATE / "platform/generated/token").exists())
 
     def test_registrations_stage_public_data_without_touching_siblings(self):
         """Merge app1 into a pending route/client view while preserving live app2 files."""
@@ -244,7 +244,7 @@ class ComponentTests(ComponentFixture):
         imports, updates, _ = registrations.registration_stage(
             ["app1"], work, self.known()
         )
-        self.assertFalse((common.HOME / "routes/app1.conf").exists())
+        self.assertFalse((common.STATE / "routes/app1.conf").exists())
         self.assertEqual(sibling.read_text(), "existing app2 route")
         self.assertEqual(client.read_text(), '{"Id": "app2"}')
         self.assertEqual(
@@ -265,7 +265,7 @@ class ComponentTests(ComponentFixture):
         registrations.write_registrations(updates)
         self.assertEqual(registrations.registration_changes(updates, owners), set())
         self.assertEqual(sibling.read_text(), "existing app2 route")
-        self.assertEqual(self.mode(common.HOME / "clients/app1/client.json"), 0o600)
+        self.assertEqual(self.mode(common.STATE / "clients/app1/client.json"), 0o600)
 
     def test_invalid_client_and_origin_are_rejected_before_live_writes(self):
         """Reject inconsistent public origins and client identities without modifying routes."""
@@ -276,7 +276,7 @@ class ComponentTests(ComponentFixture):
         )
         with self.assertRaisesRegex(common.DeployError, "PUBLIC_ORIGIN.*must match"):
             deploy.install()
-        self.assertFalse((common.HOME / "routes").exists())
+        self.assertFalse((common.STATE / "routes").exists())
         self.process.assert_not_called()
         self.write(
             "home/app1/config.yaml",
@@ -344,7 +344,7 @@ class ComponentTests(ComponentFixture):
         self.assertIn("PUBLIC_ORIGIN", errors.getvalue())
         self.assertIn("config.yaml", errors.getvalue())
         self.assertNotIn(secret, output.getvalue() + errors.getvalue())
-        self.assertFalse((common.HOME / "platform/generated/token").exists())
+        self.assertFalse((common.STATE / "platform/generated/token").exists())
         self.process.assert_not_called()
 
     def test_registration_origin_failure_does_not_echo_value_or_write_live_state(self):
@@ -361,8 +361,8 @@ class ComponentTests(ComponentFixture):
         ) as caught:
             registrations.registration_stage(["app1"], work, self.known())
         self.assertNotIn("synthetic-credential", str(caught.exception))
-        self.assertFalse((common.HOME / "routes").exists())
-        self.assertFalse((common.HOME / "clients").exists())
+        self.assertFalse((common.STATE / "routes").exists())
+        self.assertFalse((common.STATE / "clients").exists())
 
     def test_equal_platform_images_are_still_verified(self):
         """A platform bundle verifies its images while retaining equal-version output."""
@@ -395,9 +395,9 @@ class ComponentTests(ComponentFixture):
 
     def test_symlinked_archive_directory_cannot_modify_a_sibling(self):
         """Reject an app1 output alias to app2 before any image or write operation."""
-        sibling = common.HOME / "app2/files"
+        sibling = common.STATE / "app2/files"
         sibling.mkdir(parents=True)
-        (common.HOME / "app1/files").symlink_to(sibling, target_is_directory=True)
+        (common.STATE / "app1/files").symlink_to(sibling, target_is_directory=True)
         with self.assertRaisesRegex(common.DeployError, "symlinked component"):
             deploy.install()
         self.assertEqual(list(sibling.iterdir()), [])
@@ -434,9 +434,9 @@ class ComponentTests(ComponentFixture):
         self.assertFalse(route.exists())
         self.assertEqual(other.read_text(), "app2 route")
         self.assertEqual(sibling.read_text(), "persistent app2")
-        self.assertTrue((common.HOME / "app1/config.yaml").exists())
+        self.assertTrue((common.STATE / "app1/config.yaml").exists())
         self.assertTrue((common.QUADLET_DIR / "myproduct.network").exists())
-        self.assertFalse((common.HOME / "installed/app1").exists())
+        self.assertFalse((common.STATE / "installed/app1").exists())
         calls = [call[0][0] for call in self.process.call_args_list]
         self.assertNotIn(
             ["systemctl", "--user", "stop", "myproduct-platform.service"], calls
@@ -451,7 +451,7 @@ class ComponentTests(ComponentFixture):
         with self.assertRaisesRegex(common.DeployError, "still required"):
             deploy.uninstall("platform")
         self.process.assert_not_called()
-        (common.HOME / "installed/app1").unlink()
+        (common.STATE / "installed/app1").unlink()
         self.mark_installed("help", "1.2.3")
         with self.assertRaisesRegex(common.DeployError, "help"):
             deploy.uninstall("platform")
@@ -489,8 +489,8 @@ class ComponentTests(ComponentFixture):
         calls = [call[0][0] for call in self.process.call_args_list]
         self.assertIn(["podman", "volume", "rm", "app1-data"], calls)
         self.assertFalse(any("--all" in args or "--force" in args for args in calls))
-        self.assertFalse((common.HOME / "app1").exists())
-        self.assertTrue((common.HOME / "platform/config.yaml").exists())
+        self.assertFalse((common.STATE / "app1").exists())
+        self.assertTrue((common.STATE / "platform/config.yaml").exists())
 
     def test_help_upgrade_restart_policy_for_unchanged_and_changed_routes(self):
         """An unchanged route retains platform; a changed route restarts only help and platform."""
@@ -508,11 +508,11 @@ class ComponentTests(ComponentFixture):
         self.write("components/help/VERSION", "1.2.4\n")
         self.select("help")
         self.component_manifest("help")
-        platform_marker = (common.HOME / "installed/platform").read_bytes()
-        app_marker = (common.HOME / "installed/app1").read_bytes()
+        platform_marker = (common.STATE / "installed/platform").read_bytes()
+        app_marker = (common.STATE / "installed/app1").read_bytes()
         platform_yaml = catalog.component_paths("platform")[2].read_bytes()
-        platform_config = (common.HOME / "platform/config.yaml").read_bytes()
-        app_config = (common.HOME / "app1/config.yaml").read_bytes()
+        platform_config = (common.STATE / "platform/config.yaml").read_bytes()
+        app_config = (common.STATE / "app1/config.yaml").read_bytes()
         for changed in (False, True):
             with self.subTest(changed=changed):
                 if changed:
@@ -530,22 +530,23 @@ class ComponentTests(ComponentFixture):
                     + (["myproduct-platform.service"] if changed else []),
                 )
                 self.assertEqual(
-                    (common.HOME / "installed/platform").read_bytes(), platform_marker
+                    (common.STATE / "installed/platform").read_bytes(), platform_marker
                 )
                 self.assertEqual(
-                    (common.HOME / "installed/app1").read_bytes(), app_marker
+                    (common.STATE / "installed/app1").read_bytes(), app_marker
                 )
                 self.assertEqual(
                     catalog.component_paths("platform")[2].read_bytes(), platform_yaml
                 )
                 self.assertEqual(
-                    (common.HOME / "platform/config.yaml").read_bytes(), platform_config
+                    (common.STATE / "platform/config.yaml").read_bytes(),
+                    platform_config,
                 )
                 self.assertEqual(
-                    (common.HOME / "app1/config.yaml").read_bytes(), app_config
+                    (common.STATE / "app1/config.yaml").read_bytes(), app_config
                 )
                 self.assertEqual(
-                    (common.HOME / "installed/help").read_text(), "1.2.4\n"
+                    (common.STATE / "installed/help").read_text(), "1.2.4\n"
                 )
 
     def test_newer_platform_preserves_sibling_state_in_both_app_orders(self):
@@ -561,8 +562,8 @@ class ComponentTests(ComponentFixture):
                     )
                 self.write("components/platform/VERSION", "1.0.0\n")
                 self.select(first)
-                if (common.HOME / "installed/platform").exists():
-                    (common.HOME / "installed/platform").unlink()
+                if (common.STATE / "installed/platform").exists():
+                    (common.STATE / "installed/platform").unlink()
                 self.select("platform")
                 deploy.install()
                 self.select(first)
@@ -578,8 +579,8 @@ class ComponentTests(ComponentFixture):
                 paths = [
                     credentials,
                     data,
-                    common.HOME / first / "config.yaml",
-                    common.HOME / "installed" / first,
+                    common.STATE / first / "config.yaml",
+                    common.STATE / "installed" / first,
                     catalog.component_paths(first)[2],
                     catalog.component_paths(first)[3],
                 ]
@@ -601,7 +602,7 @@ class ComponentTests(ComponentFixture):
                     before,
                 )
                 self.assertEqual(
-                    (common.HOME / "installed/platform").read_text(), "1.1.0\n"
+                    (common.STATE / "installed/platform").read_text(), "1.1.0\n"
                 )
                 restarts = [
                     call[0][0][-1]
@@ -615,7 +616,7 @@ class ComponentTests(ComponentFixture):
                 # Reject a subsequent older release before any operation or persistent write.
                 snapshot = {
                     path: (path.read_bytes(), path.stat().st_mtime_ns)
-                    for path in common.HOME.rglob("*")
+                    for path in common.STATE.rglob("*")
                     if path.is_file()
                 }
                 self.write("components/platform/VERSION", "1.0.0\n")
@@ -627,7 +628,7 @@ class ComponentTests(ComponentFixture):
                 self.assertEqual(
                     {
                         path: (path.read_bytes(), path.stat().st_mtime_ns)
-                        for path in common.HOME.rglob("*")
+                        for path in common.STATE.rglob("*")
                         if path.is_file()
                     },
                     snapshot,
