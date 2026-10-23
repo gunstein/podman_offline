@@ -44,8 +44,11 @@ class ProtectedReleaseTests(unittest.TestCase):
         self.anchor.start()
         self.addCleanup(self.anchor.stop)
         self.product = self.base / "shop"
-        self.product.mkdir()
-        (self.product / "releases").mkdir()
+        # Explicit modes: a umask such as 0002 must not make the protected
+        # anchor group-writable (release.py rightly refuses that).
+        for directory in (self.product, self.product / "releases"):
+            directory.mkdir()
+            directory.chmod(0o755)
         self.trust_dir = self.root / "fapolicyd/trust.d"
         self.trust_dir.mkdir(parents=True)
         trust_patch = mock.patch.object(release, "TRUST_DIR", self.trust_dir)

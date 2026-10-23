@@ -125,6 +125,10 @@ Follow-up results, same environment: `tests/run.py all` 499 OK (1 skipped);
 `platform --isolate` 433 OK; harness 242 OK; ruff, pyright, vermin and
 shellcheck as above (the same 12 pre-existing ruff findings).
 
+An operator run on Ubuntu (umask 0002) failed one item 54 unit test because its
+fixture created the protected anchor without an explicit mode; the fixture now
+sets 0755, and `tests/run.py all` passes under both umask 0002 and 0022.
+
 Real OL9 runs: **none yet**. Record each with run ID, commit, verdict and the
 manual checks above.
 
