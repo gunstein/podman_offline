@@ -966,8 +966,15 @@ deploy and Podman do not infer a file's purpose from the name `session-key`.
 installs as an existing login account whose home only holds
 `~/.<product>/<product>.env`; everything else lives under `/var/lib/<product>`.
 This section is the reference behind it. The full automated OL9 matrix passed
-CLEAN; manual checks of the guide itself are still open; see
+CLEAN and a manual ssh run without sudo worked, but only with extensive help;
+simpler host preparation is backlog 65. See
 [verification](acceptance/PRODUCTION-LAYOUT.md).
+
+Prerequisite for `journalctl --user` as the runtime account: a persistent
+journal. A fresh OL9 host has no `/var/log/journal`; create it once with
+`sudo mkdir -p /var/log/journal`, `sudo systemd-tmpfiles --create --prefix
+/var/log/journal` and `sudo journalctl --flush`. Do not add the account to
+`systemd-journal` or `adm` instead.
 
 Run as the operator with sudo. Install the `platform` bundle first.
 For an app installation, install `identity` next, then `app1` and/or `app2` in

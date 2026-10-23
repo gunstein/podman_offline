@@ -1,9 +1,15 @@
 # Produksjonsinstallasjon: eksisterende bruker, data under /var/lib/<produkt>
 
 **Status (backlog 64):** implementert; de automatiske OL9-kjøringene med SELinux
-Enforcing og fapolicyd er rene. Denne veiledningen er ennå ikke kjørt ordrett
-som `produser` uten sudo på en ny vert; se `acceptance/PRODUCTION-LAYOUT.md` i
-kildekoden. Til det er gjort, er flyten ikke merket klar for kundeinstallasjon.
+Enforcing og fapolicyd er rene, og en manuell installasjon som `produser` over
+ssh uten sudo virket 2026-10-23. Den manuelle runden trengte likevel mye
+veiledning underveis: veiledningen er ikke verifisert ordrett og er for tung.
+Enklere maskinklargjøring og en kortere veiledning er planlagt (backlog 65).
+Flyten er ikke merket klar for kundeinstallasjon; se
+`acceptance/PRODUCTION-LAYOUT.md` i kildekoden.
+
+**Hvor kommandoene kjøres.** Alle kommandoer kjøres på serveren. Den bærbare
+maskinen brukes bare til å kopiere filer dit (`scp`) og til å logge inn (`ssh`).
 
 **To roller, to kontoer.** *Administrator* bruker sin egen konto med sudo bare
 der veiledningen sier «Administrator» (steg 1–2, publisering av hver release,
@@ -53,13 +59,31 @@ firewalld, og pakkene python3, python3-pyyaml, podman, gnupg2 (gpgv),
 policycoreutils-python-utils, acl og util-linux allerede installert. Kontoen
 `produser` finnes fra før, og kjører ikke noe annet produkt.
 
+**Vedvarende journal.** `journalctl --user` virker bare når journald lagrer i
+`/var/log/journal`. På en fersk OL9-vert finnes den katalogen ikke, og
+`produser` får da `No journal files were opened due to insufficient
+permissions`. Gi ikke `produser` ekstra grupper for å omgå dette; opprett
+katalogen én gang (én kommando om gangen):
+
+```sh
+sudo mkdir -p /var/log/journal
+sudo systemd-tmpfiles --create --prefix /var/log/journal
+sudo journalctl --flush
+```
+
+Det gjør systemjournalen vedvarende over omstart (husk diskplass i `/var/log`).
+
 ```sh
 # Sett fapolicyd sin subjektcache (README, avsnitt om fapolicyd) og restart.
 sudo grep -q '^subj_cache_size = 16381$' /etc/fapolicyd/fapolicyd.conf \
     || echo 'Sett subj_cache_size = 16381 og kjør: sudo systemctl restart fapolicyd'
 # Innleveringsområde for arkivene, utenfor hjemmekatalogen.
 sudo install -d -o root -g root -m 0700 /var/tmp/sms-inn
-# Kopier hit: sms-platform-1.4.2-offline.tar.gz(.sha256,.asc) og sms-sts-2.0.1-...
+# På den bærbare maskinen: kopier arkiver, .sha256, .asc og nøkkelen til /var/tmp.
+#   scp sms-*-offline.tar.gz* bundle-signing.gpg admin@server:/var/tmp/
+# Tilbake på serveren: flytt dem inn. Bruk aldri * på filer inne i sms-inn
+# utenfor sudo; katalogen er 0700, så skallet ditt kan ikke liste den.
+sudo mv /var/tmp/sms-*-offline.tar.gz* /var/tmp/bundle-signing.gpg /var/tmp/sms-inn/
 sudo sh -c 'cd /var/tmp/sms-inn && sha256sum -c sms-platform-1.4.2-offline.tar.gz.sha256 sms-sts-2.0.1-offline.tar.gz.sha256'
 ```
 
@@ -215,7 +239,10 @@ systemctl --user restart sms-sts.service && systemctl --user is-active sms-sts.s
 ```
 
 Suksess: tjenestene er `active (running)`, containerne `Up (healthy)`, `/livez`
-svarer og STS-siden gir forventet statuskode; test også innlogging i nettleser
+svarer `204` og STS-siden gir forventet statuskode. Bruk en adresse komponenten
+faktisk svarer på: for demoens identity er det
+`/identity/.well-known/openid-configuration` (`200`), mens `/identity/` gir
+`404`; test også innlogging i nettleser
 mot det eksterne navnet. `sms_podman` er en lokal shellfunksjon for diagnostikk,
 ikke en global eksport; uten den viser `podman` kontoens vanlige, tomme lagring.
 

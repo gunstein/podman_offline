@@ -16,8 +16,12 @@ rootless production installation as an existing login user with almost no home
 space, keeping product files under a separate `/var/lib/<product>` root.
 Implementation and local regressions are delivered on
 `claude/friendly-mendel-8u3bqs` (built on the item 54 branch); merged to `main`;
-the full OL9 matrix passed CLEAN on `5b8ab69`, manual guide checks remain
-([verification](acceptance/PRODUCTION-LAYOUT.md)).
+the full OL9 matrix passed CLEAN on `5b8ab69`. A manual install as `produser`
+over ssh without sudo worked on 2026-10-23 after adding a persistent journal,
+but needed extensive help: the operator found host preparation incomprehensible
+([verification](acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)).
+Next: item 65 (one-command host preparation and a short guide), then 66
+(install sets) and 67 (ssh acceptance scenario).
 Coordinate with item 54's protected release/trust work; integrate that security
 boundary before real installation, rather than implementing a second release
 helper or publishing service-writable trusted code. Item 64 precedes the other
@@ -177,7 +181,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual guide checks pending), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -209,8 +213,10 @@ restore core or merge Identity back into platform.
 
 Status: implemented with local regressions on `claude/friendly-mendel-8u3bqs`
 (2026-10-23), built on the unmerged item 54 branch; merged to `main`; full OL9
-matrix CLEAN PASS on `5b8ab69`; the manual checks (no cached sudo,
-guide on a fresh host, small `/home`) are open, so not ready for the operator yet. Requested 2026-10-23.
+matrix CLEAN PASS on `5b8ab69`; manual ssh run without sudo worked 2026-10-23
+with extensive help and found the missing persistent-journal prerequisite (now
+in the guide). Not ready for the operator: the guide is not verified literally
+and host preparation is too hard (items 65–67); small `/home` still untested. Requested 2026-10-23.
 
 Delivered: `deployment/layout.py` (bootstrap file `~/.<product>/<product>.env`
 with required `INSTALL_ROOT=/var/lib/<product>`, read as data; root/ancestor and
@@ -399,6 +405,87 @@ status consistent with the final implementation. Complete the understandability
 review by tracing one successful install and one failure/retry, explaining path
 ownership, bootstrap loading and systemd startup. No automatic legacy migration,
 application refactoring or unrelated backlog cleanup belongs in this task.
+
+## 65. One-command host preparation and a short operator guide
+
+Status: planned, high priority (2026-10-23). Found in the manual backlog 64 run
+([report](acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)).
+The operator's verdict: "Klargjøringen av maskinen må bli enklere. Jeg forsto
+ingenting av hva som foregikk." Installation worked only with step-by-step help.
+
+Today the administrator reconstructs the order from the guide, README and the
+PFX guide: fapolicyd cache, persistent journal, transfer area, checksums,
+independent key/tool hashes, protected copy of the release tool,
+`provision-key`, `prepare` per release, `prepare-host.sh`, later `retire`.
+
+Deliver one administrator entry point (extend `prepare-host.sh` or a small
+wrapper beside it; no second release helper) that takes product, existing
+runtime account, HTTPS port, the trusted public key with its independent SHA256,
+and the transfer directory, and then:
+
+- checks every prerequisite first and names the exact fix (OL9, SELinux
+  Enforcing, fapolicyd and `subj_cache_size`, firewalld, packages, account
+  exists and has no sudo, space under `/var/lib` and `/var/tmp`);
+- establishes or verifies the persistent journal (`/var/log/journal`), so
+  `journalctl --user` works for the account without extra groups; decide and
+  document whether this is changed or only checked, since it is host-wide;
+- installs the authenticated release tool and pins the key once;
+- runs the existing `prepare` for the selected bundles and the existing host
+  preparation, in dependency order;
+- is safe to rerun after interruption and says which step completed;
+- ends with a short report and the exact next command for the runtime account.
+
+Keep the trust boundaries: authenticate before any privileged execution of
+archive code, keep the runtime account without sudo, no wildcard or shell
+expansion inside root-only directories, no hidden network access.
+
+Rewrite `docs/PRODUCTION-INSTALL.md` around it: each step names machine,
+account, one command and the expected output; one example product that matches
+the demo (or a clear substitution table); PEM and PFX credential paths shown
+separately; HTTPS checks against endpoints the component answers. Move design
+detail to linked documents. Verify by a new person following the guide
+literally on a fresh host (manual) plus item 67.
+
+## 66. Install sets: several signed bundles through one entry point
+
+Status: planned, high priority (2026-10-23), after item 65. Requested by the
+operator after the manual backlog 64 run: put e.g. platform, identity and app1
+in one directory and have one `install.sh` install them all.
+
+Shape to investigate: an install set directory with an explicit manifest
+(product, components, versions) and the signed bundles with `.asc`/`.sha256`.
+Bundles stay separate component releases (each has its own `bundle.yaml`,
+`VERSION`, `deploy` and modules), so never unpack them on top of each other.
+The administrator part authenticates and publishes every listed bundle (item
+65); the runtime account then runs one command that, in declared dependency
+order, runs `init-config` where needed, stops for required operator edits or
+credentials with a clear message, and runs `validate`/`install` per component.
+
+Contracts: install only what the manifest lists (not every archive that happens
+to be present); keep independent component versions; keep existing config and
+credentials; offline only; a rerun after interruption continues without
+restarting finished components needlessly; the runtime account needs no sudo.
+Coordinate with item 60 (CLI name) and the per-component lifecycle; do not add a
+second deployment engine. Tests: dependency order, partial failure and retry,
+manifest/bundle mismatch, and a real OL9 run.
+
+## 67. Acceptance scenario with a real ssh login as the runtime account
+
+Status: planned, high priority (2026-10-23). The automated matrix runs runtime
+commands through the administrator's `sudo -u`; it passed while a real login
+could not read its user journal on a fresh host (manual backlog 64 run).
+
+Add a harness scenario that creates a runtime account without sudo (and asserts
+`sudo -l -U` denies it), installs a lab-only ssh key for it, and runs every
+runtime step over `ssh <account>@prod` without setting `XDG_*` or other login
+environment: bootstrap file, `init-config`, credentials, `validate`/`install`,
+`systemctl --user`, `journalctl --user` (must show the service's entries),
+HTTPS including the identity discovery endpoint, logout, reboot before login,
+a fresh login with the same checks, upgrade with state comparison and `retire`.
+Start from a host without `/var/log/journal` so the journal contract chosen in
+item 65 is verified. Do not grant `systemd-journal`/`adm` or sudo to make it
+pass. Where possible, drive the commands from `docs/PRODUCTION-INSTALL.md` so the
+guide and the harness cannot drift. Remove the lab key in cleanup.
 
 ## 61. Verify Secret-derived environment values in init containers
 

@@ -166,13 +166,69 @@ with a 0700 bootstrap folder and fails on any unprivileged read of the home
 (it failed against `1eba4d4`).
 
 Not covered by these runs (record manually before operator use): the runtime
-account's commands in its own ssh login with no sudo rights (the harness uses
-the admin's `sudo -u`, which gives the same UID but no login session), the guide's literal
-command sequence on a fresh host, a deliberate failed
+account's commands in its own ssh login (done manually once, see "Manual run";
+not automated, backlog 67), the guide's literal command sequence on a fresh
+host (not achieved: the manual run needed extensive help), a deliberate failed
 operation followed by a fresh-process retry on OL9 (covered only by local
 tests), logout as distinct from reboot, and a small separate `/home` (the lab
 `/home` is an 18 GB volume, so it does not prove behaviour on a nearly full
 home).
+
+## Manual run as `produser` over ssh (2026-10-23)
+
+Operator-run on PROD (`todo-standby`, OL9), administrator `gunstein` with sudo,
+runtime account `produser` (UID 1001) created for the test without sudo
+(`sudo -l -U` output not captured). Bundles from `main-20261023-1731-app1`;
+release and certificate tools from `5b8ab69`. Platform and identity 0.4.12,
+then platform 0.4.13. Results are taken from the terminal output the operator
+shared; no machine-readable report exists.
+
+Administrator: checksums, independent hash check of tools and key, protected
+tool copies in `/usr/local/libexec`, `provision-key`, signed `prepare` of both
+releases (`integrity=none`), `prepare-host.sh --port 8443 --user produser`.
+`produser`, in its own ssh login without sudo or manual `XDG_*` exports:
+bootstrap file, `init-config`, new lab certificates under `state/`,
+`validate`/`install` of platform and identity, `systemctl --user`, restart,
+logout, reboot before login, platform upgrade, and operation after `retire`.
+
+| Check | Result |
+| --- | --- |
+| Install platform / identity | 1 and 2 containers running and healthy |
+| `systemctl --user` in a real ssh login | worked without exports |
+| `journalctl --user` | **failed first** (see below); worked after the admin fix and after reboot |
+| Logout; reboot before `produser` logged in | both services active |
+| `show-environment`, `SourcePath`, GraphRoot (also after reboot) | `/var/lib/myproduct/config`, `.../config/containers/systemd/*.kube`, `/var/lib/myproduct/storage/containers/storage` |
+| HTTPS with test CA and `--resolve` | `/livez` 204, `/identity/.well-known/openid-configuration` 200, before and after upgrade; `/identity/` 404 |
+| Platform upgrade | healthy; identity kept running; platform config and TLS file hashes unchanged |
+| `retire` of old platform | `PASS: protected release retire`; services active |
+| `find ~ -newer ~/.myproduct/myproduct.env` | only `.lesshst`, `.bash_history` |
+
+**Journal finding.** On the fresh host `/var/log/journal` did not exist
+(default `Storage=auto`, `SplitMode=uid`), only the runtime system journal, so
+`journalctl --user` reported `No journal files were opened due to insufficient
+permissions`. The administrator ran `mkdir -p /var/log/journal`,
+`systemd-tmpfiles --create --prefix /var/log/journal` and `journalctl --flush`;
+after one service restart the user journal worked, also after reboot. No group
+was added to `produser`. The automated harness did not catch this because it
+reads logs through the administrator. The guide now lists it as an explicit
+administrator prerequisite; making it part of host preparation and detecting it
+automatically are backlog 65 and 67.
+
+**Usability finding.** The run needed extensive step-by-step help: which
+machine and account each command runs on, where signed bundles come from, the
+key/tool bootstrap, `sms`/`sts` versus `myproduct`/`identity`, PEM versus PFX
+credentials for the demo identity, and a wildcard in an assisted command
+(`sudo chown ... /var/tmp/myproduct-inn/*`) that the admin shell could not
+expand in the root-only directory. The operator's verdict: host preparation must
+be much simpler. The guide therefore is **not** verified as followed literally,
+and the flow is not customer-ready. The guide now states where commands run,
+shows a concrete transfer, the journal prerequisite and a precise HTTPS check;
+the larger simplification is backlog 65 and 66.
+
+Not covered by this run: SELinux/fapolicyd audit collection, a deliberate
+failure and retry, a small or nearly full `/home`, browser OIDC sign-in, a full
+persistent-state comparison or full home inventory, and the customer's private
+images.
 
 ## Understandability review
 
