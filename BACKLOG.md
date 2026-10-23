@@ -15,8 +15,8 @@ Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
 space, keeping product files under a separate `/var/lib/<product>` root.
 Implementation and local regressions are delivered on
-`claude/friendly-mendel-8u3bqs` (built on the item 54 branch); the automated OL9
-app1 and renamed runs passed CLEAN on `2373cba`, manual guide checks remain
+`claude/friendly-mendel-8u3bqs` (built on the item 54 branch); merged to `main`;
+the full OL9 matrix passed CLEAN on `5b8ab69`, manual guide checks remain
 ([verification](acceptance/PRODUCTION-LAYOUT.md)).
 Coordinate with item 54's protected release/trust work; integrate that security
 boundary before real installation, rather than implementing a second release
@@ -177,7 +177,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; OL9 automated runs clean, manual guide checks pending), 54 (implementation on feature branch; lab matrix pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual guide checks pending), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -208,8 +208,8 @@ restore core or merge Identity back into platform.
 ## 64. Support new rootless installations outside the login home
 
 Status: implemented with local regressions on `claude/friendly-mendel-8u3bqs`
-(2026-10-23), built on the unmerged item 54 branch; automated OL9 app1 and
-renamed scenarios CLEAN PASS on `2373cba`; the manual checks (no cached sudo,
+(2026-10-23), built on the unmerged item 54 branch; merged to `main`; full OL9
+matrix CLEAN PASS on `5b8ab69`; the manual checks (no cached sudo,
 guide on a fresh host, small `/home`) are open, so not ready for the operator yet. Requested 2026-10-23.
 
 Delivered: `deployment/layout.py` (bootstrap file `~/.<product>/<product>.env`
@@ -5712,8 +5712,9 @@ signed-bundle, isolation and fapolicyd contracts to the operator's privileged
 release steps; coordinate with items 38 and 46.
 
 Status: implementation delivered on branch `feature/protected-releases`, based on
-`a37f4e4`; implementation and local regressions delivered, full current-change
-OL9 matrix pending.
+`a37f4e4`; implementation and local regressions delivered, merged to `main` with
+item 64; six-scenario OL9 matrix CLEAN PASS on `5b8ab69`. Open: actual Python 3.6
+and a non-baseline integrity strategy.
 Coordinated with urgent item 64; not marked resolved. Found in the item 46 review on 2026-10-19. Analysis updated on
 2026-10-22 against `07f8d56`: three local reproductions confirm gaps in release
 verification/trust wiring. That analysis predates this implementation;

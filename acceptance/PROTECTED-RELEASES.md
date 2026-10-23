@@ -5,8 +5,9 @@ Backlog 64 moved the protected anchor from `/opt/<product>` to the root-owned
 installation root `/var/lib/<product>` (releases in `releases/`, keyring and
 lock beside it); `/opt` below describes the item 54 implementation as reviewed.
 See [production layout verification](PRODUCTION-LAYOUT.md).
-Real OL9/SELinux/fapolicyd verification of this change is **pending**. Earlier
-CLEAN PASS for host preparation or Secret delivery does not verify this boundary.
+The six-scenario OL9/SELinux/fapolicyd matrix passed CLEAN on `5b8ab69`
+(item 54 merged with item 64 on `main`); see "Matrix on `main`" at the end.
+Actual Python 3.6 and a non-baseline integrity strategy remain outstanding.
 
 ## Authority and bootstrap
 
@@ -350,3 +351,27 @@ the changed Python, Bash syntax, Pyright (0 errors/0 warnings) and `git diff
 --check` passed. Success/rejection flow was rechecked: full archive inventory
 before image extraction/loading, no fixture Python execution, unchanged service
 user and production trust boundary. These checks do not claim an OL9 rerun.
+
+
+## Matrix on `main` (2026-10-23)
+
+The operator ran the six scenarios above from a clean checkout of `main` at
+`5b8ab69`, which contains this branch and backlog 64 (anchor
+`/var/lib/<product>`). OL9.8, SELinux Enforcing, fapolicyd active on PROD.
+Each run includes `06-prepare-host` (signature, validated extraction,
+immutable publication, exact trust) and `07-release-safety`; the earlier
+`07-registry-offline` fapolicyd blocker did not recur.
+
+| Run | Verdict |
+| --- | --- |
+| `main-20261023-1731-app1` | CLEAN PASS, 125/125 |
+| `main-20261023-1731-app2` | CLEAN PASS, 125/125 |
+| `main-20261023-1731-renamed` | CLEAN PASS, 57/57 |
+| `main-20261023-1731-plathelp` (`--platform-help-only`) | CLEAN PASS, 39/39 |
+| `main-20261023-1731-help` (`--help-only`) | CLEAN PASS, 60/60 |
+| `main-20261023-1731-identity` (`--identity-only`) | CLEAN PASS, 66/66 |
+
+Evidence: `~/podman-offline-acceptance-runs/<run>/EVIDENCE.md` on the controller
+(operator-supplied summaries; the full EVIDENCE.md files were not reviewed
+here). Still outstanding: actual Python 3.6 and a non-baseline integrity
+strategy.

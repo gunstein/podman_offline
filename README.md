@@ -965,7 +965,7 @@ deploy and Podman do not infer a file's purpose from the name `session-key`.
 [production installation guide](docs/PRODUCTION-INSTALL.md) (backlog 64). It
 installs as an existing login account whose home only holds
 `~/.<product>/<product>.env`; everything else lives under `/var/lib/<product>`.
-This section is the reference behind it. The automated OL9 scenarios passed
+This section is the reference behind it. The full automated OL9 matrix passed
 CLEAN; manual checks of the guide itself are still open; see
 [verification](acceptance/PRODUCTION-LAYOUT.md).
 

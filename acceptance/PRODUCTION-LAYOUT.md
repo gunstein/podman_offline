@@ -2,8 +2,8 @@
 
 Implemented on `claude/friendly-mendel-8u3bqs`, built on the unmerged item 54
 branch `feature/protected-releases` (`f72d520`) merged with `main` (`22b9134`).
-**The automated OL9/SELinux/fapolicyd scenarios passed CLEAN on `2373cba`**
-(app1-first and renamed product; see "Recorded results"). The manual checks
+**The full automated OL9/SELinux/fapolicyd matrix passed CLEAN on `5b8ab69`**
+(merged to `main`; six scenarios, see "Recorded results"). The manual checks
 listed below (runtime without cached sudo, the
 [operator guide](../docs/PRODUCTION-INSTALL.md)'s literal commands on a fresh
 host, a small separate `/home`) are still open, so the layout is not yet ready
@@ -86,7 +86,7 @@ They exercise, with separate administrator (`sudo`) and runtime identities
 
 Not covered by an automated step: see the list after "Recorded results"
 (no cached sudo, the guide's literal commands, OL9 failure/retry, logout, a
-small `/home`, app2-first). Record those manually.
+small `/home`). Record those manually.
 
 ## Recorded results
 
@@ -139,6 +139,27 @@ above):
 | `layout64-20261023-1651-renamed` | `2373cba` | **CLEAN PASS** (57 steps) | Product `shop`, account `shop-ops`, root `/var/lib/shop` (prepare-host output). Renamed install of gateway, login-service, orders, inventory, manual; host-path- and release-safety; init-container check; restart, redeploy, registration removal, scoped uninstalls; `10-home-unchanged` PASS. This scenario has no `check` or reboot step, so `SourcePath`/graphroot after reboot are verified only for `myproduct`. |
 | `layout64-20261023-1607-app1` | `1eba4d4` | NOT CLEAN at `09-home-unchanged` | Every step through `09-markers-after-reboot` passed: prepare-host, install of all components, host-path-safety, release-safety as `myproduct-ops`, `check` (manager `XDG_*`, `SourcePath` and graphroot under `/var/lib/myproduct`, no AVC/FANOTIFY), restart/crash/hang, reboot without login and database-auth. The inventory diff was empty; the step then ran `du` without sudo on the home, which cannot read the 0700 `.myproduct` (harness defect, exit 1). Upgrades, uninstall and `10-home-unchanged` did not run. |
 
+Full matrix from `main` at `5b8ab69` (operator-supplied summaries, 2026-10-23;
+evidence under `~/podman-offline-acceptance-runs/<run>/EVIDENCE.md` on the
+controller):
+
+| Run | Verdict |
+| --- | --- |
+| `main-20261023-1731-app1` | CLEAN PASS, 125/125 |
+| `main-20261023-1731-app2` | CLEAN PASS, 125/125 |
+| `main-20261023-1731-renamed` | CLEAN PASS, 57/57 |
+| `main-20261023-1731-plathelp` (`--platform-help-only`) | CLEAN PASS, 39/39 |
+| `main-20261023-1731-help` (`--help-only`) | CLEAN PASS, 60/60 |
+| `main-20261023-1731-identity` (`--identity-only`) | CLEAN PASS, 66/66 |
+
+In every scenario with a `check` step (app1, app2, help, identity) the check
+reported `user manager, generated units and Podman graphroot use
+/var/lib/myproduct`, owner `myproduct-ops` and modes 0700/0644/0600 on
+`config/`, `state/` and the Quadlet files, and the generator loaded them from
+`/var/lib/myproduct/config/containers/systemd`; app1 and app2 did so again after
+reboot, upgrade and uninstall. `home-unchanged` passed in every scenario that
+has it. The renamed scenario still has no `check` or reboot step.
+
 The `du` call is removed (the inventory already records sizes through sudo);
 `test_home_unchanged_reads_the_private_home_only_through_sudo` runs the step
 with a 0700 bootstrap folder and fails on any unprivileged read of the home
@@ -147,7 +168,7 @@ with a 0700 bootstrap folder and fails on any unprivileged read of the home
 Not covered by these runs (record manually before operator use): the runtime
 account's commands in its own ssh login with no sudo rights (the harness uses
 the admin's `sudo -u`, which gives the same UID but no login session), the guide's literal
-command sequence on a fresh host, an app2-first run, a deliberate failed
+command sequence on a fresh host, a deliberate failed
 operation followed by a fresh-process retry on OL9 (covered only by local
 tests), logout as distinct from reboot, and a small separate `/home` (the lab
 `/home` is an 18 GB volume, so it does not prove behaviour on a nearly full
