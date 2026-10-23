@@ -1,5 +1,6 @@
-#!/usr/bin/env python3
 """Separate-UID protected-release attack probes. Controller supplies code via stdin."""
+# ruff: noqa: UP021, UP022
+# Guest-side subprocess arguments must remain compatible with Python 3.6.
 
 import os
 import pwd
@@ -53,8 +54,51 @@ def error_message(error):
 def phase(step):
     try:
         yield
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - sanitize every probe failure
         raise ProbeError(step + ": " + error_message(error)) from None
+
+
+def relabel_release(path):
+    target = path / "deployment/common.py"
+    original = os.getxattr(str(target), "security.selinux")
+    try:
+        result = subprocess.run(
+            ["chcon", "-t", "tmp_t", str(target)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode:
+            raise ProbeError("chcon exit=" + str(result.returncode))
+        changed = os.getxattr(str(target), "security.selinux")
+        if changed == original or changed.split(b":")[2:3] != [b"tmp_t"]:
+            raise ProbeError("chcon did not change the selected file to tmp_t")
+    finally:
+        # Also restore after a failed assertion; never leave an intentional bad label.
+        result = subprocess.run(
+            ["restorecon", "-R", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode:
+            raise ProbeError("restorecon exit=" + str(result.returncode))
+    if os.getxattr(str(target), "security.selinux") != original:
+        raise ProbeError("restorecon did not restore the original SELinux label")
+
+
+def reject_bad_signature(namespace, *arguments):
+    try:
+        namespace["publish"](*arguments)
+    except namespace["CommandError"] as error:
+        if error.executable != "gpgv" or error.returncode not in (1, 2):
+            raise ProbeError("expected gpgv signature rejection") from None
+    else:
+        raise ProbeError("invalid signature accepted")
 
 
 def run():
@@ -63,7 +107,7 @@ def run():
     path, product = Path(sys.argv[1]), sys.argv[2]
     user = pwd.getpwnam(product)
     namespace = vars(types.ModuleType("trusted_release_helper"))
-    exec(
+    exec(  # noqa: S102 - authenticated controller source, never incoming bundle code
         compile(HELPER_SOURCE, "controller-authenticated-release-helper", "exec"),
         namespace,
     )
@@ -71,15 +115,7 @@ def run():
         namespace["ancestors"](path.parent)
         before = namespace["published"](path)
     with phase("SELinux restorecon of protected release"):
-        result = subprocess.run(
-            ["restorecon", "-R", str(path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            timeout=60,
-        )
-        if result.returncode:
-            raise ProbeError("restorecon exit=" + str(result.returncode))
+        relabel_release(path)
         if namespace["published"](path) != before:
             raise ProbeError("relabel changed release inventory")
         print("PASS: SELinux relabel preserves authenticated release bindings")
@@ -104,6 +140,7 @@ def run():
             stderr=subprocess.PIPE,
             universal_newlines=True,
             timeout=30,
+            check=False,
         )
         if result.returncode or "FAIL:" in result.stdout:
             raise ProbeError("separate-UID protection exit=" + str(result.returncode))
@@ -129,6 +166,7 @@ def run():
             stderr=subprocess.PIPE,
             universal_newlines=True,
             timeout=15,
+            check=False,
         )
         if result.returncode:
             raise ProbeError(
@@ -144,16 +182,16 @@ def run():
         return result
 
     namespace["command"] = checked_command
-    with phase("authenticated repeat/snapshot protection"):
-        with namespace["product_lock"](product) as locked_root:
-            namespace["publish"](
-                locked_root,
-                archive,
-                signature,
-                product,
-                before["component"],
-                before["version"],
-            )
+    context = phase("authenticated repeat/snapshot protection")
+    with context, namespace["product_lock"](product) as locked_root:
+        namespace["publish"](
+            locked_root,
+            archive,
+            signature,
+            product,
+            before["component"],
+            before["version"],
+        )
     print("PASS: snapshot replacement before/after verification refused")
     with phase("bad signature/trust preservation"):
         with tempfile.TemporaryDirectory(
@@ -163,19 +201,15 @@ def run():
             shutil.copyfile(str(archive), str(bad))
             with bad.open("ab") as stream:
                 stream.write(b"corruption")
-            try:
-                namespace["publish"](
-                    root,
-                    bad,
-                    signature,
-                    product,
-                    before["component"],
-                    before["version"],
-                )
-            except namespace["ReleaseError"]:
-                pass
-            else:
-                raise ProbeError("invalid signature accepted")
+            reject_bad_signature(
+                namespace,
+                root,
+                bad,
+                signature,
+                product,
+                before["component"],
+                before["version"],
+            )
         if namespace["command"](["fapolicyd-cli", "--dump-db"]).stdout != trust_before:
             raise ProbeError("negative probe changed trust")
     # Confirm service-user execution still opens the enrolled file-based package.
@@ -196,6 +230,7 @@ def run():
             stderr=subprocess.PIPE,
             universal_newlines=True,
             timeout=60,
+            check=False,
         )
         if result.returncode:
             raise ProbeError("deploy validate exit=" + str(result.returncode))
@@ -214,6 +249,7 @@ def run():
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
                 timeout=15,
+                check=False,
             )
             if result.returncode:
                 raise ProbeError(arguments[0] + " exit=" + str(result.returncode))
@@ -224,7 +260,7 @@ def run():
 if __name__ == "__main__":
     try:
         run()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - never expose private diagnostics
         raise SystemExit(
             "FAIL: protected release probe: " + error_message(error)
         ) from None

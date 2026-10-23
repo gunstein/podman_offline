@@ -103,8 +103,10 @@ old-layout fallback or second deployment transaction model.
    or orphaned trees are refused. The journal is removed only after cleanup.
 
 A relabel leaves release inventory and old retained trust usable; the safety probe
-runs actual `restorecon -R` before repeat publication and subsequent trust/lifecycle
-checks. Metadata-only unit tests use a real user xattr to exercise the ctime
+sets `tmp_t` on one deployment file with `chcon`, requires the label to change,
+then runs `restorecon -R` and verifies restoration of the original label before
+repeat publication and subsequent trust/lifecycle checks. Restoration is attempted
+also when the change assertion fails. Metadata-only unit tests use a real user xattr to exercise the ctime
 change; they do not establish SELinux behavior on OL9. Unexpected ownership,
 permissions, ACLs or changed payload metadata still fail. Diagnostics identify
 the operation, protected path or probe phase and subprocess exit status without
@@ -215,7 +217,7 @@ No allow rule or daemon shutdown is used to work around untrusted language opens
 | Focused release, component-file lifecycle and standalone command tests | 50 passed; includes 17 new protected-release tests |
 | Acceptance-harness discovery | 234 passed |
 | `python3 -B tests/run.py platform --isolate` | 403 run: 399 passed, three unchanged gpg-agent signing fixture failures, one unchanged `/proc/self/fd/0` delivery-test error |
-| Ruff lint/format on affected Python; Bash syntax on affected shell | Passed (existing lint exceptions retained; shellcheck unavailable) |
+| Scoped Ruff lint/format on affected Python; Bash syntax on affected shell | Scoped checks passed; the documented full Ruff command was not verified (see correction below). Shellcheck unavailable |
 | Pyright on affected Python | 0 errors, 0 warnings |
 | Vermin on helper/probe and affected runtime-compatible product tests | Static minimum 3.5, compatible with required 3.6; actual 3.6 interpreter not run |
 | Relative documentation links and `git diff --check` | Passed |
@@ -243,7 +245,7 @@ and the required removal of old service-writable trust before reusing a lab host
 | Release regressions plus script-inventory test with `scripts/__pycache__` present | 21 passed (20 release tests) |
 | Acceptance-harness discovery, including a run without `-B` | 237 passed |
 | `python3 -B tests/run.py platform --isolate` | 410 run: 406 passed, three gpg-agent signing fixture failures and one `/proc/self/fd/0` delivery-test error, as in the previous local environment |
-| Ruff lint/format; Bash syntax; Pyright on helper/probe/new tests | Passed; Pyright 0 errors, 0 warnings |
+| Scoped Ruff lint/format; Bash syntax; Pyright on helper/probe/new tests | Scoped Ruff checks passed, not the documented full Ruff gate (see correction below); Bash/Pyright passed, 0 errors, 0 warnings |
 | Vermin on helper/probe/release tests | Minimum 3.5, compatible with required 3.6; actual 3.6 not run |
 | Current-change OL9/Podman/systemd/SELinux/fapolicyd matrix | Still pending; no current-change real-runtime result claimed |
 
@@ -263,3 +265,47 @@ phase without private stderr. No recovery mode, alternate key choice or unsigned
 production branch was added. Customer-data migration becomes mandatory after the
 first real customer installation, rather than adding a compatibility framework
 for disposable pre-customer hosts. Lab verification is still required for closure.
+
+
+## Lint correction and stronger probes (2026-10-23)
+
+The earlier Ruff claims above referred to selected rules with command-line ignores
+and formatting with an explicit target version. They did **not** establish that
+the documented full Ruff commands passed. Review found real issues in the new
+files. The host helper and probe now use the existing Python 3.6 `UP021`/`UP022`
+file exemptions, explicit `check=False` with status handling, and narrow annotated
+exceptions for authenticated controller exec and sanitized catch-all reporting.
+Their formatting now passes the command documented in tests/README.md without
+command-line overrides; host code remains compatible with Python 3.6.
+
+Current actual checks:
+
+- `ruff check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py`:
+  no findings in the item 54 files; 12 existing findings remain in unchanged
+  `acceptance/init_secret_test.py` (8), `acceptance/test_init_secret.py` (3) and
+  `tests/platform_tests/test_secret_templates.py` (1). This full lint gate is **not green**.
+- `ruff format --check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py`:
+  all 134 files already formatted.
+- Release unit tests: 21 passed. Harness discovery: 239 passed. These are
+  distinct from real runtime evidence. Pyright on the helper/probe and affected
+  tests reports 0 errors, 0 warnings; Vermin reports minimum Python 3.5 for the
+  helper/probe (compatible with required 3.6, not an actual 3.6 runtime test).
+
+The relabel probe now requires an actual temporary label change and restores it
+in a finally block; it rejects a no-op chcon and an ineffective restorecon. The
+bad-signature probe accepts only a typed command failure naming `gpgv` with a
+signature/key rejection status (1 or 2); unrelated publication/lock errors,
+other commands, launch failures and unexpected successful verification fail the
+probe. Unit tests cover these negative cases and the typed command status.
+
+Understandability recheck: the temporary label belongs to one selected public
+release file, is restored before service-user execution, and changes no policy
+rules. Publication still verifies before extraction, and retirement/retry keep
+the same ownership boundaries. Failure classification now identifies the command
+without exposing private stdout/stderr. No generic recovery flow was added.
+
+The operator reports all 410 platform tests and 237 harness tests passed at
+`7bb05dd`. That is verification of the previous revision, not current-change OL9
+coverage. The strengthened chcon/restorecon and gpgv paths have not run on OL9
+here; start with `--platform-help-only`, then run all six matrix scenarios before
+closing item 54.

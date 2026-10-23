@@ -5534,9 +5534,21 @@ not a compatibility framework to implement before the first customer installatio
 Follow-up checks: 21 focused tests and 237 harness tests passed (also without
 `-B`); isolated platform suite ran 410 tests, with 406 passes and the same three
 gpg-agent fixture failures plus one `/proc/self/fd/0` error in this environment.
-Ruff/Bash/Pyright/Vermin checks passed. See the dated verification report for
+Scoped Ruff plus Bash/Pyright/Vermin checks passed; the full documented Ruff gate
+was not green (correction below). See the dated verification report for
 regression scope and understandability recheck. Current-change lab verification
 remains pending.
+
+Lint correction and probe hardening (2026-10-23): previous Ruff claims used a
+limited rule selection/target version, not the documented full commands. Item 54
+files now pass those lint/format settings; full lint still reports 12 findings in
+three unchanged item 61 Secret test files. Full formatting passes (134 files).
+The lab probe now forces tmp_t on one deployment file and verifies restoration;
+the negative signature probe requires a typed gpgv rejection, never any generic
+ReleaseError. Current-change lab coverage is still pending. The operator reports
+410/410 platform and 237/237 harness passes at `7bb05dd`. Current follow-up
+checks: 21 release and 239 harness tests passed; Pyright 0 errors/0 warnings and
+Vermin Python 3.6 compatibility passed. Real OL9 verification remains pending.
 
 ### Problem
 

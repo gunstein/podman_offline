@@ -218,6 +218,16 @@ class ProtectedReleaseTests(unittest.TestCase):
         extract.assert_not_called()
         self.assertEqual(list((self.product / "releases").iterdir()), [])
 
+    def test_failed_command_preserves_executable_and_status_for_signature_probe(self):
+        result = types.SimpleNamespace(returncode=2, stdout="private", stderr="private")
+        with mock.patch.object(release.subprocess, "run", return_value=result):
+            with self.assertRaises(release.CommandError) as observed:
+                release.command(["gpgv", "signature", "archive"])
+        self.assertEqual(observed.exception.executable, "gpgv")
+        self.assertEqual(observed.exception.returncode, 2)
+        self.assertIsInstance(observed.exception, release.ReleaseError)
+        self.assertNotIn("private", str(observed.exception))
+
     def test_live_trust_requires_authenticated_size_hash_and_unique_exact_paths(self):
         path = self.publish()
         valid = self.rows(path)

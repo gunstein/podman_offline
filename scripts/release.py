@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
 """Privileged offline release publication. Run authenticated code via stdin, Python 3.6.
 
 Never import code from an incoming archive. /opt and the independent keyring are
 root controlled; service-owned configuration belongs outside this tree.
 """
+# ruff: noqa: UP021, UP022
+# Host Python 3.6 requires PIPE/universal_newlines, not capture_output/text.
 
 import argparse
 import errno
@@ -35,6 +36,13 @@ PART = re.compile(r"^[A-Za-z0-9_+@.-]+$")
 
 class ReleaseError(Exception):
     pass
+
+
+class CommandError(ReleaseError):
+    def __init__(self, executable, returncode):
+        self.executable = executable
+        self.returncode = returncode
+        super().__init__("command failed: " + executable + " exit=" + str(returncode))
 
 
 def require(condition, message):
@@ -173,10 +181,8 @@ def command(arguments, allowed=(0,)):
         timeout=60,
         check=False,
     )
-    require(
-        result.returncode in allowed,
-        "command failed: " + arguments[0] + " exit=" + str(result.returncode),
-    )
+    if result.returncode not in allowed:
+        raise CommandError(arguments[0], result.returncode)
     return result
 
 
@@ -505,7 +511,7 @@ def integrity_policy():
     ancestors(path.parent)
     protected(path)
     values = re.findall(
-        r"^\s*integrity\s*=\s*(\S+)\s*(?:#.*)?$", path.read_text(), re.M
+        r"^\s*integrity\s*=\s*(\S+)\s*(?:#.*)?$", path.read_text(), re.MULTILINE
     )
     require(
         len(values) == 1 and values[0] in ("none", "size", "sha256"),
@@ -741,9 +747,8 @@ def main():
         args.operation == "provision-key" or args.keyring is None,
         "--keyring is only accepted for provision-key; publication uses the pinned product key",
     )
-    with diagnostic(args.operation, BASE / args.product), product_lock(
-        args.product
-    ) as root:
+    context = diagnostic(args.operation, BASE / args.product)
+    with context, product_lock(args.product) as root:
         if args.operation == "provision-key":
             require(
                 args.keyring is not None
