@@ -77,7 +77,7 @@ def validate_catalog():
             prefix=catalog.product_name(common.ROOT) + "-validate-"
         ) as directory:
             registrations.registration_stage(
-                list(known), Path(directory), known, home=state, configs=settings
+                list(known), Path(directory), known, state=state, configs=settings
             )
     except ERRORS as error:
         findings.append(("registrations", str(error)))

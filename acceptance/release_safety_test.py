@@ -101,11 +101,17 @@ def reject_bad_signature(namespace, *arguments):
         raise ProbeError("invalid signature accepted")
 
 
+def validate_command(path, account):
+    """deploy validate as the runtime account, never as a product-named user."""
+    return ["sudo", "-n", "-H", "-u", account, "bash", str(path / "deploy"), "validate"]
+
+
 def run():
     if os.geteuid() != 0:
         raise ProbeError("root required")
-    path, product = Path(sys.argv[1]), sys.argv[2]
-    user = pwd.getpwnam(product)
+    # The runtime account is not named after the product (backlog 64).
+    path, product, account = Path(sys.argv[1]), sys.argv[2], sys.argv[4]
+    user = pwd.getpwnam(account)
     namespace = vars(types.ModuleType("trusted_release_helper"))
     exec(  # noqa: S102 - authenticated controller source, never incoming bundle code
         compile(HELPER_SOURCE, "controller-authenticated-release-helper", "exec"),
@@ -215,16 +221,7 @@ def run():
     # Confirm service-user execution still opens the enrolled file-based package.
     with phase("service-user deploy validate"):
         result = subprocess.run(
-            [
-                "sudo",
-                "-n",
-                "-H",
-                "-u",
-                product,
-                "bash",
-                str(path / "deploy"),
-                "validate",
-            ],
+            validate_command(path, account),
             cwd=user.pw_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

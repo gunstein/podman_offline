@@ -19,7 +19,7 @@ from pathlib import Path
 from . import common
 from . import render as rendering
 
-# Directories and files the target home uses for shared state. A component with
+# Directories and files the target state directory uses for shared state. A component with
 # one of these IDs would share a path with that state, so the IDs are reserved.
 RESERVED_IDS = ("installed", "metadata", "routes", "clients", "files")
 
@@ -422,9 +422,9 @@ def load_bundle_descriptor(root):
     return check_descriptor(rendering.load_yaml(path), str(path))
 
 
-def metadata_path(home, name):
+def metadata_path(state, name):
     """Installed public metadata, kept until the component is uninstalled."""
-    return home / "metadata" / (name + ".json")
+    return state / "metadata" / (name + ".json")
 
 
 def unit_name(component):
@@ -432,28 +432,28 @@ def unit_name(component):
     return product_name(common.ROOT) + "-" + component
 
 
-def state_paths(component, home=None):
+def state_paths(component, state=None):
     """Return one component's config and archive paths in a state directory.
 
-    home names another state directory than common.STATE (build/dev in source
+    state names another state directory than common.STATE (build/dev in source
     dev). Refuses symlinked state paths.
     """
-    base = (home or common.STATE).resolve()
-    state = base / component
+    base = (state or common.STATE).resolve()
+    folder = base / component
     paths = [
-        state,
-        state / "files",
-        state / "config.yaml",
+        folder,
+        folder / "files",
+        folder / "config.yaml",
         base / "installed" / component,
         base / "metadata",
         metadata_path(base, component),
     ]
-    paths.extend((state / "files").glob("*.tar"))
+    paths.extend((folder / "files").glob("*.tar"))
     if any(path.is_symlink() for path in paths):
         raise common.DeployError(
             f"Refuse symlinked component state or output paths for {component}"
         )
-    return state / "config.yaml", state / "files"
+    return folder / "config.yaml", folder / "files"
 
 
 def component_paths(component):
@@ -469,9 +469,9 @@ def component_paths(component):
     return config, files, output, quadlet
 
 
-def installed_version(home, name):
+def installed_version(state, name):
     """Return the completed install's version, or None while not installed."""
-    marker = home / "installed" / name
+    marker = state / "installed" / name
     return marker.read_text().strip() if marker.is_file() else None
 
 
@@ -479,13 +479,13 @@ class PreProductMetadata(Exception):
     """Installed metadata from before product names; there is no migration."""
 
 
-def load_installed_metadata(home):
+def load_installed_metadata(state):
     """Read every installed descriptor strictly; temporary files start with a dot.
 
     A descriptor is written before its completion marker, so this includes
     a component whose install has not finished; installed_version tells them apart.
     """
-    directory = home / "metadata"
+    directory = state / "metadata"
     if directory.is_symlink():
         raise common.DeployError(f"Refuse symlinked installed metadata: {directory}")
     descriptors = {}
@@ -521,9 +521,9 @@ def load_installed_metadata(home):
     return descriptors
 
 
-def installed_components(home, descriptors):
+def installed_components(state, descriptors):
     """Names with a completion marker; each must have installed metadata."""
-    directory = home / "installed"
+    directory = state / "installed"
     if directory.is_symlink():
         raise common.DeployError(f"Refuse symlinked installed markers: {directory}")
     if not directory.exists():
@@ -535,16 +535,16 @@ def installed_components(home, descriptors):
         check_id(marker.name, str(marker))
         if marker.name not in descriptors:
             raise common.DeployError(
-                f"Missing installed metadata {metadata_path(home, marker.name)} for {marker}"
+                f"Missing installed metadata {metadata_path(state, marker.name)} for {marker}"
             )
         names.append(marker.name)
     return names
 
 
-def dependents(descriptors, home, name):
+def dependents(descriptors, state, name):
     """Completed installs whose recorded requirements name this component."""
     return [
         other
-        for other in installed_components(home, descriptors)
+        for other in installed_components(state, descriptors)
         if name in descriptors[other]["requires"]
     ]

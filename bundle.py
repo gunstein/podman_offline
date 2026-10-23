@@ -29,6 +29,10 @@ class BundleError(Exception):
     """Error shown as a single ERROR line without a traceback."""
 
 
+# Operator documents shipped in every component bundle (backlog 64).
+RELEASE_DOCS = ("docs/PRODUCTION-INSTALL.md", "docs/PFX-CREDENTIALS.md")
+
+
 def run(*args):
     """Show and run a command; stop on a failing status."""
     print("+", " ".join(map(str, args)))
@@ -275,11 +279,12 @@ def build_release(version, descriptor=None):
         shutil.copy2(
             ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
         )
-    guide = ROOT / "docs/PRODUCTION-INSTALL.md"
-    if components and guide.is_file():
-        # The short operator guide travels with every release (backlog 64).
-        (target / "docs").mkdir()
-        shutil.copy2(guide, target / "docs/PRODUCTION-INSTALL.md")
+    # The operator guide and the documents it links travel with every release
+    # (backlog 64); the guide links nothing else except README.md.
+    for document in RELEASE_DOCS if components else ():
+        if (ROOT / document).is_file():
+            (target / "docs").mkdir(exist_ok=True)
+            shutil.copy2(ROOT / document, target / document)
     if components:
         # The compiled descriptor lets the target work without bundles.yaml.
         (target / "bundle.yaml").write_text(

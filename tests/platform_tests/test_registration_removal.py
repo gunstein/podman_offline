@@ -198,7 +198,7 @@ class OwnerlessRemovalTests(ProductFixture):
         owners = {"routes": None, "clients": "login-service"}
         self.assertEqual(
             registrations.registration_changes(
-                {}, owners, home=self.root, removals={"routes/inventory.conf"}
+                {}, owners, state=self.root, removals={"routes/inventory.conf"}
             ),
             set(),
         )
@@ -206,7 +206,7 @@ class OwnerlessRemovalTests(ProductFixture):
             registrations.registration_changes(
                 {},
                 owners,
-                home=self.root,
+                state=self.root,
                 removals={"routes/inventory.conf", "clients/inventory"},
             ),
             {"login-service"},

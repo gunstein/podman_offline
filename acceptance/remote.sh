@@ -859,7 +859,7 @@ clone)
 # The product tests must not see the lab signing key exported above.
 unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py all;;
 release-safety)
-    release_safety_source | sudo -n python3 -I -B - "$product" "$product_name" "$base/$product_name-$bundle-$version-offline.tar.gz"
+    release_safety_source | sudo -n python3 -I -B - "$product" "$product_name" "$base/$product_name-$bundle-$version-offline.tar.gz" "$service_user"
     ;;
 host-path-safety)
     if [[ $role == DEV ]]; then

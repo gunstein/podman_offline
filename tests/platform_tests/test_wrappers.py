@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 import tempfile
 uid = int(os.environ["FIXTURE_UID"])
+real_uid = os.geteuid()
 os.getuid = os.geteuid = lambda: uid
 pwd.getpwuid = lambda uid: pwd.struct_passwd(("fixture", "x", uid, uid, "", os.environ["FIXTURE_HOME"], "/bin/bash"))
 user_runtime = "/run/user/" + str(uid)
@@ -44,6 +45,14 @@ if "FIXTURE_ANCHOR" in os.environ:
     layout.ANCHOR = Path(os.environ["FIXTURE_ANCHOR"])
     layout.TRUSTED_TOP = layout.ANCHOR.parent
     layout.ROOT_UID = os.stat(os.environ["FIXTURE_ANCHOR"]).st_uid
+    # The fixture files belong to this runner; only deploy's root refusal and
+    # runtime path see the fake account UID, so no chown is needed.
+    class RealOs:
+        def geteuid(self):
+            return real_uid
+        def __getattr__(self, name):
+            return getattr(os, name)
+    layout.os = RealOs()
 
 def command(args, **kwargs):
     if args[0] not in ("podman", "systemctl"):
@@ -96,11 +105,6 @@ class WrapperTests(unittest.TestCase):
             )
             bootstrap.chmod(0o600)
             os.chmod(str(home), 0o755)
-            if os.geteuid() == 0:
-                for path in [home, bootstrap.parent, bootstrap] + [
-                    install / name for name in ("state", "config", "storage")
-                ]:
-                    os.chown(str(path), uid, uid)
             for name in (
                 "deploy",
                 "bundle.py",
@@ -116,6 +120,7 @@ class WrapperTests(unittest.TestCase):
                 )
             (source / "docs").mkdir()
             (source / "docs/PRODUCTION-INSTALL.md").write_text("# Operator guide\n")
+            (source / "docs/PFX-CREDENTIALS.md").write_text("# PFX guide\n")
             (source / "config").mkdir()
             (source / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
@@ -253,6 +258,10 @@ class WrapperTests(unittest.TestCase):
             self.assertEqual(
                 (platform_release / "docs/PRODUCTION-INSTALL.md").read_text(),
                 "# Operator guide\n",
+            )
+            self.assertEqual(
+                (platform_release / "docs/PFX-CREDENTIALS.md").read_text(),
+                "# PFX guide\n",
             )
             run(platform_release, "deploy", "init-config", "platform")
             run(platform_release, "deploy", "install")

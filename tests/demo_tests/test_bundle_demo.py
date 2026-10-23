@@ -1,6 +1,8 @@
 """Build real bundle archives with only the Podman subprocess stubbed."""
 
 import hashlib
+import os
+import re
 import shutil
 import tarfile
 from pathlib import Path
@@ -98,3 +100,20 @@ class DemoBundleTests(BundleFixture):
             if call.args[0][1] == "save"
         )
         self.assertEqual(save.count(image), 1)
+
+
+class ReleaseDocumentTests(BundleFixture):
+    """Every relative link in a shipped operator document resolves in the release."""
+
+    def test_shipped_documents_link_only_to_shipped_files(self):
+        repo = Path(__file__).resolve().parents[2]
+        shipped = {Path(name) for name in bundle.RELEASE_DOCS} | {Path("README.md")}
+        for name in bundle.RELEASE_DOCS:
+            text = (repo / name).read_text()
+            for link in re.findall(r"\]\(([^)\s]+)\)", text):
+                target = link.split("#", 1)[0]
+                if not target or re.match(r"[a-z]+:", target):
+                    continue
+                resolved = Path(os.path.normpath(str(Path(name).parent / target)))
+                with self.subTest(document=name, link=link):
+                    self.assertIn(resolved, shipped)

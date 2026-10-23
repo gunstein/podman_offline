@@ -3,7 +3,7 @@
 Install and uninstall use these; they do not depend on either. Staging
 builds the registrations in a temporary directory, the pending record
 (pending-operation.json) lists owners that still have to restart, and only
-then are registrations written or deleted in the service user's home.
+then are registrations written or deleted in the state directory (common.STATE).
 """
 
 import json
@@ -18,7 +18,7 @@ from . import catalog, common
 from . import render as rendering
 
 
-def registration_stage(components, directory, known, home=None, configs=None):
+def registration_stage(components, directory, known, state=None, configs=None):
     """Stage existing and proposed public routes and clients without changing live state.
 
     known maps component IDs to descriptors: installed metadata plus the incoming
@@ -33,10 +33,10 @@ def registration_stage(components, directory, known, home=None, configs=None):
     configs (dev) maps each component to its config before it is written; dev
     registrations then come only from the catalog, so existing ones are ignored.
     """
-    home = home or common.STATE
+    state = state or common.STATE
     owners = catalog.role_owners(known, "registration owners")
     for name in catalog.ROLE_FILES:
-        source = home / name
+        source = state / name
         if source.is_symlink():
             raise common.DeployError(
                 f"Refuse symlinked shared registration directory: {source}"
@@ -80,7 +80,7 @@ def registration_stage(components, directory, known, home=None, configs=None):
             ("clients", "clients/" + component),
         ):
             if known[component][role] is None and (
-                (home / relative).exists() or (home / relative).is_symlink()
+                (state / relative).exists() or (state / relative).is_symlink()
             ):
                 removals.add(relative)
         source = common.ROOT / "components" / component
@@ -96,7 +96,7 @@ def registration_stage(components, directory, known, home=None, configs=None):
                 )
         if not declared:
             continue
-        config_path = catalog.state_paths(component, home)[0]
+        config_path = catalog.state_paths(component, state)[0]
         if configs is None:
             config = rendering.load_config(config_path)
         else:
@@ -279,26 +279,26 @@ def client_registration(component, path, config, config_path):
     }
 
 
-def write_registrations(updates, home=None, removals=()):
+def write_registrations(updates, state=None, removals=()):
     """Write changed public registrations privately and delete removed ones.
 
     Unchanged files are kept. Callers record owner work first (save_pending),
     because a deleted registration no longer shows that its owner must restart.
     """
-    home = home or common.STATE
+    state = state or common.STATE
     if any(
-        (home / relative).is_symlink() for relative in list(updates) + list(removals)
+        (state / relative).is_symlink() for relative in list(updates) + list(removals)
     ):
         raise common.DeployError("Refuse symlinked public registration output")
     for relative, data in updates.items():
-        target = home / relative
+        target = state / relative
         if target.is_file() and target.read_bytes() == data:
             continue
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.parent.chmod(0o700)
         rendering.write_private(target, data.decode("utf-8"))
     for relative in sorted(removals):
-        target = home / relative
+        target = state / relative
         if target.is_dir():
             for child in target.iterdir():
                 if child.is_symlink() or not child.is_file():
@@ -320,7 +320,7 @@ def component_imports(component, imports, known):
     return selected or None
 
 
-def registration_changes(updates, owners, home=None, removals=()):
+def registration_changes(updates, owners, state=None, removals=()):
     """Compare before writing so unfinished owners can be recorded first.
 
     Returns the owners that must rebuild their imports and restart. A removed
@@ -329,7 +329,7 @@ def registration_changes(updates, owners, home=None, removals=()):
     """
     changed = {owners[relative.split("/", 1)[0]] for relative in removals}
     for relative, data in updates.items():
-        target = (home or common.STATE) / relative
+        target = (state or common.STATE) / relative
         if target.is_symlink():
             raise common.DeployError("Refuse symlinked public registration output")
         if not target.is_file() or target.read_bytes() != data:

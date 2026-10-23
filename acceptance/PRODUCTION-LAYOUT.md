@@ -108,6 +108,23 @@ tests and 240 harness tests passed. The harness found one product defect (dev
 prepare of a routed component needed the unset Quadlet directory); it is fixed
 with a wrapper regression that failed before the fix.
 
+Review follow-up (2026-10-23, after `75c49e3`):
+
+| Finding | Fix | Regression |
+| --- | --- | --- |
+| A repeated `prepare-host.sh` did not activate a drop-in written by an interrupted run | Activation now reads the running manager's `show-environment`, starts or restarts it until both `XDG_*` values are present, and fails otherwise | `HostUserManagerTests` (interrupted repeat, no needless restart, start when stopped, failure when still wrong); three of these failed against `75c49e3` |
+| `release_safety_test.py` used the product name as the runtime account (`07-release-safety` would stop on a clean lab host) | The account is a separate fourth argument from `remote.sh` (`$service_user`), used for `getpwnam` and `sudo -u` | `test_release_safety.py` asserts `shop-ops` for both and the `remote.sh` argument |
+| The shipped guide linked the PFX guide, ARCHITECTURE and this report, none in the bundle | Bundles ship `bundle.RELEASE_DOCS` (guide and PFX guide); the guide names source-only documents without links and explains offline delivery of `generate-certificates.sh` | `test_bundle_demo.py` requires every relative link in shipped documents to resolve inside the release (failed against the old guide); `test_wrappers.py` checks both files ship |
+
+Tests that previously needed `chown` when run as root (`test_layout.py`,
+`test_wrappers.py`) now replace only deploy's effective UID, so they also run
+where root lacks `CAP_CHOWN`. `home` parameters that meant the state directory
+are renamed `state` in `catalog.py` and `registrations.py`.
+
+Follow-up results, same environment: `tests/run.py all` 499 OK (1 skipped);
+`platform --isolate` 433 OK; harness 242 OK; ruff, pyright, vermin and
+shellcheck as above (the same 12 pre-existing ruff findings).
+
 Real OL9 runs: **none yet**. Record each with run ID, commit, verdict and the
 manual checks above.
 

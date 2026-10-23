@@ -112,12 +112,12 @@ def main():
     registration_state["clear_pending"] = clear_pending
     registrations = registration_state["write_registrations"]
 
-    def write_registrations(updates, home=None, removals=()):
+    def write_registrations(updates, directory=None, removals=()):
         # Die after deleting only the first removal, as a crash mid-removal would.
         if parameters.get("removal_interrupt") and removals:
-            registrations(updates, home, sorted(removals)[:1])
+            registrations(updates, directory, sorted(removals)[:1])
             os._exit(99)
-        return registrations(updates, home, removals)
+        return registrations(updates, directory, removals)
 
     registration_state["write_registrations"] = write_registrations
     try:

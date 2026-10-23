@@ -1072,9 +1072,12 @@ existing non-overlapping subuid/subgid ranges (adding one only when missing),
 enables linger and opens the HTTPS port permanently. It installs the root-owned
 drop-in `/etc/systemd/system/user@<uid>.service.d/podman-offline-<product>.conf`
 with `XDG_CONFIG_HOME=/var/lib/<product>/config` and
-`XDG_DATA_HOME=/var/lib/<product>/storage`, and restarts a running user manager
-once so the Quadlet generator, every service and boot-time starts use that
-Podman configuration and storage. A changed drop-in or a second product for the
+`XDG_DATA_HOME=/var/lib/<product>/storage`. It then reads the running user
+manager's environment (`systemctl --user -M <account>@ show-environment`):
+a stopped manager is started, one without the two values is restarted, and the
+script fails unless the manager finally carries them. A repeat therefore also
+completes a run that stopped after writing the drop-in. The Quadlet generator,
+every service and boot-time starts use that Podman configuration and storage. A changed drop-in or a second product for the
 same account is refused. SELinux stays Enforcing. Storage outside the normal home uses Podman's [troubleshooting guide, point 11](https://github.com/containers/podman/blob/v5.8.2/troubleshooting.md#11-podman-run-fails-with-cannot-open-shared-object-file):
 `/var/lib/containers` is mapped to `/var/lib/<product>/storage/containers`.
 Unexpected existing equivalences fail instead of being deleted automatically.

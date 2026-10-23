@@ -287,7 +287,6 @@ dropin_text="# Managed by podman-offline scripts/prepare-host.sh for product $pr
 [Service]
 Environment=XDG_CONFIG_HOME=$install_root/config XDG_DATA_HOME=$install_root/storage
 "
-changed=
 if [[ -e $dropin || -L $dropin ]]; then
     [[ ! -L $dropin && -f $dropin && $(cat "$dropin") == "${dropin_text%$'\n'}" ]] \
         || die "$dropin differs from the expected settings; inspect and remove it manually (a changed installation root is not migrated)"
@@ -296,15 +295,26 @@ else
     printf '%s' "$dropin_text" > "$dropin.tmp"
     chmod 0644 "$dropin.tmp"
     mv -f "$dropin.tmp" "$dropin"
-    changed=1
 fi
 systemctl daemon-reload
-if [[ -n $changed ]] && systemctl is-active --quiet "user@$service_uid.service"; then
+loginctl enable-linger "$user"
+# Decide from the running manager, not from whether this run wrote the file:
+# a run interrupted after writing it must still be activated by a repeat.
+manager_has_settings() {
+    local environment
+    environment=$(systemctl --user -M "$user@" show-environment) || return 1
+    grep -Fqx "XDG_CONFIG_HOME=$install_root/config" <<< "$environment" \
+        && grep -Fqx "XDG_DATA_HOME=$install_root/storage" <<< "$environment"
+}
+if ! systemctl is-active --quiet "user@$service_uid.service"; then
+    systemctl start "user@$service_uid.service"
+elif ! manager_has_settings; then
     # A running manager keeps its old environment until it restarts.
     echo "Restarting user@$service_uid.service so it uses $install_root" >&2
     systemctl restart "user@$service_uid.service"
 fi
-loginctl enable-linger "$user"
+manager_has_settings \
+    || die "user@$service_uid.service does not use $install_root/config and $install_root/storage; inspect 'systemctl cat user@$service_uid.service' and retry"
 firewall-cmd --permanent --add-port="$port/tcp"
 firewall-cmd --reload
 printf '[OK] account %s (home %s unchanged): product %s under %s, linger enabled, HTTPS port %s/tcp open\n' \

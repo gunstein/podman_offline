@@ -217,9 +217,17 @@ echo later-host-actions
 
 
 class HostUserManagerTests(unittest.TestCase):
-    """The persistent drop-in is the one place services get their storage."""
+    """The persistent drop-in is the one place services get their storage.
 
-    def run_dropin(self, existing=None, other=False, active=False):
+    The systemctl stub models a user manager: start/restart reread the drop-in
+    unless broken, and show-environment reports what the manager carries.
+    """
+
+    EXPECTED = "XDG_CONFIG_HOME=/var/lib/orders/config\nXDG_DATA_HOME=/var/lib/orders/storage\n"
+
+    def run_dropin(
+        self, existing=None, other=False, active=False, current="", broken=False
+    ):
         script = (
             Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
         ).read_text()
@@ -230,13 +238,38 @@ class HostUserManagerTests(unittest.TestCase):
         ]
         block = script[
             script.index("# The user's systemd manager") : script.index(
-                "loginctl enable-linger"
+                "firewall-cmd --permanent"
             )
         ]
+        stubs = r"""
+die() { echo "ERROR: $*"; exit 1; }
+loginctl() { echo "loginctl $*"; }
+systemctl() {
+    echo "systemctl $*" >> "$state/calls"
+    case "$*" in
+        "is-active --quiet user@4321.service") [[ -f $state/active ]];;
+        "start user@4321.service"|"restart user@4321.service")
+            touch "$state/active"
+            if [[ $broken == 0 && -f $dropin ]]; then
+                printf 'XDG_CONFIG_HOME=/var/lib/orders/config
+XDG_DATA_HOME=/var/lib/orders/storage
+' > "$state/env"
+            fi;;
+        "--user -M operator1@ show-environment") cat "$state/env";;
+        *) :;;
+    esac
+}
+"""
         with tempfile.TemporaryDirectory() as directory:
-            etc = Path(directory)
+            etc = Path(directory) / "etc"
+            state = Path(directory) / "manager"
+            state.mkdir()
+            (state / "env").write_text(current)
+            (state / "calls").write_text("")
+            if active:
+                (state / "active").write_text("")
             dropins = etc / "user@4321.service.d"
-            dropins.mkdir()
+            dropins.mkdir(parents=True)
             if existing is not None:
                 (dropins / "podman-offline-orders.conf").write_text(existing)
             if other:
@@ -247,12 +280,12 @@ class HostUserManagerTests(unittest.TestCase):
                     "-eu",
                     "-c",
                     "service_uid=4321\nuser=operator1\nproduct=orders\n"
-                    "install_root=/var/lib/orders\nactive=$1\n"
-                    'die() { echo "ERROR: $*"; exit 1; }\n'
-                    'systemctl() { echo "systemctl $*"; [[ $1 != is-active || $active == 1 ]]; }\n'
+                    "install_root=/var/lib/orders\nstate=$1\nbroken=$2\n"
+                    + stubs
                     + (guard + block).replace("/etc/systemd/system", str(etc)),
                     "probe",
-                    "1" if active else "0",
+                    str(state),
+                    "1" if broken else "0",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -260,10 +293,21 @@ class HostUserManagerTests(unittest.TestCase):
                 check=False,
             )
             written = dropins / "podman-offline-orders.conf"
-            return result, written.read_text() if written.exists() else None
+            calls = (state / "calls").read_text().splitlines()
+            return (
+                result,
+                written.read_text() if written.exists() else None,
+                calls,
+            )
+
+    def dropin_text(self):
+        result, text, _ = self.run_dropin()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        assert text is not None
+        return text
 
     def test_fresh_dropin_sets_both_variables_and_restarts_a_running_manager(self):
-        result, text = self.run_dropin(active=True)
+        result, text, calls = self.run_dropin(active=True, current="PATH=/usr/bin\n")
         self.assertEqual(result.returncode, 0, result.stdout)
         assert text is not None
         self.assertIn(
@@ -271,20 +315,47 @@ class HostUserManagerTests(unittest.TestCase):
             "XDG_DATA_HOME=/var/lib/orders/storage",
             text,
         )
-        self.assertIn("systemctl restart user@4321.service", result.stdout)
-        repeated, _ = self.run_dropin(existing=text, active=True)
-        self.assertEqual(repeated.returncode, 0, repeated.stdout)
-        self.assertNotIn("restart", repeated.stdout)
+        self.assertIn("systemctl restart user@4321.service", calls)
+
+    def test_repeat_after_interrupted_activation_restarts_the_manager(self):
+        """The drop-in exists, but the manager still has the old environment."""
+        result, _, calls = self.run_dropin(
+            existing=self.dropin_text(), active=True, current="PATH=/usr/bin\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("systemctl restart user@4321.service", calls)
+
+    def test_active_manager_with_the_settings_is_not_restarted(self):
+        result, _, calls = self.run_dropin(
+            existing=self.dropin_text(), active=True, current=self.EXPECTED
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(
+            [call for call in calls if "restart" in call or " start " in call]
+        )
+
+    def test_stopped_manager_is_started_not_restarted(self):
+        result, _, calls = self.run_dropin()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("systemctl start user@4321.service", calls)
+        self.assertNotIn("systemctl restart user@4321.service", calls)
+
+    def test_manager_without_the_settings_after_activation_fails(self):
+        result, _, _ = self.run_dropin(active=True, broken=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not use /var/lib/orders/config", result.stdout)
 
     def test_changed_dropin_or_second_product_is_refused(self):
-        result, text = self.run_dropin(existing="[Service]\nEnvironment=X=1\n")
+        result, text, calls = self.run_dropin(existing="[Service]\nEnvironment=X=1\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("differs from the expected settings", result.stdout)
         self.assertEqual(text, "[Service]\nEnvironment=X=1\n")
-        result, text = self.run_dropin(other=True)
+        self.assertEqual(calls, [])
+        result, text, calls = self.run_dropin(other=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already runs another product", result.stdout)
         self.assertIsNone(text)
+        self.assertEqual(calls, [])
 
 
 class HostPortTests(unittest.TestCase):

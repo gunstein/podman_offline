@@ -14,6 +14,19 @@ from deployment import common, deploy, layout, validation
 PRODUCT = "orders"
 
 
+class NonRootOs:
+    """os for deploy.py only: a non-root effective UID, everything else real."""
+
+    def __init__(self, uid):
+        self.uid = uid
+
+    def geteuid(self):
+        return self.uid
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+
 class LayoutFixture(unittest.TestCase):
     def setUp(self):
         self.stack = contextlib.ExitStack()
@@ -235,14 +248,11 @@ class CommandSelectionTests(LayoutFixture):
         if not source:
             (self.release_root / "bundle.yaml").write_text("")
         self.stack.enter_context(mock.patch.object(common, "ROOT", self.release_root))
-        account = os.geteuid() or 1000
-        if os.geteuid() == 0:
-            # Running as root: give the account files to a separate UID.
-            for path in [self.path.parent, self.path] + [
-                self.install / name for name in ("state", "config", "storage")
-            ]:
-                os.chown(str(path), account, account)
-        self.stack.enter_context(mock.patch.object(os, "geteuid", return_value=account))
+        # deploy refuses root; layout compares owners with the real UID, so
+        # the fixture's files stay owned by this runner (no chown needed).
+        self.stack.enter_context(
+            mock.patch.object(deploy, "os", NonRootOs(os.geteuid() or 1000))
+        )
         os.environ["HOME"] = str(self.home)
 
     def test_source_checkout_never_reads_the_bootstrap_file(self):

@@ -85,25 +85,50 @@ class ReleaseSafetyDiagnosticsTests(unittest.TestCase):
             mock.patch.object(probe.os, "getxattr", side_effect=labels),
             mock.patch.object(probe, "HELPER_SOURCE", helper),
             mock.patch.object(probe.os, "geteuid", return_value=0),
-            mock.patch.object(probe.pwd, "getpwnam"),
+            mock.patch.object(probe.pwd, "getpwnam") as account,
             mock.patch.object(
                 probe.subprocess, "run", side_effect=[success, failure]
             ) as command,
             mock.patch.object(
-                sys, "argv", ["probe", "/opt/shop/releases/shop-worker-1.2.3", "shop"]
+                sys,
+                "argv",
+                [
+                    "probe",
+                    "/var/lib/shop/releases/shop-worker-1.2.3",
+                    "shop",
+                    "/archive",
+                    "shop-ops",
+                ],
             ),
             self.assertRaises(probe.ProbeError) as error,
         ):
             probe.run()
         self.assertEqual(
             command.call_args.args[0],
-            ["restorecon", "-R", "/opt/shop/releases/shop-worker-1.2.3"],
+            ["restorecon", "-R", "/var/lib/shop/releases/shop-worker-1.2.3"],
         )
+        # The separate runtime account, never a user named after the product.
+        account.assert_called_once_with("shop-ops")
         self.assertEqual(
             str(error.exception),
             "SELinux restorecon of protected release: restorecon exit=23",
         )
         self.assertNotIn("private", probe.error_message(error.exception))
+
+    def test_validate_runs_as_the_runtime_account_not_the_product(self):
+        command = probe.validate_command(
+            Path("/var/lib/shop/releases/shop-worker-1.2.3"), "shop-ops"
+        )
+        self.assertEqual(command[:5], ["sudo", "-n", "-H", "-u", "shop-ops"])
+        self.assertNotIn("shop", command[:5])
+
+    def test_remote_passes_the_runtime_account_separately(self):
+        remote = (Path(__file__).with_name("remote.sh")).read_text()
+        line = next(
+            line for line in remote.splitlines() if "release_safety_source |" in line
+        )
+        self.assertTrue(line.rstrip().endswith('"$service_user"'), line)
+        self.assertIn('service_user="${product_name:0:27}-ops"', remote)
 
     def test_phase_hides_external_exception_values_and_reports_errno(self):
         for error in (

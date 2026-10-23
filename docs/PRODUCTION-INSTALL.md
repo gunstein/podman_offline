@@ -2,8 +2,12 @@
 
 **Status (backlog 64):** implementert og testet lokalt (produkt-, enhets- og
 harness-tester). Den reelle OL9-kjøringen med SELinux Enforcing og fapolicyd
-gjenstår; se [verifisering](../acceptance/PRODUCTION-LAYOUT.md). Til den er kjørt
+gjenstår; se `acceptance/PRODUCTION-LAYOUT.md` i kildekoden. Til den er kjørt
 rent, er denne flyten ikke merket klar for kundeinstallasjon.
+
+Denne veiledningen, [PFX-veiledningen](PFX-CREDENTIALS.md) og
+[README](../README.md) følger med i hver komponent-release under
+`/var/lib/sms/releases/<release>/`; lenkene virker der uten kildekoden.
 
 Eksempelet bruker hele veien disse verdiene. Bytt dem ut; ingenting av dette er
 hardkodet i produktet:
@@ -94,7 +98,9 @@ Skriptet endrer ikke kontoens hjem, shell eller pålogging. Det oppretter
 `state/`, `config/` og `storage/` under `/var/lib/sms`, beholder eksisterende
 subuid/subgid (legger til et område bare når det mangler), setter SELinux-
 ekvivalens for lagringen, linger, port 8443 og drop-in-filen for brukersystemd.
-Kjører brukersystemd allerede, startes den én gang på nytt. Suksess: to linjer
+Skriptet leser deretter miljøet til brukersystemd og starter eller restarter
+den til den faktisk har verdiene; ellers stopper det med feil. En gjentakelse
+fullfører derfor også en avbrutt kjøring. Suksess: to linjer
 som begynner med `[OK]`. Steget kan gjentas trygt; det trengs på nytt bare ved
 ny port. En annen eksisterende drop-in, et annet produkt på samme konto eller
 en gammel installasjon med hjem i `/var/lib/sms` stoppes med en feilmelding.
@@ -158,6 +164,26 @@ config-en deklarerer `generate: [password]`; et eksisterende passord beholdes
 byte for byte. Signerings-PFX klargjøres i STS sin credentials-katalog etter
 [PFX-veiledningen](PFX-CREDENTIALS.md) med `--root /var/lib/sms/state` og
 `--component sts` (passordfilen `credentials/signing/pfx-password` først, `0600`).
+
+**Sertifikatverktøyet på lukket nett:** `generate-certificates.sh` ligger ikke i
+bundlene (pakket levering er backlog 45b). Administrator tar
+`dev/generate-certificates.sh` fra samme gjennomgåtte kildecommit som bundlene,
+overfører den sammen med arkivene og verifiserer SHA256 mot en verdi levert
+gjennom den betrodde kanalen. Lagre den root-eid og lesbar, for eksempel
+`/usr/local/libexec/podman-offline-generate-certificates.sh` (`0644`). Den kjøres
+aldri som installert program, bare via stdin som `produser`, slik
+PFX-veiledningen viser:
+
+```sh
+sha256sum /usr/local/libexec/podman-offline-generate-certificates.sh   # sammenlign med betrodd verdi
+bash -s -- --root /var/lib/sms/state --cert-days 365 \
+    --component sts --purpose signing --pfx \
+    < /usr/local/libexec/podman-offline-generate-certificates.sh
+```
+
+Har organisasjonen allerede PFX eller `.crt`/`.key` for STS, eller `web.crt`/`web.key`
+for platform, legges de i credentials-katalogen før kommandoen; verktøyet
+beholder dem uendret og lager bare det som mangler (se PFX-veiledningen).
 
 ```sh
 bash ./deploy validate
@@ -230,6 +256,7 @@ credentials og databasevolumer; `--delete-data` sletter bare komponentens egne.
 | Images/volumer «forsvinner» | `sms_podman info --format '{{.Store.GraphRoot}}'` | Vanlig `podman` uten `sms_podman` ser kontoens hjemmelagring |
 
 Detaljer om autentisering, fapolicyd-trust, SELinux og retry står i
-[README](../README.md#first-production-installation) og
-[ARCHITECTURE](../ARCHITECTURE.md#production-paths-outside-the-login-home-backlog-64).
+[README](../README.md#first-production-installation). Design og tillitsgrenser
+står i `ARCHITECTURE.md` (avsnittet «Production paths outside the login home»)
+i kildekoden.
 Gamle installasjoner med hjem i `/var/lib/<produkt>` migreres ikke.

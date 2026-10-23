@@ -427,7 +427,7 @@ def prepare_components():
             list(known),
             Path(directory),
             known,
-            home=state,
+            state=state,
             configs=settings_by_component,
         )
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -455,7 +455,7 @@ def prepare_components():
         rendering.check_links(documents, {})
         for volumes, files in archives:
             rendering.write_file_archives(volumes, files)
-        registrations.write_registrations(updates, home=state)
+        registrations.write_registrations(updates, state=state)
         rendering.write_private(
             common.BUILD / "install.yaml",
             yaml.safe_dump_all(documents, sort_keys=False),
