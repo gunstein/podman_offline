@@ -1181,6 +1181,55 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
             (self.harness.folder / "registry").stat().st_mode & 0o777, 0o700
         )
 
+    def test_home_unchanged_reads_the_private_home_only_through_sudo(self):
+        """The 0700 bootstrap folder stopped an unprivileged du in an OL9 run."""
+        remote = Path(__file__).with_name("remote.sh").read_text()
+        code = shell_code(remote, function="home_inventory") + shell_code(
+            remote, action="home-unchanged"
+        )
+        prefix = """set -euo pipefail
+base=$1
+service_user=orders-ops
+getent() { printf 'orders-ops:x:1001:1001::%s:/bin/bash\\n' "$base/home"; }
+sudo() { [[ $1 == -n ]] || return 1; shift; PRIVILEGED=1 "$@"; }
+guard() { [[ ${PRIVILEGED-} ]] || { echo "unprivileged $1" >&2; return 1; }; }
+for tool in find du ls stat cat; do
+    eval "$tool() { guard $tool && command $tool \\"\\$@\\"; }"
+done
+"""
+        for changed in (False, True):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as folder:
+                base = Path(folder)
+                private = base / "home/.orders"
+                private.mkdir(parents=True, mode=0o700)
+                (private / "orders.env").write_text("INSTALL_ROOT=/var/lib/orders\n")
+
+                def run(script, base=base):
+                    return subprocess.run(
+                        ["bash", "-s", "--", str(base)],
+                        input=prefix + script,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+
+                before = run(
+                    shell_code(remote, function="home_inventory")
+                    + 'home_inventory > "$base/home-inventory-before"\n'
+                )
+                self.assertEqual(before.returncode, 0, before.stderr)
+                if changed:
+                    (base / "home/.config").mkdir()
+                result = run(code)
+                self.assertNotIn("unprivileged", result.stderr)
+                if changed:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(".config", result.stdout)
+                    self.assertNotIn("PASS", result.stdout)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("PASS: login home unchanged", result.stdout)
+
     def test_registry_offline_probe_checks_exact_name_and_never_pulls(self):
         """Require offline load/name validation and a temporary run with pull=never."""
         remote = Path(__file__).with_name("remote.sh").read_text()

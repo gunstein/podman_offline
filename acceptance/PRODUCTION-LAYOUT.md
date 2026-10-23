@@ -129,8 +129,17 @@ An operator run on Ubuntu (umask 0002) failed one item 54 unit test because its
 fixture created the protected anchor without an explicit mode; the fixture now
 sets 0755, and `tests/run.py all` passes under both umask 0002 and 0022.
 
-Real OL9 runs: **none yet**. Record each with run ID, commit, verdict and the
-manual checks above.
+Real OL9 runs (record each with run ID, commit, verdict and the manual checks
+above):
+
+| Run | Commit | Verdict | Notes |
+| --- | --- | --- | --- |
+| `layout64-20261023-1607-app1` | `1eba4d4` | NOT CLEAN at `09-home-unchanged` | Every step through `09-markers-after-reboot` passed: prepare-host, install of all components, host-path-safety, release-safety as `myproduct-ops`, `check` (manager `XDG_*`, `SourcePath` and graphroot under `/var/lib/myproduct`, no AVC/FANOTIFY), restart/crash/hang, reboot without login and database-auth. The inventory diff was empty; the step then ran `du` without sudo on the home, which cannot read the 0700 `.myproduct` (harness defect, exit 1). Upgrades, uninstall and `10-home-unchanged` did not run. |
+
+The `du` call is removed (the inventory already records sizes through sudo);
+`test_home_unchanged_reads_the_private_home_only_through_sudo` runs the step
+with a 0700 bootstrap folder and fails on any unprivileged read of the home
+(it failed against `1eba4d4`). A CLEAN PASS is still pending.
 
 ## Understandability review
 

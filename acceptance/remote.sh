@@ -1452,8 +1452,9 @@ prepare-host)
 home-unchanged)
     # Product writes never appear in the login home, including after reboot.
     home_inventory > "$base/home-inventory-after"
+    # The inventory already holds every size; the 0700 bootstrap folder is
+    # readable only through sudo, so nothing here reads the home unprivileged.
     diff "$base/home-inventory-before" "$base/home-inventory-after"
-    du -sk "$(getent passwd "$service_user" | cut -d: -f6)"
     echo "PASS: login home unchanged since bootstrap"
     ;;
 help-alone)
