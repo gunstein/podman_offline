@@ -2,11 +2,13 @@
 
 Implemented on `claude/friendly-mendel-8u3bqs`, built on the unmerged item 54
 branch `feature/protected-releases` (`f72d520`) merged with `main` (`22b9134`).
-**Real OL9/SELinux/fapolicyd verification of this change is pending.** Until a
-CLEAN PASS of the scenarios below is recorded here, the layout and the
-[operator guide](../docs/PRODUCTION-INSTALL.md) are not ready for a customer
-installation. Earlier lab evidence (items 46, 54, 61) used the service-home
-layout and does not verify this change.
+**The automated OL9/SELinux/fapolicyd scenarios passed CLEAN on `2373cba`**
+(app1-first and renamed product; see "Recorded results"). The manual checks
+listed below (runtime without cached sudo, the
+[operator guide](../docs/PRODUCTION-INSTALL.md)'s literal commands on a fresh
+host, a small separate `/home`) are still open, so the layout is not yet ready
+for a customer installation. Earlier lab evidence (items 46, 54, 61) used the
+service-home layout and does not verify this change.
 
 ## What changed
 
@@ -56,7 +58,7 @@ Focused regressions:
 These are mocked/simulated host checks; no Podman, systemd, SELinux or
 fapolicyd ran.
 
-## Real OL9 scenarios (pending)
+## Real OL9 scenarios
 
 Prerequisites as in [acceptance](README.md): disposable DEV/PROD snapshots
 `clean-agent`, OL9 with SELinux Enforcing, active fapolicyd and firewalld.
@@ -74,7 +76,7 @@ They exercise, with separate administrator (`sudo`) and runtime identities
   login home made read-only (0555) and its inventory recorded;
 - first install in dependency order, init-container Secret/migration probes,
   HTTPS health, restart, crash/hang recovery, upgrades retaining data,
-  failure/retry, scoped uninstall, and the renamed product;
+  downgrade refusal, scoped uninstall, and the renamed product;
 - `check` (also after reboot without interactive login): the user manager's
   `XDG_*`, every unit's `SourcePath` under `config/containers/systemd`, the
   Podman graphroot and container layers under `storage/`, private modes,
@@ -82,10 +84,9 @@ They exercise, with separate administrator (`sudo`) and runtime identities
 - `home-unchanged` after reboot and at the end: no product writes in the home;
 - `host-path-safety`: real separate-UID link refusal under `config/`.
 
-Not yet covered by an automated step: a run without cached sudo for the runtime
-account's own commands (the harness uses `sudo -u` as the lab user), the
-operator guide's literal command sequence, and a host whose `/home` is a
-separate small filesystem. Record those manually with the first lab run.
+Not covered by an automated step: see the list after "Recorded results"
+(no cached sudo, the guide's literal commands, OL9 failure/retry, logout, a
+small `/home`, app2-first). Record those manually.
 
 ## Recorded results
 
@@ -134,12 +135,22 @@ above):
 
 | Run | Commit | Verdict | Notes |
 | --- | --- | --- | --- |
+| `layout64-20261023-1628-app1` | `2373cba` | **CLEAN PASS** (126 steps) | Runtime account `myproduct-ops`, home 0555, `/home` on its own 18 GB volume. Install of platform, identity, app1, app2, help; host-path- and release-safety; `07-check`, `09-check-after-reboot` (new boot ID, no interactive login), `10-check-upgrade` and `10-check-uninstall`: the generator loaded every Quadlet from `/var/lib/myproduct/config/containers/systemd`, policy/labels classified, no AVC/FANOTIFY, no pull attempts. Stop/start/restart/crash/hang, help/app1/platform/identity upgrades with all 44 persistent state files unchanged, downgrade refusal, scoped app1 uninstall. `09-home-unchanged` and `10-home-unchanged` PASS. |
+| `layout64-20261023-1651-renamed` | `2373cba` | **CLEAN PASS** (57 steps) | Product `shop`, account `shop-ops`, root `/var/lib/shop` (prepare-host output). Renamed install of gateway, login-service, orders, inventory, manual; host-path- and release-safety; init-container check; restart, redeploy, registration removal, scoped uninstalls; `10-home-unchanged` PASS. This scenario has no `check` or reboot step, so `SourcePath`/graphroot after reboot are verified only for `myproduct`. |
 | `layout64-20261023-1607-app1` | `1eba4d4` | NOT CLEAN at `09-home-unchanged` | Every step through `09-markers-after-reboot` passed: prepare-host, install of all components, host-path-safety, release-safety as `myproduct-ops`, `check` (manager `XDG_*`, `SourcePath` and graphroot under `/var/lib/myproduct`, no AVC/FANOTIFY), restart/crash/hang, reboot without login and database-auth. The inventory diff was empty; the step then ran `du` without sudo on the home, which cannot read the 0700 `.myproduct` (harness defect, exit 1). Upgrades, uninstall and `10-home-unchanged` did not run. |
 
 The `du` call is removed (the inventory already records sizes through sudo);
 `test_home_unchanged_reads_the_private_home_only_through_sudo` runs the step
 with a 0700 bootstrap folder and fails on any unprivileged read of the home
-(it failed against `1eba4d4`). A CLEAN PASS is still pending.
+(it failed against `1eba4d4`).
+
+Not covered by these runs (record manually before operator use): runtime
+commands without cached sudo (the harness uses `sudo -u`), the guide's literal
+command sequence on a fresh host, an app2-first run, a deliberate failed
+operation followed by a fresh-process retry on OL9 (covered only by local
+tests), logout as distinct from reboot, and a small separate `/home` (the lab
+`/home` is an 18 GB volume, so it does not prove behaviour on a nearly full
+home).
 
 ## Understandability review
 

@@ -72,7 +72,7 @@ this list; update entries with implementation/test evidence when resolved.
 | ~~Global dev values on a `public_from` dependent can be silently replaced by owner inheritance~~ | Resolved by backlog 58: analysis showed owner and dependents always receive the same effective value; the precedence is documented, no code change |
 | ~~Root `prepare-host.sh` follows service-writable home paths for ownership, mode and relabel operations~~ | Resolved by backlog 46: service-user-only, descriptor-based preparation; lab matrix `t11` clean at `3a54714` ([verification](../acceptance/PREPARE-HOST.md)) |
 | Root release authentication/trust must remain protected from service-user modification | Backlog 54 implementation uses protected publication (now under `/var/lib/<product>/releases`, backlog 64) and shared exact-inventory trust; [current-change lab matrix](../acceptance/PROTECTED-RELEASES.md) pending |
-| Production installation as an existing login account with product files outside the home | Backlog 64 implemented with local regressions; [real OL9 scenario](../acceptance/PRODUCTION-LAYOUT.md) pending |
+| Production installation as an existing login account with product files outside the home | Backlog 64 implemented; automated [OL9 app1 and renamed runs](../acceptance/PRODUCTION-LAYOUT.md) CLEAN PASS on `2373cba`; manual guide checks pending |
 | ~~Bundles carry checksums but no signature~~ | Backlog 38 added `.asc` (gpg); backlog 54 requires signature verification with the pinned key before protected production publication. Unsigned builds remain development-only |
 
 External image support does not by itself demonstrate arbitrary component support.
