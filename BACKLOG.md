@@ -9,7 +9,15 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-22)
+## Current priority (updated 2026-10-23)
+
+Item 64 is the highest-priority next operator deliverable: unblock a fresh
+rootless production installation as an existing login user with almost no home
+space, keeping product files under a separate `/var/lib/<product>` root.
+Coordinate with item 54's protected release/trust work; integrate that security
+boundary before real installation, rather than implementing a second release
+helper or publishing service-writable trusted code. Item 64 precedes the other
+open feature work and includes a short, verified production installation guide.
 
 Item 61 is done: local tests and both normal/renamed real lab runs passed at
 `52f28e4` (2026-10-22). No renderer defect is established;
@@ -25,7 +33,8 @@ a clean real lab matrix (`t11`, `3a54714`; [verification](acceptance/PREPARE-HOS
 operations through service-user-controlled paths. Items 33 and 34
 from the earlier best-practice review are done. Item 44 remains the leading
 runtime-verification priority for the organisation's PFX-based Identity image.
-Item 54 follows item 46 for release trust. Item 63 (operator request) then
+Item 54 follows item 46 for release trust and supplies the security boundary
+for urgent item 64. Item 63 (operator request) then
 parameterises image versions through build-time `config/images.yaml`.
 Item 62 is implemented with local regression coverage for misplaced container
 fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
@@ -36,101 +45,105 @@ lower-priority production hardening. Item 42 remains before item 3; implementati
 verification statuses are recorded below.
 The order for an offline production deployment of an organisation's own apps:
 
-1. [Item 61](#61-verify-secret-derived-environment-values-in-init-containers):
+1. [Item 64](#64-support-new-rootless-installations-outside-the-login-home):
+   highest priority for the operator's next production test; existing arbitrary
+   user, small home bootstrap file, all product state/storage under a separate
+   installation root. New installations only; coordinate release safety with 54.
+2. [Item 61](#61-verify-secret-derived-environment-values-in-init-containers):
    done; local tests and real generated-Secret init-process delivery passed in
    normal and renamed lab runs at `52f28e4`.
-2. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
+3. [Item 56](#56-add-component-specific-dev-configuration-overrides): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Isolate each component's dev
    settings in its own optional `config.dev.yaml`.
-3. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
+4. [Item 57](#57-add-portable-references-to-bundled-component-files): high priority;
    done; lab matrix `t10` clean at `cda22e7`. Use one explicit file reference
    in source/dev and an isolated offline release,
    without hand-editing release paths. Separate from the override-layer change.
-4. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
+5. [Item 46](#46-prevent-root-host-preparation-from-following-service-user-symlinks):
    done; lab matrix `t11` clean at `3a54714`. Protect the
    root/service-user boundary on repeated host preparation; high priority,
    conditional on an attacker controlling the service account.
-5. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
+6. [Item 54](#54-keep-root-release-verification-and-trust-off-service-writable-paths):
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
-6. [Item 63](#63-parameterise-image-versions-with-build-time-variables): high priority
+7. [Item 63](#63-parameterise-image-versions-with-build-time-variables): high priority
    (operator request); `{{NAME}}` image tokens from `config/images.yaml` and
    `{{COMPONENT_VERSION}}`, resolved at build; literal tags in releases;
    refuse equal-version releases with different images. After item 54.
-7. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
+8. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
    starting with `spec.env`; after item 54 and before item 59.
-8. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+9. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-9. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
+10. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
    rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
    tests and documentation; after item 59.
-10. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
+11. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
    controlling Identity's request host; before wider production exposure.
-11. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
+12. [Item 49](#49-define-safe-proxy-logging-for-authentication-and-api-requests):
    verify and address sensitive URL parameters in access/error logs, including
    upstream failures; preserve useful operational diagnostics.
-12. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
+13. [Item 44](#44-generate-optional-pfx-signing-credentials-in-dev-and-production):
    opt-in PFX generation from retained or own-PKI signing credentials in dev and
    production, external files taking precedence; unblocks the organisation's
    Identity image.
-13. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
+14. [Item 41](#41-build-secret-and-configmap-values-from-templates-at-install-time): Secret
    values (connection strings) and ConfigMap values built from several
    placeholders at install time (done; six-scenario matrix CLEAN PASS 2026-10-19).
-14. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
+15. [Item 43](#43-separate-reusable-platform-tests-from-demo-application-tests):
    a platform test suite that runs without the demo apps, so an organisation
    using only external images can verify the platform it deploys. Before item
    40, whose fixture changes it then only has to make once (done; lab-verified
    with `t6-*` on `b3f3cf1`).
-15. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
+16. [Item 45a](#45-production-pki-from-the-certificate-provisioning-tool):
    configurable production CA name and lifetimes in the certificate script
    (small; after item 44; done, lab-verified with `t6-*`). 45b (delivery to
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
-16. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
+17. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-17. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
+18. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
    `./deploy status` shows each installed component, version and unit state.
-18. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
+19. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
-19. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
+20. [Item 42](#42-explain-client-registration-and-import-volumes-in-the-architecture-diagrams):
    documentation of client registration and import volumes; before item 3,
    which refers to its list of durable registration state.
-20. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
+21. [Item 3](#3-database-backup-and-credential-recovery-procedures): tested
    backup and recovery of databases and credentials.
-21. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
-22. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
+22. [Item 2](#2-postgresql-password-rotation): PostgreSQL password rotation.
+23. [Item 37](#37-document-and-protect-credential-copies-at-rest): credential
    copies at rest and Identity key protection (with items 2 and 3).
-23. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
+24. [Item 47](#47-refuse-unsafe-permissions-on-retained-generated-secrets):
    reject unsafe retained generated-secret permissions; low-priority hardening,
    coordinated with item 37 rather than blocking the status command or lab run.
-24. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
+25. [Item 35](#35-run-demo-apps-with-a-database-role-that-is-not-a-superuser):
    a database role that is not a superuser (a pattern for products too).
-25. [Item 36](#36-harden-the-demo-application-containers): container hardening
+26. [Item 36](#36-harden-the-demo-application-containers): container hardening
    with secret file modes.
-26. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
+27. [Item 50](#50-define-configurable-production-proxy-limits-and-security-headers):
    lower-priority production hardening: bounded request rates/connections and
    compatible response-header policy, with explicit proxy/application ownership.
-27. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
+28. [Item 22](#22-one-scoped-mutation-testing-round-for-the-riskiest-deployment-decisions):
    one mutation-testing round before the larger DR change.
-28. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
+29. [Item 24](#24-optional-disaster-recovery-dr-adapted-from-podman_test):
    optional DR, after 2, 3 and 37; on its own branch.
-29. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
+30. [Item 51](#51-add-an-optional-grafana-and-loki-logging-demo): low-priority
    demo extension with PostgreSQL logs, maintained collection and a basic
    Grafana view; full SQL logging is opt-in. Does not block DR or core work.
-30. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
+31. [Item 52](#52-add-optional-prometheus-metrics-after-the-logging-demo):
    low-priority follow-up to item 51: container/pod CPU and memory plus backend
    request rates, latency and errors; GraphQL details require app instrumentation.
-31. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
+32. [Item 53](#53-upgrade-app1-with-an-actually-changed-application-image):
    focused acceptance coverage of an app1-only release with a rebuilt application
    image; schedule with acceptance improvements, independently of observability.
-32. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
+33. [Item 55](#55-add-an-explicit-component-scoped-dev-reset): explicit
    `dev/dev.sh reset <component> --delete-data` and `reset --all --delete-data`
    for disposable dev data; whole-dev mode removes local dev Secrets and volumes
    for a fresh start. Not automatic database recovery or a production blocker.
-32. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
+34. When needed: item 5 (verification gaps: a real Python 3.6 run, new Podman
    versions), item 7 (other PostgreSQL layouts), item 6 (unchanged .NET images,
    scope decision first) and item 30 steps 3-4.
 
@@ -159,7 +172,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 54, 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent, coordinated with 54), 54, 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -186,6 +199,186 @@ baseline before implementation; these tasks are not claims of completed work.
 The refactor must preserve the behavior and naming established by items 8 and 9;
 its original core terminology below is historical scope, not an instruction to
 restore core or merge Identity back into platform.
+
+## 64. Support new rootless installations outside the login home
+
+Status: planned; highest-priority operator deliverable, requested 2026-10-23.
+The operator needs to test an offline production installation immediately after
+implementation. Scope is **new installations only**: no migration of an old
+home-based installation, images, volumes or users. Ordinary upgrades, retries,
+restarts and retention within the new layout remain required.
+
+Deliver the implementation and a short, precise production installation guide.
+The [operator-flow draft](docs/PRODUCTION-INSTALL.md) records the agreed target;
+it is explicitly not a runnable recipe for the current bundles. Replace its
+planned status with actual tested commands when implemented.
+
+### Operator requirements and scope
+
+- Run rootless as an existing non-root login account. Its real name, UID/GID and
+  home can vary and need not match the product. `produser` and product `sms` are
+  examples only. Keep the account's registered home, shell and login working;
+  do not require `nologin`, rename the account, move its home or spoof `HOME`.
+- The home has almost no free space. For product `sms`, the sole intended
+  persistent product file there is `~/.sms/sms.env`, containing installation
+  settings. All other product-persistent files belong under `/var/lib/sms`:
+  releases, component config and credentials, rendered YAML, installed metadata,
+  pending operations, route/client registrations, import archives, Podman
+  configuration, images, volumes and product caches. Generalise from the catalog
+  product name; do not hardcode `sms`, `produser` or `/home/<user>` in core code.
+- System-owned `/etc` configuration, system journal and transient
+  `/run/user/<uid>` are deliberate exceptions, not hidden relocations into the
+  login home. Keep per-UID runtime semantics. Document archive staging and image
+  import temporary-space requirements; no home-sized archive copies or caches.
+- Administrator/sudo may prepare the host and protected release/trust boundary.
+  Starting/stopping services, inspecting health/logs and ordinary product
+  operations after publication must work as the selected account without sudo.
+  Do not promise completely unprivileged publication of new executable releases:
+  protected release installation and fapolicyd enrollment remain administrator
+  operations unless an explicit safe delegation is implemented separately.
+- Preserve dev behavior: `build/dev`, existing dev override precedence,
+  `dev/dev.sh up/down`, image helpers and bundle creation must not start reading
+  production `sms.env` or silently switch to production Podman storage. No need
+  for application or manifest edits just to relocate host storage.
+
+### Detailed instructions for the implementation agent
+
+1. Read [AGENTS.md](AGENTS.md), [the review guide](docs/REVIEW_GUIDE.md),
+   [architecture](ARCHITECTURE.md), [component contracts](docs/COMPONENTS.md),
+   [tests](tests/README.md) and [acceptance](acceptance/README.md), plus items 46,
+   54, 56, 57 and 60. Inspect current main and any ongoing item 54 work before
+   selecting helpers/layout; the task text does not prove those fixes are merged.
+   Trace `common.HOME`, `FILES_DIR`, `QUADLET_DIR`, `catalog.component_paths`,
+   metadata, registrations and pending-state paths through init-config, validate,
+   install, retry, upgrade and uninstall. Trace all shell/acceptance paths too.
+2. Introduce one explicit production path model separating actual user home,
+   release inputs, installation/state root, Podman storage/config and runtime.
+   Keep common.HOME's identity meaning if retained; do not globally substitute
+   `/var/lib/...` for the user's home. Derive consumer paths consistently instead
+   of scattering new environment lookups or fallback chains. Use small functions
+   and existing lifecycle boundaries, not a plugin or configuration framework.
+3. Define a minimal, documented bootstrap format at
+   `~/.<product>/<product>.env` (the sms example is `~/.sms/sms.env`). Find the
+   actual user/home through account identity, and the product through the release
+   descriptor. Specify supported fields, precedence, quoting, missing-file and
+   unknown-key behavior, and how existing application settings in this file are
+   treated. Read data, not shell code: no `eval`, shell `source`, substitutions
+   or execution. Bootstrap fields select paths; they do not implicitly replace
+   authoritative component config or forward secrets to all containers. Keep
+   secret values out of diagnostics and redact invalid input. Require private
+   ownership/modes and safely handle symlinks. Do not ship this file in bundles.
+4. Use `/var/lib/<product>` as the target layout's root-owned anchor. A proposed
+   layout is protected `releases/`, user-private `state/`, Podman `storage/` and
+   `config/`; map all other durable outputs explicitly. The service user may
+   manage its designated data directories but must not rename/replace the root
+   anchor or protected release entries. Validate ancestors and ACL/mode exposure.
+   Coordinate with item 54: reuse its verifier/publisher and update its layout
+   assumptions if needed; keep final trusted release bytes and ancestors
+   protected before and after verification. Never fix this with recursive chown
+   of the whole installation tree or a root-owned directory inside a replaceable
+   user-owned parent. Root must not source or blindly follow paths in sms.env;
+   privileged destinations must come from explicit validated administrator input
+   or protected configuration. Validate agreement with user bootstrap settings.
+5. Adapt host preparation to an explicitly selected existing login account.
+   Preserve its home, shell, contents and existing non-overlapping subordinate
+   ID ranges; verify required mappings instead of overwriting them. Preserve
+   item 46's non-root filesystem operations and race/symlink protections while
+   preparing the new data locations. Support rootless linger, correct SELinux
+   labels/equivalences and scoped fapolicyd trust. Do not disable enforcement,
+   broaden executable trust to data, globally chown mapped volume contents or
+   recursively relabel already populated container storage.
+6. Configure Podman and the user systemd manager so CLI deployment, image load,
+   kube/Quadlet services, interactive diagnostics and unattended reboot use the
+   same storage and config. Work out Quadlet discovery before generation: merely
+   adding `EnvironmentFile=` to a generated service or exporting variables in an
+   interactive shell cannot establish the generator's environment. Verify the
+   supported Podman/systemd versions and choose a small persistent integration.
+   Preserve `/run/user/<uid>`; no fake HOME or persistent runtime directory.
+   Avoid global shell exports that redirect dev or unrelated user workloads.
+   Provide an explicit supported way to run production `podman` diagnostics if
+   they require scoped configuration. Retain the one-product-per-account
+   contract; general multi-product account support is not part of this item.
+7. New-layout creation must refuse conflicting existing state or a changed root
+   instead of silently creating a second installation, switching storage or
+   migrating data. Cover restart and fresh-process retry on the same new layout.
+   Keep credentials and DB volumes on ordinary uninstall; scoped delete-data
+   must never remove the user home, shared anchor, protected releases, another
+   product or unrelated containers. Preserve side-effect-free validate: no
+   Podman/systemd commands, writes or reads of credential contents. Loading
+   public bootstrap path settings is distinct from reading Secret source bytes.
+8. Update bundles and host/deploy helpers as needed so a release operates offline
+   without source checkout, sibling source directories or apps. Source dev and
+   bundle building ignore installed production bootstrap settings. Preserve
+   component_file resolution against the selected read-only release; ordinary
+   path sources resolve against the new persistent component-config directory.
+   Never copy local sms.env, credentials or production state into a bundle.
+   Coordinate CLI spelling with item 60 instead of introducing another alias.
+
+### Tests and real acceptance requirements
+
+- Use synthetic products and a runtime user whose name differs from the product,
+  with an actual home outside the install root and ordinary login shell. Include
+  a renamed-product case. Test root derivation, malformed/missing bootstrap,
+  permission/symlink failures, retained config, Secret templates, component files,
+  installed metadata, registration updates, retry and scoped uninstall. Do not
+  write tests that merely repeat the implementation's derived path strings.
+- Test that command-like env values cannot execute, invalid inputs fail before
+  side effects, root helpers cannot be redirected through user-controlled
+  bootstrap/ancestors, and private content is absent from logs and artifacts.
+- Add a real OL9 scenario with Enforcing SELinux and active fapolicyd, separate
+  administrator and runtime identities, an effectively unwritable or tightly
+  constrained login home after bootstrap, and sufficient space under /var/lib.
+  Check actual Podman graphroot/volume paths and home file inventory. Distinguish
+  unrelated OS/login files from product writes; no large files or product
+  config/Quadlets may silently appear in the old home layout.
+- Exercise protected bundle publication, first install in dependency order,
+  actual init-container Secret/migration-probe delivery, HTTPS health, component
+  upgrade retaining data, failed operation/retry, stop/start, logout and reboot
+  without interactive login. Confirm that generated Quadlets are discovered and
+  services use the intended storage after reboot, not only during install.
+  Runtime operations must not rely on cached sudo credentials.
+- Use real separate-UID checks for release write/replace denial, and verify that
+  no unexpected SELinux AVC/fapolicyd denial is needed to make the normal flow
+  work. Keep bounded waits and cleanup confined to disposable test resources.
+- Run the appropriate platform/demo suites, platform --isolate, acceptance-harness
+  tests and required static checks. Include a dev regression with a production
+  env file present and an isolated bundle export; neither may inherit production
+  paths/settings. Record commit and exact commands, separating unit, harness and
+  real runtime evidence. If OL9 execution is unavailable, mark it pending and do
+  not label the new deployment model ready for the operator.
+
+### Required short production installation guide
+
+Finish [docs/PRODUCTION-INSTALL.md](docs/PRODUCTION-INSTALL.md) as a short
+Norwegian operator guide with concrete copy/paste commands, linked prominently
+from README and included or explicitly delivered with the offline release.
+Keep deep design/verification details in linked documents, not in the operator
+flow. Use one coherent example with product sms and a different, replaceable
+runtime username; never assume all component versions are equal. It must show:
+
+1. Prerequisites, actual-user/root paths, required disk space and transfer of the
+   right archives/checksums/signatures. Explicit signed-policy versus approved
+   unsigned test flow; never run privileged code from an unverified archive.
+2. Administrator host preparation for the existing account, bounded ownership
+   and labels, port 8443, UID mapping/linger and protected release publication
+   plus exact fapolicyd trust verification. State which steps repeat per release.
+3. The exact minimal sms.env content and its permissions; no manual HOME change
+   or terminal-only environment required. Show actual config/credential paths.
+4. Rootless platform init-config, config edits, TLS provisioning, validate and
+   install; then STS and dependencies with signing-PFX, DB credentials and the
+   production migration/seed selection. Do not copy the entire dev credentials
+   directory or ship dev overrides. Respect component-specific secret names.
+5. Rootless status/log/Podman commands, local and external HTTPS checks, restart,
+   logout/reboot verification and a few safe diagnostics for wrong paths/storage,
+   permissions, missing credentials or fapolicyd trust. Show the execution user
+   and success condition for each step; fail clearly instead of continuing.
+
+Run the guide's commands as an acceptance scenario on a fresh host. Keep
+README, architecture, review contracts, current helper usage and this backlog
+status consistent with the final implementation. Complete the understandability
+review by tracing one successful install and one failure/retry, explaining path
+ownership, bootstrap loading and systemd startup. No automatic legacy migration,
+application refactoring or unrelated backlog cleanup belongs in this task.
 
 ## 61. Verify Secret-derived environment values in init containers
 
@@ -5493,10 +5686,17 @@ Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply the
 signed-bundle, isolation and fapolicyd contracts to the operator's privileged
 release steps; coordinate with items 38 and 46.
 
-Status: planned; next implementation priority after item 46, which is now
-lab-verified. Found in the item 46 review on 2026-10-19. Analysis updated on
+Status: planned; release-safety prerequisite coordinated with urgent item 64;
+item 46 is now lab-verified. Found in the item 46 review on 2026-10-19. Analysis updated on
 2026-10-22 against `07f8d56`: three local reproductions confirm gaps in release
 verification/trust wiring. No fix or real-host exploit verification yet.
+
+Coordination (2026-10-23): [item 64](#64-support-new-rootless-installations-outside-the-login-home)
+requires an existing login user and product files under a separate root-owned
+`/var/lib/<product>` anchor. Reconcile the final release path with that item;
+preserve this item's protected publication/trust boundary and shared helper.
+Do not assume product name equals user name or that the installation root is
+also the registered user home.
 
 ### Problem
 

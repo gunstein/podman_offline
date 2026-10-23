@@ -930,6 +930,11 @@ deploy and Podman do not infer a file's purpose from the name `session-key`.
 
 ## First production installation
 
+For the planned existing-login-user installation with storage outside the home,
+see the [short production-flow draft](docs/PRODUCTION-INSTALL.md) and backlog
+item 64. That layout is not implemented yet; the current procedure below still
+uses the service-home model.
+
 Run as the operator with sudo. Install the `platform` bundle first.
 For an app installation, install `identity` next, then `app1` and/or `app2` in
 either order. For a platform/help-only installation, install `help` after
