@@ -139,11 +139,11 @@ class ReleaseSafetyDiagnosticsTests(unittest.TestCase):
             with self.subTest(kind=type(error).__name__):
                 with (
                     self.assertRaises(probe.ProbeError) as observed,
-                    probe.phase("service-user deploy validate"),
+                    probe.phase("service-user deploy.sh validate"),
                 ):
                     raise error
                 text = probe.error_message(observed.exception)
-                self.assertIn("service-user deploy validate:", text)
+                self.assertIn("service-user deploy.sh validate:", text)
                 self.assertNotIn("secret-value", text)
                 self.assertNotIn("credentials", text)
                 if isinstance(error, OSError):

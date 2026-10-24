@@ -18,7 +18,7 @@ def export_platform(target):
     if target.exists():
         raise ValueError("Export destination already exists")
     target.mkdir(parents=True)
-    for name in ("bundle.py", "deploy", "build-bundle.sh", "README.md"):
+    for name in ("bundle.py", "deploy.sh", "build-bundle.sh", "README.md"):
         shutil.copy2(str(ROOT / name), str(target / name))
     for name in ("deployment", "scripts", "quadlet", "examples"):
         shutil.copytree(

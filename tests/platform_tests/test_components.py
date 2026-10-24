@@ -334,7 +334,7 @@ class ComponentTests(ComponentFixture):
             ),
         )
         output, errors = io.StringIO(), io.StringIO()
-        arguments = mock.patch.object(cli.sys, "argv", ["deploy", "install"])
+        arguments = mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"])
         capture = contextlib.redirect_stdout(output)
         diagnostics = contextlib.redirect_stderr(errors)
         with arguments:
@@ -386,7 +386,7 @@ class ComponentTests(ComponentFixture):
                 raise subprocess.CalledProcessError(125, arguments)
 
         self.process.side_effect = command
-        with mock.patch.object(cli.sys, "argv", ["deploy", "install"]):
+        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
             self.assertEqual(cli.main(), 1)
         self.assertIn(
             "journalctl --user -u myproduct-app1.service", self.stderr.getvalue()

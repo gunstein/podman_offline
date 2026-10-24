@@ -1,4 +1,4 @@
-# ./deploy install fills in the product name (bundles.yaml) and the unit name
+# ./deploy.sh install fills in the product name (bundles.yaml) and the unit name
 # (<product>-<component>, or the product for a standalone fixture).
 [Unit]
 Description=@@UNIT_NAME@@

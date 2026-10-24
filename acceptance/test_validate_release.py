@@ -1,4 +1,4 @@
-"""The lab requires ./deploy validate to pass before every install (backlog 23)."""
+"""The lab requires ./deploy.sh validate to pass before every install (backlog 23)."""
 
 import subprocess
 import unittest

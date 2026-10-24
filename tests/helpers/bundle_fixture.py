@@ -42,7 +42,7 @@ class BundleFixture(unittest.TestCase):
         )
         for name, text in {
             "VERSION": "1.2.3\n",
-            "deploy": '#!/bin/sh\nexec python3 -B -m deployment "$@"\n',
+            "deploy.sh": '#!/bin/sh\nexec python3 -B -m deployment "$@"\n',
             "deployment/__init__.py": "",
             "deployment/__main__.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",

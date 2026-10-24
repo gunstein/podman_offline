@@ -199,7 +199,7 @@ class QuadletBundleTests(ProductFixture):
         self.assertFalse((common.ROOT / "apps").exists())
         unit = common.QUADLET_DIR / "cedar-processor.kube"
         expected = (
-            "# ./deploy install fills in the product name (bundles.yaml) and the unit name\n"
+            "# ./deploy.sh install fills in the product name (bundles.yaml) and the unit name\n"
             "# (<product>-<component>, or the product for a standalone fixture).\n"
             "[Unit]\nDescription=cedar-processor\n\n[Kube]\nYaml=cedar-processor.yaml\n"
             "Network=cedar.network\n\n[Service]\nRestart=on-failure\nTimeoutStartSec=180\n"
@@ -210,7 +210,7 @@ class QuadletBundleTests(ProductFixture):
         network = common.QUADLET_DIR / "cedar.network"
         self.assertEqual(
             network.read_text(),
-            "# ./deploy install fills in the product name: the network every component shares.\n"
+            "# ./deploy.sh install fills in the product name: the network every component shares.\n"
             "[Network]\nNetworkName=cedar\n",
         )
         sibling_paths = [

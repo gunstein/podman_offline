@@ -102,8 +102,17 @@ def reject_bad_signature(namespace, *arguments):
 
 
 def validate_command(path, account):
-    """deploy validate as the runtime account, never as a product-named user."""
-    return ["sudo", "-n", "-H", "-u", account, "bash", str(path / "deploy"), "validate"]
+    """deploy.sh validate as the runtime account, never as a product-named user."""
+    return [
+        "sudo",
+        "-n",
+        "-H",
+        "-u",
+        account,
+        "bash",
+        str(path / "deploy.sh"),
+        "validate",
+    ]
 
 
 def run():
@@ -219,7 +228,7 @@ def run():
         if namespace["command"](["fapolicyd-cli", "--dump-db"]).stdout != trust_before:
             raise ProbeError("negative probe changed trust")
     # Confirm service-user execution still opens the enrolled file-based package.
-    with phase("service-user deploy validate"):
+    with phase("service-user deploy.sh validate"):
         result = subprocess.run(
             validate_command(path, account),
             cwd=user.pw_dir,
@@ -230,7 +239,7 @@ def run():
             check=False,
         )
         if result.returncode:
-            raise ProbeError("deploy validate exit=" + str(result.returncode))
+            raise ProbeError("deploy.sh validate exit=" + str(result.returncode))
         print(
             "PASS: signature refusal left trust unchanged; protected launch validates"
         )

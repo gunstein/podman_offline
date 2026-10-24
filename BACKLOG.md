@@ -49,7 +49,8 @@ Item 62 is implemented with local regression coverage for misplaced container
 fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is implemented
 with local regression coverage: consistent Quadlet markers and early validation
 ([verification](acceptance/QUADLET-TEMPLATES.md)).
-Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
+Item 60 is implemented locally: the CLI wrapper is `deploy.sh`
+([verification](acceptance/CLI-WRAPPER.md));
 items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
 verification statuses are recorded below.
@@ -86,8 +87,8 @@ The order for an offline production deployment of an organisation's own apps:
 9. [Item 59](#59-standardise-quadlet-placeholder-syntax): implemented;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-10. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
-   rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
+10. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): implemented;
+   use `deploy.sh` consistently in source, bundles, callers,
    tests and documentation; after item 59.
 11. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
@@ -114,7 +115,7 @@ The order for an offline production deployment of an organisation's own apps:
 17. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
 18. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
-   `./deploy status` shows each installed component, version and unit state.
+   `./deploy.sh status` shows each installed component, version and unit state.
 19. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
@@ -182,7 +183,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 and 60 (high priority, after 54; 59 implemented), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -456,7 +457,7 @@ in one directory and have one `install.sh` install them all.
 Shape to investigate: an install set directory with an explicit manifest
 (product, components, versions) and the signed bundles with `.asc`/`.sha256`.
 Bundles stay separate component releases (each has its own `bundle.yaml`,
-`VERSION`, `deploy` and modules), so never unpack them on top of each other.
+`VERSION`, `deploy.sh` and modules), so never unpack them on top of each other.
 The administrator part authenticates and publishes every listed bundle (item
 65); the runtime account then runs one command that, in declared dependency
 order, runs `init-config` where needed, stops for required operator edits or
@@ -724,10 +725,10 @@ Hvis du finner en eksisterende feil, dokumenter den med en fokusert reproduksjon
 Legg til integrasjonstester som starter de faktiske wrapper-scriptene fra en arbeidsmappe utenfor checkout/release:
 
 ```text
-./deploy prepare
-./deploy init-config <component>
-./deploy install
-./deploy uninstall
+./deploy.sh prepare
+./deploy.sh init-config <component>
+./deploy.sh install
+./deploy.sh uninstall
 ./build-bundle.sh
 ```
 
@@ -803,9 +804,9 @@ Goal: a medium-experienced developer with some Python knowledge and little famil
 
 Keep the root commands unchanged:
 
-- `./deploy prepare`
-- `./deploy install`
-- `./deploy uninstall`
+- `./deploy.sh prepare`
+- `./deploy.sh install`
+- `./deploy.sh uninstall`
 - `./build-bundle.sh`
 
 Move deploy internals into a small Python package, roughly:
@@ -819,7 +820,7 @@ deployment/
   render.py
 ```
 
-Keep `./deploy` as the stable entrypoint and run Python with `-B`, e.g. `python3 -B -m deployment`, so trusted release code does not create `.pyc`/`__pycache__`. Preserve invocation from outside the release directory as well.
+Keep `./deploy.sh` as the stable entrypoint and run Python with `-B`, e.g. `python3 -B -m deployment`, so trusted release code does not create `.pyc`/`__pycache__`. Preserve invocation from outside the release directory as well.
 
 Responsibilities:
 
@@ -1084,9 +1085,9 @@ Det skal ikke opprettes en separat platform-bundle.
 Behold rotkommandoene. Oppdater komponentargumentene:
 
 ```sh
-./deploy init-config platform
-./deploy uninstall platform
-./deploy uninstall platform --delete-data
+./deploy.sh init-config platform
+./deploy.sh uninstall platform
+./deploy.sh uninstall platform --delete-data
 ```
 
 Gamle `core`-argumenter skal ikke utføre utilsiktede operasjoner. Gi en tydelig melding om nytt navn dersom de brukes.
@@ -2628,7 +2629,7 @@ creation. A component without PostgreSQL needs no database settings. Keep the
 current PostgreSQL layout checks and lost-password/existing-volume refusal;
 broader database image/layout support remains backlog item 7.
 
-`dev/dev.sh up/down` and `./deploy prepare` must use the catalog and dependency
+`dev/dev.sh up/down` and `./deploy.sh prepare` must use the catalog and dependency
 order, including the real app1 database-before-init order. Generic dev startup
 must work with a missing/empty `apps/` and externally prepared credentials/images.
 It must not invoke demo certificate/user generation for arbitrary components.
@@ -3215,7 +3216,7 @@ side effects:
 ### Message to the implementing agent
 
 Add one explicit validation command that a developer or operator runs before
-`prepare`, `build-bundle.sh` or `install`, for example `./deploy validate`.
+`prepare`, `build-bundle.sh` or `install`, for example `./deploy.sh validate`.
 
 1. Scope: in the source checkout, validate every catalog component with its dev
    config layers (common, component, optional `config/dev.yaml`). In an
@@ -3252,7 +3253,7 @@ acceptance-harness tests, ruff, format, pyright, vermin, shellcheck and
 
 ### Plan (2026-10-17)
 
-**Command.** `./deploy validate`, the same wrapper as `prepare` and `install`.
+**Command.** `./deploy.sh validate`, the same wrapper as `prepare` and `install`.
 It decides the mode as those commands do:
 
 | Where | What is validated | Config |
@@ -3317,7 +3318,7 @@ and the renamed product. Each failure test asserts exit 1, the component in
 the message, no files changed and no commands. A test asserts that `prepare`
 and `validate` report the same message for the same broken manifest.
 
-**Docs.** README (developer workflow: run `./deploy validate` before
+**Docs.** README (developer workflow: run `./deploy.sh validate` before
 `dev/dev.sh up` and `build-bundle.sh`; operator workflow: before `install`),
 `docs/COMPONENTS.md` (adding and removing a component), ARCHITECTURE
 (validation order) and the review guide.
@@ -3467,7 +3468,7 @@ Status: done on `main` (2026-10-18); the full lab matrix on `2528769` (`b26-app1
 PASS.
 
 - F7: uninstall of a component with metadata but no marker now says it is an
-  unfinished first install and that `./deploy install` from its bundle finishes
+  unfinished first install and that `./deploy.sh install` from its bundle finishes
   it (the only recovery: units may be partly written). Fresh-process
   regression `test_unfinished_first_install_names_the_retry_for_uninstall`.
 - F8: `client.yaml` may declare `environment: {id: <VAR>, base_path: <VAR>}`;
@@ -3745,7 +3746,7 @@ prerequisite (a cache size, not a rule change); `prepare-host.sh` warns when
 it is smaller but does not edit fapolicyd's configuration; the lab's
 prepare-host step applies the documented setting and restarts fapolicyd; and
 `11-prod-audit` records the cache and queue figures. No retry was added to
-deploy: rerunning `./deploy install` already completes pending owner work.
+deploy: rerunning `./deploy.sh install` already completes pending owner work.
 
 Confirmed in `fapo-app1-first` on `2589710` (CLEAN PASS, no FANOTIFY/AVC
 events): with `subj_cache_size = 16381` the report showed 0 early evictions
@@ -3785,7 +3786,7 @@ their cause was not established.
 ### Why it matters
 
 The documented operator procedure does the same thing: add the release's trust,
-`fapolicyd-cli --update`, then `./deploy install`, which restarts services. If
+`fapolicyd-cli --update`, then `./deploy.sh install`, which restarts services. If
 the denial is a window after a trust database reload, real installs and
 upgrades can fail intermittently with 203/EXEC.
 
@@ -4020,7 +4021,7 @@ Found by the best-practice review at `689156b` (finding 5).
 `deploy.restart_service` runs `systemctl --user restart` and `is-active`. An
 active unit does not prove that the pod's containers are running, let alone
 healthy: a crash loop or a failing health check still reports success, and
-`./deploy install` prints OK. The acceptance harness has its own health wait
+`./deploy.sh install` prints OK. The acceptance harness has its own health wait
 (`healthy` in acceptance/remote.sh and the README helper); the product does not.
 
 ### Task
@@ -4035,7 +4036,7 @@ healthy: a crash loop or a failing health check still reports success, and
    record and completion marker behave exactly as for a failed restart today
    (the marker is written only after the component is healthy).
 3. Decide and document whether `uninstall` restarts of owners also wait.
-4. Keep `./deploy validate` and dev `prepare` free of Podman calls.
+4. Keep `./deploy.sh validate` and dev `prepare` free of Podman calls.
 5. Tests: healthy, starting then healthy, unhealthy, exited, missing container
    and timeout; a fresh-process retry after an unhealthy first install. Update
    README (what install guarantees), ARCHITECTURE's sequence diagram and the
@@ -4161,7 +4162,7 @@ home by hand, for example
 
 ### Task
 
-1. Add `./deploy status`, run as the service user from any unpacked bundle of
+1. Add `./deploy.sh status`, run as the service user from any unpacked bundle of
    the product (the bundle only supplies the code; status reads the service
    home). Output, one line per installed component in dependency order:
    component, installed version, unit name and `systemctl --user is-active`
@@ -4461,7 +4462,7 @@ data:
 - **Static checks (no secret contents read).** Schema, IDs, placeholder syntax,
   config keys exist, referenced secret groups and files are declared (existing
   or `generate:`). These run in `validate_component_config` / `validation.check_sources`
-  and `./deploy validate`, like `check_file_sources` today.
+  and `./deploy.sh validate`, like `check_file_sources` today.
 - **Content checks and rendering.** In `render.materialize`, after
   `generate_secrets` and `load_file_group(SECRET_FILES)`, render each template
   into an `Opaque` Secret document beside `secret_documents()`, with the same
@@ -4531,7 +4532,7 @@ which is how the organisation's own apps work:
 - **`acceptance/remote.sh`.** Keep the `--database-check` check (around line
   1379). Add:
   - no ConfigMap in the rendered YAML contains the database password;
-  - the password is absent from `./deploy` output and from the user journal of
+  - the password is absent from `./deploy.sh` output and from the user journal of
     the Identity units;
   - the rendered YAML is still mode 0600.
 - **Identity upgrade scenario** (old in-app build to the template build): the
@@ -5095,7 +5096,7 @@ Keep the current stdin delivery; no deploy, bundle or lab-scenario changes.
    the CA; define when renewal is allowed and how consumers (nginx, Identity,
    app clients) pick up the new certificate through the normal upgrade/restart
    path.
-2. Report certificate expiry in `./deploy status` (item 39).
+2. Report certificate expiry in `./deploy.sh status` (item 39).
 3. Test expiry and renewal with short-lived fixtures, and verify on PROD in the
    lab. Plan it well before the first production certificates expire.
 
@@ -6413,7 +6414,7 @@ Code facts and decisions from the review; they refine the task above.
   An entry has exactly one of `path` or `component_file`; `generate` with
   `component_file` is refused before writes. Confirm or justify another choice.
 - **Selected release.** The base is `common.ROOT/components/<current component>/files/`:
-  the source checkout in dev, the unpacked bundle running `./deploy` in production,
+  the source checkout in dev, the unpacked bundle running `./deploy.sh` in production,
   for validate and install alike. No release path is stored in config. Refuse the
   reference when there is no component context (standalone fixtures), and as a
   database password source or any generated credential.
@@ -6669,9 +6670,13 @@ the relevant checks pass, and any runtime verification gaps are recorded.
 
 ## 60. Rename the CLI wrapper to deploy.sh
 
-Status: planned, high priority (2026-10-22). Schedule after item 59 and before
-items 48/49. Requested because several users expect the shell script to have a
-`.sh` suffix. The canonical command becomes `./deploy.sh` in source and releases.
+Status: implemented with local product and harness regression checks (2026-10-24).
+`./deploy.sh` is the sole current wrapper in source, bundles, callers, usage and
+current documentation; no old-name alias is shipped. Based on item 59 commit
+`6c9a461`, on branch `fix/60-deploy-sh`.
+[Verification and understandability review](acceptance/CLI-WRAPPER.md).
+Real Podman/systemd verification of this change remains pending. The original
+rename brief follows.
 
 ### Analysis and implementation brief
 

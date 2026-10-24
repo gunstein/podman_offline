@@ -9,7 +9,7 @@ instances, nginx and a static help app.
 Planned work is tracked in [BACKLOG.md](BACKLOG.md).
 
 The deploy package and lifecycle flow are described in [ARCHITECTURE.md](ARCHITECTURE.md).
-The root `./deploy` command runs `python3 -B -m deployment` from its own directory,
+The root `./deploy.sh` command runs `python3 -B -m deployment` from its own directory,
 including when called from outside the release. It creates no Python bytecode.
 
 ## Components and bundles
@@ -44,7 +44,7 @@ host then follows it:
 | Component units and Quadlet files | `hubbabubba-<component>.service`, `.kube`, `.yaml` |
 | Shared Podman network | `hubbabubba` (`hubbabubba.network`) |
 
-`./deploy` reads the name from the bundle; the only other target setting is
+`./deploy.sh` reads the name from the bundle; the only other target setting is
 the bootstrap file `~/.<product>/<product>.env` (backlog 64). Lowercase letters,
 digits and inner hyphens, a letter first, at most 32 characters. The runtime
 account is an existing login account chosen explicitly with
@@ -198,8 +198,8 @@ for container delivery is separate from packaging.
 From a protected published release, run as the service user:
 
 ```sh
-as_product bash "$release/deploy" init-config platform
-# Or, from the release directory as the service user: ./deploy init-config platform
+as_product bash "$release/deploy.sh" init-config platform
+# Or, from the release directory as the service user: ./deploy.sh init-config platform
 ```
 
 Only components included in that bundle may be initialized. The command writes
@@ -268,7 +268,7 @@ configuration names; those reports are kept unchanged.
 cp config/dev.yaml.example config/dev.yaml   # optional local overrides
 chmod 600 config/dev.yaml
 ./dev/demo-credentials.sh                    # demo only: CA, certificates, users
-./deploy validate                            # every component, no writes or Podman
+./deploy.sh validate                            # every component, no writes or Podman
 ./dev/dev.sh up
 python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
@@ -284,7 +284,7 @@ production; it does not require an `apps/` directory or demo user generation.
 
 `dev/demo-credentials.sh` creates missing demo credentials under `build/dev/`
 and reuses them on later runs; it is demo provisioning, not part of the generic
-dev lifecycle. `./deploy validate` checks every catalog component with its dev
+dev lifecycle. `./deploy.sh validate` checks every catalog component with its dev
 config (manifests, placeholders, links, images, PostgreSQL layout, declared file
 sources by existence and type, route and client registrations) and reports the
 first finding of each component; a placeholder or YAML file that cannot be read
@@ -292,7 +292,7 @@ while dev config is assembled stops the run, as it stops `prepare`. It writes
 nothing, generates no secret, reads no credential contents and runs no Podman
 or systemd command; `prepare` and `install` start with the same checks. In an
 unpacked bundle it runs as the service user, reads the bootstrap file and checks
-the prepared installation root, but needs no runtime directory. `dev/dev.sh up` runs `./deploy prepare` for the catalog's
+the prepared installation root, but needs no runtime directory. `dev/dev.sh up` runs `./deploy.sh prepare` for the catalog's
 components in dependency order, followed by `podman kube play`. Run
 `dev/dev.sh down` before removing a component from the catalog: it stops what
 the last prepare rendered.
@@ -308,9 +308,9 @@ guard, not full Kubernetes schema validation; other Pod fields and arbitrary
 ConfigMap/Secret keys and annotations remain supported. Bundle building uses
 the same guard before image operations. See [verification](acceptance/MANIFEST-STRUCTURE.md).
 
-Run `./deploy prepare` from the source checkout; product bundles reject dev
+Run `./deploy.sh prepare` from the source checkout; product bundles reject dev
 prepare and use persistent config through install. Standalone fixtures retain
-their explicit prepare flow; in a release without `components/`, `./deploy
+their explicit prepare flow; in a release without `components/`, `./deploy.sh
 install` validates `manifests/` against `/var/lib/myproduct/state/config.yaml`, loads
 `images/images.tar` and runs one `myproduct.service` (see the
 `install_standalone` docstring for the order). Component prepare merges common defaults, component
@@ -365,7 +365,7 @@ the named components, after validating the whole catalog, and leaves
 `dist/current-bundles.txt` unchanged. Only catalog components are scanned for
 images. Each bundle contains `config/common.defaults.yaml` (when present), its
 component's `config.defaults.yaml`, only its component,
-`deploy`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
+`deploy.sh`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
 an informational `VERSION` and its own
 `images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
 Checksums cover all shipped files. Apps/dev/tests/examples/acceptance and local
@@ -614,7 +614,7 @@ VOLUME_FILES:
 ```
 
 This selects `components/sts/files/sql/010-reference.sql` in the checkout or the
-bundle running `deploy`. It never uses the current working directory, another
+bundle running `deploy.sh`. It never uses the current working directory, another
 release, or the original build checkout. `init-config` retains this logical
 reference in persistent config. An upgrade reads the new selected bundle's bytes
 without editing config; changed defaults still never replace existing config.
@@ -665,12 +665,12 @@ After the usual signature/checksum verification and unpacking, run as the servic
 user (the release directories may be anywhere accessible):
 
 ```sh
-/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy init-config sts
-/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy validate
-/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy install
+/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy.sh init-config sts
+/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy.sh validate
+/var/lib/myproduct/releases/myproduct-sts-1.0.0/deploy.sh install
 # A later verified/unpacked release, with the same persistent config:
-/var/lib/myproduct/releases/myproduct-sts-1.0.1/deploy validate
-/var/lib/myproduct/releases/myproduct-sts-1.0.1/deploy install
+/var/lib/myproduct/releases/myproduct-sts-1.0.1/deploy.sh validate
+/var/lib/myproduct/releases/myproduct-sts-1.0.1/deploy.sh install
 ```
 
 The app1 demo runs a read-only seed PVC in `seed-database` after
@@ -753,7 +753,7 @@ flowchart TD
 ```
 
 `component` in the diagram stands for the selected component, such as `app1`.
-In development, `./deploy prepare` uses materialized config and credentials under
+In development, `./deploy.sh prepare` uses materialized config and credentials under
 `build/dev/` and writes the combined `build/install.yaml` for `podman kube play`.
 Production install uses persistent config and writes component-specific YAML for
 Quadlet. The diagram shows data flow; validation and image checks still gate the
@@ -878,7 +878,7 @@ remain subject to [target verification](acceptance/CREDENTIAL-DELIVERY.md).
 
 ### Certificate and private-key flow
 
-Certificate preparation is a separate operator step before `deploy install`.
+Certificate preparation is a separate operator step before `deploy.sh install`.
 The demo uses `dev/generate-certificates.sh --root /var/lib/myproduct
 <component> <DNS-hostname>`; see the complete commands below. It is demo
 provisioning and is not part of the product bundles (which ship the host setup
@@ -1196,14 +1196,14 @@ release_tool prepare --product "$product_name" --component "$bundle" --version "
 release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
 state="/var/lib/$product_name/state"
 # Start with bundle=platform, then identity, then app1/app2; help needs only platform.
-as_product bash "$release/deploy" init-config "$bundle"
+as_product bash "$release/deploy.sh" init-config "$bundle"
 sudoedit -u "$service_user" "$state/$bundle/config.yaml"
 # On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
 # Demo only: dev/generate-certificates.sh copied from the source checkout.
 as_product bash -s -- --root "$state" "$bundle" myproduct-proxy < generate-certificates.sh
 sudoedit -u "$service_user" "$state/$bundle/config.yaml"
-sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$release"
-sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh validate' bash "$release"
+sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$release"
 sudo systemctl --user -M "$service_user@" status "$product_name-$bundle.service"
 ```
 
@@ -1228,7 +1228,7 @@ settings and install. Keep existing platform and Identity config.
 
 For help, including a platform/help-only setup, repeat after platform with
 `bundle=help` and `components/help/VERSION`; run
-`as_product bash "$release/deploy" init-config help` and install. Identity
+`as_product bash "$release/deploy.sh" init-config help` and install. Identity
 and the apps can be omitted. Help needs no new credentials. These installs update shared routing/client imports
 and restart their changed owners (platform for routes, Identity for clients),
 while retaining the other app's service/data.
@@ -1244,7 +1244,7 @@ Platform/app bundles need no retransmission. Installed apps' Identity requiremen
 must allow the requested version.
 
 Failed lifecycle commands can be repeated from the same component's verified,
-trusted bundle. Retry `./deploy install`, or repeat `./deploy uninstall` with
+trusted bundle. Retry `./deploy.sh install`, or repeat `./deploy.sh uninstall` with
 exactly the original `--delete-data` choice. The private
 `<state>/pending-operation.json` records unfinished registration owners or the scoped
 uninstall plan before relevant changes. Required imports are rebuilt and owners
@@ -1278,7 +1278,7 @@ success remove the old own trust entry, leaving other bundles' trust untouched:
 release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
     --archive "$archive" --signature "$archive.asc"
 release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
-sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$release"
 as_product podman ps
 healthy
 # Complete the required HTTPS/application e2e checks BEFORE retiring the old release.
@@ -1297,9 +1297,9 @@ state; none of it belongs to a release directory.
 Use a currently trusted release of the bundle to uninstall its own component:
 
 ```sh
-as_product bash "$release/deploy" uninstall
+as_product bash "$release/deploy.sh" uninstall
 # Destructive option: also delete this component's data/secret volumes and state.
-as_product bash "$release/deploy" uninstall --delete-data
+as_product bash "$release/deploy.sh" uninstall --delete-data
 ```
 
 `uninstall [<component>] [--delete-data]` accepts only the bundle's own
@@ -1335,7 +1335,7 @@ pattern=ld_so : all` deny systemd's launch of Podman (`203/EXEC`,
 installing; `prepare-host.sh` warns when it is smaller. This tunes the cache
 only and does not change any rule. With 4099 the lab showed six early
 evictions per acceptance run (`fapolicyd-cli --check-status`). If a restart
-still fails this way, rerunning `./deploy install` completes the pending
+still fails this way, rerunning `./deploy.sh install` completes the pending
 owner work.
 
 Rootless is the only production mode. On the OL9.8 lab, rootful crun fails with
@@ -1487,7 +1487,7 @@ and volume and tells the operator to restore the password from backup or follow 
 separate recovery procedure. No volume is deleted, inspected for reinitialization,
 or repaired automatically. Dev preparation now needs access to its rootless Podman
 volume store when a DB password is missing; `dev/dev.sh up` performs this preflight
-before creating certificate state, and `./deploy prepare` performs it before
+before creating certificate state, and `./deploy.sh prepare` performs it before
 config output or any generated secrets. Ordinary YAML rendering has no Podman lookup.
 
 PostgreSQL does not update an existing user's password when its Secret file changes.

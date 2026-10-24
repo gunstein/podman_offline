@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 case "${1:-}" in
     up)
         # prepare checks database volumes before it writes config or creates secrets.
-        ./deploy prepare
+        ./deploy.sh prepare
         # The shared network carries the product name from bundles.yaml.
         product=$(python3 -B -c 'from deployment import catalog, common; print(catalog.product_name(common.ROOT))')
         podman network exists "$product" || podman network create "$product"

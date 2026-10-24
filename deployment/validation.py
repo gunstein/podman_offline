@@ -1,4 +1,4 @@
-"""./deploy validate: report findings without writing anything (backlog 23).
+"""./deploy.sh validate: report findings without writing anything (backlog 23).
 
 The command reuses the lifecycle's checks so the two cannot disagree:
 deploy.validate_component (manifests and PostgreSQL layout), deploy.install_checks

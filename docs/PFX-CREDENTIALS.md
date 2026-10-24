@@ -79,7 +79,7 @@ as_product bash -s -- --root "$root" --cert-days 365 \
   names, so it fits a platform component with the ID `platform`. The signing
   mode accepts any component ID.
 - Back up `PKI/private/`, the password file and the component credentials.
-- Then run `./deploy validate` and install as usual. Delivery of the PFX is
+- Then run `./deploy.sh validate` and install as usual. Delivery of the PFX is
   described in [Deliver only the PFX](#deliver-only-the-pfx).
 
 Checked locally (2026-10-20, OpenSSL 3, one disposable root): the dev sequence
@@ -225,7 +225,7 @@ YAML and container storage, and back up authoritative credentials (items 3/37).
 ## Dev, production and runtime verification
 
 Dev provisioning uses `--root build/dev`; relative SECRET_FILES paths then resolve
-under `build/dev/<component>/`. Run `./deploy validate` and `./dev/dev.sh up` after
+under `build/dev/<component>/`. Run `./deploy.sh validate` and `./dev/dev.sh up` after
 images and all other credentials are present.
 
 Production uses the same relative layout under `/var/lib/<product>/state/<component>/`.

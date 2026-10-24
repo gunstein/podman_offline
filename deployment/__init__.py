@@ -1,1 +1,1 @@
-"""Offline deployment tools. Use the repository/release ./deploy entrypoint."""
+"""Offline deployment tools. Use the repository/release ./deploy.sh entrypoint."""

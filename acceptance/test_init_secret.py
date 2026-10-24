@@ -202,7 +202,7 @@ class InitSecretHarnessTests(unittest.TestCase):
                     return types.SimpleNamespace(
                         returncode=0, stdout="systemd 252\n", stderr=""
                     )
-                if arguments[0].endswith("/deploy") or arguments[-1].endswith(
+                if arguments[0].endswith("/deploy.sh") or arguments[-1].endswith(
                     "/bundle.py"
                 ):
                     return real_command(arguments, allowed)

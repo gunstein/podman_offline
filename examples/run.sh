@@ -50,7 +50,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cp "$root/deploy" "$work/"
+cp "$root/deploy.sh" "$work/"
 cp -R "$root/deployment" "$root/quadlet" "$work/"
 copy_example() {
     local source=$1
@@ -79,7 +79,7 @@ if [[ $example == failures ]]; then
             mkdir -p files
             python3 -c 'from pathlib import Path; Path("files/large.bin").write_bytes(b"x" * 400000)'
         fi
-        if ./deploy prepare >prepare.log 2>&1; then
+        if ./deploy.sh prepare >prepare.log 2>&1; then
             echo "FAIL: $(basename "$case_dir") unexpectedly succeeded" >&2
             exit 1
         fi
@@ -99,7 +99,7 @@ copy_example "$root/examples/$example"
 if [[ $example == secrets ]]; then
     python3 -c 'from pathlib import Path; Path("files/binary.bin").write_bytes(bytes(range(256)) * 4 + b"\x00\xff\r\n")'
 fi
-./deploy prepare
+./deploy.sh prepare
 # Only names in this run's rendered document are eligible for cleanup.
 mapfile -t volumes < <(python3 -c 'import yaml; print("\n".join(d["metadata"]["name"] for d in yaml.safe_load_all(open("build/install.yaml")) if d.get("kind") == "PersistentVolumeClaim"))' | sed '/^$/d')
 mapfile -t secrets < <(python3 -c 'import yaml; print("\n".join(d["metadata"]["name"] for d in yaml.safe_load_all(open("build/install.yaml")) if d.get("kind") == "Secret"))' | sed '/^$/d')
@@ -167,7 +167,7 @@ def main():
         raise RuntimeError("Invalid generated secret file or permissions")
     for attempt in range(2):
         if attempt:
-            subprocess.run(["./deploy", "prepare"], check=True)
+            subprocess.run(["./deploy.sh", "prepare"], check=True)
             if path.read_bytes() != before:
                 raise RuntimeError("Prepare changed the existing generated secret")
             subprocess.run(["podman", "kube", "play", "--replace", "build/install.yaml"], check=True)
@@ -201,7 +201,7 @@ GENERATED_EXAMPLE
             printf "modified by app\n" > /data/single.txt'
         podman kube down build/install.yaml
         printf 'updated upload\n' > files/single.txt
-        ./deploy prepare
+        ./deploy.sh prepare
         play
         wait_exec true
         podman exec "$container" sh -ec 'test "$(cat /data/app-created.txt)" = "persistent app data"'

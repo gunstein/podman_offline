@@ -29,7 +29,7 @@ are in the [acceptance test](../acceptance/README.md).
        ' bash "$@"
    }
    release=/var/lib/myproduct/releases/myproduct-app1-0.2.0
-   sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy install' bash "$release"
+   sudo -H -u myproduct bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$release"
    sudo systemctl --user -M myproduct@ status myproduct-platform.service --no-pager
    sudo systemctl --user -M myproduct@ status myproduct-network.service --no-pager
    as_product podman network inspect myproduct

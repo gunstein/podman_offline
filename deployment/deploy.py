@@ -358,7 +358,7 @@ def validate_component(config, config_path, manifests, component=None, imported=
 
     Quadlet templates, kinds, names, placeholders, pull policy, mounts and links
     (effective documents) and the supported PostgreSQL layout. Returns the effective
-    documents. Every lifecycle path and ./deploy validate start with this; a
+    documents. Every lifecycle path and ./deploy.sh validate start with this; a
     new declaration check belongs here or in install_checks, so that the
     command and the lifecycle cannot disagree.
     """
@@ -892,7 +892,7 @@ def install_preconditions(name, checked):
 
     The shared network matches the bundle, the image archive exists and every
     image install will verify is fully qualified: the rendered component's, or
-    the component's own manifests when it is not rendered. ./deploy validate
+    the component's own manifests when it is not rendered. ./deploy.sh validate
     runs this too.
     """
     network, network_text = check_shared_network()
@@ -936,7 +936,7 @@ def install_checks():
     role owners, pending owner work), dependency and dependent ranges, and the
     persistent config with its public_from settings. Returns (descriptor,
     known, config, config_path, render); render is False when only
-    registrations and owners are refreshed. ./deploy validate runs this too.
+    registrations and owners are refreshed. ./deploy.sh validate runs this too.
     """
     descriptor = bundle_descriptor()
     name = descriptor["name"]
@@ -965,7 +965,7 @@ def install_checks():
     config_path = catalog.component_paths(name)[0]
     if not config_path.is_file():
         raise common.DeployError(
-            f"Missing {config_path}; run ./deploy init-config {name} first"
+            f"Missing {config_path}; run ./deploy.sh init-config {name} first"
         )
     config = rendering.load_config(config_path)
     render = install_needed(descriptor)
@@ -1116,7 +1116,7 @@ def uninstall(component=None, delete_data=False):
             # is a first install that stopped. Finishing it is the one recovery.
             raise common.DeployError(
                 f"Component {component} has an unfinished first install "
-                f"(metadata without installed/{component}). Run ./deploy install "
+                f"(metadata without installed/{component}). Run ./deploy.sh install "
                 "from its bundle again to finish it, then uninstall; if that "
                 "install keeps failing, fix the cause it reports first"
             )

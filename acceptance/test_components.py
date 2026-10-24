@@ -427,14 +427,14 @@ class ComponentObservationTests(unittest.TestCase):
                 mock.patch.dict(
                     os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
                 ),
-                mock.patch.object(code["sys"], "argv", ["guest", "deploy"]),
+                mock.patch.object(code["sys"], "argv", ["guest", "deploy.sh"]),
                 mock.patch.object(subprocess, "run", return_value=result) as process,
                 contextlib.redirect_stdout(io.StringIO()),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 code["main"]()
                 self.assertEqual(
-                    process.call_args.args[0], ["bash", "deploy", "install"]
+                    process.call_args.args[0], ["bash", "deploy.sh", "install"]
                 )
                 (root / "app1").mkdir()
                 with self.assertRaisesRegex(SystemExit, "changed"):
@@ -722,7 +722,7 @@ class ComponentObservationTests(unittest.TestCase):
         """Keep survivor health and retired route/data/network checks in the removal step."""
         block = base.shell_code(REMOTE, action="uninstall")
         for text in (
-            "./deploy uninstall",
+            "./deploy.sh uninstall",
             "volume exists app1-data",
             'network exists "$product_name"',
             'test "$http" = 404',

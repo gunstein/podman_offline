@@ -457,7 +457,7 @@ def check_pending(operation, component, product, delete_data=False):
             + state["operation"]
             + " for "
             + state["component"]
-            + "; finish with that component's bundle: ./deploy "
+            + "; finish with that component's bundle: ./deploy.sh "
             + state["operation"]
             + flag
         )

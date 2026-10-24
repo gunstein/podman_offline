@@ -179,7 +179,7 @@ class PlatformSafetyTests(ComponentFixture):
             (["uninstall", "app1", "app2"], 2),
             (["uninstall", "--delete-data", "--delete-data"], 2),
         ):
-            command_line = mock.patch.object(cli.sys, "argv", ["deploy"] + arguments)
+            command_line = mock.patch.object(cli.sys, "argv", ["deploy.sh"] + arguments)
             with self.subTest(arguments=arguments):
                 with command_line:
                     before = self.snapshot()

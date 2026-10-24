@@ -1,6 +1,6 @@
 # Deployment architecture
 
-Use the root `./deploy prepare|install|uninstall` and `./deploy init-config
+Use the root `./deploy.sh prepare|install|uninstall` and `./deploy.sh init-config
 <component>` commands. The wrapper changes to its own directory and executes
 `python3 -B -m deployment`, so callers need not enter a release directory and
 trusted code creates no `.pyc`/`__pycache__`. `./build-bundle.sh` is the stable
@@ -65,7 +65,7 @@ writes nothing else. Then:
 `deploy.check_manifests()` runs `deploy.validate_component()` (step 2 plus the
 PostgreSQL layout, from declarations only) and then the database preflight;
 install, dev `prepare` and both standalone paths use it before any generation.
-`./deploy validate` (`deployment/validation.py`) runs `validate_component()`,
+`./deploy.sh validate` (`deployment/validation.py`) runs `validate_component()`,
 the same staging and, in a bundle, `install_checks()` and
 `install_preconditions()` (shared network, image archive, image names), but no
 volume query: it writes nothing and runs no host command. It reports the first
@@ -169,7 +169,7 @@ rendered images are in `docs/diagrams/`; run `dev/render-diagrams.sh` after
 changing a diagram ([install](docs/diagrams/deploy-install.png),
 [build](docs/diagrams/build-bundle.png)).
 
-### `./deploy install` from an unpacked bundle
+### `./deploy.sh install` from an unpacked bundle
 
 Validation happens before any write or host command; the database preflight
 is the first host command; `pending-operation.json` is saved before
@@ -188,7 +188,7 @@ sequenceDiagram
     participant H as Podman / systemd
     participant S as Installation root
 
-    Op->>CLI: ./deploy install
+    Op->>CLI: ./deploy.sh install
     CLI->>D: install()
     Note over D: install_checks (no writes, no host commands)
     D->>C: load_bundle_descriptor (bundle.yaml)
@@ -247,7 +247,7 @@ sequenceDiagram
     B->>FS: remove build/bundle
     loop each descriptor
         B->>BR: build_release(version, descriptor)
-        BR->>FS: copy deploy, deployment/, own component, scripts, quadlet
+        BR->>FS: copy deploy.sh, deployment/, own component, scripts, quadlet
         BR->>FS: write bundle.yaml (compiled descriptor) and VERSION
         BR->>H: podman pull --policy=always (registry images)
         BR->>H: podman save -m images.tar

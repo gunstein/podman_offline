@@ -354,7 +354,7 @@ class RetryTests(RetryFixture):
         events = self.attempt("uninstall", expected=1)
         self.assertEqual(events[-1][:2], ["error", "DeployError"])
         self.assertIn("app1 has an unfinished first install", events[-1][2])
-        self.assertIn("Run ./deploy install from its bundle again", events[-1][2])
+        self.assertIn("Run ./deploy.sh install from its bundle again", events[-1][2])
         self.assertEqual([event for event in events if event[0] != "error"], [])
         self.attempt()
         self.assertTrue((common.STATE / "installed/app1").is_file())

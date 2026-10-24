@@ -10,7 +10,7 @@ component names. The five shipped components (`platform`, `identity`, `app1`,
 
 | Where | File | Written by | Read by |
 | --- | --- | --- | --- |
-| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy validate`, `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
+| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy.sh validate`, `./deploy.sh prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
 | Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `validate`, `install`, `uninstall` |
 | Target host | `/var/lib/<product>/state/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
 
@@ -409,10 +409,10 @@ Generic tools never create certificates or demo users. For the shipped demo:
 
 ```sh
 ./dev/build-images.sh && ./dev/pull-images.sh
-dev/demo-credentials.sh && ./deploy validate && dev/dev.sh up
+dev/demo-credentials.sh && ./deploy.sh validate && dev/dev.sh up
 ```
 
-After adding or changing a component, run `./deploy validate` first: it
+After adding or changing a component, run `./deploy.sh validate` first: it
 reports the first finding of every component (file, document or container and
 the declaration it expected) without writing anything or calling Podman.
 
@@ -455,12 +455,12 @@ Add the entry to `bundles.yaml`:
     routes: platform
 ```
 
-No Python or shell file changes. `./deploy prepare` and `dev/dev.sh up` start
+No Python or shell file changes. `./deploy.sh prepare` and `dev/dev.sh up` start
 it; `./build-bundle.sh` pulls the image, saves it in
 `dist/<product>-reports-<version>-offline.tar.gz` and lists it in
 `dist/current-bundles.txt`; `./build-bundle.sh reports` builds only that bundle
-and leaves the list unchanged. On the target: `./deploy init-config reports`,
-prepare any credentials, then `./deploy install` from that bundle. Installing
+and leaves the list unchanged. On the target: `./deploy.sh init-config reports`,
+prepare any credentials, then `./deploy.sh install` from that bundle. Installing
 it restarts `reports` and `platform`.
 
 A worker without a gateway needs only the manifest and `worker: {}`.
@@ -472,11 +472,11 @@ A worker without a gateway needs only the manifest and `worker: {}`.
 2. Remove its catalog entry and `components/<id>/`, and remove it from every
    other entry's `requires`, `routes` or `clients`. A remaining reference fails
    before any write and names the declaration.
-3. `./deploy validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
+3. `./deploy.sh validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
    `build/install.yaml`, the dev route/client imports and
    `dist/current-bundles.txt`. Older archives stay in `dist/` for hosts that
    still run the service; `current-bundles.txt` names only the current product.
-4. On a target, keep the service's earlier bundle and run `./deploy uninstall`
+4. On a target, keep the service's earlier bundle and run `./deploy.sh uninstall`
    from it (`--delete-data` also deletes its volumes and private state). Other
    components and their registrations stay.
 

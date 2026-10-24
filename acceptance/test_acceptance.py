@@ -865,7 +865,7 @@ release_tool() {
                 block
                 for block in blocks
                 if "release_tool retire" in block
-                and "exec bash ./deploy install" in block
+                and "exec bash ./deploy.sh install" in block
             )
         (self.root / "version").write_text("0.1.1\n")
         (self.root / "myproduct-app1-0.1.1-offline.tar.gz").touch()
@@ -889,7 +889,7 @@ sudo() {
         *'--file add'*) echo add >> "$calls";;
         *'--file delete'*) echo delete >> "$calls";;
         *'--update'*) echo update >> "$calls";;
-        *'exec bash ./deploy install'*) echo install >> "$calls"; return "$install_status";;
+        *'exec bash ./deploy.sh install'*) echo install >> "$calls"; return "$install_status";;
         *'find '*) printf '%s\n' "$product/deployment/__main__.py";;
         *'--dump-db'*) printf "file %s 123 %064d\n" "$product/deployment/__main__.py" 0;;
         *'systemctl --user'*) healthy;;
@@ -903,9 +903,9 @@ gpgv() { :; }
 # Simulate the health check after install.
 healthy() { echo health >> "$calls"; return "$health_status"; }
 seed_content() { :; }
-# ./deploy validate is checked separately; it changes no trust state.
+# ./deploy.sh validate is checked separately; it changes no trust state.
 validate_release() { :; }
-install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy install' bash "$product"; }
+install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$product"; }
 """
         prefix = (
             "set -eu\nproduct_name=myproduct\nservice_user=myproduct-ops\nbase="
@@ -1490,7 +1490,7 @@ as_product() {
         command = next(
             line.strip()
             for line in readme.splitlines()
-            if "exec bash ./deploy install" in line
+            if "exec bash ./deploy.sh install" in line
         )
         command = command.replace('"$release"', '"$product"').replace(
             "sudo ", "sudo -n ", 1
@@ -1498,7 +1498,7 @@ as_product() {
         self.assertIn("cwd=str(release)", shell_code(remote, heredoc="PRIVATE_INSTALL"))
         release = self.root / "service home/releases/myproduct-test"
         release.mkdir(parents=True)
-        (release / "deploy").write_text('#!/bin/bash\npwd\nprintf "%s\\n" "$1"\n')
+        (release / "deploy.sh").write_text('#!/bin/bash\npwd\nprintf "%s\\n" "$1"\n')
         operator = self.root / "operator-private"
         operator.mkdir(mode=0o700)
         script = (

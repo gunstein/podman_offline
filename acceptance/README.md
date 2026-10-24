@@ -192,7 +192,7 @@ historical evidence, not verification of this change.
 
 # Deploy package acceptance (0.4.3)
 
-The stable `./deploy` entrypoint now uses `python3 -B -m deployment`. Current
+The stable `./deploy.sh` entrypoint now uses `python3 -B -m deployment`. Current
 bundles ship `deployment/`, and only that package directory is recursively added
 to each bundle's own fapolicyd trust file. The harness checks every expected file,
 waits for all old package entries to disappear, and preserves sibling trust.

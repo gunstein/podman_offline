@@ -43,7 +43,7 @@ def main():
         )
     ):
         print(
-            "Usage: ./deploy validate|prepare|install|uninstall [<component>] [--delete-data] | init-config <component>"
+            "Usage: ./deploy.sh validate|prepare|install|uninstall [<component>] [--delete-data] | init-config <component>"
         )
         return 2
 

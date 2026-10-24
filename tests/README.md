@@ -27,7 +27,7 @@ utilities, OpenSSL, gpg/gpgv/gpgconf and a writable temporary directory supporti
 gpg-agent sockets (set a short `TMPDIR` if needed). Missing prerequisites fail
 clearly; tests do not silently disappear or skip because demo files are absent.
 The temporary directory must also allow execution: tests run wrappers, Podman/
-OpenSSL stubs and copied `deploy` scripts from it. On hosts where `/tmp` is
+OpenSSL stubs and copied `deploy.sh` scripts from it. On hosts where `/tmp` is
 mounted `noexec`, this shows up as `PermissionError`, a failing OpenSSL wrapper
 test or a wrong-error failure in the failures example, not as a prerequisite
 message. Use an executable directory instead:
@@ -185,7 +185,7 @@ Podman or systemd behavior. See [lab verification](../acceptance/SECRET-TEMPLATE
 
 # Validate command (backlog 23)
 
-`test_validate.py` runs `./deploy validate` on the renamed product in the source
+`test_validate.py` runs `./deploy.sh validate` on the renamed product in the source
 checkout, in an unpacked bundle and on a standalone fixture. Every case asserts
 that no file under the fixture changes and that no Podman or systemd command
 runs. It covers each finding type (the five broken orders manifests, a
@@ -308,7 +308,7 @@ ruff check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke
 ruff format --check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
 pyright deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
 vermin -t=3.6- deployment/ bundle.py scripts/release.py tests/ acceptance/prepare_host_test.py acceptance/release_safety_test.py
-shellcheck deploy build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
+shellcheck deploy.sh build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
 ```
 
 Existing safety and fresh-process retry tests import the owning package modules;
