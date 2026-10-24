@@ -5,7 +5,7 @@ import sys
 
 import yaml
 
-from . import catalog, common, deploy, validation
+from . import catalog, common, deploy, status, validation
 
 
 def main():
@@ -16,9 +16,11 @@ def main():
         "uninstall": deploy.uninstall,
         "init-config": deploy.init_config,
         "validate": validation.validate,
+        "status": status.status,
     }
     args = sys.argv[1:]
     removing = bool(args and args[0] == "uninstall")
+    showing = args in (["status"], ["status", "--json"])
     # Component arguments are checked against the bundle's own descriptor later.
     names = [arg for arg in args[1:] if arg != "--delete-data"]
     valid_remove = (
@@ -39,15 +41,19 @@ def main():
         or (
             not valid_remove
             and not initializing
+            and not showing
             and (len(args) != 1 or args[0] == "init-config")
         )
     ):
         print(
-            "Usage: ./deploy.sh validate|prepare|install|uninstall [<component>] [--delete-data] | init-config <component>"
+            "Usage: ./deploy.sh validate|prepare|install|uninstall [<component>] "
+            "[--delete-data] | init-config <component> | status [--json]"
         )
         return 2
 
     try:
+        if showing:
+            return status.status(json_output="--json" in args)
         if initializing:
             deploy.init_config(args[1])
         elif removing:

@@ -114,8 +114,9 @@ The order for an offline production deployment of an organisation's own apps:
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
 17. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-18. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
-   `./deploy.sh status` shows each installed component, version and unit state.
+18. [Item 39](#39-show-the-installed-components-and-versions-on-the-target): implemented
+   locally; `./deploy.sh status [--json]` shows installed versions, unit states and
+   pending work ([verification](acceptance/STATUS.md)).
 19. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
@@ -183,7 +184,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -4147,9 +4148,14 @@ which one an operator has.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; requested by the operator on 2026-10-19. In a real product
-every component can have a different version, and operators must be able to
-see on the target which versions are installed.
+Status: implemented with local product and harness checks (2026-10-24), on
+`feature/39-component-status`, based on CLI rename commit `88f3110`.
+`./deploy.sh status [--json]` reports installed versions and unit states in
+recorded dependency order, incomplete installs/upgrades and pending owner work;
+it reads `/var/lib/<product>/state` without config/credential reads or writes.
+[Verification and understandability review](acceptance/STATUS.md).
+Current-change real Podman/systemd verification remains pending. The original
+request (2026-10-19) and task follow.
 
 ### Problem
 
@@ -4163,8 +4169,8 @@ home by hand, for example
 ### Task
 
 1. Add `./deploy.sh status`, run as the service user from any unpacked bundle of
-   the product (the bundle only supplies the code; status reads the service
-   home). Output, one line per installed component in dependency order:
+   the product (the bundle only supplies the code; status reads the installation's
+   `state/` directory). Output, one line per installed component in dependency order:
    component, installed version, unit name and `systemctl --user is-active`
    state; then the product name and any pending operation (operation,
    component, owners). Show an unfinished first install (metadata without

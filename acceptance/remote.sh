@@ -49,7 +49,7 @@ as_product() {
 user_service() { sudo -n systemctl --user -M "$service_user@" "$@"; }
 # Capture deploy diagnostics before evidence; fail closed if a DB password leaks.
 install_checked() {
-    as_product python3 - "$product" <<'PRIVATE_INSTALL'
+    if as_product python3 - "$product" <<'PRIVATE_INSTALL'
 import os
 from pathlib import Path
 import subprocess
@@ -65,6 +65,56 @@ sys.stdout.write(result.stdout)
 sys.stderr.write(result.stderr)
 raise SystemExit(result.returncode)
 PRIVATE_INSTALL
+    then
+        status_release
+    else
+        return "$?"
+    fi
+}
+# Query the actual CLI after install; expected version comes from transferred release.
+status_release() {
+    as_product python3 - "$product" "$product_name" "$bundle" "$version" <<'STATUS_REPORT'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def main():
+    release, product, selected, version = sys.argv[1:]
+    result = subprocess.run(
+        ["bash", str(Path(release) / "deploy.sh"), "status", "--json"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        check=False, timeout=90,
+    )
+    if result.returncode:
+        raise ValueError("status failed")
+    data = json.loads(result.stdout)
+    if data["product"] != product or data["pending"] is not None or not data["components"]:
+        raise ValueError("product/pending/empty status")
+    rows = data["components"]
+    seen = set()
+    for row in rows:
+        name = row["name"]
+        if (not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", name)
+                or name in seen or row["unit"] != product + "-" + name + ".service"
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", row["version"])
+                or row["recorded_version"] != row["version"]
+                or row["complete"] is not True or row["state"] != "active"):
+            raise ValueError("incomplete or inactive status")
+        seen.add(name)
+    if not any(row["name"] == selected and row["version"] == version for row in rows):
+        raise ValueError("installed version differs from transferred release")
+    public = [{key: row[key] for key in ("name", "version", "unit", "state")} for row in rows]
+    print("PASS: installed component status " + json.dumps(public, sort_keys=True))
+
+
+try:
+    main()
+except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+    raise SystemExit("FAIL: installed component status check; details withheld") from None
+STATUS_REPORT
 }
 # List only validated installed component markers, never their private state.
 installed_components() {

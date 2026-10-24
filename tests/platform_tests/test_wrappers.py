@@ -63,6 +63,8 @@ def command(args, **kwargs):
         stream.write(json.dumps([args, os.environ.get("XDG_DATA_HOME"), os.environ.get("XDG_CONFIG_HOME")]) + "\\n")
     if args == ["systemctl", "--user", "show-environment"]:
         return subprocess.CompletedProcess(args, 0, stdout=os.environ["FIXTURE_MANAGER_ENV"], stderr="")
+    if args[:3] == ["systemctl", "--user", "is-active"]:
+        return subprocess.CompletedProcess(args, 0, stdout="active\\n", stderr="")
     if args[:2] == ["podman", "save"]:
         Path(args[4]).write_bytes(b"fixture image archive")
     if args[:3] == ["podman", "container", "inspect"]:
@@ -319,6 +321,27 @@ class WrapperTests(unittest.TestCase):
             self.assertEqual(config.read_bytes(), config_before)
             self.assertIn("fixture.test", (state / "platform/config.yaml").read_text())
             self.assertEqual((state / "installed/app1").read_text().strip(), version)
+            # Status works from any same-product release, without usable config.
+            config.write_text("invalid: [\n")
+            report = json.loads(
+                run(platform_release, "deploy.sh", "status", "--json").stdout
+            )
+            self.assertEqual(report["product"], "myproduct")
+            self.assertEqual(
+                {row["name"]: row["version"] for row in report["components"]},
+                {
+                    "platform": platform_version,
+                    "identity": identity_version,
+                    "app1": version,
+                },
+            )
+            self.assertTrue(
+                all(
+                    row["complete"] and row["state"] == "active"
+                    for row in report["components"]
+                )
+            )
+            config.write_bytes(config_before)
             run(release, "deploy.sh", "uninstall")
             for folder in (extracted,):
                 self.assertFalse(list(folder.rglob("__pycache__")))

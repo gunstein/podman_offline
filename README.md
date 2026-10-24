@@ -1233,6 +1233,40 @@ and the apps can be omitted. Help needs no new credentials. These installs updat
 and restart their changed owners (platform for routes, Identity for clients),
 while retaining the other app's service/data.
 
+## Installed component status
+
+From any unpacked component bundle for the product, log in as its runtime account
+and run:
+
+```sh
+./deploy.sh status
+./deploy.sh status --json
+```
+
+The command reads `/var/lib/<product>/state/` and lists components in dependency
+order, with their completed version, unit name, systemd state and installation
+completion. The bundle supplies the code and product identity; its own version,
+config defaults and component selection do not override installed state.
+Product name and pending operation/component/owners follow the text rows.
+
+A missing completion marker is shown as `incomplete`, with version `-`. If an
+upgrade wrote newer metadata before completion, the old completed version stays
+visible alongside the recorded target version. Config and credentials are never
+read; pending work is reported and retained for the normal lifecycle retry.
+The only host queries are bounded `systemctl --user is-active` calls. This reports
+systemd unit state; application health remains covered by install/acceptance checks.
+
+Exit 0 requires a nonempty installation with every recorded component complete
+and active and no pending operation. Empty installations, unfinished work,
+non-active units and unavailable user systemd return 1. Usage errors return 2.
+No production environment repair or restart is performed.
+
+JSON contains `product`, `components` and `pending` (null or
+`{operation, component, owners}`). Each component has `name`, `version` (null
+without a completion marker), `recorded_version`, `unit`, `state` and `complete`.
+Malformed/foreign-product state is refused with an error; arbitrary subprocess
+diagnostics are never emitted as a unit state. See [verification](acceptance/STATUS.md).
+
 ## Upgrade and uninstall
 
 Identity can be upgraded alone: transfer the newer Identity archive/checksum,

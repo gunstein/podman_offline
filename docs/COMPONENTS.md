@@ -403,6 +403,20 @@ marker is an unfinished install that a retry completes. Removing a component
 from a new source catalog never changes installed state; only an explicit
 uninstall from that component's bundle does.
 
+Run `./deploy.sh status` (or `status --json`) from any same-product component
+bundle as the runtime account to inspect this state without reading config or
+credentials. Rows follow installed descriptor dependencies and show the completion
+marker's version, the product-prefixed unit and its systemd state. Missing markers
+and a marker older than its metadata are shown as incomplete; JSON keeps both
+`version` and `recorded_version`. Pending install/uninstall work remains visible
+even after the selected component's metadata has been removed, and is never
+acknowledged by status. The installation root and bootstrap file must already be
+prepared; status runs no init-config, Podman or lifecycle operation.
+
+Exit 0 means all listed components are complete and active, the set is nonempty,
+and no operation is pending. Other status findings return 1; invalid CLI arguments
+return 2. See [command/output details](../README.md#installed-component-status).
+
 ## Demo provisioning
 
 Generic tools never create certificates or demo users. For the shipped demo:
