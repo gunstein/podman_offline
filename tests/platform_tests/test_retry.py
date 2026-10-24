@@ -11,6 +11,18 @@ from helpers.retry_lifecycle import RetryFixture
 
 
 class RetryTests(RetryFixture):
+    def test_last_owner_acknowledgement_does_not_finish_the_install(self):
+        self.changed()  # Actual route/client changes require both owners.
+        marker = common.STATE / "installed/app1"
+        previous = marker.read_bytes()
+        events = self.attempt(expected=1, record_failure="installed/app1")
+        self.assertIn(service("identity", "is-active"), events)
+        self.assertIn(service("platform", "is-active"), events)
+        self.assertEqual(self.pending()["owners"], [])
+        self.assertEqual(self.pending()["operation"], "install")
+        self.assertEqual(marker.read_bytes(), previous)
+        self.assert_finished(self.attempt(), ["app1"])
+
     def test_template_secret_survives_failure_and_retry_in_new_processes(self):
         self.actual_app_credentials()
         config_path = common.STATE / "app1/config.yaml"
@@ -212,6 +224,10 @@ class RetryTests(RetryFixture):
                                 self.assertFalse(metadata.exists())
                         else:
                             self.assertIn(service("identity", "is-active"), events)
+                            # Even after every owner is acknowledged, a failed
+                            # completion-marker write must leave the attempt open.
+                            self.assertEqual(self.pending()["component"], "identity")
+                            self.assertEqual(self.pending()["owners"], [])
                             self.assertEqual(
                                 json.loads(metadata.read_text()), descriptor
                             )
@@ -344,17 +360,20 @@ class RetryTests(RetryFixture):
         self.assertFalse((common.STATE / "pending-operation.json").exists())
 
     def test_unfinished_first_install_names_the_retry_for_uninstall(self):
-        """Metadata without a marker: uninstall explains, and the retry finishes."""
+        """A first install stays pending; uninstall points to the install retry."""
         (common.STATE / "installed/app1").unlink()
         (common.STATE / "metadata/app1.json").unlink()
         events = self.attempt(expected=1, failure=service("app1"))
         self.assertTrue((common.STATE / "metadata/app1.json").is_file())
         self.assertFalse((common.STATE / "installed/app1").exists())
-        self.assertFalse((common.STATE / "pending-operation.json").exists())
+        self.assertEqual(self.pending()["component"], "app1")
+        self.assertEqual(self.pending()["owners"], [])
         events = self.attempt("uninstall", expected=1)
         self.assertEqual(events[-1][:2], ["error", "DeployError"])
-        self.assertIn("app1 has an unfinished first install", events[-1][2])
-        self.assertIn("Run ./deploy install from its bundle again", events[-1][2])
+        self.assertIn("Pending install for app1", events[-1][2])
+        self.assertIn(
+            "finish with that component's bundle: ./deploy.sh install", events[-1][2]
+        )
         self.assertEqual([event for event in events if event[0] != "error"], [])
         self.attempt()
         self.assertTrue((common.STATE / "installed/app1").is_file())

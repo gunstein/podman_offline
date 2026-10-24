@@ -1,11 +1,11 @@
-# ./deploy install fills in the product name (bundles.yaml) and the unit name
+# ./deploy.sh install fills in the product name (bundles.yaml) and the unit name
 # (<product>-<component>, or the product for a standalone fixture).
 [Unit]
-Description={name}
+Description=@@UNIT_NAME@@
 
 [Kube]
-Yaml={name}.yaml
-Network={product}.network
+Yaml=@@UNIT_NAME@@.yaml
+Network=@@PRODUCT_NAME@@.network
 
 [Service]
 Restart=on-failure

@@ -483,7 +483,8 @@ def load_installed_metadata(state):
     """Read every installed descriptor strictly; temporary files start with a dot.
 
     A descriptor is written before its completion marker, so this includes
-    a component whose install has not finished; installed_version tells them apart.
+    a component whose install has not finished. installed_version gives its
+    last completed version; pending work also distinguishes failed reinstalls.
     """
     directory = state / "metadata"
     if directory.is_symlink():

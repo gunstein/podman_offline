@@ -29,9 +29,13 @@ The known gaps below explicitly identify outstanding work.
 | Retry | Durable pending work survives a new process and is acknowledged only after required work succeeds. |
 | Isolation | Operate on the selected component's resources/state; preserve sibling data and registrations and avoid sibling app restarts. |
 | Compatibility | Preserve host Python 3.6, checksums, offline delivery, version/dependency rules, SELinux and fapolicyd behavior. |
+| Operator usability | An administrator/installer with limited Linux experience can complete ordinary tasks quickly and correctly using one manual, without oral help or internal architecture knowledge. Apply the separate [operator review](#7-mandatory-operator-and-procedure-understanding-review), including distinct AI and human evidence. Green automated acceptance alone does not establish usability. |
 | Host preparation | Trust the root-controlled `/var/lib` anchor; root creates only the root-owned `/var/lib/<product>` and the account's `state/`, `config/`, `storage/` directly beneath it, refusing links and foreign owners before chown/chmod. Descendant directory/lock creation and both relabel operations run as a non-root numeric account UID/GID without supplementary groups or capabilities, with no privilege acquisition or root retry. Reject managed links/foreign-owned objects; preserve lock bytes, existing subordinate IDs, the account's home/shell and populated storage labels. Current-change OL9 Enforcing/fapolicyd verification is required before declaring this boundary verified. |
 | Production layout | An existing login account (any name) runs one product. Its home holds only `~/.<product>/<product>.env`, read by `layout.select()` as private data (no execution, unknown keys ignored, values never logged). Everything else is under `/var/lib/<product>`: root-only `releases/`, the account's `state/`, `config/` (`XDG_CONFIG_HOME`) and `storage/` (`XDG_DATA_HOME`). The user manager gets the same two values from a root-owned `user@<uid>` drop-in, and lifecycle commands refuse a mismatch. Root never reads the bootstrap file. Source dev and bundle building never select production paths. No migration of the earlier service-home layout. |
-| Validation | `./deploy validate` and the lifecycle share one validation (`validate_component`, staging, `install_checks`, `install_preconditions`); the command writes nothing, reads no credential contents and runs no host command. Container-only fields listed in [README](../README.md) are refused directly under Pod `spec` through the shared `render.pod_specs` shape check, including bundle image discovery. This is a focused guard, not full schema validation. A new declaration check belongs in one of those functions, never inline in `install_component_plan`; a validate-only check names where the lifecycle does the same. |
+| CLI entry point | Source and new offline releases expose only executable `deploy.sh`, which changes to its own directory and execs `python3 -B -m deployment` with unchanged arguments and exit status. The Python module remains `deployment.deploy`; callers, checksums and trust inventory use the wrapper filename. No old-name alias is shipped. [Verification](../acceptance/CLI-WRAPPER.md). |
+| Quadlet templates | `@@UNIT_NAME@@` and `@@PRODUCT_NAME@@` resolve only from internal unit/catalog names in one nonrecursive pass; arbitrary config/Secret access and obsolete `{name}`/`{product}` are refused. Preserve literal braces, shell `${...}`, systemd specifiers and rendered bytes. Validate both templates before host queries or persistent changes, including standalone and equal-version `newer-only` installs. [Verification](../acceptance/QUADLET-TEMPLATES.md). |
+| Installed status | `./deploy.sh status [--json]` reads the selected product's installed markers/descriptors and pending record under `STATE`, never config/credentials or incoming release versions. Query only bounded user-unit states; preserve all files and pending work. Show missing/mismatched markers or a pending attempt for the component as incomplete, including same-version reinstalls with an active old service. Retain the completed version; persist the attempt after image verification and before installed metadata or service files change, and clear it only after the completion marker is durable, even without registration owners. Return 1 for empty, pending, incomplete or non-active state. [Verification](../acceptance/STATUS.md). |
+| Validation | `./deploy.sh validate` and the lifecycle share one validation (`validate_component`, staging, `install_checks`, `install_preconditions`); the command writes nothing, reads no credential contents and runs no host command. Container-only fields listed in [README](../README.md) are refused directly under Pod `spec` through the shared `render.pod_specs` shape check, including bundle image discovery. This is a focused guard, not full schema validation. A new declaration check belongs in one of those functions, never inline in `install_component_plan`; a validate-only check names where the lifecycle does the same. |
 | Product name | `product:` in `bundles.yaml` is the only source of the installation's names. Code builds unit, network, Quadlet, temporary-directory and archive names from `catalog.product_name()` / `catalog.unit_name()` (or the descriptor's `product`), never from a literal; `common.STANDALONE_PRODUCT` is only for standalone fixtures. It names the installation root `/var/lib/<product>` and the bootstrap file; the runtime account is passed explicitly (`prepare-host.sh --user`) and need not match it (the harness uses `<product>-ops`). One account runs one product (`check_same_product`, one drop-in per account). Image names come from the manifests (the demo's are neutral `localhost/demo-*`) and `PUBLIC_ORIGIN` from config; neither is derived from the product name. |
 | Shared settings | A `public_from` dependent takes `PUBLIC_ORIGIN`, `HTTPS_PORT` and the owner's `shares` at `init-config` and in dev, and install/validate compare them (`deploy.shared_keys`, `check_public_settings`); errors name the setting, both files and the owner, never values. `shares` is compiled into descriptors; an owner upgrade may not drop a name an installed dependent takes (`check_kept_shares`). Reserved names (`PUBLIC_HOSTNAME`, `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES`) cannot be shared; their documentation is docs/COMPONENTS.md, "Reserved configuration names". |
 
@@ -61,6 +65,8 @@ this list; update entries with implementation/test evidence when resolved.
 | ~~Removing route/client declarations from a release does not remove prior registrations~~ | Resolved by backlog 21 in 0.4.10 |
 | ~~Some invalid manifests create generated secrets before validation rejects them~~ | Resolved by backlog 21 in 0.4.10 |
 | ~~Container fields such as `spec.env` pass declaration/reference validation at the wrong structural level~~ | Resolved by backlog 62: shared Pod shape guard; [scope and verification](../acceptance/MANIFEST-STRUCTURE.md) |
+| ~~Quadlet placeholders use a separate spelling and unknown markers survive rendering~~ | Resolved by backlog 59: internal-only `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` and early shared validation; [verification](../acceptance/QUADLET-TEMPLATES.md) |
+| ~~Installed component versions and unfinished work lack a target-side report~~ | Resolved by backlog 39: read-only `deploy.sh status [--json]`; [verification](../acceptance/STATUS.md) |
 | PostgreSQL data mount and explicit Secret items mapping restrict supported layouts | Backlog 7 |
 | ~~Secret `items[].key` / `secretKeyRef.key` naming a key no source provides passes validation and fails only at pod start~~ | Resolved by backlog 33: `render.check_secret_keys` in materialize and validate |
 | ~~`install` reports success once units are active; containers are not required to be running or healthy~~ | Resolved by backlog 34: `health.wait_healthy` after every restart |
@@ -73,6 +79,7 @@ this list; update entries with implementation/test evidence when resolved.
 | ~~Root `prepare-host.sh` follows service-writable home paths for ownership, mode and relabel operations~~ | Resolved by backlog 46: service-user-only, descriptor-based preparation; lab matrix `t11` clean at `3a54714` ([verification](../acceptance/PREPARE-HOST.md)) |
 | Root release authentication/trust must remain protected from service-user modification | Backlog 54 implementation uses protected publication (now under `/var/lib/<product>/releases`, backlog 64) and shared exact-inventory trust; six-scenario [OL9 matrix](../acceptance/PROTECTED-RELEASES.md) CLEAN PASS on `5b8ab69`; Python 3.6 and non-baseline integrity outstanding |
 | Production installation as an existing login account with product files outside the home | Backlog 64 implemented; full automated [OL9 matrix](../acceptance/PRODUCTION-LAYOUT.md) CLEAN PASS on `5b8ab69`; manual ssh run without sudo worked after adding a persistent journal, but the guide is not verified literally; simpler host preparation, install sets and an ssh harness scenario are backlog 65–67 |
+| One self-contained procedure usable without Linux expertise or oral assistance | Backlog 65–67; [AI operator review](../acceptance/OPERATOR-REVIEW.md) finds gaps in the current manual. Unassisted human trial remains outstanding; earlier assisted installation and automated matrix results do not close this gap. |
 | ~~Bundles carry checksums but no signature~~ | Backlog 38 added `.asc` (gpg); backlog 54 requires signature verification with the pinned key before protected production publication. Unsigned builds remain development-only |
 
 External image support does not by itself demonstrate arbitrary component support.
@@ -164,6 +171,8 @@ arguments and state transitions relevant to the contract, not just exit status.
 | Unit/product tests | Validation, planning, command arguments, file changes and injected failure/retry behavior |
 | Acceptance-harness tests | Scenario wiring, assertions and failure reporting |
 | Real acceptance runs | Actual Podman/systemd, mounts, init-containers, proxy, OIDC, database and persistence behavior |
+| AI operator walkthrough | Missing instructions, assumptions and comprehension barriers found by following the manual literally; neither runtime verification nor proof of human usability |
+| Unassisted human trial | Observed ability of a person in the target audience to complete the tested tasks with that manual/version; record time, mistakes, stops and explanations needed, without generalizing beyond the trial |
 
 Run `python3 -B tests/run.py platform --isolate` for platform coverage without
 application source or shipped component declarations; `demo` covers shipped apps
@@ -207,10 +216,98 @@ If many mode flags, parallel models or indirect special cases accumulate, reasse
 and simplify before continuing. Report simplifications and justify remaining
 complexity. Passing tests alone does not complete this review.
 
+## 7. Mandatory operator and procedure-understanding review
+
+This is a separate assessment in addition to code review, the developer-facing
+understandability review in section 6, and automated acceptance tests. The target
+operator is a human administrator or installer with limited Linux experience,
+not a developer who knows the implementation. Ordinary setup, installation,
+checks, upgrade and recovery should be quick and correct using **one simple
+manual**, without oral assistance or knowledge of the internal architecture.
+
+Apply this review to changes affecting operator commands, prerequisites,
+diagnostics, recovery or instructions, including documentation-only changes.
+For other changes state why operator impact is not applicable. Keep separate
+outcomes for the AI walkthrough and human trial; never treat one as the other.
+
+### Procedure checklist
+
+- Every step states machine, user, required access, command and expected result.
+  Make account/machine switches explicit, including a fresh SSH session.
+- Commands can be copied directly after a single, clearly explained substitution
+  step. Collect replacement values in one place and use one consistent example;
+  do not assume remembered shell variables, functions or working directories.
+- Check prerequisites before changes. Explain exactly how to remedy a missing
+  prerequisite, who does it and which command resumes the procedure. Identify
+  checks that necessarily happen later and the partial state they can leave.
+- Put all ordinary task instructions and necessary credential-path choices in
+  the one manual, in execution order. The operator must not assemble a sequence
+  from other documents. Linked documents may explain design and advanced topics.
+- Errors explain what failed, the operator's next action and the next command
+  to run, with its machine/user context. An internal exception name or a generic
+  instruction to inspect configuration is not enough.
+- Explain recovery after interruption and which commands are safe to repeat,
+  which preserve existing work, and which must not be repeated blindly.
+- Common diagnosis must not require displaying or sharing passwords, private
+  keys, tokens, complete connection strings or unfiltered potentially sensitive
+  logs. Give bounded safe diagnostics and say what can be shared.
+- Ordinary tasks require few commands and account switches. Record command and
+  manual-edit counts per task. If the manual becomes complicated, assess and
+  document whether the tool or workflow needs simplification; adding more prose
+  or hiding many manual steps in a large pasted script is not sufficient alone.
+
+### Two separately documented assessments
+
+1. **AI walkthrough:** start only from the manual's stated prerequisites and
+   follow the commands in order, including success and interruption/retry paths.
+   Do not fill gaps from source code, architectural knowledge or earlier chat.
+   Record the first blocker and any downstream conditional findings: missing
+   steps, hidden assumptions, ambiguous terms and Linux knowledge beyond the
+   audience. Identify the manual revision, tasks, step references, findings and
+   remedies, and distinguish static reasoning from commands actually executed.
+2. **Human trial:** a person with limited Linux experience uses the same manual
+   on a fresh disposable test host without oral assistance. Record the tested
+   revision, declared starting state, relevant experience, tasks, elapsed time
+   (separating machine waits where possible), errors, stopping points and every
+   requested/received explanation. Record actual command/edit counts. If help is
+   supplied, mark that task assisted, fix the procedure and repeat the affected
+   task unassisted. If no qualifying trial took place, explicitly report
+   **outstanding verification**, with the intended tasks and starting state.
+
+Store both assessments with the change's acceptance evidence and link them from
+the relevant backlog item. Use pass, findings or not performed per assessment;
+do not infer a human pass from an AI pass, an assisted demonstration or green
+automated tests. A human pass is scoped to its tested tasks/manual/host. Do not
+declare the operator flow customer-ready while required human verification is
+outstanding or unresolved findings prevent unassisted completion.
+
+### Same procedure in manual and acceptance harness
+
+For backlog 65–67, automated acceptance must execute the same preparation command
+and operator flow as the manual. Use shared command blocks or a checked mapping
+from manual step IDs to executable harness commands, with tests that fail on
+drift; a comment saying the flows are equivalent is not a gate. Cover initial
+execution, repeated execution and continuation after interruption, plus real
+SSH login as the runtime account without sudo or manually injected login/XDG
+environment. The first-run path must include the documented tool bootstrap.
+
+The harness may reset disposable VMs, deliver test artifacts and provision a
+lab-only SSH key. Its declared starting state may supply documented OS/account
+prerequisites. It must not independently create product directories, pin keys,
+populate journal/drop-in/bootstrap state or call lower-level preparation helpers
+to bypass manual steps. If a prerequisite is absent, test the same diagnosis,
+documented remedy and continuation rather than silently repairing it in the
+harness. Keep fault injection outside protected release code and retain trust
+rules. Record test infrastructure separately from the operator's procedure.
+
+These tests establish execution and retry behavior for the documented path.
+They do not establish that a human finds the manual understandable or quick.
+
 ## Delivery and maintenance
 
 For each change report: relevant contracts, findings/fixes, meaningful regression
-evidence, understandability outcome, and remaining gaps. Mark non-applicable
+evidence, code-understandability outcome, separate AI operator and human-trial
+outcomes (or justified non-applicability), and remaining gaps. Mark non-applicable
 areas briefly rather than inventing work. Do not fix unrelated backlog items as
 incidental scope expansion. Documentation-only work needs consistency/link checks
 and git diff --check, not runtime tests merely to satisfy this template.

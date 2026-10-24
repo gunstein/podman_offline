@@ -111,6 +111,7 @@ class Run:
         self.identity_only = False
         self.platform_help_only = False
         self.renamed_product = False
+        self.status_retry = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -231,6 +232,11 @@ class Run:
             "# RELEASE_HELPER_BODY",
             "printf '%s\\n' " + shlex.quote((ROOT / "scripts/release.py").read_text()),
         )
+        script = script.replace(
+            "# STATUS_RETRY_BODY",
+            "printf '%s\\n' "
+            + shlex.quote((ROOT / "acceptance/status_retry_test.py").read_text()),
+        )
         prefix = "set -- " + " ".join(map(shlex.quote, args)) + "\n"
         return self.ssh(role, prefix + script, log_stdout=log_stdout)
 
@@ -283,6 +289,7 @@ class Run:
             platform_version=(ROOT / "components/platform/VERSION").read_text().strip(),
             identity_version=(ROOT / "components/identity/VERSION").read_text().strip(),
             first_app=self.first_app,
+            status_retry=self.status_retry,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -905,6 +912,11 @@ class Run:
             lambda: self.guest("PROD", "release-safety", bundle="platform"),
         )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
+        if self.status_retry:
+            self.step(
+                "07-status-retry",
+                lambda: self.guest("PROD", "status-retry", bundle="app1"),
+            )
         if self.platform_help_only:
             self.step(
                 "07-proxy-help-without-identity",
@@ -1009,6 +1021,11 @@ class Run:
         )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         self.step("07-init-check", lambda: self.guest("PROD", "renamed-init-check"))
+        if self.status_retry:
+            self.step(
+                "07-status-retry",
+                lambda: self.guest("PROD", "status-retry", bundle="orders"),
+            )
         self.step("08-credentials", lambda: self.credentials("login-service"))
         self.step("08-e2e", lambda: self.guest("DEV", "renamed-e2e"))
         self.step("08-markers", lambda: self.guest("DEV", "renamed-markers-create"))
@@ -1117,7 +1134,8 @@ class Run:
         lines += [
             "",
             "A failed step stops execution. Later steps were NOT TESTED.",
-            "Only read-only prod launch diagnostics, audit collection and secret cleanup may run after failure. No retries or repairs.",
+            "Only read-only prod launch diagnostics, audit collection and secret cleanup may run after a failed step. No automatic step retries or repairs.",
+            "The opt-in status-retry probe performs its controlled retry and config restoration inside that step.",
             "",
         ]
         report = "\n".join(lines)
@@ -1170,6 +1188,11 @@ def main():
         help="Generate the renamed product from the demo and run its dev and offline lifecycle",
     )
     parser.add_argument("action", choices=["run"])
+    parser.add_argument(
+        "--status-retry",
+        action="store_true",
+        help="Inject a same-version install failure and verify status/retry on disposable PROD",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
@@ -1186,11 +1209,14 @@ def main():
     ):
         parser.error("Choose only one focused scenario")
     os.umask(0o077)
+    if args.status_retry and args.platform_help_only:
+        parser.error("--status-retry requires app1 or the renamed orders component")
     run = Run(args.run, args.config, args.first_app)
     run.help_only = args.help_only
     run.identity_only = args.identity_only
     run.platform_help_only = args.platform_help_only
     run.renamed_product = args.renamed_product
+    run.status_retry = args.status_retry
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

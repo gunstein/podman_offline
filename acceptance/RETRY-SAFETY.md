@@ -4,6 +4,24 @@ Baseline: `d53afe4d57c2b45374bd5bfe061af3b6096d3b96`. Before this change,
 207 product tests and 158 acceptance-harness tests passed with Python 3.12.14 /
 PyYAML 6.0.3. Historical reports remain unchanged.
 
+## Current completion follow-up (backlog 39)
+
+The historical evidence below predates the status command. The current
+`/var/lib/<product>/state/pending-operation.json` also represents the selected
+install attempt, even without registration owners. `begin_install` saves it after
+image verification and before installed metadata/registrations/service files
+change. `owners=[]` means owner work is confirmed, not that install is complete.
+The previous completed version stays in `installed/<id>` during failed work.
+Only `install_component_plan`, after healthy restarts and the durable completion
+marker write, clears the whole install operation. Uninstall retains its existing
+separate final acknowledgement after its scoped removal steps.
+
+Fresh-process regressions cover same-version daemon-reload failure, last-owner
+acknowledgement followed by marker failure, and read-only status/retry. An opt-in
+lab probe passed in all five applicable scenarios of the 2026-10-24 matrix;
+see [current evidence and commands](STATUS.md#completed-real-lab-verification-2026-10-24).
+The counts and host evidence in the original report below are historical.
+
 ## Cause and fix
 
 Installation previously used only registration file differences to decide shared

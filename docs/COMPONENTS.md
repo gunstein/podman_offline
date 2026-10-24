@@ -10,7 +10,7 @@ component names. The five shipped components (`platform`, `identity`, `app1`,
 
 | Where | File | Written by | Read by |
 | --- | --- | --- | --- |
-| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy validate`, `./deploy prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
+| Source checkout | `bundles.yaml` (the catalog) | you | `./deploy.sh validate`, `./deploy.sh prepare`, `dev/dev.sh`, `./build-bundle.sh`, image helpers |
 | Unpacked bundle | `bundle.yaml` (one compiled descriptor) | `./build-bundle.sh` | `init-config`, `validate`, `install`, `uninstall` |
 | Target host | `/var/lib/<product>/state/metadata/<id>.json` | `install` | later installs and uninstalls of any component |
 
@@ -388,10 +388,10 @@ would pass some checks and skip others.
 /var/lib/<product>/state/
 ├── <id>/config.yaml        authoritative config (init-config, then you)
 ├── metadata/<id>.json      compiled descriptor, written before registrations
-├── installed/<id>          version, written last: the install is complete
+├── installed/<id>          last completed version; retained during retries
 ├── routes/<id>.conf        registered routes
 ├── clients/<id>/           registered public client files
-└── pending-operation.json  unfinished owner work for a retry
+└── pending-operation.json  install attempt/owners or scoped uninstall work
 ```
 
 Quadlets live in `/var/lib/<product>/config/containers/systemd/` and Podman
@@ -403,16 +403,34 @@ marker is an unfinished install that a retry completes. Removing a component
 from a new source catalog never changes installed state; only an explicit
 uninstall from that component's bundle does.
 
+Run `./deploy.sh status` (or `status --json`) from any same-product component
+bundle as the runtime account to inspect this state without reading config or
+credentials. Rows follow installed descriptor dependencies and show the completion
+marker's version, the product-prefixed unit and its systemd state. Missing markers
+and a marker older than its metadata are shown as incomplete; JSON keeps both
+`version` and `recorded_version`. A component with a pending attempt is incomplete
+even when the versions match and its old service is active. The install record is
+saved after image verification, before installed metadata or service files change,
+and cleared only after the completion marker is durably written, including
+installs with no registration owners. Pending install/uninstall work remains visible
+even after the selected component's metadata has been removed, and is never
+acknowledged by status. The installation root and bootstrap file must already be
+prepared; status runs no init-config, Podman or lifecycle operation.
+
+Exit 0 means all listed components are complete and active, the set is nonempty,
+and no operation is pending. Other status findings return 1; invalid CLI arguments
+return 2. See [command/output details](../README.md#installed-component-status).
+
 ## Demo provisioning
 
 Generic tools never create certificates or demo users. For the shipped demo:
 
 ```sh
 ./dev/build-images.sh && ./dev/pull-images.sh
-dev/demo-credentials.sh && ./deploy validate && dev/dev.sh up
+dev/demo-credentials.sh && ./deploy.sh validate && dev/dev.sh up
 ```
 
-After adding or changing a component, run `./deploy validate` first: it
+After adding or changing a component, run `./deploy.sh validate` first: it
 reports the first finding of every component (file, document or container and
 the declaration it expected) without writing anything or calling Podman.
 
@@ -455,12 +473,12 @@ Add the entry to `bundles.yaml`:
     routes: platform
 ```
 
-No Python or shell file changes. `./deploy prepare` and `dev/dev.sh up` start
+No Python or shell file changes. `./deploy.sh prepare` and `dev/dev.sh up` start
 it; `./build-bundle.sh` pulls the image, saves it in
 `dist/<product>-reports-<version>-offline.tar.gz` and lists it in
 `dist/current-bundles.txt`; `./build-bundle.sh reports` builds only that bundle
-and leaves the list unchanged. On the target: `./deploy init-config reports`,
-prepare any credentials, then `./deploy install` from that bundle. Installing
+and leaves the list unchanged. On the target: `./deploy.sh init-config reports`,
+prepare any credentials, then `./deploy.sh install` from that bundle. Installing
 it restarts `reports` and `platform`.
 
 A worker without a gateway needs only the manifest and `worker: {}`.
@@ -472,11 +490,11 @@ A worker without a gateway needs only the manifest and `worker: {}`.
 2. Remove its catalog entry and `components/<id>/`, and remove it from every
    other entry's `requires`, `routes` or `clients`. A remaining reference fails
    before any write and names the declaration.
-3. `./deploy validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
+3. `./deploy.sh validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
    `build/install.yaml`, the dev route/client imports and
    `dist/current-bundles.txt`. Older archives stay in `dist/` for hosts that
    still run the service; `current-bundles.txt` names only the current product.
-4. On a target, keep the service's earlier bundle and run `./deploy uninstall`
+4. On a target, keep the service's earlier bundle and run `./deploy.sh uninstall`
    from it (`--delete-data` also deletes its volumes and private state). Other
    components and their registrations stay.
 

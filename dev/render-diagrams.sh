@@ -13,7 +13,7 @@ if [[ -n ${CHROMIUM:-} ]]; then
 else
     echo '{}' > "$work/puppeteer.json"
 fi
-for pair in "deploy-install:### \`./deploy install\` from an unpacked bundle" \
+for pair in "deploy-install:### \`./deploy.sh install\` from an unpacked bundle" \
     "build-bundle:### \`./build-bundle.sh\` in the source checkout"; do
     name=${pair%%:*}
     heading=${pair#*:}

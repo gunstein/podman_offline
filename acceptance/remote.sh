@@ -49,14 +49,14 @@ as_product() {
 user_service() { sudo -n systemctl --user -M "$service_user@" "$@"; }
 # Capture deploy diagnostics before evidence; fail closed if a DB password leaks.
 install_checked() {
-    as_product python3 - "$product" <<'PRIVATE_INSTALL'
+    if as_product python3 - "$product" <<'PRIVATE_INSTALL'
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 release = Path(sys.argv[1])
-result = subprocess.run(["bash", "./deploy", "install"], cwd=str(release),
+result = subprocess.run(["bash", "./deploy.sh", "install"], cwd=str(release),
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
 credentials = [path.read_text().rstrip("\n") for path in Path(os.environ["PRODUCT_STATE"]).glob("*/credentials/*/password") if path.is_file()]
 if any(value and value in result.stdout + result.stderr for value in credentials):
@@ -65,6 +65,61 @@ sys.stdout.write(result.stdout)
 sys.stderr.write(result.stderr)
 raise SystemExit(result.returncode)
 PRIVATE_INSTALL
+    then
+        status_release
+    else
+        return "$?"
+    fi
+}
+# Controller-supplied test source, executed over stdin without changing release trust.
+status_retry_source() {
+    # STATUS_RETRY_BODY
+    :
+}
+# Query the actual CLI after install; expected version comes from transferred release.
+status_release() {
+    as_product python3 - "$product" "$product_name" "$bundle" "$version" <<'STATUS_REPORT'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+def main():
+    release, product, selected, version = sys.argv[1:]
+    result = subprocess.run(
+        ["bash", str(Path(release) / "deploy.sh"), "status", "--json"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+        check=False, timeout=90,
+    )
+    if result.returncode:
+        raise ValueError("status failed")
+    data = json.loads(result.stdout)
+    if data["product"] != product or data["pending"] is not None or not data["components"]:
+        raise ValueError("product/pending/empty status")
+    rows = data["components"]
+    seen = set()
+    for row in rows:
+        name = row["name"]
+        if (not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", name)
+                or name in seen or row["unit"] != product + "-" + name + ".service"
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", row["version"])
+                or row["recorded_version"] != row["version"]
+                or row["complete"] is not True or row["state"] != "active"):
+            raise ValueError("incomplete or inactive status")
+        seen.add(name)
+    if not any(row["name"] == selected and row["version"] == version for row in rows):
+        raise ValueError("installed version differs from transferred release")
+    public = [{key: row[key] for key in ("name", "version", "unit", "state")} for row in rows]
+    print("PASS: installed component status " + json.dumps(public, sort_keys=True))
+
+
+try:
+    main()
+except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+    raise SystemExit("FAIL: installed component status check; details withheld") from None
+STATUS_REPORT
 }
 # List only validated installed component markers, never their private state.
 installed_components() {
@@ -131,10 +186,10 @@ prepare_release() {
         --archive "$base/$product_name-$bundle-$version-offline.tar.gz" \
         --signature "$base/$product_name-$bundle-$version-offline.tar.gz.asc"
 }
-# ./deploy validate must pass for this release before it is installed (backlog 23).
+# ./deploy.sh validate must pass for this release before it is installed (backlog 23).
 validate_release() {
     local output
-    output=$(sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy validate' bash "$product")
+    output=$(sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh validate' bash "$product")
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated $bundle;"* ]] || { echo "FAIL: validate did not pass for $bundle" >&2; return 1; }
 }
@@ -145,7 +200,7 @@ install_configuration() {
     for component in $components; do
         existing=0
         if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
-        as_product bash "$product/deploy" init-config "$component"
+        as_product bash "$product/deploy.sh" init-config "$component"
         # The component that accepts routes is the gateway; edit its new config first.
         if [[ $existing == 0 ]] && as_product python3 -c 'import sys, yaml; sys.exit("routes" not in yaml.safe_load(open(sys.argv[1]))["accepts"])' "$product/bundle.yaml"; then
         as_product python3 - "$state/$component/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
@@ -861,6 +916,9 @@ unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py 
 release-safety)
     release_safety_source | sudo -n python3 -I -B - "$product" "$product_name" "$base/$product_name-$bundle-$version-offline.tar.gz" "$service_user"
     ;;
+status-retry)
+    status_retry_source | as_product python3 -I -B - "$product" "$bundle"
+    ;;
 host-path-safety)
     if [[ $role == DEV ]]; then
         # The operator reads probe code; only its execution needs root.
@@ -891,7 +949,7 @@ dev-up)
     # The shipped demo provisions its credentials explicitly before generic dev up.
     ./dev/demo-credentials.sh
     # Every catalog component validates with its dev config before dev up (backlog 23).
-    output=$(./deploy validate)
+    output=$(./deploy.sh validate)
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated platform, identity, app1, app2, help;"* ]]
     ./dev/dev.sh up
@@ -919,7 +977,7 @@ renamed-generate)
     (cd "$src" && python3 acceptance/secret_templates_test.py && python3 acceptance/init_secret_test.py)
     # Only YAML, descriptors and runtime settings change; deploy code stays as checked out.
     python3 "$src/acceptance/renamed_product.py" generate "$src" "$renamed"
-    for path in deployment bundle.py dev scripts quadlet deploy build-bundle.sh; do
+    for path in deployment bundle.py dev scripts quadlet deploy.sh build-bundle.sh; do
         diff -r -x __pycache__ "$src/$path" "$renamed/$path"
     done
     echo 'PASS: generic deploy, bundle, dev and script files are identical to the source'
@@ -938,7 +996,7 @@ print(urlsplit(settings["gateway"]["PUBLIC_ORIGIN"]).hostname)
 RENAMED_HOST
 )
     python3 acceptance/renamed_product.py credentials build/dev "$host"
-    output=$(./deploy validate)
+    output=$(./deploy.sh validate)
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated gateway, login-service, orders, inventory, manual;"* ]]
     ./dev/dev.sh up
@@ -1084,7 +1142,7 @@ renamed-uninstall)
         manual) path=/help volume=;;
         *) echo "Unsupported renamed uninstall: $bundle" >&2; exit 2;;
     esac
-    sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh uninstall' bash "$product"
     release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
     sudo -n test ! -e "$state/installed/$bundle"
     sudo -n test ! -e "$state/metadata/$bundle.json"
@@ -1393,7 +1451,7 @@ def main():
                 raise SystemExit("FAIL: expected explicit platform restart")
     else:
         # The previous app bundle is still verified/trusted; refuse its older platform.
-        result = subprocess.run(["bash", str(Path(old_release) / "deploy"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        result = subprocess.run(["bash", str(Path(old_release) / "deploy.sh"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
         if result.returncode != 1 or "Platform downgrade refused" not in result.stderr or "+ podman" in result.stdout:
             raise SystemExit("FAIL: older platform was not refused before image operations")
         if observe() != current:
@@ -1459,7 +1517,7 @@ home-unchanged)
     ;;
 help-alone)
     prepare_release
-    as_product python3 -B - "$product/deploy" <<'HELP_ALONE'
+    as_product python3 -B - "$product/deploy.sh" <<'HELP_ALONE'
 import os
 import pathlib
 import subprocess
@@ -2420,7 +2478,7 @@ except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
 SIBLINGS
     ;;
 uninstall)
-    sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy uninstall' bash "$product"
+    sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh uninstall' bash "$product"
     release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
     app2_version=$(sudo -n -H -u "$service_user" cat "$state/installed/app2")
     wait_trust "$release_root/$product_name-app2-$app2_version/deployment/" "$product/deployment/"

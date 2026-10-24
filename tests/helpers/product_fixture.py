@@ -279,7 +279,7 @@ class ProductFixture(DeployFixture):
     def write_product(self, product, version="1.0.0"):
         """Write the generic tool files plus only YAML/component files for a product."""
         self.source.mkdir(exist_ok=True)
-        for name in ("deploy", "README.md"):
+        for name in ("deploy.sh", "README.md"):
             shutil.copy2(REPO / name, self.source / name)
         for name in ("deployment", "scripts", "quadlet"):
             if not (self.source / name).exists():

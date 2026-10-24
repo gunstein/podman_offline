@@ -110,7 +110,7 @@ class GeneratorTests(unittest.TestCase):
             )
             self.assertFalse(comparison.diff_files, name)
             self.assertFalse(comparison.left_only, name)
-        for name in ("bundle.py", "deploy", "build-bundle.sh"):
+        for name in ("bundle.py", "deploy.sh", "build-bundle.sh"):
             self.assertEqual(
                 (ROOT / name).read_bytes(), (self.target / name).read_bytes()
             )
@@ -248,7 +248,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(key.read_bytes(), before)
         for name in ("platform", "identity", "app1", "app2", "help"):
             self.assertFalse((dev / name).exists(), name)
-        run("./deploy", "prepare")
+        run("./deploy.sh", "prepare")
         documents = list(
             yaml.safe_load_all((self.target / "build/install.yaml").read_text())
         )

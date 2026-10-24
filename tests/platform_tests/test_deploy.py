@@ -49,7 +49,7 @@ class ConfigTests(DeployFixture):
                 with self.assertRaises(common.DeployError) as caught:
                     rendering.load_config(common.CONFIG)
                 self.assertNotIn(private, str(caught.exception))
-                with mock.patch.object(sys, "argv", ["deploy", "prepare"]):
+                with mock.patch.object(sys, "argv", ["deploy.sh", "prepare"]):
                     self.assertEqual(cli.main(), 1)
                 self.assertNotIn(
                     private, self.stdout.getvalue() + self.stderr.getvalue()
@@ -1134,7 +1134,7 @@ class CommandTests(DeployFixture):
                 ]
                 self.stderr.seek(0)
                 self.stderr.truncate()
-                with mock.patch.object(cli.sys, "argv", ["deploy", "install"]):
+                with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
                     self.assertEqual(cli.main(), 1)
                 self.assertEqual(self.process.call_count, failing + 1)
                 self.assertIn(
@@ -1145,7 +1145,7 @@ class CommandTests(DeployFixture):
 
     def test_invalid_arguments_return_two_without_side_effects(self):
         for args in ([], ["unknown"], ["prepare", "extra"], ["install", "prepare"]):
-            argv = mock.patch.object(cli.sys, "argv", ["deploy"] + args)
+            argv = mock.patch.object(cli.sys, "argv", ["deploy.sh"] + args)
             with self.subTest(args=args):
                 with argv:
                     self.assertEqual(cli.main(), 2)
@@ -1153,7 +1153,7 @@ class CommandTests(DeployFixture):
         self.assertFalse(common.BUILD.exists())
 
     def test_prepare_success_and_validation_failure_exit_codes(self):
-        with mock.patch.object(cli.sys, "argv", ["deploy", "prepare"]):
+        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "prepare"]):
             self.assertEqual(cli.main(), 0)
             self.write("config.yaml", "HTTPS_PORT: invalid")
             self.assertEqual(cli.main(), 1)
@@ -1162,7 +1162,7 @@ class CommandTests(DeployFixture):
     def test_missing_archive_stops_before_quadlet(self):
         self.install_fixture()
         (self.root / "images/images.tar").unlink()
-        with mock.patch.object(cli.sys, "argv", ["deploy", "install"]):
+        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
             self.assertEqual(cli.main(), 1)
         self.assertIn("Missing image archive", self.stderr.getvalue())
         self.assertIn("images.tar", self.stderr.getvalue())
@@ -1181,7 +1181,7 @@ class CommandTests(DeployFixture):
                 ]
                 self.stderr.seek(0)
                 self.stderr.truncate()
-                with mock.patch.object(cli.sys, "argv", ["deploy", "install"]):
+                with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
                     self.assertEqual(cli.main(), 1)
                 self.assertIn("ERROR:", self.stderr.getvalue())
                 self.assertIn(image, self.stderr.getvalue())
@@ -1210,7 +1210,7 @@ class CommandTests(DeployFixture):
                 self.process.side_effect = [None] * failing + [
                     subprocess.CalledProcessError(1, "podman")
                 ]
-                with mock.patch.object(cli.sys, "argv", ["deploy", "install"]):
+                with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
                     self.assertEqual(cli.main(), 1)
                 self.assertEqual(archive.read_bytes(), b"previous archive")
                 self.assertFalse(common.QUADLET_DIR.exists())

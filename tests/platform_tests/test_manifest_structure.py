@@ -109,7 +109,7 @@ class ManifestStructureTests(ProductFixture):
                 before = self.snapshot()
                 self.process.reset_mock()
                 with self.without_credential_reads():
-                    with mock.patch.object(cli.sys, "argv", ["deploy", "validate"]):
+                    with mock.patch.object(cli.sys, "argv", ["deploy.sh", "validate"]):
                         self.assertEqual(cli.main(), 1)
                 error = self.stderr.getvalue()
                 self.assertIn("10-resources.yaml: spec." + field, error)

@@ -1,4 +1,4 @@
-"""./deploy validate: every component's first finding, with no writes or commands.
+"""./deploy.sh validate: every component's first finding, with no writes or commands.
 
 Backlog item 23. The command reuses the lifecycle's validation (effective
 documents, PostgreSQL layout, staging, install_checks), so prepare and install
@@ -189,14 +189,14 @@ class SourceValidationTests(ProductFixture):
                 self.assertIn(str(prepared.exception), error)
 
     def test_cli_exit_codes(self):
-        with mock.patch.object(cli.sys, "argv", ["deploy", "validate"]):
+        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "validate"]):
             self.assertEqual(cli.main(), 0)
         documents, _ = broken_orders("undefined mount")
         self.write_orders(documents)
-        with mock.patch.object(cli.sys, "argv", ["deploy", "validate"]):
+        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "validate"]):
             self.assertEqual(cli.main(), 1)
         self.assertIn("orders: ", self.stderr.getvalue())
-        with mock.patch.object(cli.sys, "argv", ["deploy", "validate", "orders"]):
+        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "validate", "orders"]):
             self.assertEqual(cli.main(), 2)
 
 
@@ -229,7 +229,7 @@ class BundleValidationTests(ProductFixture):
             self.install(self.releases_by_name[name])
         self.use_root(orders)
         self.validate(
-            orders, "Missing .*orders/config.yaml; run ./deploy init-config orders"
+            orders, "Missing .*orders/config.yaml; run ./deploy.sh init-config orders"
         )
         deploy.init_config("orders")
         self.validate(orders)

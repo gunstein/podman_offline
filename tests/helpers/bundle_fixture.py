@@ -42,7 +42,7 @@ class BundleFixture(unittest.TestCase):
         )
         for name, text in {
             "VERSION": "1.2.3\n",
-            "deploy": '#!/bin/sh\nexec python3 -B -m deployment "$@"\n',
+            "deploy.sh": '#!/bin/sh\nexec python3 -B -m deployment "$@"\n',
             "deployment/__init__.py": "",
             "deployment/__main__.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",
@@ -52,8 +52,8 @@ class BundleFixture(unittest.TestCase):
             "dev/dev.sh": "#!/bin/sh\nexit 0\n",
             "dev/build-images.sh": "#!/bin/sh\nexit 0\n",
             "dev/smoke-test.py": "print('dev only')\n",
-            "quadlet/template.kube": "[Kube]\nYaml={name}.yaml\n",
-            "quadlet/template.network": "[Network]\nNetworkName={product}\n",
+            "quadlet/template.kube": "[Kube]\nYaml=@@UNIT_NAME@@.yaml\n",
+            "quadlet/template.network": "[Network]\nNetworkName=@@PRODUCT_NAME@@\n",
             "manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
         }.items():
             self.write(name, text)

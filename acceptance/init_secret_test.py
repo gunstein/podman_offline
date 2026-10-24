@@ -108,7 +108,7 @@ def fixture(source, name, probe_image):
             source / entry,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
-    for entry in ("deploy", "bundle.py", "README.md"):
+    for entry in ("deploy.sh", "bundle.py", "README.md"):
         shutil.copy2(repo / entry, source / entry)
     private_yaml(source / "bundles.yaml", {"product": name, "components": {name: {}}})
     component = source / "components" / name
@@ -320,7 +320,7 @@ def run(probe_image=None):
                     private_yaml(
                         source / "components" / name / "config.dev.yaml", {"HOST": host}
                     )
-                    command([str(source / "deploy"), "prepare"])
+                    command([str(source / "deploy.sh"), "prepare"])
                     nonce = uuid.uuid4().hex
                     instrument(
                         source / "build/install.yaml",

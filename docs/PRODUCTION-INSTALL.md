@@ -15,7 +15,7 @@ maskinen brukes bare til å kopiere filer dit (`scp`) og til å logge inn (`ssh`
 der veiledningen sier «Administrator» (steg 1–2, publisering av hver release,
 `retire` og omstart). *Driftsbrukeren* `produser` gjør alt annet, logger inn
 selv og har **ingen sudo-rettigheter** (ikke i `wheel`, ingen sudoers-regel).
-Produktet kaller aldri sudo, og `deploy` nekter å kjøre som root.
+Produktet kaller aldri sudo, og `deploy.sh` nekter å kjøre som root.
 
 Denne veiledningen, [PFX-veiledningen](PFX-CREDENTIALS.md) og
 [README](../README.md) følger med i hver komponent-release under
@@ -161,15 +161,15 @@ terminaleksport trengs.
 
 ```sh
 cd /var/lib/sms/releases/sms-platform-1.4.2
-bash ./deploy init-config platform
+bash ./deploy.sh init-config platform
 vi /var/lib/sms/state/platform/config.yaml
 #   PUBLIC_ORIGIN: https://sms.example.org:8443
 #   HTTPS_PORT: 8443
 #   IP_ADDRESS: <serverens adresse>
 install -d -m 0700 /var/lib/sms/state/platform/credentials/web
 install -m 0600 /sti/til/web.crt /sti/til/web.key /var/lib/sms/state/platform/credentials/web/
-bash ./deploy validate
-bash ./deploy install
+bash ./deploy.sh validate
+bash ./deploy.sh install
 ```
 
 Suksess: `validate` skriver `[OK] validated platform; nothing written, ...`, og
@@ -184,7 +184,7 @@ Administrator publiserer STS-releasen som i steg 1 (`--component sts --version
 
 ```sh
 cd /var/lib/sms/releases/sms-sts-2.0.1
-bash ./deploy init-config sts
+bash ./deploy.sh init-config sts
 vi /var/lib/sms/state/sts/config.yaml
 ```
 
@@ -218,8 +218,8 @@ for platform, legges de i credentials-katalogen før kommandoen; verktøyet
 beholder dem uendret og lager bare det som mangler (se PFX-veiledningen).
 
 ```sh
-bash ./deploy validate
-bash ./deploy install
+bash ./deploy.sh validate
+bash ./deploy.sh install
 ```
 
 Suksess som for platform. Installer eventuelle andre deklarerte avhengigheter
@@ -265,7 +265,7 @@ find ~ -newer ~/.sms/sms.env                            # ingen produktfiler
 ## 7. Oppgradering og retry
 
 Administrator publiserer den nye releasen (steg 1). `produser` kjører
-`bash ./deploy validate` og `bash ./deploy install` fra den nye release-katalogen; config og
+`bash ./deploy.sh validate` og `bash ./deploy.sh install` fra den nye release-katalogen; config og
 credentials i `state/` beholdes. Etter helse- og funksjonskontroll pensjonerer
 administrator den gamle:
 
@@ -273,9 +273,9 @@ administrator den gamle:
 release_tool retire --product sms --component sts --version 2.0.2 --old-version 2.0.1
 ```
 
-Feiler `install`, rett årsaken og kjør samme `bash ./deploy install` igjen; den
+Feiler `install`, rett årsaken og kjør samme `bash ./deploy.sh install` igjen; den
 fullfører registrert gjenstående arbeid. Ikke rediger
-`state/pending-operation.json`. Vanlig `bash ./deploy uninstall` beholder config,
+`state/pending-operation.json`. Vanlig `bash ./deploy.sh uninstall` beholder config,
 credentials og databasevolumer; `--delete-data` sletter bare komponentens egne.
 
 ## Feilsøking
@@ -286,7 +286,7 @@ credentials og databasevolumer; `--delete-data` sletter bare komponentens egne.
 | `The user systemd manager has XDG_...` | `systemctl --user show-environment` | Administrator kjører steg 2 igjen |
 | `/var/lib/sms/... must be ...` | `ls -ld /var/lib/sms /var/lib/sms/*` | Administrator kjører steg 2; ikke chmod/chown hele treet |
 | Tjeneste finnes ikke etter install/reboot | `systemctl --user show -p SourcePath sms-sts.service` | Skal peke inn i `/var/lib/sms/config/...`; kontroller drop-in-filen |
-| Manglende credentials | `bash ./deploy validate` | Feilen navngir config-fil og nøkkel, aldri verdien |
+| Manglende credentials | `bash ./deploy.sh validate` | Feilen navngir config-fil og nøkkel, aldri verdien |
 | `203/EXEC` eller fapolicyd-avvisning | `sudo ausearch -m FANOTIFY,AVC -ts recent`, `release_tool wait --product sms --component sts --version 2.0.1` | Kontroller `subj_cache_size` og at releasen er publisert med `prepare` |
 | Images/volumer «forsvinner» | `sms_podman info --format '{{.Store.GraphRoot}}'` | Vanlig `podman` uten `sms_podman` ser kontoens hjemmelagring |
 

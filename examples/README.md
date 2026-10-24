@@ -53,13 +53,13 @@ EXAMPLE_PORT=18081 ./examples/run.sh basic
 | [manifest-defined](manifest-defined/README.md) | Manifest-defined PVC and Secret/stringData/secretKeyRef |
 | [failures](failures/README.md) | Four expected validation errors, without Podman |
 
-The script copies `deploy`, `deploy.py`, the example's
+The script copies `deploy.sh`, `deploy.py`, the example's
 config, manifests and any files to a private, temporary directory.
 There the marker `example-run` is replaced with a unique name, and `POD_NAME` is added
 to the config. The originals are not changed. Binary data and the large negative
 test file are generated only in the temporary area; no keys or certificates are needed.
 
-Then `./deploy prepare`, `podman kube play --replace` and explicit
+Then `./deploy.sh prepare`, `podman kube play --replace` and explicit
 checks with `podman exec` and possibly `curl` run. Failures give a non-zero exit.
 The exit trap runs `podman kube down` and removes only this run's PVC volumes,
 Secret volumes and any remaining Secrets. The volume test keeps the volume

@@ -199,7 +199,7 @@ class IdentityEvidenceTests(unittest.TestCase):
                 "VERSION": "0.4.0\n",
                 "components/platform/VERSION": "0.4.0\n",
                 "components/identity/VERSION": "0.4.0\n",
-                "deploy": "#!/bin/sh\n",
+                "deploy.sh": "#!/bin/sh\n",
                 "deployment/__init__.py": "# fixture\n",
                 "deployment/__main__.py": "# fixture\n",
                 "README.md": "fixture\n",

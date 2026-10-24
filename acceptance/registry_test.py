@@ -177,7 +177,7 @@ def main(base, run):
     (fixture / "manifests").mkdir()
     (fixture / "dev").mkdir()
     for name in (
-        "deploy",
+        "deploy.sh",
         "bundle.py",
         "README.md",
         "dev/build-images.sh",

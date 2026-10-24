@@ -1,6 +1,8 @@
 """Run one real deploy invocation in a fresh interpreter with only host transport stubbed."""
 
+import builtins
 import importlib
+import io
 import json
 import os
 import subprocess
@@ -28,7 +30,8 @@ def main():
         QUADLET_DIR=home / ".config/containers/systemd",
         QUADLET_TEMPLATE=root / "quadlet/template.kube",
     )
-    state.update(production_environment=lambda: None)
+    # Identity/layout guards have separate tests; retry uses the paths above.
+    state.update(production_environment=lambda: None, service_user=lambda: None)
     os.environ["XDG_RUNTIME_DIR"] = str(root)
     events = []
     record = Path(parameters["record"])
@@ -58,7 +61,8 @@ def main():
             volumes.write_text(json.dumps(names))
         if check and status:
             raise subprocess.CalledProcessError(status, args)
-        return subprocess.CompletedProcess(args, status)
+        output = "active\n" if args[:3] == ["systemctl", "--user", "is-active"] else ""
+        return subprocess.CompletedProcess(args, status, output, "")
 
     subprocess.run = command
 
@@ -93,6 +97,13 @@ def main():
 
     def replace_record(source, destination):
         relative = str(Path(destination).relative_to(home))
+        if parameters.get("observe_completion") and relative.startswith("installed/"):
+            record_event(
+                [
+                    "before-marker",
+                    json.loads((home / "pending-operation.json").read_text()),
+                ]
+            )
         if relative == parameters.get("record_failure"):
             raise OSError("Injected install record failure")
         if relative == parameters.get("record_interrupt"):
@@ -105,6 +116,15 @@ def main():
     clear = registration_state["clear_pending"]
 
     def clear_pending():
+        if parameters.get("observe_completion"):
+            pending = json.loads((home / "pending-operation.json").read_text())
+            record_event(
+                [
+                    "before-clear",
+                    pending,
+                    (home / "installed" / pending["component"]).read_text().strip(),
+                ]
+            )
         if parameters.get("clear_failure"):
             raise OSError("Injected completion cleanup failure")
         return clear()
@@ -125,6 +145,22 @@ def main():
             state["install"]()
         elif parameters["action"] == "init-config":
             state["init_config"](state["bundle_descriptor"]()["name"])
+        elif parameters["action"] == "status":
+            # Status must not open config/credentials, even in the real retry flow.
+            def guarded_open(original):
+                def checked(file, *args, **kwargs):
+                    if not isinstance(file, int):
+                        path = Path(file)
+                        if path.name == "config.yaml" or "credentials" in path.parts:
+                            raise AssertionError("status read config or credentials")
+                    return original(file, *args, **kwargs)
+
+                return checked
+
+            builtins.open = guarded_open(builtins.open)
+            io.open = guarded_open(io.open)
+            sys.argv = ["deploy.sh", "status", "--json"]
+            return importlib.import_module("deployment.cli").main()
         else:
             state["uninstall"](delete_data=parameters.get("delete_data", False))
     except (common.DeployError, OSError, subprocess.CalledProcessError) as error:

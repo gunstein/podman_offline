@@ -1,4 +1,4 @@
-"""Scoped text substitution for Secret recipes and public ConfigMap data.
+"""Scoped text substitution for Secret recipes, ConfigMap data and Quadlet names.
 
 Validation only needs names and config, not credential bytes. Materialization
 uses the already loaded file Secrets, so no derived credential has its own file.

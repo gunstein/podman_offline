@@ -46,9 +46,12 @@ for urgent item 64; implementation is on `feature/protected-releases`, with
 review and the full OL9 matrix still pending. Item 63 (operator request) then
 parameterises image versions through build-time `config/images.yaml`.
 Item 62 is implemented with local regression coverage for misplaced container
-fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
-to standardise Quadlet placeholder syntax and reject invalid templates early.
-Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
+fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is implemented
+with local regression coverage and the 2026-10-24 CLEAN PASS lab matrix:
+consistent Quadlet markers and early validation
+([verification](acceptance/QUADLET-TEMPLATES.md)).
+Item 60 is implemented and lab-verified in that matrix: the CLI wrapper is `deploy.sh`
+([verification](acceptance/CLI-WRAPPER.md));
 items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
 verification statuses are recorded below.
@@ -82,11 +85,11 @@ The order for an offline production deployment of an organisation's own apps:
 8. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
    starting with `spec.env`; after item 54 and before item 59.
-9. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+9. [Item 59](#59-standardise-quadlet-placeholder-syntax): implemented;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
-10. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
-   rename `deploy` to `deploy.sh` consistently in source, bundles, callers,
+10. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): implemented;
+   use `deploy.sh` consistently in source, bundles, callers,
    tests and documentation; after item 59.
 11. [Item 48](#48-validate-public-hosts-and-proxy-header-trust):
    reject unexpected hosts and prevent client-supplied forwarded headers from
@@ -112,8 +115,9 @@ The order for an offline production deployment of an organisation's own apps:
    targets) and 45c (renewal and expiry, after item 39) are planned separately.
 17. [Item 38](#38-sign-bundles-so-the-target-can-authenticate-them): signed
    bundles, beside the existing checksums (done; verified in every lab run 2026-10-19).
-18. [Item 39](#39-show-the-installed-components-and-versions-on-the-target):
-   `./deploy status` shows each installed component, version and unit state.
+18. [Item 39](#39-show-the-installed-components-and-versions-on-the-target): implemented
+   locally; `./deploy.sh status [--json]` shows installed versions, unit states and
+   pending work ([verification](acceptance/STATUS.md)).
 19. [Item 40](#40-one-version-file-per-component-in-its-own-directory): one
    `components/<id>/VERSION` per component; the root version files go.
    Done; lab-verified with `t6-*` on `b3f3cf1`.
@@ -181,7 +185,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -408,7 +412,11 @@ application refactoring or unrelated backlog cleanup belongs in this task.
 
 ## 65. One-command host preparation and a short operator guide
 
-Status: planned, high priority (2026-10-23). Found in the manual backlog 64 run
+Status: planned, high priority (2026-10-23); implementation plan written
+2026-10-24, not implemented. Read the
+[implementation plan](docs/HOST-SETUP-PLAN.md) before starting: it fixes the CLI,
+bootstrap trust, journal policy, scope against 66/67, failure/retry behavior and
+test gates. Found in the manual backlog 64 run
 ([report](acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)).
 The operator's verdict: "Klargjøringen av maskinen må bli enklere. Jeg forsto
 ingenting av hva som foregikk." Installation worked only with step-by-step help.
@@ -418,20 +426,24 @@ PFX guide: fapolicyd cache, persistent journal, transfer area, checksums,
 independent key/tool hashes, protected copy of the release tool,
 `provision-key`, `prepare` per release, `prepare-host.sh`, later `retire`.
 
-Deliver one administrator entry point (extend `prepare-host.sh` or a small
-wrapper beside it; no second release helper) that takes product, existing
+Deliver one administrator entry point (`setup` in the existing independently
+authenticated `scripts/release.py`, calling the protected `prepare-host.sh`;
+no second release helper) that takes product, existing
 runtime account, HTTPS port, the trusted public key with its independent SHA256,
-and the transfer directory, and then:
+the transfer directory, explicit release selections and a selected host-script
+release, and then:
 
 - checks every prerequisite first and names the exact fix (OL9, SELinux
   Enforcing, fapolicyd and `subj_cache_size`, firewalld, packages, account
   exists and has no sudo, space under `/var/lib` and `/var/tmp`);
-- establishes or verifies the persistent journal (`/var/log/journal`), so
-  `journalctl --user` works for the account without extra groups; decide and
-  document whether this is changed or only checked, since it is host-wide;
-- installs the authenticated release tool and pins the key once;
+- establishes the persistent journal for supported `auto`/`persistent` plus
+  `SplitMode=uid` policy, without extra groups; refuses explicit incompatible
+  policy rather than overwriting it. Document the host-wide change;
+- uses the separately installed/authenticated release tool and pins the key
+  once; consolidate and test the initial tool bootstrap procedure;
 - runs the existing `prepare` for the selected bundles and the existing host
-  preparation, in dependency order;
+  preparation once. Publication follows explicit selection order; dependency
+  ordering for runtime installation belongs to item 66;
 - is safe to rerun after interruption and says which step completed;
 - ends with a short report and the exact next command for the runtime account.
 
@@ -443,8 +455,30 @@ Rewrite `docs/PRODUCTION-INSTALL.md` around it: each step names machine,
 account, one command and the expected output; one example product that matches
 the demo (or a clear substitution table); PEM and PFX credential paths shown
 separately; HTTPS checks against endpoints the component answers. Move design
-detail to linked documents. Verify by a new person following the guide
-literally on a fresh host (manual) plus item 67.
+detail to linked documents; keep every required action, including tool bootstrap
+and the selected credential path, in the one manual.
+
+Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review).
+For 65, the AI walkthrough must cover transfer/tool authentication, prerequisite
+failure and remedy, initial setup, identical rerun and interrupted setup retry,
+then handoff to real SSH login as the non-sudo runtime account. Each step states
+machine, user, access, copyable command and expected result. Count commands,
+manual edits and account switches; simplify the tool if these make setup hard.
+Errors must give a safe diagnosis, corrective action and exact continuation.
+
+The acceptance path must execute the manual's bootstrap and `setup` command,
+including first run, repeat and interruption/retry, with a checked mapping to
+manual steps. No controller-provided helper execution, direct `prepare-host.sh`
+call, journal setup or product/bootstrap-file creation may substitute for those
+operator steps. Runtime steps use real SSH without sudo; coordinate this shared
+path with 67, and mark its absence as a verification gap until implemented.
+Preserve the existing hostile-input/security probes as additional tests.
+
+Record a separate fresh-host trial by a person with limited Linux experience,
+without oral help: time, errors, stops and explanations needed. Human verification
+is outstanding; the assisted 2026-10-23 run does not qualify. The current
+[AI assessment](acceptance/OPERATOR-REVIEW.md) has findings; repeat it on the final
+manual. Automated success alone does not make 65 customer-ready.
 
 ## 66. Install sets: several signed bundles through one entry point
 
@@ -455,7 +489,7 @@ in one directory and have one `install.sh` install them all.
 Shape to investigate: an install set directory with an explicit manifest
 (product, components, versions) and the signed bundles with `.asc`/`.sha256`.
 Bundles stay separate component releases (each has its own `bundle.yaml`,
-`VERSION`, `deploy` and modules), so never unpack them on top of each other.
+`VERSION`, `deploy.sh` and modules), so never unpack them on top of each other.
 The administrator part authenticates and publishes every listed bundle (item
 65); the runtime account then runs one command that, in declared dependency
 order, runs `init-config` where needed, stops for required operator edits or
@@ -468,6 +502,27 @@ restarting finished components needlessly; the runtime account needs no sudo.
 Coordinate with item 60 (CLI name) and the per-component lifecycle; do not add a
 second deployment engine. Tests: dependency order, partial failure and retry,
 manifest/bundle mismatch, and a real OL9 run.
+
+Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review)
+to the complete multi-bundle task. One manual must show how to supply/select the
+install set, run 65's administrator preparation, log in through SSH without sudo,
+provide required public config/credentials, and invoke the runtime installation
+command. Give exact continuation commands when it stops for input or fails after
+one component. Do not make the operator infer dependency order, choose internal
+helpers or display sensitive values to diagnose a stop.
+
+The automated scenario must use those same public commands and manual steps for
+first installation, unchanged rerun and partial-failure continuation in a fresh
+SSH session, asserting retained config/credentials and no unnecessary restart of
+completed components. No harness loop over lower-level component commands may
+stand in for the documented install-set entry point. Reuse 65/67's preparation
+and SSH path, with drift tests for the manual-command mapping.
+
+Document an AI walkthrough and a separate unassisted human trial of the whole
+install set, including command/edit counts, elapsed time, errors, stops and
+explanations requested. Both assessments of the future install-set procedure
+remain outstanding; existing per-component tests/manual runs do not prove them.
+The [current operator baseline](acceptance/OPERATOR-REVIEW.md) records the gaps.
 
 ## 67. Acceptance scenario with a real ssh login as the runtime account
 
@@ -484,8 +539,28 @@ HTTPS including the identity discovery endpoint, logout, reboot before login,
 a fresh login with the same checks, upgrade with state comparison and `retire`.
 Start from a host without `/var/log/journal` so the journal contract chosen in
 item 65 is verified. Do not grant `systemd-journal`/`adm` or sudo to make it
-pass. Where possible, drive the commands from `docs/PRODUCTION-INSTALL.md` so the
-guide and the harness cannot drift. Remove the lab key in cleanup.
+pass. Drive the commands from `docs/PRODUCTION-INSTALL.md` or a tested explicit
+mapping from its step IDs; fail harness tests when command, account, prerequisites
+or order drift. Remove the lab key in cleanup.
+
+Exercise the exact manual bootstrap/preparation command from 65 and the runtime
+flow from 66 when available. Cover first execution on a fresh host, successful
+repeat, and interrupted preparation/installation followed by a new SSH session
+and the documented continuation command. Do not pre-create journals, product
+directories, pinned keys, manager drop-ins or the runtime bootstrap file through
+private harness logic. VM reset, artifact delivery and the disposable SSH key
+are test infrastructure; any supplied OS/account baseline must match the stated
+manual prerequisites. Missing prerequisites must exercise documented diagnosis
+and remedy, not an invisible harness fix.
+
+Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review)
+separately from harness/code review. Record an AI literal walkthrough of the
+tested manual and a separate limited-Linux-experience human trial on a fresh
+host, without oral help. Record time, errors, stops, command/edit counts and
+explanations needed; assisted tasks require a new unassisted trial after fixes.
+The human trial is outstanding, and the [current AI baseline](acceptance/OPERATOR-REVIEW.md)
+has findings. A green SSH acceptance scenario proves execution of that path,
+not that the manual is easy to understand; report these outcomes separately.
 
 ## 61. Verify Secret-derived environment values in init containers
 
@@ -723,10 +798,10 @@ Hvis du finner en eksisterende feil, dokumenter den med en fokusert reproduksjon
 Legg til integrasjonstester som starter de faktiske wrapper-scriptene fra en arbeidsmappe utenfor checkout/release:
 
 ```text
-./deploy prepare
-./deploy init-config <component>
-./deploy install
-./deploy uninstall
+./deploy.sh prepare
+./deploy.sh init-config <component>
+./deploy.sh install
+./deploy.sh uninstall
 ./build-bundle.sh
 ```
 
@@ -802,9 +877,9 @@ Goal: a medium-experienced developer with some Python knowledge and little famil
 
 Keep the root commands unchanged:
 
-- `./deploy prepare`
-- `./deploy install`
-- `./deploy uninstall`
+- `./deploy.sh prepare`
+- `./deploy.sh install`
+- `./deploy.sh uninstall`
 - `./build-bundle.sh`
 
 Move deploy internals into a small Python package, roughly:
@@ -818,7 +893,7 @@ deployment/
   render.py
 ```
 
-Keep `./deploy` as the stable entrypoint and run Python with `-B`, e.g. `python3 -B -m deployment`, so trusted release code does not create `.pyc`/`__pycache__`. Preserve invocation from outside the release directory as well.
+Keep `./deploy.sh` as the stable entrypoint and run Python with `-B`, e.g. `python3 -B -m deployment`, so trusted release code does not create `.pyc`/`__pycache__`. Preserve invocation from outside the release directory as well.
 
 Responsibilities:
 
@@ -1083,9 +1158,9 @@ Det skal ikke opprettes en separat platform-bundle.
 Behold rotkommandoene. Oppdater komponentargumentene:
 
 ```sh
-./deploy init-config platform
-./deploy uninstall platform
-./deploy uninstall platform --delete-data
+./deploy.sh init-config platform
+./deploy.sh uninstall platform
+./deploy.sh uninstall platform --delete-data
 ```
 
 Gamle `core`-argumenter skal ikke utføre utilsiktede operasjoner. Gi en tydelig melding om nytt navn dersom de brukes.
@@ -2627,7 +2702,7 @@ creation. A component without PostgreSQL needs no database settings. Keep the
 current PostgreSQL layout checks and lost-password/existing-volume refusal;
 broader database image/layout support remains backlog item 7.
 
-`dev/dev.sh up/down` and `./deploy prepare` must use the catalog and dependency
+`dev/dev.sh up/down` and `./deploy.sh prepare` must use the catalog and dependency
 order, including the real app1 database-before-init order. Generic dev startup
 must work with a missing/empty `apps/` and externally prepared credentials/images.
 It must not invoke demo certificate/user generation for arbitrary components.
@@ -3214,7 +3289,7 @@ side effects:
 ### Message to the implementing agent
 
 Add one explicit validation command that a developer or operator runs before
-`prepare`, `build-bundle.sh` or `install`, for example `./deploy validate`.
+`prepare`, `build-bundle.sh` or `install`, for example `./deploy.sh validate`.
 
 1. Scope: in the source checkout, validate every catalog component with its dev
    config layers (common, component, optional `config/dev.yaml`). In an
@@ -3251,7 +3326,7 @@ acceptance-harness tests, ruff, format, pyright, vermin, shellcheck and
 
 ### Plan (2026-10-17)
 
-**Command.** `./deploy validate`, the same wrapper as `prepare` and `install`.
+**Command.** `./deploy.sh validate`, the same wrapper as `prepare` and `install`.
 It decides the mode as those commands do:
 
 | Where | What is validated | Config |
@@ -3316,7 +3391,7 @@ and the renamed product. Each failure test asserts exit 1, the component in
 the message, no files changed and no commands. A test asserts that `prepare`
 and `validate` report the same message for the same broken manifest.
 
-**Docs.** README (developer workflow: run `./deploy validate` before
+**Docs.** README (developer workflow: run `./deploy.sh validate` before
 `dev/dev.sh up` and `build-bundle.sh`; operator workflow: before `install`),
 `docs/COMPONENTS.md` (adding and removing a component), ARCHITECTURE
 (validation order) and the review guide.
@@ -3466,7 +3541,7 @@ Status: done on `main` (2026-10-18); the full lab matrix on `2528769` (`b26-app1
 PASS.
 
 - F7: uninstall of a component with metadata but no marker now says it is an
-  unfinished first install and that `./deploy install` from its bundle finishes
+  unfinished first install and that `./deploy.sh install` from its bundle finishes
   it (the only recovery: units may be partly written). Fresh-process
   regression `test_unfinished_first_install_names_the_retry_for_uninstall`.
 - F8: `client.yaml` may declare `environment: {id: <VAR>, base_path: <VAR>}`;
@@ -3714,7 +3789,9 @@ standalone paragraph consistent.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: done on `main` (0 early evictions in the lab with the documented cache size). `acceptance/fapolicyd-reload-probe.sh` reproduces
+Status: fix on `main`; earlier lab runs had 0 early evictions with the documented
+cache size. A later counter observation remains to monitor (below).
+`acceptance/fapolicyd-reload-probe.sh` reproduces
 the sequence on the PROD VM (trust add/delete, `fapolicyd-cli --update`, wait
 0–15 s, restart a user unit) and reports failed restarts per delay, the
 effective rules, `fapolicyd.conf`, fapolicyd's journal and every FANOTIFY/AVC
@@ -3744,7 +3821,7 @@ prerequisite (a cache size, not a rule change); `prepare-host.sh` warns when
 it is smaller but does not edit fapolicyd's configuration; the lab's
 prepare-host step applies the documented setting and restarts fapolicyd; and
 `11-prod-audit` records the cache and queue figures. No retry was added to
-deploy: rerunning `./deploy install` already completes pending owner work.
+deploy: rerunning `./deploy.sh install` already completes pending owner work.
 
 Confirmed in `fapo-app1-first` on `2589710` (CLEAN PASS, no FANOTIFY/AVC
 events): with `subj_cache_size = 16381` the report showed 0 early evictions
@@ -3757,6 +3834,15 @@ audit action (test: `test_clean_prod_audit_check_reports_fapolicyd_cache`).
 Confirmed in `fapo-stats-app1-first` on `8629614` (CLEAN PASS): cache size
 16381, 0 early evictions, 19 % of slots in use, 453 evictions, maximum queue
 depth 7.
+
+Follow-up observation, 2026-10-24: `status39-20261024-070515-renamed` on
+`137a2da` ended CLEAN PASS with no FANOTIFY/AVC events, but its final audit
+reported 6 early subject cache evictions at cache size 16381 (3559 slots in use,
+805 total evictions, maximum queue depth 14/800). The other five final matrix
+audits reported zero early evictions. This does not diagnose a new failure or
+justify changing policy/cache settings during evidence recording; retain it for
+monitoring and investigation if launch failures recur. The cache size is not a
+guarantee of zero evictions. [Run provenance and limits](acceptance/STATUS.md#completed-real-lab-verification-2026-10-24).
 
 ### Observation
 
@@ -3784,7 +3870,7 @@ their cause was not established.
 ### Why it matters
 
 The documented operator procedure does the same thing: add the release's trust,
-`fapolicyd-cli --update`, then `./deploy install`, which restarts services. If
+`fapolicyd-cli --update`, then `./deploy.sh install`, which restarts services. If
 the denial is a window after a trust database reload, real installs and
 upgrades can fail intermittently with 203/EXEC.
 
@@ -4019,7 +4105,7 @@ Found by the best-practice review at `689156b` (finding 5).
 `deploy.restart_service` runs `systemctl --user restart` and `is-active`. An
 active unit does not prove that the pod's containers are running, let alone
 healthy: a crash loop or a failing health check still reports success, and
-`./deploy install` prints OK. The acceptance harness has its own health wait
+`./deploy.sh install` prints OK. The acceptance harness has its own health wait
 (`healthy` in acceptance/remote.sh and the README helper); the product does not.
 
 ### Task
@@ -4034,7 +4120,7 @@ healthy: a crash loop or a failing health check still reports success, and
    record and completion marker behave exactly as for a failed restart today
    (the marker is written only after the component is healthy).
 3. Decide and document whether `uninstall` restarts of owners also wait.
-4. Keep `./deploy validate` and dev `prepare` free of Podman calls.
+4. Keep `./deploy.sh validate` and dev `prepare` free of Podman calls.
 5. Tests: healthy, starting then healthy, unhealthy, exited, missing container
    and timeout; a fresh-process retry after an unhealthy first install. Update
    README (what install guarantees), ARCHITECTURE's sequence diagram and the
@@ -4145,9 +4231,24 @@ which one an operator has.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: planned; requested by the operator on 2026-10-19. In a real product
-every component can have a different version, and operators must be able to
-see on the target which versions are installed.
+Status: implemented with local product and harness checks (2026-10-24), on
+`feature/39-component-status`, based on CLI rename commit `88f3110`.
+`./deploy.sh status [--json]` reports installed versions and unit states in
+recorded dependency order, incomplete installs/upgrades/reinstalls and pending work;
+it reads `/var/lib/<product>/state` without config/credential reads or writes.
+Review follow-up: the existing pending record now covers the full install attempt,
+including same-version reinstalls without owners, until the completion-marker
+write succeeds. Fresh-process install/failure/status/retry regression coverage
+preserves the previous completed version and the `newer-only` skip policy.
+The fix is committed as `bd0cc77`. The coverage follow-up demonstrates the test
+failing against `b46d548` and adds an opt-in `--status-retry` acceptance probe,
+including actual container consumption after retry. The 2026-10-24 six-scenario
+matrix is CLEAN PASS, including the probe in all five applicable scenarios.
+[Verification and understandability review](acceptance/STATUS.md).
+Current-change real Podman/systemd verification is recorded with exact revisions,
+477 verified step logs and the non-blocking fapolicyd counter observation in that
+report. Python 3.6 runtime and the separate 65–67 operator work remain outstanding.
+The original request (2026-10-19) and task follow.
 
 ### Problem
 
@@ -4160,9 +4261,9 @@ home by hand, for example
 
 ### Task
 
-1. Add `./deploy status`, run as the service user from any unpacked bundle of
-   the product (the bundle only supplies the code; status reads the service
-   home). Output, one line per installed component in dependency order:
+1. Add `./deploy.sh status`, run as the service user from any unpacked bundle of
+   the product (the bundle only supplies the code; status reads the installation's
+   `state/` directory). Output, one line per installed component in dependency order:
    component, installed version, unit name and `systemctl --user is-active`
    state; then the product name and any pending operation (operation,
    component, owners). Show an unfinished first install (metadata without
@@ -4460,7 +4561,7 @@ data:
 - **Static checks (no secret contents read).** Schema, IDs, placeholder syntax,
   config keys exist, referenced secret groups and files are declared (existing
   or `generate:`). These run in `validate_component_config` / `validation.check_sources`
-  and `./deploy validate`, like `check_file_sources` today.
+  and `./deploy.sh validate`, like `check_file_sources` today.
 - **Content checks and rendering.** In `render.materialize`, after
   `generate_secrets` and `load_file_group(SECRET_FILES)`, render each template
   into an `Opaque` Secret document beside `secret_documents()`, with the same
@@ -4530,7 +4631,7 @@ which is how the organisation's own apps work:
 - **`acceptance/remote.sh`.** Keep the `--database-check` check (around line
   1379). Add:
   - no ConfigMap in the rendered YAML contains the database password;
-  - the password is absent from `./deploy` output and from the user journal of
+  - the password is absent from `./deploy.sh` output and from the user journal of
     the Identity units;
   - the rendered YAML is still mode 0600.
 - **Identity upgrade scenario** (old in-app build to the template build): the
@@ -5094,7 +5195,7 @@ Keep the current stdin delivery; no deploy, bundle or lab-scenario changes.
    the CA; define when renewal is allowed and how consumers (nginx, Identity,
    app clients) pick up the new certificate through the normal upgrade/restart
    path.
-2. Report certificate expiry in `./deploy status` (item 39).
+2. Report certificate expiry in `./deploy.sh status` (item 39).
 3. Test expiry and renewal with short-lived fixtures, and verify on PROD in the
    lab. Plan it well before the first production certificates expire.
 
@@ -6412,7 +6513,7 @@ Code facts and decisions from the review; they refine the task above.
   An entry has exactly one of `path` or `component_file`; `generate` with
   `component_file` is refused before writes. Confirm or justify another choice.
 - **Selected release.** The base is `common.ROOT/components/<current component>/files/`:
-  the source checkout in dev, the unpacked bundle running `./deploy` in production,
+  the source checkout in dev, the unpacked bundle running `./deploy.sh` in production,
   for validate and install alike. No release path is stored in config. Refuse the
   reference when there is no component context (standalone fixtures), and as a
   database password source or any generated credential.
@@ -6534,9 +6635,14 @@ REVIEW_GUIDE known gap is marked resolved.
 
 ## 59. Standardise Quadlet placeholder syntax
 
-Status: planned, high priority (2026-10-22). Schedule after item 54 and before
-items 48/49. This is a consistency and validation improvement, not evidence that
-the current valid templates generate incorrect units.
+Status: implemented with local product/harness regression checks (2026-10-23).
+`@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` use the existing single-pass parser with
+an internal-only resolver; both templates are checked before host queries,
+generation or writes, including standalone and equal-version `newer-only`.
+[Verification and understandability review](acceptance/QUADLET-TEMPLATES.md).
+Real Podman/systemd verification passed in the 2026-10-24 six-scenario matrix;
+see [run provenance and limits](acceptance/STATUS.md#completed-real-lab-verification-2026-10-24).
+The original analysis and task follow.
 
 ### Analysis and decision
 
@@ -6664,9 +6770,14 @@ the relevant checks pass, and any runtime verification gaps are recorded.
 
 ## 60. Rename the CLI wrapper to deploy.sh
 
-Status: planned, high priority (2026-10-22). Schedule after item 59 and before
-items 48/49. Requested because several users expect the shell script to have a
-`.sh` suffix. The canonical command becomes `./deploy.sh` in source and releases.
+Status: implemented with local product and harness regression checks (2026-10-24).
+`./deploy.sh` is the sole current wrapper in source, bundles, callers, usage and
+current documentation; no old-name alias is shipped. Based on item 59 commit
+`6c9a461`, on branch `fix/60-deploy-sh`.
+[Verification and understandability review](acceptance/CLI-WRAPPER.md).
+Real Podman/systemd verification passed in the 2026-10-24 six-scenario matrix;
+see [run provenance and limits](acceptance/STATUS.md#completed-real-lab-verification-2026-10-24).
+The original rename brief follows.
 
 ### Analysis and implementation brief
 

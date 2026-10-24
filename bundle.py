@@ -229,7 +229,7 @@ def build_release(version, descriptor=None):
     guard(
         ROOT,
         [
-            "deploy",
+            "deploy.sh",
             "deployment",
             "VERSION",
             "README.md",
@@ -243,7 +243,7 @@ def build_release(version, descriptor=None):
 
     target.mkdir(parents=True)
 
-    for filename in ["deploy", "README.md"] + (
+    for filename in ["deploy.sh", "README.md"] + (
         ["VERSION", "config.defaults.yaml"] if not components else []
     ):
         shutil.copy2(ROOT / filename, target / filename)
@@ -304,7 +304,7 @@ def build_release(version, descriptor=None):
         (target / "credentials").chmod(0o700)
         (target / "build").mkdir()
 
-    (target / "deploy").chmod(0o755)
+    (target / "deploy.sh").chmod(0o755)
     for script in (target / "scripts").glob("*.sh"):
         script.chmod(0o755)
 

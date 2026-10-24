@@ -63,6 +63,8 @@ def command(args, **kwargs):
         stream.write(json.dumps([args, os.environ.get("XDG_DATA_HOME"), os.environ.get("XDG_CONFIG_HOME")]) + "\\n")
     if args == ["systemctl", "--user", "show-environment"]:
         return subprocess.CompletedProcess(args, 0, stdout=os.environ["FIXTURE_MANAGER_ENV"], stderr="")
+    if args[:3] == ["systemctl", "--user", "is-active"]:
+        return subprocess.CompletedProcess(args, 0, stdout="active\\n", stderr="")
     if args[:2] == ["podman", "save"]:
         Path(args[4]).write_bytes(b"fixture image archive")
     if args[:3] == ["podman", "container", "inspect"]:
@@ -106,7 +108,7 @@ class WrapperTests(unittest.TestCase):
             bootstrap.chmod(0o600)
             os.chmod(str(home), 0o755)
             for name in (
-                "deploy",
+                "deploy.sh",
                 "bundle.py",
                 "build-bundle.sh",
                 "README.md",
@@ -209,7 +211,7 @@ class WrapperTests(unittest.TestCase):
             (caller / "config.yaml").write_text("invalid: [\n")
             before = (caller / "config.yaml").read_bytes()
 
-            def run(folder, wrapper, *args):
+            def run(folder, wrapper, *args, expected=0):
                 env["PYTHONPATH"] = os.pathsep.join((str(shim), str(folder)))
                 result = subprocess.run(
                     [str(folder / wrapper)] + list(args),
@@ -221,9 +223,20 @@ class WrapperTests(unittest.TestCase):
                     universal_newlines=True,
                     timeout=30,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(
+                    result.returncode, expected, result.stdout + result.stderr
+                )
+                return result
 
-            run(source, "deploy", "prepare")
+            self.assertFalse((ROOT / "deploy").exists())
+            self.assertFalse((source / "apps").exists())
+            usage = run(source, "deploy.sh", expected=2)
+            self.assertIn("Usage: ./deploy.sh ", usage.stdout)
+            run(source, "deploy.sh", "prepare", "unexpected", expected=2)
+            refusal = run(source, "deploy.sh", "init-config", "app1", expected=1)
+            self.assertIn("unpacked component bundle", refusal.stderr)
+            run(source, "deploy.sh", "validate")
+            run(source, "deploy.sh", "prepare")
             self.assertTrue((source / "build/install.yaml").is_file())
             # This fixture has no database pods, so prepare needs no host commands.
             self.assertFalse(commands.exists())
@@ -263,8 +276,6 @@ class WrapperTests(unittest.TestCase):
                 (platform_release / "docs/PFX-CREDENTIALS.md").read_text(),
                 "# PFX guide\n",
             )
-            run(platform_release, "deploy", "init-config", "platform")
-            run(platform_release, "deploy", "install")
             identity_version = (
                 (source / "components/identity/VERSION").read_text().strip()
             )
@@ -278,21 +289,61 @@ class WrapperTests(unittest.TestCase):
                     warnings.simplefilter("ignore", DeprecationWarning)
                     archive.extractall(str(extracted))
             identity_release = extracted / ("myproduct-identity-" + identity_version)
-            run(identity_release, "deploy", "init-config", "identity")
-            run(identity_release, "deploy", "install")
-            run(release, "deploy", "init-config", "app1")
+            wrapper_bytes = (source / "deploy.sh").read_bytes()
+            self.assertFalse(list(source.rglob("__pycache__")))
+            self.assertFalse(list(source.rglob("*.pyc")))
+            shutil.rmtree(source)
+            relocated = root / "offline-releases"
+            extracted.rename(relocated)
+            extracted = relocated
+            release = relocated / release.name
+            platform_release = relocated / platform_release.name
+            identity_release = relocated / identity_release.name
+            for folder in (release, platform_release, identity_release):
+                self.assertFalse((folder / "deploy").exists())
+                self.assertEqual((folder / "deploy.sh").read_bytes(), wrapper_bytes)
+                self.assertEqual((folder / "deploy.sh").stat().st_mode & 0o777, 0o755)
+                usage = run(folder, "deploy.sh", "--help", expected=2)
+                self.assertIn("Usage: ./deploy.sh ", usage.stdout)
+            run(platform_release, "deploy.sh", "init-config", "platform")
+            run(platform_release, "deploy.sh", "install")
+            run(identity_release, "deploy.sh", "init-config", "identity")
+            run(identity_release, "deploy.sh", "install")
+            run(release, "deploy.sh", "init-config", "app1")
+            run(release, "deploy.sh", "validate")
             # Persistent settings override deliberately different release defaults.
             config = state / "app1/config.yaml"
             config_before = config.read_bytes()
             (release / "config/common.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://changed.test:443\nHTTPS_PORT: 443\n"
             )
-            run(release, "deploy", "install")
+            run(release, "deploy.sh", "install")
             self.assertEqual(config.read_bytes(), config_before)
             self.assertIn("fixture.test", (state / "platform/config.yaml").read_text())
             self.assertEqual((state / "installed/app1").read_text().strip(), version)
-            run(release, "deploy", "uninstall")
-            for folder in (source, extracted):
+            # Status works from any same-product release, without usable config.
+            config.write_text("invalid: [\n")
+            report = json.loads(
+                run(platform_release, "deploy.sh", "status", "--json").stdout
+            )
+            self.assertEqual(report["product"], "myproduct")
+            self.assertEqual(
+                {row["name"]: row["version"] for row in report["components"]},
+                {
+                    "platform": platform_version,
+                    "identity": identity_version,
+                    "app1": version,
+                },
+            )
+            self.assertTrue(
+                all(
+                    row["complete"] and row["state"] == "active"
+                    for row in report["components"]
+                )
+            )
+            config.write_bytes(config_before)
+            run(release, "deploy.sh", "uninstall")
+            for folder in (extracted,):
                 self.assertFalse(list(folder.rglob("__pycache__")))
                 self.assertFalse(list(folder.rglob("*.pyc")))
             self.assertFalse((state / "installed/app1").exists())

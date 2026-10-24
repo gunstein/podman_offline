@@ -68,7 +68,7 @@ class BundleTests(BundleFixture):
                 regular,
                 {
                     "VERSION",
-                    "deploy",
+                    "deploy.sh",
                     "deployment/__init__.py",
                     "deployment/__main__.py",
                     "README.md",
@@ -91,7 +91,7 @@ class BundleTests(BundleFixture):
                     (member.uid, member.gid, member.uname, member.gname),
                     (0, 0, "root", "root"),
                 )
-            for name in ("deploy", "scripts/prepare-host.sh"):
+            for name in ("deploy.sh", "scripts/prepare-host.sh"):
                 self.assertEqual(archive.getmember(prefix + name).mode, 0o755)
             self.assertEqual(archive.getmember(prefix + "credentials").mode, 0o700)
             self.assertTrue(archive.getmember(prefix + "build").isdir())
