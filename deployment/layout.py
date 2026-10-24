@@ -47,6 +47,51 @@ def expected_root(product):
     return ANCHOR / product
 
 
+def initialize(product):
+    """Explicit, no-clobber bootstrap creation after administrator preparation."""
+    root = expected_root(product)
+    check_root(root)
+    check_home_unused(product)
+    path = bootstrap_path(product)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with_dir = os.open(str(common.HOME), flags)
+    try:
+        try:
+            os.mkdir(path.parent.name, 0o700, dir_fd=with_dir)
+        except FileExistsError:
+            pass
+        directory = os.open(path.parent.name, flags, dir_fd=with_dir)
+        try:
+            info = os.fstat(directory)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise common.DeployError(
+                    f"{path.parent} must be owned by you with mode 0700"
+                )
+            try:
+                fd = os.open(
+                    path.name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=directory,
+                )
+            except FileExistsError:
+                install_root(product, read_bootstrap(path), path)
+                print(f"[OK] Existing bootstrap retained: {path}")
+                return
+            with os.fdopen(fd, "w") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(f"INSTALL_ROOT={root}\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.fsync(directory)
+            os.fsync(with_dir)
+        finally:
+            os.close(directory)
+    finally:
+        os.close(with_dir)
+    print(f"[OK] Bootstrap ready: {path}; continue with init-config from the manual")
+
+
 def read_bootstrap(path):
     """Return the supported fields of a private KEY=VALUE file; never executes it.
 

@@ -283,3 +283,36 @@ class CommandSelectionTests(LayoutFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InitLayoutTests(LayoutFixture):
+    def test_initialize_is_explicit_private_and_preserves_existing_bytes(self):
+        layout.initialize(PRODUCT)
+        self.assertEqual(
+            self.path.read_text(), "INSTALL_ROOT=" + str(self.install) + "\n"
+        )
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
+        self.path.write_text(self.path.read_text() + "APP_SETTING=private-value\n")
+        before = self.path.read_bytes(), self.path.stat().st_ino
+        layout.initialize(PRODUCT)
+        self.assertEqual((self.path.read_bytes(), self.path.stat().st_ino), before)
+        self.assertUnselected()
+
+    def test_initialize_refuses_conflict_symlink_and_missing_preparation(self):
+        self.bootstrap("INSTALL_ROOT=/wrong\n")
+        with self.assertRaises(common.DeployError):
+            layout.initialize(PRODUCT)
+        self.assertEqual(self.path.read_text(), "INSTALL_ROOT=/wrong\n")
+        self.path.unlink()
+        target = self.root / "target"
+        target.write_text("preserve")
+        self.path.symlink_to(target)
+        with self.assertRaises(common.DeployError):
+            layout.initialize(PRODUCT)
+        self.assertEqual(target.read_text(), "preserve")
+        self.path.unlink()
+        (self.install / "state").rmdir()
+        with self.assertRaises(common.DeployError):
+            layout.initialize(PRODUCT)
+        self.assertFalse(self.path.exists())

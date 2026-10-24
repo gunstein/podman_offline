@@ -1,6 +1,7 @@
 # Operator review baseline for backlog 65–67
 
-Assessment date: 2026-10-24. This is documentation review evidence, **not a lab
+Historical baseline date: 2026-10-24. The first table refers to `7ef9671`;
+the current item 65 assessment is recorded separately below. This is **not a lab
 run**. Requirements are in the separate
 [operator review](../docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review).
 The [item 65 plan](../docs/HOST-SETUP-PLAN.md) describes future behavior; it is not
@@ -17,6 +18,76 @@ an executable manual and does not resolve these findings until implemented.
 Documentation checks: 196 local links/heading targets across the four changed
 documents checked successfully; whitespace, code fences and `git diff --check`
 passed. This verifies document consistency, not execution of manual commands.
+
+## Current item 65 AI walkthrough (2026-10-24)
+
+Result: the supported declared-baseline path has no identified missing execution
+step after the fixes below. This is a static AI assessment plus local execution
+of manual-block regressions, not real server execution or human approval.
+Reviewed working-tree guide SHA256:
+`db9a2a9bb7de9ee4725ce7fb71f9ff437ea52ac8189ff2ae16d9b133c2475ef7`; implementation branch `feature/65-host-setup`,
+based on `f52b797`. The earlier table and literal walkthrough below are a
+**historical baseline** against `7ef9671`, not a claim about the rewritten guide.
+Current local evidence is in [HOST-SETUP.md](HOST-SETUP.md).
+
+The literal path now starts with a complete trusted delivery/value checklist,
+explicit administrator SSH, private unprivileged upload directory, one checked
+tool bootstrap and one `setup` invocation. It then switches through actual
+runtime SSH, reinitializes the public worksheet in that session, runs init-layout,
+config/credential steps, validate/install and concrete HTTPS/status/journal
+checks. Retry instructions name the account, retained state and exact repeated
+block. No remembered shell functions, implicit exports, inferred dependency order
+or required instructions from other documents are needed for this example.
+
+Findings corrected during this walkthrough:
+
+- Added the administrator login command; merely labelling a step "server" did
+  not show a limited-experience reader how to reach it.
+- Removed sudo from upload-directory creation. Staging untrusted inputs needs
+  no privileged directory ownership operation.
+- Credential conflict exits are confined to a subshell and print the public
+  filename and next action instead of silently logging out the operator.
+- PFX and PEM selection now happens once in the worksheet and drives both
+  transfer and installation, in the same sequence. PFX no longer first demands
+  the demo's PEM/user-password inputs; a runnable regression checks PFX placement,
+  retention and safe mismatch diagnostics.
+- The cache remedy reports a missing baseline setting rather than silently
+  stopping at grep. The harness permits it only for that exact sole preflight
+  failure and refuses unrelated failures.
+- The HTTP harness gates require exactly 204/200, not just successful curl exit.
+- Ordinary journal checks project only timestamp/unit/priority metadata; MESSAGE
+  contents need not be displayed or shared to verify log access.
+- Setup/retirement pipelines use pipefail, so a failed gzip cannot become an
+  apparently successful empty Python invocation.
+
+Command burden is measured as operator submissions/pasted blocks, separately
+from internal automatic host actions. The guide has 19 uniquely named executable
+blocks. Per ordinary task: upload-directory 1 command; tool bootstrap 1 pasted
+command with its fixed Python body; host setup 1 pasted selection/invocation
+block; runtime bootstrap 1 command; each component validate/install 1 block with
+2 CLI commands; gateway public config 1 block with init-config, a fixed editor
+snippet and private input-directory creation; each component credential import
+1 fixed block; each endpoint check 1 command; status/log inspection 3 commands.
+Transfers are one block per public/private delivery (two scp calls when Identity
+is included). Login is 1 SSH command per role/session, followed by the same public
+worksheet. The ordinary example needs 1 public worksheet edit, no manual edits
+to Python/shell internals, and no password entry into command lines. These are
+static procedure counts, not observed human performance or machine timings.
+
+Tool/workflow simplifications implemented: one setup replaces manual key pinning,
+per-bundle publication, journal creation and host-script invocation; init-layout
+replaces manual bootstrap-file creation. Per-component runtime orchestration
+remains 66. The fixed initial root bootstrap is still a substantial code block,
+and external credential delivery still requires role/machine switches. These
+are explicit usability risks to assess in the human trial; an approved OS package
+can provision the trusted tool, but new package delivery is not claimed here.
+A larger file or fewer pasted blocks alone does not establish easier operation.
+
+The human trial is still **not performed / outstanding**. No time, mistakes or
+questions are invented. The original assisted run remains evidence of difficulty;
+it cannot approve this new manual. The focused SSH scenario is implemented but
+unrun, and the full reboot/upgrade flow in 67 is still pending. Neither code review,
+local tests nor this AI walkthrough establishes customer usability.
 
 ## AI literal walkthrough
 

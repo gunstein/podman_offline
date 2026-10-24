@@ -412,11 +412,14 @@ application refactoring or unrelated backlog cleanup belongs in this task.
 
 ## 65. One-command host preparation and a short operator guide
 
-Status: planned, high priority (2026-10-23); implementation plan written
-2026-10-24, not implemented. Read the
+Status: implemented on `feature/65-host-setup` with local regression coverage
+(2026-10-24); real OL9 and unassisted human verification remain outstanding.
+[Implementation, evidence and lab commands](acceptance/HOST-SETUP.md). Read the
 [implementation plan](docs/HOST-SETUP-PLAN.md) before starting: it fixes the CLI,
 bootstrap trust, journal policy, scope against 66/67, failure/retry behavior and
-test gates. Found in the manual backlog 64 run
+test gates. The focused `--host-setup` scenario uses the manual blocks and real
+runtime SSH without sudo. `deploy.sh init-layout` replaces manual bootstrap-file
+creation. The complete reboot/upgrade SSH path remains item 67. Found in the manual backlog 64 run
 ([report](acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)).
 The operator's verdict: "Klargjøringen av maskinen må bli enklere. Jeg forsto
 ingenting av hva som foregikk." Installation worked only with step-by-step help.
@@ -526,7 +529,10 @@ The [current operator baseline](acceptance/OPERATOR-REVIEW.md) records the gaps.
 
 ## 67. Acceptance scenario with a real ssh login as the runtime account
 
-Status: planned, high priority (2026-10-23). The automated matrix runs runtime
+Status: planned, high priority (2026-10-23). Item 65 now supplies a focused
+manual-matched setup/initial-install SSH path; this item must extend it through
+logout/reboot/upgrade/retirement and retention assertions. Its real lab execution
+and human usability evidence are still pending. The ordinary automated matrix runs runtime
 commands through the administrator's `sudo -u`; it passed while a real login
 could not read its user journal on a fresh host (manual backlog 64 run).
 

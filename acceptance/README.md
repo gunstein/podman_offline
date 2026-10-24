@@ -1,3 +1,12 @@
+# Manual host setup (backlog 65)
+
+`--host-setup` selects the focused manual-block bootstrap/setup, repeat,
+interruption/retry and real runtime SSH path. Normal, renamed and gateway-only
+variants are runnable; current-change OL9 and human verification are outstanding.
+See [contracts, evidence and commands](HOST-SETUP.md). This is separate from the
+complete reboot/upgrade operator scenario planned in 67 and the six-scenario
+product matrix below.
+
 # Same-version status failure/retry (backlog 39)
 
 The opt-in `--status-retry` flag adds a controlled daemon-reload failure and retry

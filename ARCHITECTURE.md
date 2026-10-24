@@ -21,7 +21,7 @@ build entrypoint and also uses `-B`.
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
-| `scripts/release.py` | Independently authenticated root helper: snapshot/signature verification, strict archive inventory, atomic immutable publication under `/var/lib/<product>/releases`, exact fapolicyd enrollment/wait and scoped retirement; never imports incoming code. |
+| `scripts/release.py` | Independently authenticated root helper (`setup` composes preflight, explicit signed release preparation, guarded persistent journal and the authenticated host script; no runtime pending/config/credential reads): snapshot/signature verification, strict archive inventory, atomic immutable publication under `/var/lib/<product>/releases`, exact fapolicyd enrollment/wait and scoped retirement; never imports incoming code. |
 | `scripts/prepare-host.sh` | Explicit root host setup for an existing login account (`--user`): root-owned `/var/lib/<product>`, the account's `state/`/`config/`/`storage/`, subordinate IDs, SELinux equivalence, linger, port and the `user@<uid>` drop-in with `XDG_CONFIG_HOME`/`XDG_DATA_HOME`; drops to the account's UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. Its embedded Python helper (a here-document, because fapolicyd denies reading untrusted Python files before trust) uses directory descriptors and exclusive lock creation; it does not inspect application data. |
 
 `common.ROOT` is the directory above the package, both in source and unpacked
@@ -29,7 +29,11 @@ bundles. `common.HOME` follows the account's user-database home and is used only
 for identity checks and the bootstrap file. `common.STATE`, `QUADLET_DIR` and
 `FILES_DIR` are unset (`None`) until `layout.select()` assigns them for a
 production command; source dev and bundle building never assign them. There
-are no lifecycle actions during package import. Modules share these explicit
+are no lifecycle actions during package import. `deploy.sh init-layout` is an explicit runtime-account
+operation before selection: identity and the prepared root are validated, then
+`layout.initialize` exclusively creates the private bootstrap (or validates and
+retains it). It never selects paths, initializes config or queries systemd.
+ Modules share these explicit
 paths without circular imports or a dependency framework.
 
 In source dev, `deploy.dev_settings()` walks the catalog in dependency order,

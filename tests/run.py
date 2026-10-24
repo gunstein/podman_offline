@@ -20,6 +20,9 @@ def export_platform(target):
     target.mkdir(parents=True)
     for name in ("bundle.py", "deploy.sh", "build-bundle.sh", "README.md"):
         shutil.copy2(str(ROOT / name), str(target / name))
+    (target / "docs").mkdir()
+    for name in ("PRODUCTION-INSTALL.md", "PFX-CREDENTIALS.md"):
+        shutil.copy2(str(ROOT / "docs" / name), str(target / "docs" / name))
     for name in ("deployment", "scripts", "quadlet", "examples"):
         shutil.copytree(
             str(ROOT / name),

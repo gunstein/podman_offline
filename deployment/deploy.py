@@ -497,11 +497,11 @@ def run(*args):
     subprocess.run(list(map(str, args)), check=True)
 
 
-def service_user():
+def service_identity():
     """Check the account, then select the production paths; reads only.
 
     Refuses root, a HOME that is not the account's registered home and the
-    source checkout, then reads ~/.<product>/<product>.env (layout.select).
+    source checkout. Shared with the explicit init-layout command.
     """
     if os.geteuid() == 0:
         raise common.DeployError("Run install as the service user, not as root")
@@ -520,7 +520,19 @@ def service_user():
             "Run production commands from an unpacked component bundle, not the "
             "source checkout"
         )
+
+
+def service_user():
+    """Validate identity, then read the private bootstrap and select paths."""
+    service_identity()
     return layout.select(catalog.product_name(common.ROOT))
+
+
+def init_layout():
+    """Create only the runtime account's bootstrap; no systemd or credential reads."""
+    service_identity()
+    descriptor = bundle_descriptor()
+    layout.initialize(descriptor["product"])
 
 
 def production_environment():
