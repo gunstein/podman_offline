@@ -171,7 +171,7 @@ class FileGroupTests(DeployFixture):
         self.assertEqual(base64.b64decode(docs["second"]["data"]["item"]), b"second")
 
     def test_secret_filenames(self):
-        for name in ("with space", "æ.txt", "bad@name"):
+        for name in ("with space", "\u00e6.txt", "bad@name"):
             with self.subTest(name=name):
                 self.write(name)
                 with self.assertRaisesRegex(common.DeployError, "the file name"):

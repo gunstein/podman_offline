@@ -344,7 +344,7 @@ class HostSetupHarnessTests(unittest.TestCase):
             (incoming / "pfx-password").write_text("other-secret")
             result = execute()
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("credentialkonflikt", result.stderr)
+            self.assertIn("credential conflict", result.stderr)
             self.assertNotIn("other-secret", result.stderr)
             self.assertEqual((target.read_bytes(), target.stat().st_ino), original)
 

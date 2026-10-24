@@ -1,9 +1,49 @@
 # Host setup and operator procedure (backlog 65)
 
 Implemented on `feature/65-host-setup`, based on `f52b797` (2026-10-24).
-**The first real OL9 run stopped in preflight; a successful rerun and an
-unassisted human trial are outstanding.** See the lab finding below.
+**All nine scenarios passed on `2d36d71`; unassisted human verification
+remains outstanding under backlog item 68.** The first failed attempt is retained below.
 Historical item 39/54/64 lab results do not verify this change.
+
+## Successful real OL9 verification (2026-10-24)
+
+The operator supplied `akseptanselogger-20261024-165715.tar.gz`, SHA256
+`3a5eb6f0a667f5449f55b75e4215aac106757a0730f3c2eb08affdd68e9971b5`.
+All runs in `host65-20261024-144821-*` record clean source revision
+`2d36d718e50b1163a9b7eda2393392f681078625`. All 582 step records passed with
+exit 0; all 582 log hashes matched the recorded evidence.
+
+| Scenario suffix | Steps | Result |
+| --- | ---: | --- |
+| normal | 36 | CLEAN PASS |
+| renamed | 37 | CLEAN PASS |
+| minimal | 32 | CLEAN PASS |
+| platform-help | 39 | CLEAN PASS |
+| app1 | 126 | CLEAN PASS |
+| app2 | 126 | CLEAN PASS |
+| help | 61 | CLEAN PASS |
+| identity | 67 | CLEAN PASS |
+| renamed-regression | 58 | CLEAN PASS |
+
+The first three scenarios exercise the literal manual setup path: documented
+cache diagnosis/remedy, authenticated publication, initial/repeated/interrupted
+setup and retry, retained release hashes, bootstrap, actual runtime SSH without
+sudo or XDG injection, installation, endpoint checks, status and readable journal.
+The other six exercise the existing regression matrix. Five status-retry probes
+verify an active old service remains pending/incomplete after failed reinstall,
+then observe the changed public value inside the container after retry and
+restore the original configuration without modifying protected release code.
+
+All nine final audits report no FANOTIFY/AVC events since run start. The renamed
+regression recorded nine early subject-cache evictions, without a denial or
+failed step; retain this as a cache-monitoring observation, not a diagnosed
+regression. Other runs recorded zero early subject-cache evictions.
+
+These are real Podman/systemd/SELinux/fapolicyd results for `2d36d71`. Subsequent
+English translations were checked locally and were not rerun on the VMs. They
+preserve command flow apart from placeholder/diagnostic text. Python 3.6 execution,
+unassisted human usability (item 68) and the complete SSH lifecycle in item 67
+remain separate gaps. No agent-initiated VM reset or lab run was performed.
 
 ## First real lab attempt and sudo regression (2026-10-24)
 
@@ -86,8 +126,8 @@ after complete file content is durable; failure before it leaves retryable
 temporary state, and failure after it leaves a complete private file. The host
 script owns phase reporting and the release coordinator owns safe presentation;
 no new pending protocol or silent host repair is introduced. Code review passes
-for these focused changes. Real OL9 rerun, actual SELinux/fapolicyd behavior and
-unassisted human usability remain outstanding.
+for these focused changes. The subsequent real OL9 results above cover the
+corrected flow; unassisted human usability remains outstanding (item 68).
 
 Follow-up verification: 40 focused layout/setup tests and 18 host-script tests
 passed. The final isolated platform suite passed 485 tests, the demo suite
@@ -170,8 +210,8 @@ are grouped by request, account, host policy, journal, space and postconditions.
 The detailed existing host checks remain at their own mutation boundaries after
 authentication; not every possible I/O or host failure can be discovered before
 publication. This layering and the two authority boundaries were reviewed
-separately from test success. Code-understandability review: passed, with real
-privilege-boundary verification still pending.
+separately from test success. Code-understandability review: passed. Subsequent
+real-host verification is recorded above; human usability is still outstanding.
 
 ## Product/unit and harness evidence
 
@@ -253,9 +293,8 @@ are retained.
 This focused path deliberately stops after initial installation/status/journal.
 The complete logout/reboot-before-login, new-login, upgrade/hash retention and
 retirement scenario remains backlog 67; multi-bundle runtime orchestration
-remains 66. The full existing six-scenario matrix should also be rerun before
-release because the shared helper/CLI changed. Do not count an unexecuted focused
-scenario, a sudo-u path or previous matrix as that evidence.
+remains 66. The full existing six-scenario matrix passed in the series above.
+Its sudo-u runtime paths do not substitute for the full SSH lifecycle in 67.
 
 ## Operator assessment and remaining limits
 

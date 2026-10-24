@@ -418,7 +418,7 @@ def run():
     host = prefix + "-postgres"
     passwords = [
         " space;single' double\" dollar$ equals= end ",
-        "unicode-ø;=\"'$",
+        "unicode-\u00f8;=\"'$",
         "0123456789abcdef" * 3 + "\n\n",
     ]
     with tempfile.TemporaryDirectory(prefix=prefix + "-") as directory:

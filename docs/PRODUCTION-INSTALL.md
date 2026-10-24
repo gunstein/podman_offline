@@ -1,68 +1,75 @@
-# Produksjonsinstallasjon
+# Production installation
 
-For administrator/installatør med begrenset Linux-erfaring. Alle nødvendige
-steg står her, i rekkefølge. Designforklaringer står i [README](../README.md).
-**Status:** backlog 65 er under implementasjon. Fersk OL9-labkjøring og
-menneskelig utprøving uten hjelp gjenstår; historiske tester godkjenner ikke
-kommandoene nedenfor. Verifikasjonsrapporten heter `acceptance/HOST-SETUP.md` i kildekoden.
+For administrators and installers with limited Linux experience. All required
+steps are here, in execution order. Design explanations are in [README](../README.md).
+**Status:** the item 65 implementation passed the focused OL9 scenarios and full
+regression matrix at `2d36d71`. This English translation is a later documentation
+change. Unassisted human testing remains outstanding. The verification report
+is `acceptance/HOST-SETUP.md` in the source repository.
 
-## Før du begynner
+## Before you begin
 
-Du trenger en Oracle Linux 9-server med SELinux Enforcing, aktiv fapolicyd og
-firewalld. Organisasjonens administrator leverer en eksisterende innloggingskonto
-`produser` uten sudo, wheel, adm eller systemd-journal. Hjem og shell beholdes.
-Python 3, python3-pyyaml, Podman, gnupg2, fapolicyd, firewalld,
-policycoreutils-python-utils, acl, util-linux, shadow-utils og sudo skal være
-installert fra organisasjonens godkjente offline-repository. `setup` kontrollerer
-kommandoene og gir pakkenavn hvis noe mangler. Ingen kommando laster ned pakker.
+You need an Oracle Linux 9 server with SELinux Enforcing, active fapolicyd and
+firewalld. Your organisation's administrator provides an existing login account,
+`produser`, without sudo access or membership in wheel, adm or systemd-journal.
+Its home and shell are retained. Python 3, python3-pyyaml, Podman, gnupg2,
+fapolicyd, firewalld, policycoreutils-python-utils, acl, util-linux, shadow-utils
+and sudo must be installed from your organisation's approved offline repository.
+`setup` checks the commands and names the package if something is missing.
+No command downloads packages.
 
-**To kontoer:** Administratoren bruker sudo for klargjøring, publisering og
-pensjonering av releaser. Driftsbrukeren logger inn selv med SSH og bruker aldri
-sudo. Produktfiler legges under `/var/lib/myproduct`; i hjemmet opprettes bare
-`~/.myproduct/myproduct.env`. SSH-nøkler tilhører den vanlige innloggingen.
+**Two accounts:** The administrator uses sudo to prepare the host, publish
+releases and retire releases. The runtime user logs in directly over SSH and
+never uses sudo. Product files go under `/var/lib/myproduct`; only
+`~/.myproduct/myproduct.env` is created in the home directory. SSH keys belong
+to the ordinary login setup.
 
-Bestill følgende levering fra leverandøren før endringer på serveren:
+Obtain the following delivery from the supplier before changing the server:
 
-- Denne manualen fra en betrodd kilde, `release.py.gz`, `bundle-signing.gpg`,
-  valgte `<produkt>-<komponent>-<versjon>-offline.tar.gz` og tilhørende `.asc`.
-  Signatur er obligatorisk; `.sha256` kan følge med for overføringskontroll.
-- **To SHA256-verdier via en separat, autentisert kanal:** for `release.py.gz`
-  og `bundle-signing.gpg`. En sjekksumfil ved siden av opplastingen er ikke nok.
-- For eksempelet med platform og identity: `web.crt`, `web.key`, `identity.crt`,
-  `identity.key`, `alice-password`, `bob-password` og offentlig `ca.crt`.
-  Websertifikatet skal dekke vertsnavnet i `public_origin`. Disse filene leveres
-  privat til driftsbrukeren. De to passordfilene gjelder demoens brukere;
-  organisasjonens komponenter må ha sin egen leveringsliste. PFX-varianten
-  trenger i stedet `signing-cert.pfx` og den private enlinjesfilen `pfx-password`.
+- This manual from a trusted source, `release.py.gz`, `bundle-signing.gpg`, the
+  selected `<product>-<component>-<version>-offline.tar.gz` files and their `.asc`
+  files. Signatures are mandatory; `.sha256` files may accompany them to check
+  transfer integrity.
+- **Two SHA256 values through a separate authenticated channel:** one for
+  `release.py.gz` and one for `bundle-signing.gpg`. A checksum file next to the
+  upload is not sufficient.
+- For the platform and identity example: `web.crt`, `web.key`, `identity.crt`,
+  `identity.key`, `alice-password`, `bob-password` and the public `ca.crt`.
+  The web certificate must cover the hostname in `public_origin`. Deliver these
+  files privately to the runtime user. The two password files belong to demo
+  users; your organisation's components need their own delivery list. The PFX
+  variant instead needs `signing-cert.pfx` and the private, single-line
+  `pfx-password` file.
 
-Be administratoren klargjøre server/konto dersom disse forutsetningene mangler.
-Ikke opprett credentials fra dev eller bruk et usignert arkiv som snarvei.
-For leverandøren: `gzip -n -c scripts/release.py > release.py.gz` lages fra samme
-separat gjennomgåtte kildecommit som verktøyet skal representere. Produser ikke
-verktøyet fra et uverifisert bundle.
+Ask the administrator to prepare the server/account if these prerequisites are
+missing. Do not generate credentials from dev or use an unsigned archive as a
+shortcut. For the supplier: create `release.py.gz` using
+`gzip -n -c scripts/release.py > release.py.gz` from the separately reviewed
+source commit that the tool is intended to represent. Do not produce the tool
+from an unverified bundle.
 
-### Verdier du bytter ut én gang
+### Values to replace once
 
-Kopier blokken under til terminalen på hver maskin/ny innlogging der du følger
-stegene. Bytt **bare verdiene mellom apostrofene** etter tabellen. Dette er
-offentlige innstillinger; legg aldri passord eller private nøkler i blokken.
-Ikke bruk apostrof eller linjeskift inne i en verdi. Versjonene hentes fra
-leveringens filnavn; de behøver ikke være like.
+Copy the following block into the terminal on each machine and in each new
+login session where you follow these steps. Replace **only the values between
+single quotes**, using the table. These are public settings; never put passwords
+or private keys in this block. Do not include single quotes or line breaks in a
+value. Take versions from the delivery filenames; they need not match.
 
-| Verdi | Betyr |
+| Value | Meaning |
 | --- | --- |
-| `server`, `admin`, `runtime` | serveradresse og de to innloggingskontoene |
-| `product` | leverandørens produktnavn; `myproduct` i eksempelet |
-| `gateway`, `login_component` | komponentnavn; eksempelets `platform` og `identity` |
-| `gateway_version`, `login_version` | versjoner i leveringen, ikke en antakelse om siste versjon |
-| `old_gateway_version` | tidligere installert gateway-versjon, bare brukt ved pensjonering etter oppgradering |
-| `port`, `public_origin`, `bind_ip` | samme HTTPS-port og serveradresse som tjenesten skal bruke |
-| `upload` | innleveringskatalog på serveren, utenfor hjemmet |
-| `credentials` | driftsbrukerens private innleveringskatalog på serveren |
-| `helper_sha256`, `key_sha256` | erstatt teksten med de to uavhengig mottatte 64-tegns verdiene |
-| `credential_format` | `pem` for demoen; `pfx` bare for en levert komponent som deklarerer `credentials/signing/signing-cert.pfx` |
-| `discovery_path` | leverandørens faktiske discovery-sti, som i eksempelet |
-| `with_identity` | `yes` for eksempelet; `no` for bare gateway, uten Identity eller database |
+| `server`, `admin`, `runtime` | Server address and the two login accounts |
+| `product` | Supplier's product name; `myproduct` in this example |
+| `gateway`, `login_component` | Component names; `platform` and `identity` in this example |
+| `gateway_version`, `login_version` | Versions in the delivery, not an assumed latest version |
+| `old_gateway_version` | Previously installed gateway version, used only for retirement after upgrade |
+| `port`, `public_origin`, `bind_ip` | HTTPS port and server address that the service will use |
+| `upload` | Upload directory on the server, outside the home directory |
+| `credentials` | Runtime user's private delivery directory on the server |
+| `helper_sha256`, `key_sha256` | Replace the text with the two independently received 64-character values |
+| `credential_format` | `pem` for the demo; `pfx` only for a delivered component declaring `credentials/signing/signing-cert.pfx` |
+| `discovery_path` | Supplier's actual discovery path, as in this example |
+| `with_identity` | `yes` for this example; `no` for gateway only, without Identity or a database |
 
 <!-- operator: values -->
 ```sh
@@ -80,37 +87,37 @@ public_origin='https://myproduct-proxy:8443'
 bind_ip='192.168.0.108'
 upload='/var/tmp/myproduct-upload'
 credentials='/var/tmp/myproduct-credentials'
-helper_sha256='BYTT_TIL_VERKTOYETS_UAVHENGIGE_SHA256'
-key_sha256='BYTT_TIL_NOKKELENS_UAVHENGIGE_SHA256'
+helper_sha256='REPLACE_WITH_INDEPENDENT_TOOL_SHA256'
+key_sha256='REPLACE_WITH_INDEPENDENT_KEY_SHA256'
 with_identity='yes'
 credential_format='pem'
 discovery_path='/identity/.well-known/openid-configuration'
 ```
 
-## 1. Overfør levering
+## 1. Transfer the delivery
 
-**Maskin:** laptop. **Bruker:** administratorens innlogging. Kjør verdiblokken,
-og logg inn på serveren:
+**Machine:** laptop. **User:** administrator's login account. Run the values
+block, then log in to the server:
 
 <!-- operator: admin-login -->
 ```sh
 ssh "$admin@$server"
 ```
 
-**Forventet:** serverens shellprompt. Kjør verdiblokken i den nye sesjonen også.
+**Expected:** the server's shell prompt. Run the values block in this new session too.
 
-**Maskin:** server. **Bruker:** administrator, uten sudo i dette steget. Kjør
-verdiblokken først. Opprett en privat katalog som du selv eier; ingen ekstra kopiering til en
-root-only katalog er nødvendig.
+**Machine:** server. **User:** administrator, without sudo for this step. Run
+the values block first. Create a private directory owned by your account;
+an additional copy into a root-only directory is not required.
 
 <!-- operator: upload-directory -->
 ```sh
 install -d -m 0700 "$upload"
 ```
 
-**Maskin:** laptop. **Bruker:** administrator. Kjør verdiblokken her også og stå
-i katalogen med den mottatte offentlige leveringen. Private credentialfiler
-kopieres senere med driftsbrukerens konto.
+**Machine:** laptop. **User:** administrator. Run the values block here too,
+and work from the directory containing the public delivery. Private credential
+files are transferred later using the runtime account.
 
 <!-- operator: transfer -->
 ```sh
@@ -123,15 +130,15 @@ fi
 )
 ```
 
-**Forventet:** scp fullfører uten feil. Mangler en fil: hent den fra leverandøren,
-kjør samme overføring igjen, og fortsett med steg 2.
+**Expected:** scp completes without errors. If a file is missing, obtain it from
+the supplier, repeat the same transfer, then continue with step 2.
 
-## 2. Installer betrodd verktøy
+## 2. Install the trusted tool
 
-**Maskin:** server. **Bruker:** administrator med sudo. Kjør verdiblokken ved
-ny innlogging. Kopier hele blokken. Den kontrollerer den uavhengige sjekksummen
-på en beskyttet kopi før verktøyet kan kjøres. En eldre kopi beholdes ved feil.
-Du skal ikke redigere Python-koden. Steget kan gjentas med samme leveranse.
+**Machine:** server. **User:** administrator with sudo. Run the values block
+after a new login. Copy the entire block. It checks the independent checksum
+against a protected copy before the tool can run. An older copy is retained on
+failure. Do not edit the Python code. You can repeat this step with the same delivery.
 
 <!-- operator: tool-bootstrap -->
 ```sh
@@ -198,15 +205,16 @@ finally:
 PY
 ```
 
-**Forventet:** `PASS: authenticated release tool installed`.
-Ved SHA256-feil: be om korrekt verktøy/verdier gjennom den betrodde kanalen,
-oppdater verdiblokken og gjenta steg 2. Ved eierskaps-/ACL-feil må administratoren
-undersøke den navngitte systemstien; ikke kjør rekursiv chmod/chown.
+**Expected:** `PASS: authenticated release tool installed`.
+For a SHA256 mismatch, obtain the correct tool/values through the trusted channel,
+update the values block and repeat step 2. For ownership/ACL errors, the
+administrator must inspect the named system path; do not run recursive chmod/chown.
 
-## 3. Klargjør server og valgte releaser
+## 3. Prepare the server and selected releases
 
-**Maskin:** server. **Bruker:** administrator med sudo. Kopier hele blokken.
-Bare komponentene som er angitt her behandles. Andre filer i katalogen ignoreres.
+**Machine:** server. **User:** administrator with sudo. Copy the entire block.
+Only the components explicitly selected here are processed. Other files in the
+directory are ignored.
 
 <!-- operator: setup -->
 ```sh
@@ -223,33 +231,35 @@ gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - 
 )
 ```
 
-**Forventet:** `PASS: setup preflight`, én `PASS: release ready` per komponent og
-sist `PASS: host setup`. Verktøyet viser neste kommando som driftsbrukeren skal
-kjøre. Dette har publisert release og klargjort verten; appene er ennå ikke
-installert. Det opprettes ingen installasjonskvittering på deres vegne.
+**Expected:** `PASS: setup preflight`, one `PASS: release ready` per component,
+and finally `PASS: host setup`. The tool prints the next command for the runtime
+user. This publishes the releases and prepares the host; applications are not
+yet installed. No installation receipt is created on their behalf.
 
-Kommandoen kontrollerer OS, pakker, konto, sudo-policy, sikkerhetstjenester,
-nøkkel, journalpolicy og plass før produktendringer. Arkivinnhold og utpakket
-størrelse kan først valideres etter signaturkontroll. Feil i et senere bundle
-kan derfor etterlate tidligere verifiserte releaser, men kjører ikke host-skriptet.
-Plasskontrollene er nedre grenser med 1 GiB reserve per filsystem; administratoren
-må i tillegg dimensjonere images og databaser. På standard OL9 opprettes
-`/var/log/journal`, og journald tømmes til disk. Dette gjør **hele vertens** journal
-vedvarende og krever plass under `/var/log`. Eksplisitt motstridende journalpolicy
-overskrives ikke. Ingen ekstra grupper gis til driftsbrukeren.
+The command checks the OS, packages, account, sudo policy, security services,
+key, journal policy and space before product changes. Archive contents and
+extracted size can only be validated after signature verification. Failure in
+a later bundle can therefore leave earlier verified releases in place, but does
+not run the host script. Space checks are lower bounds with 1 GiB reserved per
+filesystem; the administrator must also size storage for images and databases.
+On standard OL9, `/var/log/journal` is created and journald is flushed to disk.
+This makes the **entire host's** journal persistent and requires space under
+`/var/log`. Explicit conflicting journal policy is not overwritten. The runtime
+user receives no additional group memberships.
 
-### Hvis preflight stopper
+### If preflight stops
 
-**Samme maskin/administrator.** Følg den navngitte feilen, og kjør deretter hele
-steg 3 på nytt. Ved manglende kommando: installer pakken feilen navngir fra
-organisasjonens offline-repository. Ved sudo-grant: bruk en konto uten grants;
-ikke gi produktet sudo. Ved `Storage`/`SplitMode`-konflikt må systemansvarlig
-først godkjenne persistent journal med `Storage=auto` eller `persistent` og
-`SplitMode=uid`; ikke omgå policyen med grupper.
+**Same server and administrator account.** Follow the named error, then repeat
+all of step 3. For a missing command, install the named package from your
+organisation's offline repository. For a sudo grant, use an account without
+grants; do not give the product sudo access. For a `Storage`/`SplitMode` conflict,
+the system administrator must first approve persistent journaling with
+`Storage=auto` or `persistent` and `SplitMode=uid`; do not bypass policy with groups.
 
-For standard OL9 med for liten fapolicyd-cache, kontroller at innstillingen finnes
-og bruk denne eksakte rettingen. Den endrer cache-størrelse, ikke tillitsregler.
-Hvis første kommando feiler, stopp og be systemansvarlig klargjøre baseline.
+For standard OL9 with an undersized fapolicyd cache, check that the setting
+exists and apply this exact remedy. It changes cache size, not trust rules.
+If the first command fails, stop and ask the system administrator to prepare
+the baseline.
 
 <!-- operator: cache-remedy -->
 ```sh
@@ -257,41 +267,41 @@ if sudo grep -Eq '^[[:space:]]*subj_cache_size[[:space:]]*=' /etc/fapolicyd/fapo
   sudo sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf &&
   sudo systemctl restart fapolicyd
 else
-  printf 'STOP: subj_cache_size mangler; systemansvarlig må klargjøre OL9-baseline før steg 3 gjentas.\n' >&2
+  printf 'STOP: subj_cache_size is missing; ask the system administrator to prepare the OL9 baseline before repeating step 3.\n' >&2
   false
 fi
 ```
 
-**Forventet:** ingen feil. Kjør så steg 3 igjen. For annen preflight-feil følger du
-rettingen som vises; ikke bruk cache-rettingen som generell reparasjon.
+**Expected:** no errors. Then repeat step 3. For another preflight failure,
+follow its stated remedy; do not use the cache remedy as a general repair.
 
-## 4. Logg inn som driftsbruker
+## 4. Log in as the runtime user
 
-**Maskin:** laptop. **Bruker:** driftsbrukerens innlogging, uten sudo.
+**Machine:** laptop. **User:** runtime login account, without sudo.
 
 <!-- operator: login -->
 ```sh
 ssh "$runtime@$server"
 ```
 
-**Maskin:** server i den nye SSH-sesjonen. **Bruker:** driftsbruker uten sudo.
-Kjør verdiblokken igjen, og opprett produktets innstillingsfil:
+**Machine:** server, in the new SSH session. **User:** runtime user without sudo.
+Run the values block again, then create the product's settings file:
 
 <!-- operator: init-layout -->
 ```sh
 bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" init-layout
 ```
 
-**Forventet:** `[OK] Bootstrap ready` eller `[OK] Existing bootstrap retained`.
-Steget kan gjentas; eksisterende gyldige innstillinger beholdes. Ved konflikt:
-be administratoren undersøke produkt-/kontotilknytningen og fortsett deretter
-med samme kommando. Ikke slett eller overskriv en eksisterende innstillingsfil.
-Ved avbrudd kjører du samme `init-layout`-kommando på nytt som driftsbruker.
-En uferdig midlertidig fil tas ikke i bruk og hindrer ikke neste forsøk.
+**Expected:** `[OK] Bootstrap ready` or `[OK] Existing bootstrap retained`.
+You can repeat this step; existing valid settings are retained. For a conflict,
+ask the administrator to check the product/account association, then continue
+with the same command. Do not delete or overwrite an existing settings file.
+After interruption, run the same `init-layout` command again as the runtime user.
+An unfinished temporary file is not used and does not block the next attempt.
 
-## 5. Konfigurasjon og private credentials
+## 5. Configuration and private credentials
 
-**Maskin:** server. **Bruker:** driftsbruker uten sudo. Initialiser gateway:
+**Machine:** server. **User:** runtime user without sudo. Initialise the gateway:
 
 <!-- operator: gateway-config -->
 ```sh
@@ -312,16 +322,16 @@ install -d -m 0700 "$credentials"
 )
 ```
 
-**Forventet:** init-config viser at config er opprettet eller beholdt, etterfulgt
-av `OK: public gateway settings saved`. Innstillingene kommer fra verdiblokken.
-Dette er et eksplisitt redigeringssteg: ved vanlig retry/oppgradering skal du
-ikke kjøre redigeringssteget på nytt med gamle verdier.
-Blokken stopper ved første feil. Hvis `init-config` feiler, blir eksisterende
-config ikke redigert. Rett den oppgitte årsaken, kontroller verdiblokken og gjenta
-denne blokken som driftsbruker på serveren før du går videre.
+**Expected:** init-config reports that config was created or retained, followed
+by `OK: public gateway settings saved`. Settings come from the values block.
+This is an explicit editing step: during ordinary retry/upgrade, do not repeat
+the editing step with old values.
+The block stops at the first failure. If `init-config` fails, existing config
+is not edited. Correct the reported cause, check the values block and repeat
+this block as the runtime user on the server before continuing.
 
-**Maskin:** laptop. **Bruker:** driftsbrukerens innlogging. Stå i katalogen med
-private filer fra leverandøren. Kjør verdiblokken på laptopen først.
+**Machine:** laptop. **User:** runtime login account. Work from the directory
+containing the supplier's private files. Run the values block on the laptop first.
 
 <!-- operator: credentials-transfer -->
 ```sh
@@ -332,15 +342,15 @@ if [ "$with_identity" = yes ]; then
   case "$credential_format" in
     pem) scp identity.crt identity.key alice-password bob-password "$runtime@$server:$credentials/";;
     pfx) scp signing-cert.pfx pfx-password "$runtime@$server:$credentials/";;
-    *) printf 'STOP: credential_format må være pem eller pfx fra leverandørens verdiliste.\n' >&2; false;;
+    *) printf 'STOP: credential_format must be pem or pfx from the supplier values list.\n' >&2; false;;
   esac
 fi
 )
 ```
 
-**Forventet:** ingen scp-feil. Bruk aldri chat, terminalutskrift eller Git til å
-sende disse filene. Private filer skal være eiet av driftsbrukeren, modus 0600.
-På **serveren som driftsbruker**, installer bare gateway-filer:
+**Expected:** no scp errors. Never use chat, terminal output or Git to send these
+files. Private files must be owned by the runtime user with mode 0600.
+On the **server as the runtime user**, install only the gateway files:
 
 <!-- operator: gateway-credentials -->
 ```sh
@@ -350,7 +360,7 @@ install -d -m 0700 "/var/lib/$product/state/$gateway/credentials/web"
 for name in web.crt web.key; do
   destination="/var/lib/$product/state/$gateway/credentials/web/$name"
   if [ -e "$destination" ] || [ -L "$destination" ]; then
-    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credentialkonflikt for %s; behold filen og kontakt credentialansvarlig, gjenta deretter dette steget.\n' "$name" >&2; exit 1; }
+    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credential conflict for %s; retain the file and contact the credential provider, then repeat this step.\n' "$name" >&2; exit 1; }
   else
     install -m 0600 "$credentials/$name" "$destination" || exit 1
   fi
@@ -358,12 +368,13 @@ done
 )
 ```
 
-**Forventet:** ingen feil; identiske eksisterende filer beholdes. Ved konflikt:
-stopp og be credentialansvarlig avklare riktig sett. Ikke overskriv beholdte nøkler.
+**Expected:** no errors; identical existing files are retained. For a conflict,
+stop and ask the credential provider to confirm the correct set. Do not overwrite
+retained keys.
 
-## 6. Installer og kontroller gateway
+## 6. Install and check the gateway
 
-**Maskin:** server. **Bruker:** driftsbruker uten sudo.
+**Machine:** server. **User:** runtime user without sudo.
 
 <!-- operator: gateway-install -->
 ```sh
@@ -371,32 +382,34 @@ bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" v
 bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" install
 ```
 
-**Forventet:** validated, deretter tjenesten healthy og containere Up. Ved feil:
-følg «Feil og avbrudd» nedenfor og kjør samme blokk på nytt. Etter suksess:
+**Expected:** validated, followed by a healthy service and containers reported Up.
+For a failure, follow "Upgrade and failure/interruption" below and repeat the
+same block. After success:
 
 <!-- operator: gateway-check -->
 ```sh
 curl --cacert "$credentials/ca.crt" --resolve "$(printf '%s' "$public_origin" | sed -E 's@https://([^:/]+).*@\1@'):$port:$bind_ip" -sS -o /dev/null -w '%{http_code}\n' "$public_origin/livez"
 ```
 
-**Forventet:** `204`. Curl kan ikke erstatte sertifikatkontroll med `-k`.
-Hvis `with_identity=no`, hopp til steg 8. Gateway alene trenger ingen Identity,
-database eller demobrukere.
+**Expected:** `204`. Do not bypass certificate verification with curl's `-k`.
+If `with_identity=no`, skip to step 8. The gateway alone needs no Identity,
+database or demo users.
 
-## 7. Installer identity (når valgt)
+## 7. Install identity when selected
 
-**Maskin:** server. **Bruker:** driftsbruker uten sudo. Gateway skal allerede
-være installert. Leverandøren velger credential-varianten i verdiblokken:
+**Machine:** server. **User:** runtime user without sudo. The gateway must
+already be installed. The supplier selects the credential variant in the values block:
 
-| Variant | Privat leveranse | Destinasjon under komponentens `credentials/` |
+| Variant | Private delivery | Destination under the component's `credentials/` |
 | --- | --- | --- |
-| `pem` (demoen) | `identity.crt`, `identity.key`, `alice-password`, `bob-password` | sertifikat/nøkkel i `identity/`, demopassord i `users/` |
-| `pfx` (egen levert Identity) | `signing-cert.pfx`, `pfx-password` | begge i `signing/`; komponentens leverte config skal allerede deklarere PFX-referansen |
+| `pem` (demo) | `identity.crt`, `identity.key`, `alice-password`, `bob-password` | Certificate/key in `identity/`, demo passwords in `users/` |
+| `pfx` (separately supplied Identity) | `signing-cert.pfx`, `pfx-password` | Both in `signing/`; the component's supplied config must already declare the PFX reference |
 
-Passordfilen har én ikke-tom linje. Skriv aldri passord som kommandolinjeargument.
-Leverandøren må avklare om applikasjonen trenger passordet som en separat Secret;
-provisioning-filer leveres aldri implicit. Ikke endre demoens PEM-config ved å
-gjette PFX-innstillinger. Kopier den samme blokken for begge varianter:
+The password file contains one nonempty line. Never put passwords in command-line
+arguments. The supplier must clarify whether the application needs the password
+as a separate Secret; provisioning files are never delivered implicitly. Do not
+change the demo's PEM config by guessing PFX settings. Copy the same block for
+either variant:
 
 <!-- operator: identity-config -->
 ```sh
@@ -406,7 +419,7 @@ bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy
 case "$credential_format" in
   pem) names='identity.crt identity.key alice-password bob-password';;
   pfx) names='signing-cert.pfx pfx-password';;
-  *) printf 'STOP: credential_format må være pem eller pfx fra leverandørens verdiliste.\n' >&2; exit 1;;
+  *) printf 'STOP: credential_format must be pem or pfx from the supplier values list.\n' >&2; exit 1;;
 esac
 for name in $names; do
   case "$name" in
@@ -418,7 +431,7 @@ for name in $names; do
   install -d -m 0700 "/var/lib/$product/state/$login_component/credentials/$group"
   destination="/var/lib/$product/state/$login_component/credentials/$group/$name"
   if [ -e "$destination" ] || [ -L "$destination" ]; then
-    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credentialkonflikt for %s; behold filen og kontakt credentialansvarlig, gjenta deretter dette steget.\n' "$name" >&2; exit 1; }
+    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credential conflict for %s; retain the file and contact the credential provider, then repeat this step.\n' "$name" >&2; exit 1; }
   else
     install -m 0600 "$credentials/$name" "$destination" || exit 1
   fi
@@ -426,9 +439,9 @@ done
 )
 ```
 
-**Forventet:** initialisert eller beholdt config, ingen kopieringsfeil. Filer
-beholdes ved gjentakelse. Databasepassord genereres av install hvis deklarert;
-et eksisterende passord beholdes. Installer:
+**Expected:** initialised or retained config, no copy errors. Files are retained
+on repeat. Install generates a database password if declared; an existing
+password is retained. Install:
 
 <!-- operator: identity-install -->
 ```sh
@@ -436,25 +449,24 @@ bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy
 bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" install
 ```
 
-**Forventet:** begge tjenester healthy. Kontroller med:
+**Expected:** both services healthy. Check with:
 
 <!-- operator: identity-check -->
 ```sh
 curl --cacert "$credentials/ca.crt" --resolve "$(printf '%s' "$public_origin" | sed -E 's@https://([^:/]+).*@\1@'):$port:$bind_ip" -sS -o /dev/null -w '%{http_code}\n' "$public_origin$discovery_path"
 ```
 
-**Forventet:** `200`. Demoens `/identity/` er ikke en gyldig suksesskontroll
-(gir 404). Leverandøren må oppgi det faktiske endepunktet for sin komponent.
-Utstedelse/konvertering av egne sertifikater er en avansert leverandøroppgave,
-beskrevet i [PFX-design og provisioning](PFX-CREDENTIALS.md).
-`generate-certificates.sh` følger ikke med bundlene; ekstern PEM/PFX-levering
-ovenfor trenger det ikke.
+**Expected:** `200`. The demo's `/identity/` is not a valid success check
+(it returns 404). The supplier must provide the actual endpoint for its component.
+Issuing/converting your own certificates is an advanced supplier task, described
+in [PFX design and provisioning](PFX-CREDENTIALS.md). `generate-certificates.sh`
+is not included in the bundles; external PEM/PFX delivery above does not need it.
 
-## 8. Drift, ny innlogging og omstart
+## 8. Operations, fresh login and reboot
 
-**Maskin:** server. **Bruker:** driftsbruker uten sudo. Kjør verdiblokken igjen
-etter hver ny innlogging. Alle stier er absolutte; ingen huskede shellfunksjoner
-eller manuelle XDG-eksporter trengs.
+**Machine:** server. **User:** runtime user without sudo. Run the values block
+again after each new login. All paths are absolute; no remembered shell functions
+or manual XDG exports are needed.
 
 <!-- operator: status -->
 ```sh
@@ -466,14 +478,15 @@ journalctl --user -u "$product-$gateway.service" -b -n 10 --no-pager --output=js
 )
 ```
 
-**Forventet:** status viser complete/active og ingen pending, is-active viser
-`active`, og journalen inneholder JSON-poster med tidsstempel og unitnavn.
-Dette viser lesetilgang uten å skrive ut meldingsinnhold (`MESSAGE`). Ikke del rå journaltekst
-med passord, tokens eller tilkoblingsstrenger; se trygge feilmeldinger nedenfor.
+**Expected:** status shows complete/active with no pending work, is-active shows
+`active`, and the journal contains JSON entries with timestamps and unit names.
+This demonstrates read access without printing message contents (`MESSAGE`).
+Do not share raw journal text containing passwords, tokens or connection strings;
+see the safe error-reporting instructions below.
 
-Logg ut som driftsbruker (`exit`). **Administrator på serveren med sudo**
-kjører `sudo reboot`. Etter oppstart logger administratoren inn igjen og kjører
-verdiblokken og kontrollen nedenfor **før driftsbrukeren logger inn**:
+Log out as the runtime user (`exit`). The **administrator on the server with sudo**
+runs `sudo reboot`. After boot, the administrator logs in again and runs the values
+block and the check below **before the runtime user logs in**:
 
 <!-- operator: boot-check -->
 ```sh
@@ -482,20 +495,21 @@ if [ "$with_identity" = yes ]; then set -- "$@" "$product-$login_component.servi
 sudo systemctl --user -M "$runtime@" is-active "$@"
 ```
 
-**Forventet:** `active` for hver valgt tjeneste. Logg deretter inn igjen som driftsbruker med steg 4,
-kjør verdiblokken og steg 8. Forvent samme status og lesbar journal uten sudo.
+**Expected:** `active` for each selected service. Then log in again as the runtime
+user using step 4, run the values block and step 8. Expect the same status and
+readable journal without sudo.
 
-## 9. Oppgradering og feil/avbrudd
+## 9. Upgrade and failure/interruption
 
-Ved oppgradering: administratoren overfører den nye leveringen (steg 1), endrer
-bare leverte versjoner i verdiblokken og kjører steg 3. Verktøyoppdatering krever
-ny uavhengig verifisering i steg 2. Driftsbrukeren logger inn, bruker nye versjoner
-i verdiblokken og kjører validate/install i steg 6/7. Hopp over redigering og
-credentialkopiering; eksisterende config, nøkler og data beholdes.
+For an upgrade, the administrator transfers the new delivery (step 1), changes
+only the delivered versions in the values block and runs step 3. Updating the
+tool requires new independent verification in step 2. The runtime user logs in,
+uses the new versions in the values block and runs validate/install in steps 6/7.
+Skip editing and credential copying; existing config, keys and data are retained.
 
-Når funksjonskontrollene er grønne kan administratoren pensjonere en gammel
-release. Kopier blokken på **serveren som administrator med sudo** etter å ha
-satt `old_gateway_version` til versjonen som faktisk er erstattet:
+Once functional checks pass, the administrator can retire an old release. Copy
+the block on the **server as administrator with sudo** after setting
+`old_gateway_version` to the version that was actually replaced:
 
 ```sh
 (
@@ -505,22 +519,22 @@ gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - 
 )
 ```
 
-**Forventet:** `PASS: protected release retire`. Gamle releaser slettes aldri
-som automatisk feilopprydding.
+**Expected:** `PASS: protected release retire`. Old releases are never deleted
+as automatic failure cleanup.
 
-| Hendelse | Hva du gjør og kjører videre |
+| Event | Action and command to continue |
 | --- | --- |
-| Avbrutt bootstrap | Administrator kjører steg 2 igjen med samme betrodde SHA256. Ved feil beholdes gammel verktøykopi. |
-| Avbrutt setup, signatur-/trustfeil | Administrator retter den navngitte fil-/baselinefeilen og kjører hele steg 3 igjen. Tidligere godkjente releaser beholdes; feil signatur autoriserer aldri kode. |
-| Setup stopper etter journal/drop-in | Administrator kjører steg 3 igjen. Det kontrollerer faktisk manager/journal/firewall, ikke bare om filer finnes. |
-| Ny SSH-sesjon | Kjør verdiblokken igjen. `init-layout` kan gjentas og beholder gyldig fil. |
-| Install feiler | Driftsbruker kjører status fra steg 8; komponenten skal stå ufullført/pending. Rett navngitt config-/credentialfeil fra leveringens offentlige felt/filnavn, og kjør samme validate/install-blokk igjen. Ikke rediger pending-recorden. |
-| Eksisterende credentials er forskjellige | Stopp kopieringen, behold filene og be credentialansvarlig avklare settet. Gjenta credentialsteget først når leveringen er korrekt. Ingen hemmelige verdier trenger deles. |
-| Manglende journal eller manager-miljø | Administrator kjører steg 3 igjen. Ikke legg driftsbrukeren i privileged grupper eller eksporter XDG manuelt. |
-| Uventet feil uten konkret retting | Stopp. Send bare stegnavn, offentlig komponent/versjon og fast feilmelding; ikke dump config, miljø, inspect eller journal. Leverandøren må gi en trygg retting og neste kommando før du fortsetter. |
+| Interrupted tool bootstrap | Administrator repeats step 2 with the same trusted SHA256. The old tool copy is retained on failure. |
+| Interrupted setup, signature/trust failure | Administrator corrects the named file/baseline error and repeats all of step 3. Previously approved releases are retained; an invalid signature never authorises code. |
+| Setup stops after journal/drop-in changes | Administrator repeats step 3. It checks the actual manager/journal/firewall, not just file existence. |
+| New SSH session | Run the values block again. `init-layout` can be repeated and retains a valid file. |
+| Install fails | Runtime user runs status from step 8; the component should be incomplete/pending. Correct the named config/credential error using the delivery's public fields/filenames, then repeat the same validate/install block. Do not edit the pending record. |
+| Existing credentials differ | Stop copying, retain the files and ask the credential provider to confirm the set. Repeat the credential step only when the delivery is correct. No secret values need to be shared. |
+| Missing journal or manager environment | Administrator repeats step 3. Do not add the runtime user to privileged groups or export XDG manually. |
+| Unexpected error without a concrete remedy | Stop. Send only the step name, public component/version and fixed error message; do not dump config, environment, inspect or journal. The supplier must provide a safe remedy and next command before you continue. |
 
-Steg 2, 3, init-layout, init-config og identisk credentialkopiering kan gjentas.
-Et install-forsøk er trygt å fullføre med samme kommando og beholdte innstillinger;
-`upgrade: always` kan restarte den valgte tjenesten ved gjentakelse. Gjenta ikke
-config-redigering med gamle verdier eller retirement av en annen versjon.
-Kjør bare én setup/install/upgrade/retire-operasjon om gangen.
+Steps 2, 3, init-layout, init-config and identical credential copying can be repeated.
+An install attempt can safely be completed with the same command and retained
+settings; `upgrade: always` may restart the selected service on repeat. Do not
+repeat config editing with old values or retire a different version.
+Run only one setup/install/upgrade/retire operation at a time.

@@ -28,7 +28,7 @@ could hide the corrective action. The targeted fixes below have local regression
 evidence; that does not establish that all operator steps or failure cases are
 resolved. This assessment combines static walkthrough with local manual-block
 tests, not a successful real-server run or human approval.
-Reviewed working-tree guide SHA256:
+The guide reviewed at `2d36d71` had SHA256:
 `953744f079c6846cc9fb27936f07cee7790ac65019765986298dd42373a7cb14`; implementation branch `feature/65-host-setup`,
 based on `f52b797`. The earlier table and literal walkthrough below are a
 **historical baseline** against `7ef9671`, not a claim about the rewritten guide.
@@ -109,9 +109,36 @@ A larger file or fewer pasted blocks alone does not establish easier operation.
 
 The human trial is still **not performed / outstanding**. No time, mistakes or
 questions are invented. The original assisted run remains evidence of difficulty;
-it cannot approve this new manual. The first focused OL9 scenario at `8559a2a` stopped in preflight; a successful
-run of the corrected flow remains outstanding, and the full reboot/upgrade flow in 67 is still pending. Neither code review,
+it cannot approve this new manual. After the first preflight failure at `8559a2a`,
+all nine corrected-flow scenarios passed at `2d36d71`
+([lab evidence](HOST-SETUP.md#successful-real-ol9-verification-2026-10-24)).
+The full reboot/upgrade SSH flow in 67 is still pending. Neither code review,
 local tests nor this AI walkthrough establishes customer usability.
+
+## English-only repository follow-up (2026-10-24)
+
+The repository language is English, including code identifiers, comments,
+filenames, documentation and diagnostics. This requirement is now explicit in
+`AGENTS.md`. The production manual and Norwegian backlog task text were translated;
+historical task requirements, status, item headings, inline code references and
+fenced examples were preserved. The operator's quoted feedback is labelled as
+a translation. Unicode fixture data uses escapes with unchanged Python values.
+
+The translated guide SHA256 is
+`c00ccf7260e260752b583faa4042bf74f0adb174160454fedfa935febd8f1020`.
+Comparison against `2d36d71` confirms all 19 operator step IDs and executable
+blocks are unchanged apart from English placeholder/error text. All 20 shell
+blocks pass Bash syntax checking. The same machine/account transitions,
+prerequisites, failure stops and retry rules remain in the English procedure.
+The literal manual failure/credential regressions run against the translated
+blocks; no new operator flow or runtime behaviour is introduced.
+
+Local verification: 94 focused product tests and all 266 acceptance-harness tests
+passed. Changed test formatting/lint, relative links and `git diff --check` passed.
+These are local results. The supplied nine-scenario lab series passed on
+`2d36d71`, before this translation; it does not establish human usability of
+the English manual. No lab run or VM reset was performed for the translation.
+Unassisted human verification remains outstanding.
 
 ## AI literal walkthrough
 
@@ -157,6 +184,8 @@ not evidence that the current guide has been simplified. The final AI review
 must be repeated against the actual implemented/manual revision.
 
 ## Human trial: outstanding verification
+
+Tracked explicitly by [backlog item 68](../BACKLOG.md#68-human-operator-trial-on-a-fresh-vm).
 
 No qualifying unassisted trial was performed for this change. The
 [2026-10-23 assisted manual run](PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)
