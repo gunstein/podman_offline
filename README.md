@@ -390,6 +390,23 @@ After the first real customer installation, incompatible changes must include an
 explicit migration and verification procedure preserving customer data and
 credentials. The current permission to discard lab installations is temporary.
 
+### Quadlet templates
+
+`quadlet/template.kube` and `quadlet/template.network` use `@@UNIT_NAME@@` and
+`@@PRODUCT_NAME@@`, including inline/repeated occurrences. These are internal
+values: the unit is `<product>-<component>` and the shared network uses the product
+from the catalog/bundle descriptor. Standalone fixtures use the standalone
+product name for both. Config settings with these names cannot override them.
+
+The marker spelling is shared with YAML, ConfigMap and Secret templates, but
+Quadlet permits only these two internal names. It has no config or Secret
+resolver. Unknown/malformed markers and the obsolete `{name}` / `{product}`
+markers fail with template-path diagnostics. Literal braces, shell `${...}` and
+systemd `%` specifiers are preserved. Both templates are checked by validate and
+the lifecycle before generation, output or host commands; install checks them
+before querying the user manager, also on an equal-version `newer-only` repeat.
+See [verification](acceptance/QUADLET-TEMPLATES.md).
+
 ### Signed bundles
 
 `.sha256` files detect a damaged archive, but whoever can replace an archive can
@@ -486,7 +503,7 @@ encoded in the same 0600 YAML. Use `secretKeyRef` for unchanged apps reading a
 complete environment value or a Secret mount for file-aware apps. Environment
 values remain visible to the service user and root in Podman inspection and
 process environments. See the [schema, example and input restrictions](docs/COMPONENTS.md#secret-templates).
-Only Secret templates and ConfigMap `data` accept embedded placeholders; other
+Within YAML, only Secret templates and ConfigMap `data` accept embedded placeholders; other
 manifest fields keep whole-value replacement. ConfigMaps accept only ordinary
 string/integer config inputs and refuse `@@secret:...@@`. `validate` never reads Secret contents. Equal `newer-only` installs
 and systemd restarts do not recompute templates.

@@ -28,7 +28,8 @@ def main():
         QUADLET_DIR=home / ".config/containers/systemd",
         QUADLET_TEMPLATE=root / "quadlet/template.kube",
     )
-    state.update(production_environment=lambda: None)
+    # Identity/layout guards have separate tests; retry uses the paths above.
+    state.update(production_environment=lambda: None, service_user=lambda: None)
     os.environ["XDG_RUNTIME_DIR"] = str(root)
     events = []
     record = Path(parameters["record"])

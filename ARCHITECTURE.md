@@ -16,7 +16,7 @@ build entrypoint and also uses `-B`.
 | `deployment/layout.py` | Production paths outside the login home (backlog 64): reads the bootstrap file `~/.<product>/<product>.env` as data, validates the root-owned `/var/lib/<product>` and the account's `state/`, `config/`, `storage/`, assigns `common.STATE`/`QUADLET_DIR`/`FILES_DIR` and checks the user manager's `XDG_*` |
 | `deployment/catalog.py` | Read and validate the component model: catalog, compiled bundle descriptor and installed metadata; dependency order, role owners, the product name (`product_name`, `unit_name`) and per-component paths (`component_paths`) |
 | `deployment/render.py` | Config/YAML loading and validation, generated-secret helpers, file groups, manifests, images and import archives |
-| `deployment/templates.py` | Shared single-pass substitution for ConfigMap data and Secret recipes, scoped input policies and private composition from loaded file Secrets; no writes or host commands |
+| `deployment/templates.py` | Shared single-pass substitution for ConfigMap data, Secret recipes and internally resolved Quadlet names, scoped input policies and private composition from loaded file Secrets; no writes or host commands |
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |

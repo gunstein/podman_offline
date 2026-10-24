@@ -51,7 +51,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cp "$root/deploy" "$work/"
-cp -R "$root/deployment" "$work/"
+cp -R "$root/deployment" "$root/quadlet" "$work/"
 copy_example() {
     local source=$1
     cp "$source/config.yaml" "$work/"

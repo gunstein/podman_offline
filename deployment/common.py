@@ -20,7 +20,7 @@ CONFIG = ROOT / "config.yaml"  # Standalone manifest fixtures only.
 # catalog, so they use this explicit name.
 STANDALONE_PRODUCT = "myproduct"
 
-# quadlet/template.kube and template.network; {product} and {name} are filled in.
+# quadlet/template.kube and template.network; @@PRODUCT_NAME@@ and @@UNIT_NAME@@ are filled in.
 QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
 
 # Production paths under the installation root. layout.select() assigns them

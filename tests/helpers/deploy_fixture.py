@@ -97,6 +97,10 @@ class DeployFixture(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO())
         )
         common.MANIFESTS.mkdir()
+        self.write("quadlet/template.kube", "[Kube]\nYaml=@@UNIT_NAME@@.yaml\n")
+        self.write(
+            "quadlet/template.network", "[Network]\nNetworkName=@@PRODUCT_NAME@@\n"
+        )
         self.config = {"HTTPS_PORT": 8443, "HOSTNAME": "example.test"}
         self.write_config()
 
@@ -163,8 +167,10 @@ class DeployFixture(unittest.TestCase):
             mock.patch.dict(os.environ, {"HOME": str(self.root / "home")})
         )
         self.config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
-        self.write("quadlet/template.kube", "[Kube]\nYaml={name}.yaml\n")
-        self.write("quadlet/template.network", "[Network]\nNetworkName={product}\n")
+        self.write("quadlet/template.kube", "[Kube]\nYaml=@@UNIT_NAME@@.yaml\n")
+        self.write(
+            "quadlet/template.network", "[Network]\nNetworkName=@@PRODUCT_NAME@@\n"
+        )
         self.write("images/images.tar")
         self.config["APP_IMAGE"] = "localhost/app:1"
         self.write_config()

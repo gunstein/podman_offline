@@ -46,8 +46,9 @@ for urgent item 64; implementation is on `feature/protected-releases`, with
 review and the full OL9 matrix still pending. Item 63 (operator request) then
 parameterises image versions through build-time `config/images.yaml`.
 Item 62 is implemented with local regression coverage for misplaced container
-fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is a high-priority follow-up
-to standardise Quadlet placeholder syntax and reject invalid templates early.
+fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is implemented
+with local regression coverage: consistent Quadlet markers and early validation
+([verification](acceptance/QUADLET-TEMPLATES.md)).
 Item 60 follows with the high-priority rename of the CLI wrapper to `deploy.sh`;
 items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
@@ -82,7 +83,7 @@ The order for an offline production deployment of an organisation's own apps:
 8. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
    starting with `spec.env`; after item 54 and before item 59.
-9. [Item 59](#59-standardise-quadlet-placeholder-syntax): high priority;
+9. [Item 59](#59-standardise-quadlet-placeholder-syntax): implemented;
    use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` with explicit internal values and
    early validation; after item 54.
 10. [Item 60](#60-rename-the-cli-wrapper-to-deploysh): high priority;
@@ -181,7 +182,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63, 59 and 60 (high priority, in that order after 54), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 and 60 (high priority, after 54; 59 implemented), 48, 49, 44, 39, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -6534,9 +6535,13 @@ REVIEW_GUIDE known gap is marked resolved.
 
 ## 59. Standardise Quadlet placeholder syntax
 
-Status: planned, high priority (2026-10-22). Schedule after item 54 and before
-items 48/49. This is a consistency and validation improvement, not evidence that
-the current valid templates generate incorrect units.
+Status: implemented with local product/harness regression checks (2026-10-23).
+`@@UNIT_NAME@@` / `@@PRODUCT_NAME@@` use the existing single-pass parser with
+an internal-only resolver; both templates are checked before host queries,
+generation or writes, including standalone and equal-version `newer-only`.
+[Verification and understandability review](acceptance/QUADLET-TEMPLATES.md).
+Real Podman/systemd verification of this change remains pending. The original
+analysis and task follow.
 
 ### Analysis and decision
 

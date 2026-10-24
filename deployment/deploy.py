@@ -5,6 +5,7 @@ Registrations and the pending-operation record live in registrations.py.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, health, layout, registrations
+from . import catalog, common, health, layout, registrations, templates
 from . import render as rendering
 
 
@@ -355,12 +356,13 @@ def dev_settings():
 def validate_component(config, config_path, manifests, component=None, imported=()):
     """Validate one component's manifests from declarations; no writes or host commands.
 
-    Kinds, names, placeholders, pull policy, mounts and links (effective
-    documents) and the supported PostgreSQL layout. Returns the effective
+    Quadlet templates, kinds, names, placeholders, pull policy, mounts and links
+    (effective documents) and the supported PostgreSQL layout. Returns the effective
     documents. Every lifecycle path and ./deploy validate start with this; a
     new declaration check belongs here or in install_checks, so that the
     command and the lifecycle cannot disagree.
     """
+    check_quadlet_templates(component)
     documents = rendering.effective_documents(
         config, config_path, manifests, component, imported
     )
@@ -552,8 +554,9 @@ def install_standalone():
     It reads config.yaml in the state directory (common.STATE) and the
     release's manifests/ and images/images.tar, in this order:
 
-    1. production_environment() (service user, HOME, installation paths,
-       runtime directory), then STATE/config.yaml must exist.
+    1. service_user() selects installation paths, check_quadlet_templates()
+       validates both templates, then production_environment() checks runtime
+       and the user manager. STATE/config.yaml must exist.
     2. check_manifests(): kinds, placeholders, pull policy, mounts and links
        of the effective manifests, then the database preflight; images.tar
        must exist and every container needs a fully qualified image.
@@ -570,6 +573,8 @@ def install_standalone():
     preflight finding, a missing images.tar or an image the archive did not
     provide; a failing systemctl or podman command raises CalledProcessError.
     """
+    service_user()
+    quadlets = check_quadlet_templates()
     production_environment()
     config_path = common.STATE / "config.yaml"
     if not config_path.exists():
@@ -599,7 +604,7 @@ def install_standalone():
     for suffix in (".kube", ".network"):
         target = common.QUADLET_TARGET.with_suffix(suffix)
         target.write_text(
-            quadlet_text(suffix, common.STANDALONE_PRODUCT, common.STANDALONE_PRODUCT),
+            quadlets[suffix],
             encoding="utf-8",
         )
         target.chmod(0o644)
@@ -684,13 +689,39 @@ def install_needed(descriptor):
 
 
 def quadlet_text(suffix, product, name):
-    """Fill quadlet/template.kube or template.network for one unit.
+    """Render only internal unit/product names, using the shared token parser."""
+    path = common.QUADLET_TEMPLATE.with_suffix(suffix)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeError:
+        raise common.DeployError(f"{path}: Quadlet template must be UTF-8") from None
+    obsolete = re.search(r"(?<!\$)\{(?:name|product)\}", text)
+    if obsolete:
+        raise common.DeployError(f"{path}: obsolete Quadlet marker {obsolete[0]}")
+    values = {"PRODUCT_NAME": product, "UNIT_NAME": name}
 
-    {product} becomes the product name (the shared network), {name} the unit's
-    file name without suffix: <product>-<component>, or the product itself.
-    """
-    text = common.QUADLET_TEMPLATE.with_suffix(suffix).read_text(encoding="utf-8")
-    return text.replace("{product}", product).replace("{name}", name)
+    def resolve(group, field):
+        if group is not None:
+            raise common.DeployError(
+                f"{path}: Secret placeholders are forbidden in Quadlet"
+            )
+        if field not in values:
+            raise common.DeployError(
+                f"{path}: unknown Quadlet token @@{field}@@; "
+                "allowed: @@UNIT_NAME@@, @@PRODUCT_NAME@@"
+            )
+        return values[field]
+
+    return templates.substitute(text, resolve, str(path))
+
+
+def check_quadlet_templates(component=None):
+    """Validate both release templates without config, credentials or host queries."""
+    product = catalog.product_name(common.ROOT)
+    name = catalog.unit_name(component) if component is not None else product
+    return {
+        suffix: quadlet_text(suffix, product, name) for suffix in (".kube", ".network")
+    }
 
 
 def check_same_product(product, installed):
@@ -909,6 +940,7 @@ def install_checks():
     """
     descriptor = bundle_descriptor()
     name = descriptor["name"]
+    check_quadlet_templates(name)
     pending = registrations.check_pending("install", name, descriptor["product"])
     installed = catalog.load_installed_metadata(common.STATE)
     check_same_product(descriptor["product"], installed)
@@ -948,17 +980,21 @@ def install_checks():
 def install_components():
     """Validate the bundle, installed state and config before writing anything.
 
-    Order: install_checks, then staging in a temporary directory, then
-    manifests and database preflight, then install_component_plan.
+    Order: service_user selects paths, install_checks validates declarations
+    (including both Quadlet templates), production_environment checks runtime
+    and the user manager, then temporary registration staging, manifests and
+    database preflight, and install_component_plan.
     """
-    production_environment()
+    # Pure declaration checks precede even the user-manager host query.
+    service_user()
     descriptor, known, config, config_path, render = install_checks()
+    production_environment()
     name = descriptor["name"]
     with tempfile.TemporaryDirectory(
         prefix=descriptor["product"] + "-install-", dir=os.environ["XDG_RUNTIME_DIR"]
     ) as directory:
         # Staging only reads and validates registrations; it writes nothing
-        # outside the temporary directory and runs before any host command.
+        # outside the temporary directory and precedes workload host commands.
         imports, updates, removals = registrations.registration_stage(
             [name], Path(directory), known
         )
