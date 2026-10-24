@@ -71,6 +71,11 @@ PRIVATE_INSTALL
         return "$?"
     fi
 }
+# Controller-supplied test source, executed over stdin without changing release trust.
+status_retry_source() {
+    # STATUS_RETRY_BODY
+    :
+}
 # Query the actual CLI after install; expected version comes from transferred release.
 status_release() {
     as_product python3 - "$product" "$product_name" "$bundle" "$version" <<'STATUS_REPORT'
@@ -910,6 +915,9 @@ clone)
 unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py all;;
 release-safety)
     release_safety_source | sudo -n python3 -I -B - "$product" "$product_name" "$base/$product_name-$bundle-$version-offline.tar.gz" "$service_user"
+    ;;
+status-retry)
+    status_retry_source | as_product python3 -I -B - "$product" "$bundle"
     ;;
 host-path-safety)
     if [[ $role == DEV ]]; then

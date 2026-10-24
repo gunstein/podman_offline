@@ -11,6 +11,18 @@ from helpers.retry_lifecycle import RetryFixture
 
 
 class RetryTests(RetryFixture):
+    def test_last_owner_acknowledgement_does_not_finish_the_install(self):
+        self.changed()  # Actual route/client changes require both owners.
+        marker = common.STATE / "installed/app1"
+        previous = marker.read_bytes()
+        events = self.attempt(expected=1, record_failure="installed/app1")
+        self.assertIn(service("identity", "is-active"), events)
+        self.assertIn(service("platform", "is-active"), events)
+        self.assertEqual(self.pending()["owners"], [])
+        self.assertEqual(self.pending()["operation"], "install")
+        self.assertEqual(marker.read_bytes(), previous)
+        self.assert_finished(self.attempt(), ["app1"])
+
     def test_template_secret_survives_failure_and_retry_in_new_processes(self):
         self.actual_app_credentials()
         config_path = common.STATE / "app1/config.yaml"

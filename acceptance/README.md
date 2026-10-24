@@ -1,3 +1,13 @@
+# Same-version status failure/retry (backlog 39)
+
+The opt-in `--status-retry` flag adds a controlled daemon-reload failure and retry
+on disposable PROD, after app installation. It checks incomplete status with the
+old container still active, then verifies the new public config value inside the
+replacement container. Normal and renamed scenarios are supported. Protected
+release code and trust rules are unchanged; original config is restored through
+install. See [probe commands, negative control and verification limits](STATUS.md).
+The existing matrix without this flag does not exercise this failure path.
+
 # Protected releases (backlog 54)
 
 Production lab steps use the shared authenticated root helper and protected

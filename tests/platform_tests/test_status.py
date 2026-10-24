@@ -306,7 +306,7 @@ class StatusLifecycleTests(ProductFixture):
         self.write_product(
             {
                 "worker": {
-                    "catalog": {},
+                    "catalog": {"upgrade": "always"},
                     "defaults": {"MESSAGE": "original"},
                     "manifests": [
                         pod(
@@ -423,10 +423,32 @@ class StatusLifecycleTests(ProductFixture):
                 pending = self.pending.read_bytes()
                 self.attempt("uninstall", expected=1)
                 self.assertEqual(self.pending.read_bytes(), pending)
-                _, events = self.attempt("install")
+                _, events = self.attempt("install", observe_completion=True)
                 self.assertIn(
                     ["systemctl", "--user", "restart", "cedar-worker.service"], events
                 )
+                self.assertIn(message, self.output.read_text())
+                pending = {
+                    "operation": "install",
+                    "component": "worker",
+                    "product": "cedar",
+                    "owners": [],
+                }
+                marker_event = ["before-marker", pending]
+                clear_event = ["before-clear", pending, "1.0.0"]
+                self.assertLess(
+                    events.index(
+                        [
+                            "systemctl",
+                            "--user",
+                            "is-active",
+                            "--quiet",
+                            "cedar-worker.service",
+                        ]
+                    ),
+                    events.index(marker_event),
+                )
+                self.assertLess(events.index(marker_event), events.index(clear_event))
                 self.report(True)
                 self.assertEqual(
                     yaml.safe_load(self.config.read_text()), {"MESSAGE": message}

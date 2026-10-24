@@ -4157,6 +4157,9 @@ Review follow-up: the existing pending record now covers the full install attemp
 including same-version reinstalls without owners, until the completion-marker
 write succeeds. Fresh-process install/failure/status/retry regression coverage
 preserves the previous completed version and the `newer-only` skip policy.
+The fix is committed as `bd0cc77`. The coverage follow-up demonstrates the test
+failing against `b46d548` and adds an opt-in `--status-retry` acceptance probe,
+including actual container consumption after retry; the new lab path is unrun.
 [Verification and understandability review](acceptance/STATUS.md).
 Current-change real Podman/systemd verification remains pending. The original
 request (2026-10-19) and task follow.
