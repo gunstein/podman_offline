@@ -1,297 +1,540 @@
-# Produksjonsinstallasjon: eksisterende bruker, data under /var/lib/<produkt>
+# Production installation
 
-**Status (backlog 64):** implementert; de automatiske OL9-kjøringene med SELinux
-Enforcing og fapolicyd er rene, og en manuell installasjon som `produser` over
-ssh uten sudo virket 2026-10-23. Den manuelle runden trengte likevel mye
-veiledning underveis: veiledningen er ikke verifisert ordrett og er for tung.
-Enklere maskinklargjøring og en kortere veiledning er planlagt (backlog 65).
-Flyten er ikke merket klar for kundeinstallasjon; se
-`acceptance/PRODUCTION-LAYOUT.md` i kildekoden.
+For administrators and installers with limited Linux experience. All required
+steps are here, in execution order. Design explanations are in [README](../README.md).
+**Status:** the item 65 implementation passed the focused OL9 scenarios and full
+regression matrix at `2d36d71`. This English translation is a later documentation
+change. Unassisted human testing remains outstanding. The verification report
+is `acceptance/HOST-SETUP.md` in the source repository.
 
-**Hvor kommandoene kjøres.** Alle kommandoer kjøres på serveren. Den bærbare
-maskinen brukes bare til å kopiere filer dit (`scp`) og til å logge inn (`ssh`).
+## Before you begin
 
-**To roller, to kontoer.** *Administrator* bruker sin egen konto med sudo bare
-der veiledningen sier «Administrator» (steg 1–2, publisering av hver release,
-`retire` og omstart). *Driftsbrukeren* `produser` gjør alt annet, logger inn
-selv og har **ingen sudo-rettigheter** (ikke i `wheel`, ingen sudoers-regel).
-Produktet kaller aldri sudo, og `deploy.sh` nekter å kjøre som root.
+You need an Oracle Linux 9 server with SELinux Enforcing, active fapolicyd and
+firewalld. Your organisation's administrator provides an existing login account,
+`produser`, without sudo access or membership in wheel, adm or systemd-journal.
+Its home and shell are retained. Python 3, python3-pyyaml, Podman, gnupg2,
+fapolicyd, firewalld, policycoreutils-python-utils, acl, util-linux, shadow-utils
+and sudo must be installed from your organisation's approved offline repository.
+`setup` checks the commands and names the package if something is missing.
+No command downloads packages.
 
-Denne veiledningen, [PFX-veiledningen](PFX-CREDENTIALS.md) og
-[README](../README.md) følger med i hver komponent-release under
-`/var/lib/sms/releases/<release>/`; lenkene virker der uten kildekoden.
+**Two accounts:** The administrator uses sudo to prepare the host, publish
+releases and retire releases. The runtime user logs in directly over SSH and
+never uses sudo. Product files go under `/var/lib/myproduct`; only
+`~/.myproduct/myproduct.env` is created in the home directory. SSH keys belong
+to the ordinary login setup.
 
-Eksempelet bruker hele veien disse verdiene. Bytt dem ut; ingenting av dette er
-hardkodet i produktet:
+Obtain the following delivery from the supplier before changing the server:
 
-| Verdi | Eksempel | Merknad |
+- This manual from a trusted source, `release.py.gz`, `bundle-signing.gpg`, the
+  selected `<product>-<component>-<version>-offline.tar.gz` files and their `.asc`
+  files. Signatures are mandatory; `.sha256` files may accompany them to check
+  transfer integrity.
+- **Two SHA256 values through a separate authenticated channel:** one for
+  `release.py.gz` and one for `bundle-signing.gpg`. A checksum file next to the
+  upload is not sufficient.
+- For the platform and identity example: `web.crt`, `web.key`, `identity.crt`,
+  `identity.key`, `alice-password`, `bob-password` and the public `ca.crt`.
+  The web certificate must cover the hostname in `public_origin`. Deliver these
+  files privately to the runtime user. The two password files belong to demo
+  users; your organisation's components need their own delivery list. The PFX
+  variant instead needs `signing-cert.pfx` and the private, single-line
+  `pfx-password` file.
+
+Ask the administrator to prepare the server/account if these prerequisites are
+missing. Do not generate credentials from dev or use an unsigned archive as a
+shortcut. For the supplier: create `release.py.gz` using
+`gzip -n -c scripts/release.py > release.py.gz` from the separately reviewed
+source commit that the tool is intended to represent. Do not produce the tool
+from an unverified bundle.
+
+### Values to replace once
+
+Copy the following block into the terminal on each machine and in each new
+login session where you follow these steps. Replace **only the values between
+single quotes**, using the table. These are public settings; never put passwords
+or private keys in this block. Do not include single quotes or line breaks in a
+value. Take versions from the delivery filenames; they need not match.
+
+| Value | Meaning |
+| --- | --- |
+| `server`, `admin`, `runtime` | Server address and the two login accounts |
+| `product` | Supplier's product name; `myproduct` in this example |
+| `gateway`, `login_component` | Component names; `platform` and `identity` in this example |
+| `gateway_version`, `login_version` | Versions in the delivery, not an assumed latest version |
+| `old_gateway_version` | Previously installed gateway version, used only for retirement after upgrade |
+| `port`, `public_origin`, `bind_ip` | HTTPS port and server address that the service will use |
+| `upload` | Upload directory on the server, outside the home directory |
+| `credentials` | Runtime user's private delivery directory on the server |
+| `helper_sha256`, `key_sha256` | Replace the text with the two independently received 64-character values |
+| `credential_format` | `pem` for the demo; `pfx` only for a delivered component declaring `credentials/signing/signing-cert.pfx` |
+| `discovery_path` | Supplier's actual discovery path, as in this example |
+| `with_identity` | `yes` for this example; `no` for gateway only, without Identity or a database |
+
+<!-- operator: values -->
+```sh
+server='192.168.0.108'
+admin='gunstein'
+runtime='produser'
+product='myproduct'
+gateway='platform'
+login_component='identity'
+gateway_version='0.4.12'
+old_gateway_version='0.4.11'
+login_version='0.4.12'
+port='8443'
+public_origin='https://myproduct-proxy:8443'
+bind_ip='192.168.0.108'
+upload='/var/tmp/myproduct-upload'
+credentials='/var/tmp/myproduct-credentials'
+helper_sha256='REPLACE_WITH_INDEPENDENT_TOOL_SHA256'
+key_sha256='REPLACE_WITH_INDEPENDENT_KEY_SHA256'
+with_identity='yes'
+credential_format='pem'
+discovery_path='/identity/.well-known/openid-configuration'
+```
+
+## 1. Transfer the delivery
+
+**Machine:** laptop. **User:** administrator's login account. Run the values
+block, then log in to the server:
+
+<!-- operator: admin-login -->
+```sh
+ssh "$admin@$server"
+```
+
+**Expected:** the server's shell prompt. Run the values block in this new session too.
+
+**Machine:** server. **User:** administrator, without sudo for this step. Run
+the values block first. Create a private directory owned by your account;
+an additional copy into a root-only directory is not required.
+
+<!-- operator: upload-directory -->
+```sh
+install -d -m 0700 "$upload"
+```
+
+**Machine:** laptop. **User:** administrator. Run the values block here too,
+and work from the directory containing the public delivery. Private credential
+files are transferred later using the runtime account.
+
+<!-- operator: transfer -->
+```sh
+(
+set -eu
+scp release.py.gz bundle-signing.gpg "$product-$gateway-$gateway_version-offline.tar.gz" "$product-$gateway-$gateway_version-offline.tar.gz.asc" "$admin@$server:$upload/"
+if [ "$with_identity" = yes ]; then
+  scp "$product-$login_component-$login_version-offline.tar.gz" "$product-$login_component-$login_version-offline.tar.gz.asc" "$admin@$server:$upload/"
+fi
+)
+```
+
+**Expected:** scp completes without errors. If a file is missing, obtain it from
+the supplier, repeat the same transfer, then continue with step 2.
+
+## 2. Install the trusted tool
+
+**Machine:** server. **User:** administrator with sudo. Run the values block
+after a new login. Copy the entire block. It checks the independent checksum
+against a protected copy before the tool can run. An older copy is retained on
+failure. Do not edit the Python code. You can repeat this step with the same delivery.
+
+<!-- operator: tool-bootstrap -->
+```sh
+sudo python3 -I -B - "$upload/release.py.gz" "$helper_sha256" <<'PY'
+import errno, hashlib, os, stat, sys, tempfile
+from pathlib import Path
+
+def protected(path, directory):
+    info = path.lstat()
+    if info.st_uid != 0 or info.st_mode & 0o022 or not (
+        stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    ):
+        raise ValueError('Unsafe protected path; ask administrator to inspect: ' + str(path))
+    for key in ('system.posix_acl_access', 'system.posix_acl_default'):
+        try:
+            os.getxattr(str(path), key, follow_symlinks=False)
+        except OSError as error:
+            if error.errno not in (errno.ENODATA, errno.ENOTSUP):
+                raise
+        else:
+            raise ValueError('ACL on protected path; ask administrator to inspect: ' + str(path))
+
+source, expected = sys.argv[1:]
+target = Path('/usr/local/libexec/podman-offline-release.py.gz')
+if os.geteuid() != 0 or len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected):
+    raise SystemExit('ERROR: administrator access and independent SHA256 required; repeat bootstrap with correct inputs')
+temporary = None
+try:
+    for parent in reversed((target.parent,) + tuple(target.parent.parents)):
+        if not os.path.lexists(str(parent)):
+            parent.mkdir(mode=0o755)
+        protected(parent, True)
+    if os.path.lexists(str(target)):
+        protected(target, False)
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as incoming:
+        if not stat.S_ISREG(os.fstat(incoming.fileno()).st_mode):
+            raise ValueError('Helper upload must be a regular file')
+        with tempfile.NamedTemporaryFile(dir=str(target.parent), prefix='.bootstrap-', delete=False) as out:
+            temporary = Path(out.name)
+            value = hashlib.sha256()
+            for block in iter(lambda: incoming.read(1024 * 1024), b''):
+                value.update(block)
+                out.write(block)
+            if value.hexdigest() != expected:
+                raise ValueError('Helper SHA256 mismatch; obtain correct file/digest, then repeat bootstrap')
+            out.flush()
+            os.fchmod(out.fileno(), 0o644)
+            os.fsync(out.fileno())
+    os.replace(str(temporary), str(target))
+    fd = os.open(str(target.parent), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    print('PASS: authenticated release tool installed; continue with setup')
+except (OSError, ValueError) as error:
+    if isinstance(error, ValueError):
+        raise SystemExit('ERROR: ' + str(error)) from None
+    raise SystemExit('ERROR: bootstrap I/O failure; administrator must inspect upload/target permissions and space, then repeat bootstrap') from None
+finally:
+    if temporary is not None and temporary.exists():
+        temporary.unlink()
+PY
+```
+
+**Expected:** `PASS: authenticated release tool installed`.
+For a SHA256 mismatch, obtain the correct tool/values through the trusted channel,
+update the values block and repeat step 2. For ownership/ACL errors, the
+administrator must inspect the named system path; do not run recursive chmod/chown.
+
+## 3. Prepare the server and selected releases
+
+**Machine:** server. **User:** administrator with sudo. Copy the entire block.
+Only the components explicitly selected here are processed. Other files in the
+directory are ignored.
+
+<!-- operator: setup -->
+```sh
+(
+set -euo pipefail
+set -- --release "$gateway@$gateway_version"
+if [ "$with_identity" = yes ]; then
+  set -- "$@" --release "$login_component@$login_version"
+fi
+gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - setup \
+  --product "$product" --user "$runtime" --port "$port" \
+  --input-dir "$upload" --keyring "$upload/bundle-signing.gpg" --key-sha256 "$key_sha256" \
+  "$@" --host-release "$gateway@$gateway_version"
+)
+```
+
+**Expected:** `PASS: setup preflight`, one `PASS: release ready` per component,
+and finally `PASS: host setup`. The tool prints the next command for the runtime
+user. This publishes the releases and prepares the host; applications are not
+yet installed. No installation receipt is created on their behalf.
+
+The command checks the OS, packages, account, sudo policy, security services,
+key, journal policy and space before product changes. Archive contents and
+extracted size can only be validated after signature verification. Failure in
+a later bundle can therefore leave earlier verified releases in place, but does
+not run the host script. Space checks are lower bounds with 1 GiB reserved per
+filesystem; the administrator must also size storage for images and databases.
+On standard OL9, `/var/log/journal` is created and journald is flushed to disk.
+This makes the **entire host's** journal persistent and requires space under
+`/var/log`. Explicit conflicting journal policy is not overwritten. The runtime
+user receives no additional group memberships.
+
+### If preflight stops
+
+**Same server and administrator account.** Follow the named error, then repeat
+all of step 3. For a missing command, install the named package from your
+organisation's offline repository. For a sudo grant, use an account without
+grants; do not give the product sudo access. For a `Storage`/`SplitMode` conflict,
+the system administrator must first approve persistent journaling with
+`Storage=auto` or `persistent` and `SplitMode=uid`; do not bypass policy with groups.
+
+For standard OL9 with an undersized fapolicyd cache, check that the setting
+exists and apply this exact remedy. It changes cache size, not trust rules.
+If the first command fails, stop and ask the system administrator to prepare
+the baseline.
+
+<!-- operator: cache-remedy -->
+```sh
+if sudo grep -Eq '^[[:space:]]*subj_cache_size[[:space:]]*=' /etc/fapolicyd/fapolicyd.conf; then
+  sudo sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf &&
+  sudo systemctl restart fapolicyd
+else
+  printf 'STOP: subj_cache_size is missing; ask the system administrator to prepare the OL9 baseline before repeating step 3.\n' >&2
+  false
+fi
+```
+
+**Expected:** no errors. Then repeat step 3. For another preflight failure,
+follow its stated remedy; do not use the cache remedy as a general repair.
+
+## 4. Log in as the runtime user
+
+**Machine:** laptop. **User:** runtime login account, without sudo.
+
+<!-- operator: login -->
+```sh
+ssh "$runtime@$server"
+```
+
+**Machine:** server, in the new SSH session. **User:** runtime user without sudo.
+Run the values block again, then create the product's settings file:
+
+<!-- operator: init-layout -->
+```sh
+bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" init-layout
+```
+
+**Expected:** `[OK] Bootstrap ready` or `[OK] Existing bootstrap retained`.
+You can repeat this step; existing valid settings are retained. For a conflict,
+ask the administrator to check the product/account association, then continue
+with the same command. Do not delete or overwrite an existing settings file.
+After interruption, run the same `init-layout` command again as the runtime user.
+An unfinished temporary file is not used and does not block the next attempt.
+
+## 5. Configuration and private credentials
+
+**Machine:** server. **User:** runtime user without sudo. Initialise the gateway:
+
+<!-- operator: gateway-config -->
+```sh
+(
+set -eu
+bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" init-config "$gateway"
+python3 - "$product" "$gateway" "$public_origin" "$port" "$bind_ip" <<'PY'
+from pathlib import Path
+import sys, yaml
+product, component, origin, port, address = sys.argv[1:]
+p = Path('/var/lib') / product / 'state' / component / 'config.yaml'
+v = yaml.safe_load(p.read_text())
+v.update(PUBLIC_ORIGIN=origin, HTTPS_PORT=int(port), IP_ADDRESS=address)
+p.write_text(yaml.safe_dump(v))
+print('OK: public gateway settings saved; continue with credentials')
+PY
+install -d -m 0700 "$credentials"
+)
+```
+
+**Expected:** init-config reports that config was created or retained, followed
+by `OK: public gateway settings saved`. Settings come from the values block.
+This is an explicit editing step: during ordinary retry/upgrade, do not repeat
+the editing step with old values.
+The block stops at the first failure. If `init-config` fails, existing config
+is not edited. Correct the reported cause, check the values block and repeat
+this block as the runtime user on the server before continuing.
+
+**Machine:** laptop. **User:** runtime login account. Work from the directory
+containing the supplier's private files. Run the values block on the laptop first.
+
+<!-- operator: credentials-transfer -->
+```sh
+(
+set -eu
+scp web.crt web.key ca.crt "$runtime@$server:$credentials/"
+if [ "$with_identity" = yes ]; then
+  case "$credential_format" in
+    pem) scp identity.crt identity.key alice-password bob-password "$runtime@$server:$credentials/";;
+    pfx) scp signing-cert.pfx pfx-password "$runtime@$server:$credentials/";;
+    *) printf 'STOP: credential_format must be pem or pfx from the supplier values list.\n' >&2; false;;
+  esac
+fi
+)
+```
+
+**Expected:** no scp errors. Never use chat, terminal output or Git to send these
+files. Private files must be owned by the runtime user with mode 0600.
+On the **server as the runtime user**, install only the gateway files:
+
+<!-- operator: gateway-credentials -->
+```sh
+(
+set -e
+install -d -m 0700 "/var/lib/$product/state/$gateway/credentials/web"
+for name in web.crt web.key; do
+  destination="/var/lib/$product/state/$gateway/credentials/web/$name"
+  if [ -e "$destination" ] || [ -L "$destination" ]; then
+    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credential conflict for %s; retain the file and contact the credential provider, then repeat this step.\n' "$name" >&2; exit 1; }
+  else
+    install -m 0600 "$credentials/$name" "$destination" || exit 1
+  fi
+done
+)
+```
+
+**Expected:** no errors; identical existing files are retained. For a conflict,
+stop and ask the credential provider to confirm the correct set. Do not overwrite
+retained keys.
+
+## 6. Install and check the gateway
+
+**Machine:** server. **User:** runtime user without sudo.
+
+<!-- operator: gateway-install -->
+```sh
+bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" validate &&
+bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" install
+```
+
+**Expected:** validated, followed by a healthy service and containers reported Up.
+For a failure, follow "Upgrade and failure/interruption" below and repeat the
+same block. After success:
+
+<!-- operator: gateway-check -->
+```sh
+curl --cacert "$credentials/ca.crt" --resolve "$(printf '%s' "$public_origin" | sed -E 's@https://([^:/]+).*@\1@'):$port:$bind_ip" -sS -o /dev/null -w '%{http_code}\n' "$public_origin/livez"
+```
+
+**Expected:** `204`. Do not bypass certificate verification with curl's `-k`.
+If `with_identity=no`, skip to step 8. The gateway alone needs no Identity,
+database or demo users.
+
+## 7. Install identity when selected
+
+**Machine:** server. **User:** runtime user without sudo. The gateway must
+already be installed. The supplier selects the credential variant in the values block:
+
+| Variant | Private delivery | Destination under the component's `credentials/` |
 | --- | --- | --- |
-| Produkt (`product:` i bundles.yaml) | `sms` | gir `/var/lib/sms` og unitnavn `sms-<komponent>` |
-| Driftsbruker (eksisterende innloggingskonto) | `produser` | hjem, shell og UID beholdes uendret |
-| Bundles | `sms-platform-1.4.2`, `sms-sts-2.0.1` | versjonene er uavhengige per komponent |
-| Offentlig adresse | `https://sms.example.org:8443` | samme port i `--port`, `HTTPS_PORT` og `PUBLIC_ORIGIN` |
+| `pem` (demo) | `identity.crt`, `identity.key`, `alice-password`, `bob-password` | Certificate/key in `identity/`, demo passwords in `users/` |
+| `pfx` (separately supplied Identity) | `signing-cert.pfx`, `pfx-password` | Both in `signing/`; the component's supplied config must already declare the PFX reference |
 
-## Plassering
+The password file contains one nonempty line. Never put passwords in command-line
+arguments. The supplier must clarify whether the application needs the password
+as a separate Secret; provisioning files are never delivered implicitly. Do not
+change the demo's PEM config by guessing PFX settings. Copy the same block for
+either variant:
 
-| Sti | Eier og modus | Innhold |
-| --- | --- | --- |
-| `~produser/.sms/sms.env` | produser, katalog `0700`, fil `0600` | eneste produktfil i hjemmekatalogen |
-| `/var/lib/sms/` | root, `0755` | installasjonsrot; driftsbrukeren kan ikke erstatte innholdet |
-| `/var/lib/sms/releases/` | root | publiserte, verifiserte releaser (skrivebeskyttet) |
-| `/var/lib/sms/state/` | produser, `0700` | komponentconfig, credentials, installert metadata, registreringer, retry-status |
-| `/var/lib/sms/config/` | produser, `0700` | Podmans og brukersystemd sin `XDG_CONFIG_HOME` (Quadlet-filer) |
-| `/var/lib/sms/storage/` | produser, `0700` | Podmans `XDG_DATA_HOME`: images, volumer, cache |
-| `/etc/systemd/system/user@<uid>.service.d/podman-offline-sms.conf` | root | gir brukersystemd samme `XDG_*`-verdier ved hver oppstart |
-
-`/run/user/<uid>`, systemjournalen og `/etc` beholder sine vanlige plasseringer.
-
-**Diskplass:** hjemmekatalogen trenger bare noen hundre byte. Under `/var/lib`
-trengs ved publisering av hver release plass til arkivet to ganger (kopi og
-utpakket release) i tillegg til eldre releaser frem til de pensjoneres, og i
-`storage/` plass til alle images og databaser. `podman load` mellomlagrer i
-`/var/tmp` (Podmans standard `image_copy_tmp_dir`); sett av like mye plass der
-som største `images/images.tar`. Ikke legg arkiver i hjemmekatalogen.
-
-## 1. Administrator: forutsetninger og overføring
-
-Verten er Oracle Linux 9 med `getenforce` = `Enforcing`, aktiv fapolicyd og
-firewalld, og pakkene python3, python3-pyyaml, podman, gnupg2 (gpgv),
-policycoreutils-python-utils, acl og util-linux allerede installert. Kontoen
-`produser` finnes fra før, og kjører ikke noe annet produkt.
-
-**Vedvarende journal.** `journalctl --user` virker bare når journald lagrer i
-`/var/log/journal`. På en fersk OL9-vert finnes den katalogen ikke, og
-`produser` får da `No journal files were opened due to insufficient
-permissions`. Gi ikke `produser` ekstra grupper for å omgå dette; opprett
-katalogen én gang (én kommando om gangen):
-
+<!-- operator: identity-config -->
 ```sh
-sudo mkdir -p /var/log/journal
-sudo systemd-tmpfiles --create --prefix /var/log/journal
-sudo journalctl --flush
+(
+set -e
+bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" init-config "$login_component"
+case "$credential_format" in
+  pem) names='identity.crt identity.key alice-password bob-password';;
+  pfx) names='signing-cert.pfx pfx-password';;
+  *) printf 'STOP: credential_format must be pem or pfx from the supplier values list.\n' >&2; exit 1;;
+esac
+for name in $names; do
+  case "$name" in
+    signing-cert.pfx|pfx-password) group=signing;;
+    *-password) group=users;;
+    identity.*) group=identity;;
+    *) group=signing;;
+  esac
+  install -d -m 0700 "/var/lib/$product/state/$login_component/credentials/$group"
+  destination="/var/lib/$product/state/$login_component/credentials/$group/$name"
+  if [ -e "$destination" ] || [ -L "$destination" ]; then
+    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credential conflict for %s; retain the file and contact the credential provider, then repeat this step.\n' "$name" >&2; exit 1; }
+  else
+    install -m 0600 "$credentials/$name" "$destination" || exit 1
+  fi
+done
+)
 ```
 
-Det gjør systemjournalen vedvarende over omstart (husk diskplass i `/var/log`).
+**Expected:** initialised or retained config, no copy errors. Files are retained
+on repeat. Install generates a database password if declared; an existing
+password is retained. Install:
 
+<!-- operator: identity-install -->
 ```sh
-# Sett fapolicyd sin subjektcache (README, avsnitt om fapolicyd) og restart.
-sudo grep -q '^subj_cache_size = 16381$' /etc/fapolicyd/fapolicyd.conf \
-    || echo 'Sett subj_cache_size = 16381 og kjør: sudo systemctl restart fapolicyd'
-# Innleveringsområde for arkivene, utenfor hjemmekatalogen.
-sudo install -d -o root -g root -m 0700 /var/tmp/sms-inn
-# På den bærbare maskinen: kopier arkiver, .sha256, .asc og nøkkelen til /var/tmp.
-#   scp sms-*-offline.tar.gz* bundle-signing.gpg admin@server:/var/tmp/
-# Tilbake på serveren: flytt dem inn. Bruk aldri * på filer inne i sms-inn
-# utenfor sudo; katalogen er 0700, så skallet ditt kan ikke liste den.
-sudo mv /var/tmp/sms-*-offline.tar.gz* /var/tmp/bundle-signing.gpg /var/tmp/sms-inn/
-sudo sh -c 'cd /var/tmp/sms-inn && sha256sum -c sms-platform-1.4.2-offline.tar.gz.sha256 sms-sts-2.0.1-offline.tar.gz.sha256'
+bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" validate &&
+bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" install
 ```
 
-Suksess: begge linjer viser `OK`. Sjekksummer avdekker bare overføringsfeil;
-signaturen under er det som autoriserer installasjon.
+**Expected:** both services healthy. Check with:
 
-**Signeringspolicy:** produksjon krever signerte bundles og en offentlig nøkkel
-som er levert og sjekksumverifisert gjennom en egen, betrodd kanal.
-`release.py` nekter usignerte arkiver. For test brukes samme flyt med egne
-testbundles signert med en egen testnøkkel (`BUNDLE_SIGNING_KEY` ved bygging);
-det finnes ingen usignert snarvei, og ingen kode fra et arkiv kjøres før det er
-verifisert.
-
-Release-verktøyet installeres én gang etter README,
-[First production installation](../README.md#first-production-installation)
-(beskyttet kopi i `/usr/local/libexec`, verifisert mot uavhengig SHA256):
-
+<!-- operator: identity-check -->
 ```sh
-release_tool() {
-    gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - "$@"
-}
-# Én gang per produkt: den betrodde offentlige nøkkelen og dens uavhengige SHA256.
-release_tool provision-key --product sms --keyring /var/tmp/sms-inn/bundle-signing.gpg \
-    --key-sha256 "$nokkel_sha256"
-# For hver release (også ved oppgradering): verifiser, publiser, fapolicyd-trust.
-release_tool prepare --product sms --component platform --version 1.4.2 \
-    --archive /var/tmp/sms-inn/sms-platform-1.4.2-offline.tar.gz \
-    --signature /var/tmp/sms-inn/sms-platform-1.4.2-offline.tar.gz.asc
+curl --cacert "$credentials/ca.crt" --resolve "$(printf '%s' "$public_origin" | sed -E 's@https://([^:/]+).*@\1@'):$port:$bind_ip" -sS -o /dev/null -w '%{http_code}\n' "$public_origin$discovery_path"
 ```
 
-Suksess: siste linje er `PASS: protected release prepare`, og
-`/var/lib/sms/releases/sms-platform-1.4.2/` finnes.
+**Expected:** `200`. The demo's `/identity/` is not a valid success check
+(it returns 404). The supplier must provide the actual endpoint for its component.
+Issuing/converting your own certificates is an advanced supplier task, described
+in [PFX design and provisioning](PFX-CREDENTIALS.md). `generate-certificates.sh`
+is not included in the bundles; external PEM/PFX delivery above does not need it.
 
-## 2. Administrator: klargjør verten (én gang)
+## 8. Operations, fresh login and reboot
 
+**Machine:** server. **User:** runtime user without sudo. Run the values block
+again after each new login. All paths are absolute; no remembered shell functions
+or manual XDG exports are needed.
+
+<!-- operator: status -->
 ```sh
-sudo -l -U produser    # forventet: "User produser is not allowed to run sudo ..."
-sudo bash /var/lib/sms/releases/sms-platform-1.4.2/scripts/prepare-host.sh \
-    --port 8443 --user produser
+(
+set -eu
+bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" status
+systemctl --user is-active "$product-$gateway.service"
+journalctl --user -u "$product-$gateway.service" -b -n 10 --no-pager --output=json --output-fields=__REALTIME_TIMESTAMP,_SYSTEMD_USER_UNIT,USER_UNIT,PRIORITY
+)
 ```
 
-Skriptet endrer ikke kontoens hjem, shell eller pålogging. Det oppretter
-`state/`, `config/` og `storage/` under `/var/lib/sms`, beholder eksisterende
-subuid/subgid (legger til et område bare når det mangler), setter SELinux-
-ekvivalens for lagringen, linger, port 8443 og drop-in-filen for brukersystemd.
-Skriptet leser deretter miljøet til brukersystemd og starter eller restarter
-den til den faktisk har verdiene; ellers stopper det med feil. En gjentakelse
-fullfører derfor også en avbrutt kjøring. Suksess: to linjer
-som begynner med `[OK]`. Steget kan gjentas trygt; det trengs på nytt bare ved
-ny port. En annen eksisterende drop-in, et annet produkt på samme konto eller
-en gammel installasjon med hjem i `/var/lib/sms` stoppes med en feilmelding.
+**Expected:** status shows complete/active with no pending work, is-active shows
+`active`, and the journal contains JSON entries with timestamps and unit names.
+This demonstrates read access without printing message contents (`MESSAGE`).
+Do not share raw journal text containing passwords, tokens or connection strings;
+see the safe error-reporting instructions below.
 
-## 3. Driftsbruker: installasjonsinnstillinger (én gang)
+Log out as the runtime user (`exit`). The **administrator on the server with sudo**
+runs `sudo reboot`. After boot, the administrator logs in again and runs the values
+block and the check below **before the runtime user logs in**:
 
-Logg inn som `produser` selv (ssh eller konsoll). Alle driftsbrukersteg under
-forutsetter en slik innlogging; da setter systemet opp `systemctl --user` og
-`journalctl --user` uten manuelle eksporter.
-
+<!-- operator: boot-check -->
 ```sh
-install -d -m 0700 ~/.sms
-printf 'INSTALL_ROOT=/var/lib/sms\n' > ~/.sms/sms.env
-chmod 0600 ~/.sms/sms.env
+set -- "$product-$gateway.service"
+if [ "$with_identity" = yes ]; then set -- "$@" "$product-$login_component.service"; fi
+sudo systemctl --user -M "$runtime@" is-active "$@"
 ```
 
-Formatet er `NØKKEL=verdi`, én per linje, `#`-kommentarer og tomme linjer
-tillatt; ett par omsluttende `'` eller `"` fjernes. Filen leses som data og kjøres
-aldri som shell; `$(...)` og backticks utføres ikke. `INSTALL_ROOT` er påkrevd og
-må være `/var/lib/<produkt>`. Andre nøkler (for eksempel eksisterende
-applikasjonsinnstillinger) ignoreres, logges ikke og sendes ikke til containere.
-Manglende fil, feil eierskap/modus, symlenker eller ugyldige linjer stopper før
-noe skrives, med linjenummer men uten verdi. Ingen `HOME`-endring eller
-terminaleksport trengs.
+**Expected:** `active` for each selected service. Then log in again as the runtime
+user using step 4, run the values block and step 8. Expect the same status and
+readable journal without sudo.
 
-## 4. Driftsbruker: platform
+## 9. Upgrade and failure/interruption
 
-```sh
-cd /var/lib/sms/releases/sms-platform-1.4.2
-bash ./deploy.sh init-config platform
-vi /var/lib/sms/state/platform/config.yaml
-#   PUBLIC_ORIGIN: https://sms.example.org:8443
-#   HTTPS_PORT: 8443
-#   IP_ADDRESS: <serverens adresse>
-install -d -m 0700 /var/lib/sms/state/platform/credentials/web
-install -m 0600 /sti/til/web.crt /sti/til/web.key /var/lib/sms/state/platform/credentials/web/
-bash ./deploy.sh validate
-bash ./deploy.sh install
-```
+For an upgrade, the administrator transfers the new delivery (step 1), changes
+only the delivered versions in the values block and runs step 3. Updating the
+tool requires new independent verification in step 2. The runtime user logs in,
+uses the new versions in the values block and runs validate/install in steps 6/7.
+Skip editing and credential copying; existing config, keys and data are retained.
 
-Suksess: `validate` skriver `[OK] validated platform; nothing written, ...`, og
-`install` slutter med `podman ps`-listen der alle containere er `Up` (install
-venter selv til de er healthy). Websertifikatet må dekke vertsnavnet i
-`PUBLIC_ORIGIN`. Ikke kopier dev-credentials eller `config.dev.yaml`.
-
-## 5. Administrator og driftsbruker: STS
-
-Administrator publiserer STS-releasen som i steg 1 (`--component sts --version
-2.0.1`). Deretter, som `produser`:
+Once functional checks pass, the administrator can retire an old release. Copy
+the block on the **server as administrator with sudo** after setting
+`old_gateway_version` to the version that was actually replaced:
 
 ```sh
-cd /var/lib/sms/releases/sms-sts-2.0.1
-bash ./deploy.sh init-config sts
-vi /var/lib/sms/state/sts/config.yaml
+(
+set -euo pipefail
+gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - retire \
+  --product "$product" --component "$gateway" --version "$gateway_version" --old-version "$old_gateway_version"
+)
 ```
 
-`init-config` tar `PUBLIC_ORIGIN`, `HTTPS_PORT` og platforms delte verdier fra
-installert platform. Velg produksjonens migrerings-/seed-filer og andre
-STS-spesifikke innstillinger i denne filen; navn på secrets og credentials
-følger STS sin egen config. Databasepassordet opprettes ved første install når
-config-en deklarerer `generate: [password]`; et eksisterende passord beholdes
-byte for byte. Signerings-PFX klargjøres i STS sin credentials-katalog etter
-[PFX-veiledningen](PFX-CREDENTIALS.md) med `--root /var/lib/sms/state` og
-`--component sts` (passordfilen `credentials/signing/pfx-password` først, `0600`).
+**Expected:** `PASS: protected release retire`. Old releases are never deleted
+as automatic failure cleanup.
 
-**Sertifikatverktøyet på lukket nett:** `generate-certificates.sh` ligger ikke i
-bundlene (pakket levering er backlog 45b). Administrator tar
-`dev/generate-certificates.sh` fra samme gjennomgåtte kildecommit som bundlene,
-overfører den sammen med arkivene og verifiserer SHA256 mot en verdi levert
-gjennom den betrodde kanalen. Lagre den root-eid og lesbar, for eksempel
-`/usr/local/libexec/podman-offline-generate-certificates.sh` (`0644`). Den kjøres
-aldri som installert program, bare via stdin som `produser`, slik
-PFX-veiledningen viser:
+| Event | Action and command to continue |
+| --- | --- |
+| Interrupted tool bootstrap | Administrator repeats step 2 with the same trusted SHA256. The old tool copy is retained on failure. |
+| Interrupted setup, signature/trust failure | Administrator corrects the named file/baseline error and repeats all of step 3. Previously approved releases are retained; an invalid signature never authorises code. |
+| Setup stops after journal/drop-in changes | Administrator repeats step 3. It checks the actual manager/journal/firewall, not just file existence. |
+| New SSH session | Run the values block again. `init-layout` can be repeated and retains a valid file. |
+| Install fails | Runtime user runs status from step 8; the component should be incomplete/pending. Correct the named config/credential error using the delivery's public fields/filenames, then repeat the same validate/install block. Do not edit the pending record. |
+| Existing credentials differ | Stop copying, retain the files and ask the credential provider to confirm the set. Repeat the credential step only when the delivery is correct. No secret values need to be shared. |
+| Missing journal or manager environment | Administrator repeats step 3. Do not add the runtime user to privileged groups or export XDG manually. |
+| Unexpected error without a concrete remedy | Stop. Send only the step name, public component/version and fixed error message; do not dump config, environment, inspect or journal. The supplier must provide a safe remedy and next command before you continue. |
 
-```sh
-sha256sum /usr/local/libexec/podman-offline-generate-certificates.sh   # sammenlign med betrodd verdi
-bash -s -- --root /var/lib/sms/state --cert-days 365 \
-    --component sts --purpose signing --pfx \
-    < /usr/local/libexec/podman-offline-generate-certificates.sh
-```
-
-Har organisasjonen allerede PFX eller `.crt`/`.key` for STS, eller `web.crt`/`web.key`
-for platform, legges de i credentials-katalogen før kommandoen; verktøyet
-beholder dem uendret og lager bare det som mangler (se PFX-veiledningen).
-
-```sh
-bash ./deploy.sh validate
-bash ./deploy.sh install
-```
-
-Suksess som for platform. Installer eventuelle andre deklarerte avhengigheter
-i den rekkefølgen `bundles.yaml` krever; `install` nekter en manglende avhengighet.
-
-## 6. Driftsbruker: drift og kontroll
-
-```sh
-systemctl --user status sms-platform.service sms-sts.service
-journalctl --user -u sms-sts.service --since -1h
-# Podman-diagnostikk med produksjonens lagring (samme verdier som brukersystemd):
-sms_podman() { XDG_CONFIG_HOME=/var/lib/sms/config XDG_DATA_HOME=/var/lib/sms/storage podman "$@"; }
-sms_podman ps --all --pod
-curl --cacert /sti/til/ca.crt https://sms.example.org:8443/livez
-curl --cacert /sti/til/ca.crt -o /dev/null -w '%{http_code}\n' https://sms.example.org:8443/sts/
-systemctl --user restart sms-sts.service && systemctl --user is-active sms-sts.service
-```
-
-Suksess: tjenestene er `active (running)`, containerne `Up (healthy)`, `/livez`
-svarer `204` og STS-siden gir forventet statuskode. Bruk en adresse komponenten
-faktisk svarer på: for demoens identity er det
-`/identity/.well-known/openid-configuration` (`200`), mens `/identity/` gir
-`404`; test også innlogging i nettleser
-mot det eksterne navnet. `sms_podman` er en lokal shellfunksjon for diagnostikk,
-ikke en global eksport; uten den viser `podman` kontoens vanlige, tomme lagring.
-
-Logg ut og la administrator kjøre `sudo reboot`. Etter oppstart, uten å logge inn:
-
-```sh
-sudo systemctl --user -M produser@ is-active sms-platform.service sms-sts.service
-```
-
-Suksess: `active` for begge. Kontroller deretter som `produser` at riktig lagring
-og Quadlets brukes, og at produktet ikke har skrevet til hjemmekatalogen:
-
-```sh
-systemctl --user show-environment | grep '^XDG_'      # /var/lib/sms/config og /var/lib/sms/storage
-systemctl --user show -p SourcePath sms-sts.service   # /var/lib/sms/config/containers/systemd/sms-sts.kube
-sms_podman info --format '{{.Store.GraphRoot}}'        # /var/lib/sms/storage/containers/storage
-find ~ -newer ~/.sms/sms.env                            # ingen produktfiler
-```
-
-## 7. Oppgradering og retry
-
-Administrator publiserer den nye releasen (steg 1). `produser` kjører
-`bash ./deploy.sh validate` og `bash ./deploy.sh install` fra den nye release-katalogen; config og
-credentials i `state/` beholdes. Etter helse- og funksjonskontroll pensjonerer
-administrator den gamle:
-
-```sh
-release_tool retire --product sms --component sts --version 2.0.2 --old-version 2.0.1
-```
-
-Feiler `install`, rett årsaken og kjør samme `bash ./deploy.sh install` igjen; den
-fullfører registrert gjenstående arbeid. Ikke rediger
-`state/pending-operation.json`. Vanlig `bash ./deploy.sh uninstall` beholder config,
-credentials og databasevolumer; `--delete-data` sletter bare komponentens egne.
-
-## Feilsøking
-
-| Symptom | Kontroll | Tiltak |
-| --- | --- | --- |
-| `Missing ~/.sms/sms.env` eller modusfeil | `ls -la ~/.sms` | Opprett etter steg 3 (`0700`/`0600`, eid av produser) |
-| `The user systemd manager has XDG_...` | `systemctl --user show-environment` | Administrator kjører steg 2 igjen |
-| `/var/lib/sms/... must be ...` | `ls -ld /var/lib/sms /var/lib/sms/*` | Administrator kjører steg 2; ikke chmod/chown hele treet |
-| Tjeneste finnes ikke etter install/reboot | `systemctl --user show -p SourcePath sms-sts.service` | Skal peke inn i `/var/lib/sms/config/...`; kontroller drop-in-filen |
-| Manglende credentials | `bash ./deploy.sh validate` | Feilen navngir config-fil og nøkkel, aldri verdien |
-| `203/EXEC` eller fapolicyd-avvisning | `sudo ausearch -m FANOTIFY,AVC -ts recent`, `release_tool wait --product sms --component sts --version 2.0.1` | Kontroller `subj_cache_size` og at releasen er publisert med `prepare` |
-| Images/volumer «forsvinner» | `sms_podman info --format '{{.Store.GraphRoot}}'` | Vanlig `podman` uten `sms_podman` ser kontoens hjemmelagring |
-
-Detaljer om autentisering, fapolicyd-trust, SELinux og retry står i
-[README](../README.md#first-production-installation). Design og tillitsgrenser
-står i `ARCHITECTURE.md` (avsnittet «Production paths outside the login home»)
-i kildekoden.
-Gamle installasjoner med hjem i `/var/lib/<produkt>` migreres ikke.
+Steps 2, 3, init-layout, init-config and identical credential copying can be repeated.
+An install attempt can safely be completed with the same command and retained
+settings; `upgrade: always` may restart the selected service on repeat. Do not
+repeat config editing with old values or retire a different version.
+Run only one setup/install/upgrade/retire operation at a time.

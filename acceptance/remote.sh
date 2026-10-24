@@ -1477,6 +1477,12 @@ app-retire|help-retire|platform-retire|identity-retire)
     sudo -n test ! -e "$old_release"
     echo "PASS: old $bundle release and its own trust retired after verification"
     ;;
+host65-credentials)
+    # Demo-only supplier fixture on DEV; never run on the production host.
+    [[ $role == DEV ]]
+    bash "$src/dev/generate-certificates.sh" --root "$base/host65-credentials" platform "$prod_host"
+    bash "$src/dev/generate-certificates.sh" --root "$base/host65-credentials" identity "$prod_host"
+    ;;
 prepare-host)
     # The documented host baseline (README, fapolicyd): a subject cache large
     # enough that starting processes are not evicted (backlog 29).

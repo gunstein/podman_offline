@@ -1,6 +1,7 @@
 # Operator review baseline for backlog 65–67
 
-Assessment date: 2026-10-24. This is documentation review evidence, **not a lab
+Historical baseline date: 2026-10-24. The first table refers to `7ef9671`;
+the current item 65 assessment is recorded separately below. This is **not a lab
 run**. Requirements are in the separate
 [operator review](../docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review).
 The [item 65 plan](../docs/HOST-SETUP-PLAN.md) describes future behavior; it is not
@@ -17,6 +18,127 @@ an executable manual and does not resolve these findings until implemented.
 Documentation checks: 196 local links/heading targets across the four changed
 documents checked successfully; whitespace, code fences and `git diff --check`
 passed. This verifies document consistency, not execution of manual commands.
+
+## Current item 65 AI walkthrough (2026-10-24)
+
+Result: **findings; customer usability is not established**. The earlier claim
+that no execution steps were missing was too strong. Review at `15f6e4b` found
+that manual failure behavior differed from the harness and that host diagnostics
+could hide the corrective action. The targeted fixes below have local regression
+evidence; that does not establish that all operator steps or failure cases are
+resolved. This assessment combines static walkthrough with local manual-block
+tests, not a successful real-server run or human approval.
+The guide reviewed at `2d36d71` had SHA256:
+`953744f079c6846cc9fb27936f07cee7790ac65019765986298dd42373a7cb14`; implementation branch `feature/65-host-setup`,
+based on `f52b797`. The earlier table and literal walkthrough below are a
+**historical baseline** against `7ef9671`, not a claim about the rewritten guide.
+Current local evidence is in [HOST-SETUP.md](HOST-SETUP.md).
+
+The literal path now starts with a complete trusted delivery/value checklist,
+explicit administrator SSH, private unprivileged upload directory, one checked
+tool bootstrap and one `setup` invocation. It then switches through actual
+runtime SSH, reinitializes the public worksheet in that session, runs init-layout,
+config/credential steps, validate/install and concrete HTTPS/status/journal
+checks. Retry instructions name the account, retained state and exact repeated
+block. No remembered shell functions, implicit exports, inferred dependency order
+or required instructions from other documents are needed for this example.
+
+Review follow-up at `15f6e4b`:
+
+- The pasted gateway config block now stops on init-config failure before any
+  config edit or credential-directory creation. Transfer/status blocks also own
+  their failure handling. Harness worksheet setup and SSH no longer add stronger
+  shell options; the literal-block regression executes plain Bash and verifies
+  unchanged existing config after failure.
+- Interrupted init-layout no longer publishes an empty final file. The same
+  runtime command retries from a new process; any partial temporary file is not
+  used. Existing valid files and concurrently published settings are retained.
+- Host-script failures expose fixed phase/reason/action diagnostics. For example,
+  overlapping subordinate IDs direct the administrator to resolve /etc/subuid and
+  /etc/subgid safely, then repeat the manual's setup command. Unknown/private
+  child output is withheld rather than becoming shareable diagnostic text.
+
+These address the three concrete review findings. The success and interruption
+paths were re-traced: explicit administrator preparation precedes runtime login,
+manual blocks stop themselves, and retry uses retained state. Broader difficulty,
+correctness of the real host flow and human comprehension remain open.
+
+Findings corrected during the original walkthrough:
+
+- Added the administrator login command; merely labelling a step "server" did
+  not show a limited-experience reader how to reach it.
+- Removed sudo from upload-directory creation. Staging untrusted inputs needs
+  no privileged directory ownership operation.
+- Credential conflict exits are confined to a subshell and print the public
+  filename and next action instead of silently logging out the operator.
+- PFX and PEM selection now happens once in the worksheet and drives both
+  transfer and installation, in the same sequence. PFX no longer first demands
+  the demo's PEM/user-password inputs; a runnable regression checks PFX placement,
+  retention and safe mismatch diagnostics.
+- The cache remedy reports a missing baseline setting rather than silently
+  stopping at grep. The harness permits it only for that exact sole preflight
+  failure and refuses unrelated failures.
+- The HTTP harness gates require exactly 204/200, not just successful curl exit.
+- Ordinary journal checks project only timestamp/unit/priority metadata; MESSAGE
+  contents need not be displayed or shared to verify log access.
+- Setup/retirement pipelines use pipefail, so a failed gzip cannot become an
+  apparently successful empty Python invocation.
+
+Command burden is measured as operator submissions/pasted blocks, separately
+from internal automatic host actions. The guide has 19 uniquely named executable
+blocks. Per ordinary task: upload-directory 1 command; tool bootstrap 1 pasted
+command with its fixed Python body; host setup 1 pasted selection/invocation
+block; runtime bootstrap 1 command; each component validate/install 1 block with
+2 CLI commands; gateway public config 1 block with init-config, a fixed editor
+snippet and private input-directory creation; each component credential import
+1 fixed block; each endpoint check 1 command; status/log inspection 3 commands.
+Transfers are one block per public/private delivery (two scp calls when Identity
+is included). Login is 1 SSH command per role/session, followed by the same public
+worksheet. The ordinary example needs 1 public worksheet edit, no manual edits
+to Python/shell internals, and no password entry into command lines. These are
+static procedure counts, not observed human performance or machine timings.
+
+Tool/workflow simplifications implemented: one setup replaces manual key pinning,
+per-bundle publication, journal creation and host-script invocation; init-layout
+replaces manual bootstrap-file creation. Per-component runtime orchestration
+remains 66. The fixed initial root bootstrap is still a substantial code block,
+and external credential delivery still requires role/machine switches. These
+are explicit usability risks to assess in the human trial; an approved OS package
+can provision the trusted tool, but new package delivery is not claimed here.
+A larger file or fewer pasted blocks alone does not establish easier operation.
+
+The human trial is still **not performed / outstanding**. No time, mistakes or
+questions are invented. The original assisted run remains evidence of difficulty;
+it cannot approve this new manual. After the first preflight failure at `8559a2a`,
+all nine corrected-flow scenarios passed at `2d36d71`
+([lab evidence](HOST-SETUP.md#successful-real-ol9-verification-2026-10-24)).
+The full reboot/upgrade SSH flow in 67 is still pending. Neither code review,
+local tests nor this AI walkthrough establishes customer usability.
+
+## English-only repository follow-up (2026-10-24)
+
+The repository language is English, including code identifiers, comments,
+filenames, documentation and diagnostics. This requirement is now explicit in
+`AGENTS.md`. The production manual and Norwegian backlog task text were translated;
+historical task requirements, status, item headings, inline code references and
+fenced examples were preserved. The operator's quoted feedback is labelled as
+a translation. Unicode fixture data uses escapes with unchanged Python values.
+
+The translated guide SHA256 is
+`c00ccf7260e260752b583faa4042bf74f0adb174160454fedfa935febd8f1020`.
+Comparison against `2d36d71` confirms all 19 operator step IDs and executable
+blocks are unchanged apart from English placeholder/error text. All 20 shell
+blocks pass Bash syntax checking. The same machine/account transitions,
+prerequisites, failure stops and retry rules remain in the English procedure.
+The literal manual failure/credential regressions run against the translated
+blocks; no new operator flow or runtime behaviour is introduced.
+
+Local verification: 94 focused product tests and all 266 acceptance-harness tests
+passed. Changed test formatting/lint, relative links and `git diff --check` passed.
+These are local results. The supplied nine-scenario lab series passed on
+`2d36d71`, before this translation; it does not establish human usability of
+the English manual. No lab run or VM reset was performed for the translation.
+Unassisted human verification remains outstanding.
 
 ## AI literal walkthrough
 
@@ -62,6 +184,8 @@ not evidence that the current guide has been simplified. The final AI review
 must be repeated against the actual implemented/manual revision.
 
 ## Human trial: outstanding verification
+
+Tracked explicitly by [backlog item 68](../BACKLOG.md#68-human-operator-trial-on-a-fresh-vm).
 
 No qualifying unassisted trial was performed for this change. The
 [2026-10-23 assisted manual run](PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)

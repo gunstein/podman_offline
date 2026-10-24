@@ -148,6 +148,7 @@ PREPARE_HOME
         || die "Storage-directory relabeling failed; inspect $install_root before retrying"
 }
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
+printf 'HOST-PHASE: preflight\n' >&2
 [[ $EUID == 0 ]] || die "Run sudo bash scripts/prepare-host.sh --port <1024-65535> --user <existing account>"
 # Arguments: --port <1024-65535> --user <existing account>.
 usage="Use --port <integer 1024-65535> --user <existing login account>"
@@ -200,6 +201,7 @@ account_home=$(getent passwd "$user" | cut -d: -f6)
 install_root=/var/lib/$product
 container_home=$install_root/storage/containers
 # Check the trusted anchor and the root before creating anything beneath them.
+printf 'HOST-PHASE: directories\n' >&2
 [[ ! -L /var/lib && -d /var/lib && $(stat -c %u /var/lib) == 0 && $(stat -c %a /var/lib) =~ ^[57][015][015]$ ]] \
     || die "/var/lib must be a root-owned directory without group/other write access"
 if [[ ! -e $install_root && ! -L $install_root ]]; then
@@ -233,6 +235,7 @@ for name in state config storage; do
     chmod 0700 "$path"
 done
 # Keep ID mappings for existing volumes; users must not overlap.
+printf 'HOST-PHASE: subordinate-ids\n' >&2
 read -r uid_range gid_range < <(python3 -I - "$user" <<'PY'
 import sys
 from pathlib import Path
@@ -268,6 +271,7 @@ PY
 [[ $uid_range == existing ]] || usermod --add-subuids "$uid_range" "$user"
 [[ $gid_range == existing ]] || usermod --add-subgids "$gid_range" "$user"
 # SELinux: Podman storage under /var/lib/<product> needs the container labels.
+printf 'HOST-PHASE: selinux\n' >&2
 equivalences=$(semanage fcontext -l -C)
 expected="$container_home = /var/lib/containers"
 while IFS= read -r equivalence; do
@@ -279,10 +283,12 @@ if ! grep -Fqx "$expected" <<< "$equivalences"; then
     semanage fcontext -a -e /var/lib/containers "$container_home"
 fi
 # Pre-create directories/lock so Podman does not create them with a runtime type.
+printf 'HOST-PHASE: directories\n' >&2
 prepare_install_directories
 # The user's systemd manager, its Quadlet generator and every service started
 # at boot get Podman's config and storage from these two variables. A terminal
 # export cannot reach them; this root-owned drop-in is the one persistent place.
+printf 'HOST-PHASE: user-manager\n' >&2
 dropin_text="# Managed by podman-offline scripts/prepare-host.sh for product $product.
 [Service]
 Environment=XDG_CONFIG_HOME=$install_root/config XDG_DATA_HOME=$install_root/storage
@@ -315,6 +321,7 @@ elif ! manager_has_settings; then
 fi
 manager_has_settings \
     || die "user@$service_uid.service does not use $install_root/config and $install_root/storage; inspect 'systemctl cat user@$service_uid.service' and retry"
+printf 'HOST-PHASE: firewall\n' >&2
 firewall-cmd --permanent --add-port="$port/tcp"
 firewall-cmd --reload
 printf '[OK] account %s (home %s unchanged): product %s under %s, linger enabled, HTTPS port %s/tcp open\n' \

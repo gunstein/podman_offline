@@ -3,6 +3,7 @@
 import contextlib
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -283,3 +284,79 @@ class CommandSelectionTests(LayoutFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InitLayoutTests(LayoutFixture):
+    def test_interrupted_creation_and_fresh_process_retry(self):
+        helper = Path(__file__).resolve().parents[1] / "helpers/init_layout_driver.py"
+        for boundary in ("created", "synced", "published"):
+            with self.subTest(boundary=boundary):
+                result = subprocess.run(
+                    [sys.executable, "-B", str(helper), str(self.root), boundary],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=dict(os.environ, PYTHONPATH=str(helper.parents[2])),
+                    check=False,
+                )
+                self.assertEqual(result.returncode, -9, result.stderr)
+                self.assertEqual(self.path.exists(), boundary == "published")
+                result = subprocess.run(
+                    [sys.executable, "-B", str(helper), str(self.root), "retry"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=dict(os.environ, PYTHONPATH=str(helper.parents[2])),
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    self.path.read_text(), "INSTALL_ROOT=" + str(self.install) + "\n"
+                )
+                self.assertEqual(self.path.stat().st_nlink, 1)
+                layout.initialize(PRODUCT)
+                self.path.unlink()
+
+    def test_concurrent_bootstrap_is_never_overwritten(self):
+        publish = layout.publish_bootstrap
+        content = "INSTALL_ROOT=" + str(self.install) + "\nAPP_SETTING=retained\n"
+
+        def concurrent(directory, temporary, name):
+            self.path.write_text(content)
+            self.path.chmod(0o600)
+            publish(directory, temporary, name)
+
+        with mock.patch.object(layout, "publish_bootstrap", side_effect=concurrent):
+            layout.initialize(PRODUCT)
+        self.assertEqual(self.path.read_text(), content)
+        self.assertEqual(self.path.stat().st_nlink, 1)
+        self.assertEqual(list(self.path.parent.iterdir()), [self.path])
+
+    def test_initialize_is_explicit_private_and_preserves_existing_bytes(self):
+        layout.initialize(PRODUCT)
+        self.assertEqual(
+            self.path.read_text(), "INSTALL_ROOT=" + str(self.install) + "\n"
+        )
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
+        self.path.write_text(self.path.read_text() + "APP_SETTING=private-value\n")
+        before = self.path.read_bytes(), self.path.stat().st_ino
+        layout.initialize(PRODUCT)
+        self.assertEqual((self.path.read_bytes(), self.path.stat().st_ino), before)
+        self.assertUnselected()
+
+    def test_initialize_refuses_conflict_symlink_and_missing_preparation(self):
+        self.bootstrap("INSTALL_ROOT=/wrong\n")
+        with self.assertRaises(common.DeployError):
+            layout.initialize(PRODUCT)
+        self.assertEqual(self.path.read_text(), "INSTALL_ROOT=/wrong\n")
+        self.path.unlink()
+        target = self.root / "target"
+        target.write_text("preserve")
+        self.path.symlink_to(target)
+        with self.assertRaises(common.DeployError):
+            layout.initialize(PRODUCT)
+        self.assertEqual(target.read_text(), "preserve")
+        self.path.unlink()
+        (self.install / "state").rmdir()
+        with self.assertRaises(common.DeployError):
+            layout.initialize(PRODUCT)
+        self.assertFalse(self.path.exists())

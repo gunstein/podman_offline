@@ -1,5 +1,8 @@
 # Instructions for repository work
 
+Use English for all repository content: code identifiers, comments, filenames,
+documentation, command output, error messages and test descriptions.
+
 Before changes or code review, read [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md).
 Use its relevant product contracts and lifecycle checks when planning,
 implementing and reviewing work. Read the selected backlog item's instructions

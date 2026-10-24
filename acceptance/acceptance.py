@@ -17,6 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import host_setup as operator_flow
 from pve import Proxmox, env_file
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -112,6 +113,7 @@ class Run:
         self.platform_help_only = False
         self.renamed_product = False
         self.status_retry = False
+        self.host_setup = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -277,7 +279,8 @@ class Run:
         """Check a clean checkout, lab access and profiles before the VMs change."""
         self.cfg = env_file(self.config_file)
         validate(self.cfg)
-        for program in ("git", "ssh", "scp"):
+        programs = ("git", "ssh", "scp") + (("ssh-keygen",) if self.host_setup else ())
+        for program in programs:
             if not shutil.which(program):
                 raise RuntimeError("Missing controller tool: " + program)
         self.revision = self.command(["git", "-C", ROOT, "rev-parse", "HEAD"]).strip()
@@ -290,6 +293,7 @@ class Run:
             identity_version=(ROOT / "components/identity/VERSION").read_text().strip(),
             first_app=self.first_app,
             status_retry=self.status_retry,
+            host_setup=self.host_setup,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -388,7 +392,7 @@ class Run:
         self.command(SCP + [source, self.host("DEV") + ":" + base + "/source.bundle"])
         self.guest("DEV", "clone")
 
-    def transfer(self, version=None, bundle="app1", tree="src"):
+    def transfer(self, version=None, bundle="app1", tree="src", publish=True):
         """Transfer the chosen product bundle through the controller and record SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["bundles_built"][bundle]
@@ -429,7 +433,8 @@ class Run:
                 digest.update(chunk)
         self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
         self.write("bundle_sha256=" + digest.hexdigest() + "\n")
-        self.guest("PROD", "publish-release", version, bundle=bundle)
+        if publish:
+            self.guest("PROD", "publish-release", version, bundle=bundle)
 
     def record_bundles(self, action):
         """Read the components and versions the last build produced on DEV."""
@@ -802,6 +807,8 @@ class Run:
     def cleanup(self):
         """Delete transferred runtime secrets, even when the remote cleanup fails."""
         try:
+            if self.host_setup:
+                operator_flow.cleanup(self)
             if self.dev_private:
                 self.guest("DEV", "cleanup")
         finally:
@@ -838,6 +845,9 @@ class Run:
         self.step("02-isolate-prod", lambda: self.guest("PROD", "isolate"))
         self.step("03-source", self.source)
         self.step("03-host-path-safety", lambda: self.guest("DEV", "host-path-safety"))
+        if self.host_setup:
+            operator_flow.execute(self)
+            return
         if self.renamed_product:
             self.execute_renamed()
             return
@@ -1193,7 +1203,16 @@ def main():
         action="store_true",
         help="Inject a same-version install failure and verify status/retry on disposable PROD",
     )
+    parser.add_argument(
+        "--host-setup",
+        action="store_true",
+        help="Run the focused manual-matched item 65 setup/SSH scenario",
+    )
     args = parser.parse_args()
+    if args.host_setup and (args.status_retry or args.identity_only or args.help_only):
+        parser.error(
+            "--host-setup is a separate focused scenario; choose normal, renamed or platform-only"
+        )
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
     if (
@@ -1217,6 +1236,7 @@ def main():
     run.platform_help_only = args.platform_help_only
     run.renamed_product = args.renamed_product
     run.status_retry = args.status_retry
+    run.host_setup = args.host_setup
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

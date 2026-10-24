@@ -15,11 +15,13 @@ unpacked release, never in source dev or bundle building. It reads data, never
 executes it, and reads no credential contents.
 """
 
+import ctypes
 import errno
 import os
 import re
 import stat
 import subprocess
+import uuid
 from pathlib import Path
 
 from . import common
@@ -45,6 +47,91 @@ def bootstrap_path(product):
 
 def expected_root(product):
     return ANCHOR / product
+
+
+def publish_bootstrap(directory, temporary, name):
+    """Linux rename without replacement, including a concurrently created file.
+
+    A hard-link/unlink pair leaves two links if killed between operations;
+    bootstrap readers deliberately reject linked files. Use one atomic rename.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        rename = libc.renameat2
+    except AttributeError:
+        raise common.DeployError(
+            "init-layout requires Linux renameat2 support"
+        ) from None
+    rename.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    rename.restype = ctypes.c_int
+    if rename(directory, os.fsencode(temporary), directory, os.fsencode(name), 1):
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), name)
+
+
+def initialize(product):
+    """Explicit, no-clobber bootstrap creation after administrator preparation."""
+    root = expected_root(product)
+    check_root(root)
+    check_home_unused(product)
+    path = bootstrap_path(product)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with_dir = os.open(str(common.HOME), flags)
+    try:
+        try:
+            os.mkdir(path.parent.name, 0o700, dir_fd=with_dir)
+        except FileExistsError:
+            pass
+        directory = os.open(path.parent.name, flags, dir_fd=with_dir)
+        try:
+            info = os.fstat(directory)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise common.DeployError(
+                    f"{path.parent} must be owned by you with mode 0700"
+                )
+            if os.path.lexists(str(path)):
+                install_root(product, read_bootstrap(path), path)
+                print(f"[OK] Existing bootstrap retained: {path}")
+                return
+            temporary = ".bootstrap-" + uuid.uuid4().hex
+            fd = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
+            try:
+                with os.fdopen(fd, "w") as stream:
+                    os.fchmod(stream.fileno(), 0o600)
+                    stream.write(f"INSTALL_ROOT={root}\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                try:
+                    publish_bootstrap(directory, temporary, path.name)
+                except FileExistsError:
+                    install_root(product, read_bootstrap(path), path)
+                    print(f"[OK] Existing bootstrap retained: {path}")
+                    return
+            finally:
+                # Only this attempt's private temporary name is cleaned up.
+                # SIGKILL may leave residue, but no partial authoritative file.
+                try:
+                    os.unlink(temporary, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+            os.fsync(directory)
+            os.fsync(with_dir)
+        finally:
+            os.close(directory)
+    finally:
+        os.close(with_dir)
+    print(f"[OK] Bootstrap ready: {path}; continue with init-config from the manual")
 
 
 def read_bootstrap(path):

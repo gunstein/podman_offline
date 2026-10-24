@@ -3,7 +3,8 @@
 Never import code from an incoming archive. /var/lib/<product> (the root-owned
 installation root, backlog 64) and the independent keyring are root controlled;
 releases/ beneath it is root-only. The account's state/, config/ and storage/
-siblings are never read or written here.
+siblings are never opened by release publication; setup delegates their creation
+to the authenticated host script with its existing privilege drop.
 """
 # ruff: noqa: UP021, UP022
 # Host Python 3.6 requires PIPE/universal_newlines, not capture_output/text.
@@ -14,7 +15,9 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -24,7 +27,13 @@ import time
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    raise SystemExit(
+        "ERROR: release tool requires python3-pyyaml; administrator must install "
+        "that OL9 package from the approved offline repository, then repeat setup"
+    ) from None
 
 BASE = Path("/var/lib")
 OWNER = 0
@@ -174,7 +183,7 @@ def product_lock(product):
         os.close(fd)
 
 
-def command(arguments, allowed=(0,)):
+def command(arguments, allowed=(0,), diagnose=None):
     result = subprocess.run(
         arguments,
         stdout=subprocess.PIPE,
@@ -184,8 +193,86 @@ def command(arguments, allowed=(0,)):
         check=False,
     )
     if result.returncode not in allowed:
+        if diagnose is not None:
+            raise diagnose(result)
         raise CommandError(arguments[0], result.returncode)
     return result
+
+
+def host_preparation_error(result):
+    """Translate bounded, recognized diagnostics; never relay arbitrary output."""
+    phases = {
+        "preflight": "check the documented OS packages, account and active firewalld",
+        "directories": "inspect product directory ownership, links and ACLs; do not recursively chown",
+        "subordinate-ids": "inspect /etc/subuid and /etc/subgid; preserve mappings used by existing containers",
+        "selinux": "check getenforce and semanage fcontext -l -C; resolve the conflicting product label mapping",
+        "user-manager": "check systemctl --failed and the runtime account's user-manager drop-in under /etc/systemd/system",
+        "firewall": "check firewall-cmd --state and the configured HTTPS port",
+    }
+    errors = {
+        "ERROR: Overlap in subuid/subgid": (
+            "overlapping subordinate ID ranges",
+            "have the account administrator resolve overlapping entries in /etc/subuid and /etc/subgid without changing mappings used by existing containers",
+        ),
+        "ERROR: No free subuid/subgid block": (
+            "no free subordinate ID block",
+            "have the account administrator allocate a free block of at least 65536 IDs in /etc/subuid and /etc/subgid",
+        ),
+    }
+    phase = "host-script"
+    reason = None
+    action = "check the documented host prerequisites with the system administrator"
+    # Limit parsing and only return our fixed strings, never paths/values or
+    # arbitrary child output (which can contain private or terminal-control data).
+    for line in (
+        (result.stdout or "")[-32768:] + "\n" + (result.stderr or "")[-32768:]
+    ).splitlines():
+        if line.startswith("HOST-PHASE: ") and line[12:] in phases:
+            phase = line[12:]
+            action = phases[phase]
+        if line in errors:
+            reason, action = errors[line]
+            break
+        if re.fullmatch(
+            r"ERROR: [A-Za-z_][A-Za-z0-9_.-]{0,31} needs at least 65536 subordinate IDs",
+            line,
+        ):
+            reason = "runtime account has fewer than 65536 subordinate IDs"
+            action = phases["subordinate-ids"]
+            break
+        if line.startswith("ERROR: Unexpected SELinux equivalence:"):
+            reason = "conflicting SELinux equivalence"
+            action = phases["selinux"]
+            break
+        if line.startswith(
+            (
+                "ERROR: Installation directory relabeling failed;",
+                "ERROR: Storage-directory relabeling failed;",
+            )
+        ):
+            reason = "installation directory SELinux relabeling failed"
+            action = "have the system administrator check getenforce, product label mappings and directory access; do not retry relabeling as root"
+            break
+        if line.startswith(
+            (
+                "ERROR: Unsafe or inaccessible installation directory;",
+                "ERROR: Installation directory preparation failed;",
+            )
+        ):
+            reason = "unsafe or inaccessible installation directory"
+            action = phases["directories"]
+            break
+    return ReleaseError(
+        "host preparation phase="
+        + phase
+        + " exit="
+        + str(result.returncode)
+        + ": "
+        + (reason or "phase failed")
+        + "; administrator must "
+        + action
+        + "; then rerun the same administrator setup command from manual step 3"
+    )
 
 
 def copy_input(source, target):
@@ -209,43 +296,51 @@ def safe_name(name):
     return parts
 
 
-def extract(snapshot, destination, name, product, component, version):
+def archive_members(archive, name):
+    """One archive-shape validator for extraction and authenticated sizing."""
+    members = archive.getmembers()
+    seen = set()
+    for member in members:
+        parts = safe_name(member.name)
+        require(
+            parts[0] == name and member.name not in seen,
+            "wrong archive root or duplicate member",
+        )
+        require(
+            member.type in (tarfile.DIRTYPE, tarfile.REGTYPE, tarfile.AREGTYPE)
+            and not member.issparse(),
+            "archive link, sparse or special file",
+        )
+        require(
+            not member.mode & 0o7022
+            and not member.pax_headers.keys()
+            - {"mtime", "atime", "ctime", "path", "size"},
+            "unsafe archive metadata",
+        )
+        require(member.name != name + "/" + RECORD, "reserved archive name")
+        seen.add(member.name)
+    require(name in seen, "missing archive root")
+    # Explicit parents prevent a file/directory alias regardless of tar order.
+    for member in members:
+        for parent in Path(member.name).parents:
+            if str(parent) == ".":
+                break
+            require(
+                str(parent) in seen
+                and any(item.name == str(parent) and item.isdir() for item in members),
+                "missing or non-directory parent",
+            )
+    return members
+
+
+def extract(
+    snapshot, destination, name, product, component, version, setup_space=False
+):
     """Validate all members, then copy bytes; tar never creates links or metadata."""
     with tarfile.open(str(snapshot), "r:gz") as archive:
-        members = archive.getmembers()
-        seen = set()
-        for member in members:
-            parts = safe_name(member.name)
-            require(
-                parts[0] == name and member.name not in seen,
-                "wrong archive root or duplicate member",
-            )
-            require(
-                member.type in (tarfile.DIRTYPE, tarfile.REGTYPE, tarfile.AREGTYPE)
-                and not member.issparse(),
-                "archive link, sparse or special file",
-            )
-            require(
-                not member.mode & 0o7022
-                and not member.pax_headers.keys()
-                - {"mtime", "atime", "ctime", "path", "size"},
-                "unsafe archive metadata",
-            )
-            require(member.name != name + "/" + RECORD, "reserved archive name")
-            seen.add(member.name)
-        require(name in seen, "missing archive root")
-        # Explicit parents prevent a file/directory alias regardless of tar order.
-        for member in members:
-            for parent in Path(member.name).parents:
-                if str(parent) == ".":
-                    break
-                require(
-                    str(parent) in seen
-                    and any(
-                        item.name == str(parent) and item.isdir() for item in members
-                    ),
-                    "missing or non-directory parent",
-                )
+        members = archive_members(archive, name)
+        if setup_space:
+            extraction_space(destination, members, name)
         hashes, metadata = {}, {}
         for member in sorted(
             members, key=lambda item: (len(Path(item.name).parts), item.name)
@@ -392,7 +487,7 @@ def read_published(path):
     return record
 
 
-def publish(root, archive, signature, product, component, version):
+def publish(root, archive, signature, product, component, version, setup_space=False):
     name = identity(product, component, version)
     keyring = root / "keyring.gpg"
     ancestors(keyring.parent)
@@ -404,6 +499,8 @@ def publish(root, archive, signature, product, component, version):
         stage = Path(directory)
         snapshot, sig = stage / "archive", stage / "signature"
         print("START: protected release snapshot/authentication", flush=True)
+        if setup_space:
+            check_space([(root, regular_size(archive))])
         copy_input(archive, snapshot)
         copy_input(signature, sig)
         (stage / "gnupg").mkdir(mode=0o700)
@@ -421,7 +518,13 @@ def publish(root, archive, signature, product, component, version):
         print("PASS: archive signature; START: validated extraction", flush=True)
         with diagnostic("validate/extract signed archive", name):
             tree, files, directories, bindings = extract(
-                snapshot, stage, name, product, component, version
+                snapshot,
+                stage,
+                name,
+                product,
+                component,
+                version,
+                setup_space=setup_space,
             )
         record = {
             "name": name,
@@ -509,7 +612,7 @@ def wait_trust(path, removed=None, attempts=30):
 
 
 def integrity_policy():
-    path = Path("/etc/fapolicyd/fapolicyd.conf")
+    path = FAPOLICYD
     ancestors(path.parent)
     protected(path)
     values = re.findall(
@@ -718,6 +821,567 @@ def retire(root, path, old):
     sync_directory(root)
 
 
+RESERVE = 1024 * 1024 * 1024
+JOURNAL = Path("/var/log/journal")
+TMP = Path("/var/tmp")
+SYSTEMD = Path("/etc/systemd/system")
+FAPOLICYD = Path("/etc/fapolicyd/fapolicyd.conf")
+OS_RELEASE = Path("/etc/os-release")
+
+
+def setup_request(args):
+    """Validate explicit selections without touching the host or uploaded files."""
+    require(PRODUCT.fullmatch(args.product), "invalid product")
+    require(
+        args.user and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,31}", args.user),
+        "setup requires --user with an existing login account",
+    )
+    require(
+        args.port is not None and 1024 <= args.port <= 65535,
+        "setup requires --port 1024-65535",
+    )
+    require(
+        args.input_dir is not None
+        and args.input_dir.is_absolute()
+        and ".." not in args.input_dir.parts,
+        "setup requires an absolute --input-dir",
+    )
+    require(
+        args.keyring is not None
+        and args.keyring.is_absolute()
+        and args.key_sha256
+        and re.fullmatch(r"[0-9a-f]{64}", args.key_sha256),
+        "setup requires --keyring and its independent --key-sha256",
+    )
+    require(
+        not any(
+            (
+                args.component,
+                args.version,
+                args.archive,
+                args.signature,
+                args.old_version,
+            )
+        ),
+        "setup uses --release, not single-release arguments",
+    )
+    selected, seen = [], set()
+    for item in args.release:
+        parts = item.split("@")
+        require(len(parts) == 2, "use --release COMPONENT@VERSION")
+        component, version = parts
+        name = identity(args.product, component, version)
+        require(
+            component not in seen,
+            "select one version per component, without duplicates",
+        )
+        seen.add(component)
+        archive = args.input_dir / (name + "-offline.tar.gz")
+        selected.append((component, version, archive, Path(str(archive) + ".asc")))
+    require(
+        selected and args.host_release in args.release,
+        "--host-release must name one of the explicit --release selections",
+    )
+    return selected
+
+
+def regular_size(path):
+    """Inspect a regular input without following its final link or blocking on a FIFO."""
+    with diagnostic("read selected input", path):
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            require(
+                stat.S_ISREG(info.st_mode), "input must be a regular file: " + str(path)
+            )
+            return info.st_size
+        finally:
+            os.close(fd)
+
+
+def input_digest(path):
+    """Hash one held regular input, never reopen a path after checking its type."""
+    fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        require(
+            stat.S_ISREG(os.fstat(stream.fileno()).st_mode), "key input is not regular"
+        )
+        value = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def check_space(allocations):
+    """Sum simultaneous allocations on each filesystem, keeping one reserve."""
+    devices = {}
+    for path, size in allocations:
+        require(
+            not os.statvfs(str(path)).f_flag & os.ST_RDONLY,
+            "read-only filesystem at "
+            + str(path)
+            + "; administrator must provide a writable approved filesystem before retry",
+        )
+        device = path.stat().st_dev
+        previous = devices.get(device, (path, 0))
+        devices[device] = (previous[0], previous[1] + size)
+    for path, size in devices.values():
+        free = shutil.disk_usage(str(path)).free
+        required = size + RESERVE
+        require(
+            free >= required,
+            "space at "
+            + str(path)
+            + ": required="
+            + str(required)
+            + " free="
+            + str(free)
+            + "; administrator must free space or extend this filesystem before retry",
+        )
+
+
+def extraction_space(destination, members, name):
+    """Called only after signature verification and shared member validation."""
+    size = sum(member.size for member in members if member.isfile())
+    images = sum(
+        member.size for member in members if member.name == name + "/images/images.tar"
+    )
+    check_space([(destination, size), (TMP, images), (JOURNAL.parent, 0)])
+
+
+def setting_values(text):
+    """Read simple fapolicyd settings; duplicates are an error, not a guessed policy."""
+    result = {}
+    for line in text.splitlines():
+        match = re.fullmatch(r"\s*([a-z_]+)\s*=\s*(\S+)\s*(?:#.*)?", line)
+        if match:
+            key, value = match.groups()
+            require(key not in result, "ambiguous fapolicyd setting " + key)
+            result[key] = value
+    return result
+
+
+def journal_settings(text):
+    """cat-config supplies systemd's ordered files; track section and source."""
+    values = {"Storage": ("auto", "OL9 default"), "SplitMode": ("uid", "OL9 default")}
+    section, source = "", "journald configuration"
+    for line in text.splitlines():
+        if line.startswith("# /"):
+            source = line[2:]
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+        elif section == "Journal" and not line.startswith(("#", ";")) and "=" in line:
+            key, value = (part.strip() for part in line.split("=", 1))
+            if key in values:
+                values[key] = (value, source)
+    for key, allowed in (("Storage", ("auto", "persistent")), ("SplitMode", ("uid",))):
+        value, source = values[key]
+        require(
+            value in allowed,
+            key
+            + " in "
+            + source
+            + " conflicts with user journals; administrator must approve "
+            + key
+            + "="
+            + allowed[0]
+            + ", apply journald policy and retry setup",
+        )
+    return values
+
+
+def check_journal_path():
+    ancestors(JOURNAL.parent)
+    if os.path.lexists(str(JOURNAL)):
+        info = JOURNAL.lstat()
+        # systemd owns journal ACLs. Read-only ACL grants are normal; the mode's
+        # ACL mask must still exclude every non-owner writer.
+        require(
+            stat.S_ISDIR(info.st_mode)
+            and info.st_uid == OWNER
+            and not info.st_mode & 0o022,
+            "unsafe /var/log/journal; administrator must inspect ownership/links; do not recursively chown",
+        )
+
+
+def check_host_account(args):
+    try:
+        account = pwd.getpwnam(args.user)
+    except KeyError:
+        raise ReleaseError(
+            "account missing; administrator must create "
+            + args.user
+            + " using the organisation's login-account procedure"
+        ) from None
+    require(
+        account.pw_uid >= 1000
+        and not 61184 <= account.pw_uid <= 65535
+        and account.pw_gid != 0,
+        "use an ordinary non-root login account with a per-user journal",
+    )
+    require(
+        account.pw_shell in ("/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh"),
+        "account needs an interactive login shell; administrator must verify the account",
+    )
+    groups = command(["id", "-nG", args.user]).stdout.split()
+    require(
+        not {"root", "wheel", "adm", "systemd-journal"}.intersection(groups),
+        "runtime account has privileged groups; administrator must use an unprivileged account",
+    )
+    result = command(["sudo", "-n", "-l", "-U", args.user], allowed=(0, 1))
+    denial = (
+        r"User " + re.escape(args.user) + r" is not allowed to run sudo on [^\n]+\."
+    )
+    lines = (result.stdout + result.stderr).strip()
+    # OL9 sudo may return zero for a successful policy query with no grants.
+    # The complete explicit denial, not the query exit code, proves no access.
+    require(
+        re.fullmatch(denial, lines),
+        "sudo policy grants access or could not be verified; administrator must check "
+        "sudo -l -U " + args.user + " and use an account with no grants",
+    )
+    root = BASE / args.product
+    require(
+        Path(account.pw_dir) != root,
+        "old service-home layout is not migrated; use a separate ordinary login account",
+    )
+    ancestors(BASE)
+    if os.path.lexists(str(root)):
+        protected(root, directory=True)
+        require(
+            stat.S_IMODE(root.stat().st_mode) == 0o755,
+            "product root must have mode 0755",
+        )
+        for name in ("state", "config", "storage"):
+            path = root / name
+            if os.path.lexists(str(path)):
+                info = path.lstat()
+                require(
+                    stat.S_ISDIR(info.st_mode) and info.st_uid == account.pw_uid,
+                    "foreign or linked "
+                    + str(path)
+                    + "; administrator must inspect; no automatic takeover",
+                )
+    dropins = SYSTEMD / ("user@" + str(account.pw_uid) + ".service.d")
+    if os.path.lexists(str(dropins)):
+        ancestors(dropins)
+        expected = dropins / ("podman-offline-" + args.product + ".conf")
+        for path in dropins.glob("podman-offline-*.conf"):
+            require(
+                path == expected,
+                "account already runs another product; use a separate account",
+            )
+        if os.path.lexists(str(expected)):
+            protected(expected)
+            wanted = (
+                "# Managed by podman-offline scripts/prepare-host.sh for product "
+                + args.product
+                + ".\n[Service]\nEnvironment=XDG_CONFIG_HOME="
+                + str(root / "config")
+                + " XDG_DATA_HOME="
+                + str(root / "storage")
+                + "\n"
+            )
+            require(
+                expected.read_text() == wanted,
+                "conflicting user-manager drop-in; administrator must inspect "
+                + str(expected),
+            )
+    return account
+
+
+def check_host_prerequisites(args, selections, after_lock=False):
+    """Read-only checks before product_lock creates any product paths."""
+    errors = []
+
+    def check(action):
+        try:
+            return action()
+        except (
+            ReleaseError,
+            OSError,
+            ValueError,
+            KeyError,
+            subprocess.TimeoutExpired,
+        ) as error:
+            errors.append(error_message(error))
+            return None
+
+    required = {
+        "gpgv": "gnupg2",
+        "fapolicyd-cli": "fapolicyd",
+        "getenforce": "libselinux-utils",
+        "semanage": "policycoreutils-python-utils",
+        "restorecon": "policycoreutils",
+        "loginctl": "systemd",
+        "systemctl": "systemd",
+        "systemd-analyze": "systemd",
+        "systemd-tmpfiles": "systemd",
+        "journalctl": "systemd",
+        "firewall-cmd": "firewalld",
+        "newuidmap": "shadow-utils-subid",
+        "newgidmap": "shadow-utils-subid",
+        "setpriv": "util-linux",
+        "usermod": "shadow-utils",
+        "getfacl": "acl",
+        "sudo": "sudo",
+        "podman": "podman",
+        "bash": "bash",
+        "python3": "python3",
+        "id": "coreutils",
+        "getent": "glibc-common",
+    }
+    for executable, package in required.items():
+        if shutil.which(executable) is None:
+            errors.append(
+                "missing "
+                + executable
+                + "; administrator must install OL9 package "
+                + package
+                + " from the approved offline repository"
+            )
+
+    def host_policy():
+        os_release = OS_RELEASE.read_text()
+        require(
+            re.search(r"^ID=[\"\']?ol[\"\']?$", os_release, re.MULTILINE)
+            and re.search(
+                r"^VERSION_ID=[\"\']?9(?:\.\d+)?[\"\']?$", os_release, re.MULTILINE
+            ),
+            "Oracle Linux 9 required; use the supported host baseline",
+        )
+        require(
+            command(["getenforce"]).stdout.strip() == "Enforcing",
+            "SELinux must be Enforcing; administrator must correct the host baseline",
+        )
+        for service in ("fapolicyd", "firewalld"):
+            require(
+                command(
+                    ["systemctl", "is-active", service], allowed=(0, 3)
+                ).stdout.strip()
+                == "active",
+                service
+                + " must be active; administrator must start the approved service",
+            )
+        ancestors(FAPOLICYD.parent)
+        protected(FAPOLICYD)
+        policy = setting_values(FAPOLICYD.read_text())
+        require(
+            policy.get("permissive", "0") == "0",
+            "fapolicyd permissive mode is not supported; correct host policy",
+        )
+        require(
+            policy.get("integrity") in ("none", "size", "sha256"),
+            "unsupported fapolicyd integrity policy",
+        )
+        require(
+            policy.get("subj_cache_size", "").isdigit()
+            and int(policy["subj_cache_size"]) >= 16381,
+            "set subj_cache_size = 16381 in /etc/fapolicyd/fapolicyd.conf and restart fapolicyd as administrator before retry",
+        )
+
+    check(host_policy)
+    account = check(lambda: check_host_account(args))
+    check(
+        lambda: journal_settings(
+            command(["systemd-analyze", "cat-config", "systemd/journald.conf"]).stdout
+        )
+    )
+    check(check_journal_path)
+
+    def inputs():
+        sizes = [regular_size(path) for item in selections for path in item[2:]]
+        regular_size(args.keyring)
+        require(
+            input_digest(args.keyring) == args.key_sha256,
+            "keyring digest mismatch; obtain the correct public key and independent SHA256",
+        )
+        retained = BASE / args.product / "keyring.gpg"
+        if os.path.lexists(str(retained)):
+            protected(retained)
+            require(
+                digest(retained) == args.key_sha256,
+                "existing keyring differs; key rotation is a separate administrator action",
+            )
+        check_space([(BASE, sum(sizes)), (TMP, 0), (JOURNAL.parent, 0)])
+
+    check(inputs)
+    require(
+        not errors,
+        (
+            "recheck failed after locking the product anchor (no publication/host work):\n- "
+            if after_lock
+            else "preflight failed before changes:\n- "
+        )
+        + "\n- ".join(errors),
+    )
+    print(
+        "PASS: setup preflight; space checks are lower bounds, not application sizing",
+        flush=True,
+    )
+    return account
+
+
+def prepare_persistent_journal():
+    # Repeat policy/path checks immediately before host-wide effects.
+    journal_settings(
+        command(["systemd-analyze", "cat-config", "systemd/journald.conf"]).stdout
+    )
+    check_journal_path()
+    created = not JOURNAL.exists()
+    if created:
+        JOURNAL.mkdir(mode=0o755)
+    command(["systemd-tmpfiles", "--create", "--prefix", str(JOURNAL)])
+    command(["journalctl", "--flush"])
+    check_journal_path()
+    require(
+        any(JOURNAL.glob("*/*.journal")),
+        "journal flush did not establish persistent storage; administrator must check journald disk/policy, then retry setup",
+    )
+    print(
+        "PASS: persistent journal "
+        + ("created (host-wide)" if created else "verified"),
+        flush=True,
+    )
+
+
+def verify_host_setup(args, account):
+    root = BASE / args.product
+    protected(root, directory=True)
+    for name in ("state", "config", "storage"):
+        path = root / name
+        info = path.lstat()
+        require(
+            stat.S_ISDIR(info.st_mode)
+            and info.st_uid == account.pw_uid
+            and stat.S_IMODE(info.st_mode) == 0o700,
+            "host directory postcondition failed: " + str(path),
+        )
+    require(
+        command(
+            ["loginctl", "show-user", args.user, "-p", "Linger", "--value"]
+        ).stdout.strip()
+        == "yes",
+        "linger is not enabled; retry setup and inspect loginctl as administrator",
+    )
+    environment = command(
+        ["systemctl", "--user", "-M", args.user + "@", "show-environment"]
+    ).stdout.splitlines()
+    for variable, name in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "storage")):
+        require(
+            variable + "=" + str(root / name) in environment,
+            "user manager environment postcondition failed; rerun setup as administrator",
+        )
+    for scope in ([], ["--permanent"]):
+        require(
+            command(
+                ["firewall-cmd"] + scope + ["--query-port=" + str(args.port) + "/tcp"],
+                allowed=(0, 1),
+            ).returncode
+            == 0,
+            "HTTPS firewall port is not active/permanent; retry setup as administrator",
+        )
+    check_journal_path()
+    require(
+        any(JOURNAL.glob("*/*.journal")),
+        "persistent journal is unavailable; retry setup",
+    )
+
+
+def setup_host(args, selections):
+    """Compose existing authorities; never create runtime install receipts."""
+    check_host_prerequisites(args, selections)
+    with product_lock(args.product) as root:
+        account = check_host_prerequisites(args, selections, after_lock=True)
+        provision_key(root, args.keyring, args.key_sha256)
+        for component, version, archive, signature in selections:
+            with diagnostic(
+                "prepare selected release",
+                Path(identity(args.product, component, version)),
+            ):
+                path = publish(
+                    root,
+                    archive,
+                    signature,
+                    args.product,
+                    component,
+                    version,
+                    setup_space=True,
+                )
+                enroll(path)
+            print("PASS: release ready " + str(path), flush=True)
+        component, version = args.host_release.split("@")
+        host = release_path(args.product, component, version)
+        record = published(host)
+        script = host / "scripts/prepare-host.sh"
+        require(
+            "scripts/prepare-host.sh" in record["files"]
+            and digest(script) == record["files"]["scripts/prepare-host.sh"]["sha256"],
+            "selected host release has no authenticated host script; obtain the correct signed bundle",
+        )
+        prepare_persistent_journal()
+        command(
+            [
+                "/usr/bin/bash",
+                str(script),
+                "--port",
+                str(args.port),
+                "--user",
+                args.user,
+            ],
+            diagnose=host_preparation_error,
+        )
+        print("PASS: existing host preparation", flush=True)
+        verify_host_setup(args, account)
+        print(
+            "PASS: host setup; product="
+            + args.product
+            + " account="
+            + args.user
+            + " HTTPS="
+            + str(args.port)
+            + "; application installation is next",
+            flush=True,
+        )
+        print(
+            "NEXT: log in with ssh as "
+            + args.user
+            + ", then run:\n"
+            + "bash "
+            + shlex.quote(str(host / "deploy.sh"))
+            + " init-layout",
+            flush=True,
+        )
+
+
+def provision_key(root, keyring, key_sha256):
+    require(
+        keyring is not None
+        and key_sha256 is not None
+        and re.fullmatch(r"[0-9a-f]{64}", key_sha256),
+        "keyring and independent key SHA256 required",
+    )
+    target = root / "keyring.gpg"
+    with tempfile.TemporaryDirectory(prefix=".key-", dir=str(root)) as directory:
+        snapshot = Path(directory) / "keyring"
+        copy_input(keyring, snapshot)
+        require(
+            digest(snapshot) == key_sha256,
+            "keyring authentication mismatch",
+        )
+        snapshot.chmod(0o644)
+        if os.path.lexists(str(target)):
+            protected(target)
+            require(digest(target) == digest(snapshot), "existing keyring differs")
+        else:
+            with snapshot.open("rb") as stream:
+                os.fsync(stream.fileno())
+            os.rename(str(snapshot), str(target))
+            sync_directory(root)
+    print("PASS: independent keyring provisioned")
+
+
 def release_path(product, component, version):
     return BASE / product / "releases" / identity(product, component, version)
 
@@ -726,7 +1390,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "operation",
-        choices=("provision-key", "publish", "prepare", "wait", "withdraw", "retire"),
+        choices=(
+            "provision-key",
+            "publish",
+            "prepare",
+            "wait",
+            "withdraw",
+            "retire",
+            "setup",
+        ),
     )
     parser.add_argument("--product", required=True)
     parser.add_argument("--component")
@@ -736,11 +1408,57 @@ def main():
     parser.add_argument(
         "--keyring",
         type=Path,
-        help="input keyring for provision-key only; publish/prepare always use the pinned product key",
+        help="input keyring for provision-key/setup only; publish/prepare always use the pinned product key",
     )
     parser.add_argument("--key-sha256")
     parser.add_argument("--old-version")
+    parser.add_argument("--user")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--input-dir", type=Path)
+    parser.add_argument("--release", action="append", default=[])
+    parser.add_argument("--host-release")
     args = parser.parse_args()
+    setup_fields = (
+        args.user,
+        args.port,
+        args.input_dir,
+        args.release,
+        args.host_release,
+    )
+    if args.operation != "setup" and any(
+        value is not None and value != [] for value in setup_fields
+    ):
+        parser.error("setup arguments are only accepted for setup")
+    if args.operation == "setup":
+        try:
+            request = setup_request(args)
+        except ReleaseError as error:
+            parser.error(str(error))
+        require(
+            os.geteuid() == 0,
+            "root required; run the setup command as administrator with sudo",
+        )
+        os.umask(0o022)
+        # No caller-controlled shell startup, Python path or executable search.
+        os.environ.clear()
+        os.environ.update(PATH="/usr/sbin:/usr/bin:/sbin:/bin", LC_ALL="C")
+        try:
+            setup_host(args, request)
+        except (
+            ReleaseError,
+            OSError,
+            ValueError,
+            KeyError,
+            tarfile.TarError,
+            subprocess.TimeoutExpired,
+            yaml.YAMLError,
+        ) as error:
+            raise ReleaseError(
+                "setup: "
+                + error_message(error)
+                + "; fix the named step using docs/PRODUCTION-INSTALL.md, then rerun the same administrator setup command (completed releases are retained)"
+            ) from None
+        return
     require(os.geteuid() == 0, "root required")
     if args.operation != "provision-key":
         identity(args.product, args.component, args.version)
@@ -752,34 +1470,7 @@ def main():
     context = diagnostic(args.operation, BASE / args.product)
     with context, product_lock(args.product) as root:
         if args.operation == "provision-key":
-            require(
-                args.keyring is not None
-                and args.key_sha256 is not None
-                and re.fullmatch(r"[0-9a-f]{64}", args.key_sha256),
-                "keyring and independent key SHA256 required",
-            )
-            target = root / "keyring.gpg"
-            with tempfile.TemporaryDirectory(
-                prefix=".key-", dir=str(root)
-            ) as directory:
-                snapshot = Path(directory) / "keyring"
-                copy_input(args.keyring, snapshot)
-                require(
-                    digest(snapshot) == args.key_sha256,
-                    "keyring authentication mismatch",
-                )
-                snapshot.chmod(0o644)
-                if os.path.lexists(str(target)):
-                    protected(target)
-                    require(
-                        digest(target) == digest(snapshot), "existing keyring differs"
-                    )
-                else:
-                    with snapshot.open("rb") as stream:
-                        os.fsync(stream.fileno())
-                    os.rename(str(snapshot), str(target))
-                    sync_directory(root)
-            print("PASS: independent keyring provisioned")
+            provision_key(root, args.keyring, args.key_sha256)
             return
         path = release_path(args.product, args.component, args.version)
         if args.operation in ("publish", "prepare"):

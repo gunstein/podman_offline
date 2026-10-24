@@ -185,7 +185,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65, 66 and 67 (high priority, in that order), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 66 and 67 (high priority, in that order), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -412,14 +412,24 @@ application refactoring or unrelated backlog cleanup belongs in this task.
 
 ## 65. One-command host preparation and a short operator guide
 
-Status: planned, high priority (2026-10-23); implementation plan written
-2026-10-24, not implemented. Read the
+Status: implemented on `feature/65-host-setup` with local regression coverage
+(2026-10-24). The first real OL9 run at `8559a2a` stopped in preflight: sudo
+reported explicit denial with exit 0, which setup incorrectly rejected. The
+follow-up fix has regression coverage. All nine scenarios in lab series
+`host65-20261024-144821-*` passed at `2d36d71`; unassisted human
+verification remains outstanding under item 68. Review follow-up fixes literal manual
+fail-stop behavior, interruption-safe bootstrap publication and bounded host
+phase/error diagnostics, with regression coverage and a revised AI operator
+assessment.
+[Implementation, evidence and lab commands](acceptance/HOST-SETUP.md). Read the
 [implementation plan](docs/HOST-SETUP-PLAN.md) before starting: it fixes the CLI,
 bootstrap trust, journal policy, scope against 66/67, failure/retry behavior and
-test gates. Found in the manual backlog 64 run
+test gates. The focused `--host-setup` scenario uses the manual blocks and real
+runtime SSH without sudo. `deploy.sh init-layout` replaces manual bootstrap-file
+creation. The complete reboot/upgrade SSH path remains item 67. Found in the manual backlog 64 run
 ([report](acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)).
-The operator's verdict: "Klargjøringen av maskinen må bli enklere. Jeg forsto
-ingenting av hva som foregikk." Installation worked only with step-by-step help.
+The operator's verdict: "Host preparation must be simpler. I did not
+understand what was happening." (translated from Norwegian) Installation worked only with step-by-step help.
 
 Today the administrator reconstructs the order from the guide, README and the
 PFX guide: fapolicyd cache, persistent journal, transfer area, checksums,
@@ -480,6 +490,38 @@ is outstanding; the assisted 2026-10-23 run does not qualify. The current
 [AI assessment](acceptance/OPERATOR-REVIEW.md) has findings; repeat it on the final
 manual. Automated success alone does not make 65 customer-ready.
 
+## 68. Human operator trial on a fresh VM
+
+Status: outstanding verification (2026-10-24). Required before declaring the
+operator flow customer-ready; does not block merging the implementation of 65.
+Coordinate with items 65–67 and repeat affected tasks when their manual changes.
+
+A person with limited Linux experience must follow the English
+[production manual](docs/PRODUCTION-INSTALL.md) on a fresh disposable VM at its
+declared OS/account baseline, without oral help or internal architecture
+knowledge. Supply only the documented delivery, substitution worksheet and
+manual. An observer records events without coaching or silently repairing state.
+
+Cover transfer and trusted tool bootstrap, prerequisite diagnosis/remedy, first
+setup, repeated setup and continuation after an interruption, then real SSH login
+as the runtime user without sudo, configuration/credential delivery, installation,
+status and safe journal access. Include install sets and reboot/upgrade/retire
+when items 66–67 provide those procedures. Record unsupported tasks as pending.
+
+Record code/manual revision, VM starting state, relevant participant experience,
+elapsed and active time, machine waits, commands, edits, account switches, errors,
+stopping points and every requested explanation. Do not record sensitive values.
+If assistance is needed, mark the task assisted, fix the manual or workflow and
+repeat the affected task without help. Assess whether the tool needs simplifying
+rather than merely adding more instructions.
+
+Store the result in [the operator assessment](acceptance/OPERATOR-REVIEW.md),
+following the [mandatory review criteria](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review).
+Keep AI walkthrough, automated acceptance and human outcomes separate. The
+assisted 2026-10-23 trial and green automated lab runs do not satisfy this item.
+Completion requires an unassisted pass for each claimed task, with remaining
+scope and usability findings explicitly recorded.
+
 ## 66. Install sets: several signed bundles through one entry point
 
 Status: planned, high priority (2026-10-23), after item 65. Requested by the
@@ -526,7 +568,10 @@ The [current operator baseline](acceptance/OPERATOR-REVIEW.md) records the gaps.
 
 ## 67. Acceptance scenario with a real ssh login as the runtime account
 
-Status: planned, high priority (2026-10-23). The automated matrix runs runtime
+Status: planned, high priority (2026-10-23). Item 65 now supplies a focused
+manual-matched setup/initial-install SSH path; this item must extend it through
+logout/reboot/upgrade/retirement and retention assertions. Its real lab execution
+and human usability evidence are still pending. The ordinary automated matrix runs runtime
 commands through the administrator's `sudo -u`; it passed while a real login
 could not read its user journal on a fresh host (manual backlog 64 run).
 
@@ -717,85 +762,85 @@ results and the retained 0.2.0 upgrade gate. The original task is preserved belo
 This task includes the retained 0.2.0 upgrade scenario already tracked in item 5;
 implement it once and cross-reference its evidence rather than duplicating it.
 
-Suppler testdekningen i `gunstein/podman_offline` før den planlagte refaktoreringen av deploy-koden.
+Supplement test coverage in `gunstein/podman_offline` before the planned deploy-code refactor.
 
-Målet er å etablere en tydelig, testet baseline for eksisterende oppførsel. Dette er en avgrenset testoppgave, ikke selve refaktoreringen.
+The goal is to establish a clear, tested baseline for existing behaviour. This is a bounded testing task, not the refactor itself.
 
-### 1. Kartlegg eksisterende dekning og kjør baseline
+### 1. Map existing coverage and run the baseline
 
-Les dagens kode, tester og verifikasjonsrapporter. Kontroller særlig:
+Read the current code, tests and verification reports. In particular, check:
 
 - `tests/`
 - `acceptance/`
 - `deploy.py`
 - `bundle.py`
-- Rotkommandoene og bundle-innholdet.
+- Root commands and bundle contents.
 
-Kjør eksisterende produkt- og acceptance-harness-tester før endringer. Registrer commit og resultater.
+Run existing product and acceptance-harness tests before changes. Record the commit and results.
 
-Gjenbruk eksisterende fixtures og testverktøy. Ikke dupliser tester som allerede dekker kravene nedenfor.
+Reuse existing fixtures and test tools. Do not duplicate tests already covering the requirements below.
 
-### 2. Test reell oppgradering fra 0.2.0
+### 2. Test a real upgrade from 0.2.0
 
-Legg til et målrettet acceptance-scenario som oppgraderer en faktisk 0.2.0-installasjon til dagens versjon.
+Add a focused acceptance scenario upgrading an actual 0.2.0 installation to the current version.
 
-Bruk en identifisert historisk commit for gammel kode og gamle images. Ikke simuler gammel release ved bare å endre `VERSION` i dagens kode.
+Use an identified historical commit for old code and images. Do not simulate an old release by changing only `VERSION` in current code.
 
 Scenario:
 
-1. Bygg og installer gammel app1/core og app2.
-2. Opprett brukerdata gjennom eksisterende e2e-/markørmekanisme.
-3. Registrer eksisterende versjoner, config, credential-filer, databasevolumer og relevante tjenesteobservasjoner.
-4. Følg dagens dokumenterte manuelle oppgraderingssteg: legg til nødvendige DB-felter og `GENERATED_SECRETS`-oppføringer i persistent config.
-5. Overfør og installer ny app1/core-bundle.
-6. Verifiser at app1/core fungerer, og at gammel app2 fortsatt fungerer uten utilsiktede endringer.
-7. Oppgrader deretter app2 og verifiser hele installasjonen.
+1. Build and install old app1/core and app2.
+2. Create user data through the existing e2e/marker mechanism.
+3. Record existing versions, config, credential files, database volumes and relevant service observations.
+4. Follow the currently documented manual upgrade steps: add required DB fields and `GENERATED_SECRETS` entries to persistent config.
+5. Transfer and install the new app1/core bundle.
+6. Verify that app1/core works and old app2 still works without unintended changes.
+7. Then upgrade app2 and verify the entire installation.
 
-Kontroller spesielt:
+In particular, check:
 
-- Eksisterende databasepassord beholdes byte-for-byte.
-- Databasevolumer beholdes, og eksisterende brukerdata er tilgjengelige.
-- Persistent config endres bare gjennom de eksplisitte operatørstegene.
-- Ingen credentials regenereres eller databasebrukere endres automatisk.
-- App1-oppgraderingen ikke endrer app2s tjeneste, versjon, config eller credentials.
-- Innlogging og databaseoperasjoner fungerer etter hvert oppgraderingstrinn.
-- Trust for gammel release fjernes først etter vellykket verifikasjon, uten å berøre sibling-bundles.
+- Existing database passwords are retained byte-for-byte.
+- Database volumes are retained and existing user data remains available.
+- Persistent config changes only through explicit operator steps.
+- No credentials are regenerated or database users changed automatically.
+- The app1 upgrade does not change app2's service, version, config or credentials.
+- Login and database operations work after each upgrade stage.
+- Trust for the old release is removed only after successful verification, without affecting sibling bundles.
 
-Test også at manglende nødvendige configtillegg avvises før image-operasjoner og endringer i installert tilstand. Dette kan dekkes av en fokusert lokal test dersom eksisterende dekning er tilstrekkelig.
+Also test that missing required config additions are rejected before image operations or installed-state changes. A focused local test may cover this if existing coverage is sufficient.
 
-Hold scenarioet avgrenset. Ikke gjenta hele matrisen av reboot-, crash- og hang-tester hvis disse allerede dekkes separat.
+Keep the scenario bounded. Do not repeat the entire reboot, crash and hang matrix if those cases are already covered separately.
 
-### 3. Lås feiloppførselen under installasjon
+### 3. Establish installation failure behaviour
 
-Undersøk eksisterende dekning og suppler for:
+Review existing coverage and supplement it for:
 
-- Feil under `podman load`.
-- Feil eller manglende image ved `podman image exists`.
-- Feil ved restart eller `is-active` for en berørt systemd-tjeneste.
+- Failure during `podman load`.
+- Failure or a missing image during `podman image exists`.
+- Failure during restart or `is-active` for an affected systemd service.
 
-Bruk eksisterende komponentinstallasjon som utgangspunkt.
+Use existing component installation as the starting point.
 
-Test relevante observasjoner:
+Test relevant observations:
 
-- Persistent config og credentials.
-- Importarkiver.
-- Route- og OIDC-klientregistreringer.
-- Quadlet- og YAML-filer.
-- Versjonsmarkører.
-- Hvilke tjenester som er forsøkt restartet, og i hvilken rekkefølge.
-- At upåvirkede sibling-komponenter beholdes.
+- Persistent config and credentials.
+- Import archives.
+- Route and OIDC client registrations.
+- Quadlet and YAML files.
+- Version markers.
+- Which services were targeted for restart, and in which order.
+- Preservation of unaffected sibling components.
 
-Skille mellom feil før og etter at installasjonen begynner å endre tilstand. Ikke anta at installasjon er atomisk eller at rollback allerede finnes.
+Distinguish failures before and after installation begins changing state. Do not assume installation is atomic or rollback already exists.
 
-Ved servicefeil skal testen beskrive den faktiske delvis gjennomførte tilstanden og kontrollere at videre steg stopper, og at versjonsmarkører ikke feilaktig hevder en fullført installasjon.
+For a service failure, describe the actual partial state and check that later steps stop and version markers do not falsely claim a completed installation.
 
-Bruk konkrete feilscenarioer fremfor tester som bare gjentar interne funksjonskall.
+Use concrete failure scenarios rather than tests that merely repeat internal function calls.
 
-Hvis du finner en eksisterende feil, dokumenter den med en fokusert reproduksjon. Ikke lås en kjent feil som ønsket oppførsel eller gjør urelaterte produktendringer uten å synliggjøre dem.
+If you find an existing bug, document it with a focused reproduction. Do not lock in a known bug as desired behaviour or make unrelated product changes without identifying them.
 
-### 4. Test rotkommandoer fra en annen arbeidsmappe
+### 4. Test root commands from another working directory
 
-Legg til integrasjonstester som starter de faktiske wrapper-scriptene fra en arbeidsmappe utenfor checkout/release:
+Add integration tests launching the actual wrapper scripts from a working directory outside the checkout/release:
 
 ```text
 ./deploy.sh prepare
@@ -805,63 +850,63 @@ Legg til integrasjonstester som starter de faktiske wrapper-scriptene fra en arb
 ./build-bundle.sh
 ```
 
-Bruk absolutt sti til wrapperen i testen.
+Use the wrapper's absolute path in the test.
 
-Test kommandoene i riktig kontekst:
+Test commands in the appropriate context:
 
-- `prepare` og bundling fra kildekoden.
-- `init-config`, `install` og `uninstall` fra en utpakket bundle.
+- `prepare` and bundling from source.
+- `init-config`, `install` and `uninstall` from an unpacked bundle.
 
-Verifiser at ressursstier og configvalg fungerer uavhengig av callerens arbeidsmappe, og at output ikke utilsiktet skrives dit.
+Verify that resource paths and config selection work independently of the caller's working directory, and that output is not accidentally written there.
 
-Bruk isolerte midlertidige mapper og eksisterende stubs for Podman/systemd der det er hensiktsmessig. Ikke kjør produksjonskommandoer mot utviklerens virkelige hjem eller containermiljø.
+Use isolated temporary directories and existing Podman/systemd stubs where appropriate. Do not run production commands against the developer's actual home or container environment.
 
-Der realistisk testing krever tjenestebruker, brukerhjem og systemd-runtime, legg kontrollen i det eksisterende autoriserte labscenarioet fremfor å bygge et komplisert nytt mock-rammeverk.
+Where realistic testing requires a service account, user home and systemd runtime, put the check in the existing authorised lab scenario rather than building a complicated new mock framework.
 
-### 5. Avgrensning
+### 5. Scope
 
-Ikke implementer:
+Do not implement:
 
-- Oppdeling i `deployment/`-pakken.
-- Ny CLI-arkitektur.
+- Extraction into the `deployment/` package.
+- A new CLI architecture.
 - Directory trust for fapolicyd.
-- Passordrotasjon.
-- Automatisk config- eller databasemigrering.
-- Ny rollback-mekanisme.
+- Password rotation.
+- Automatic config or database migration.
+- A new rollback mechanism.
 
-Tester for den kommende pakkestrukturen, `python -B`, bytecode-ekskludering og directory trust hører til refaktoreringsoppgaven.
+Tests for the future package structure, `python -B`, bytecode exclusion and directory trust belong to the refactoring task.
 
-Behold eksisterende sikkerhetskontroller og testassertions. Ikke svekk dem for å få nye scenarioer til å passere.
+Retain existing security checks and test assertions. Do not weaken them to make new scenarios pass.
 
-### 6. Verifikasjon
+### 6. Verification
 
-Kjør etter endringene:
+After changes, run:
 
-- Alle produkttester.
-- Alle acceptance-harness-tester.
-- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller med prosjektets eksisterende oppsett.
+- All product tests.
+- All acceptance-harness tests.
+- Relevant ruff, format, pyright, vermin and shellcheck checks using the project's existing setup.
 
-Behold Python 3.6-kompatibilitet for host-verktøy og produkttester.
+Retain Python 3.6 compatibility for host tools and product tests.
 
-Kjør det nye reelle oppgraderingsscenarioet dersom det etablerte labmiljøet er tilgjengelig og kjøring er autorisert. Ikke reset eller endre andre miljøer.
+Run the new real upgrade scenario if the established lab is available and execution is authorised. Do not reset or change other environments.
 
-Skill tydelig mellom lokale tester, harness-tester og faktiske målmaskinkjøringer. Hvis labkjøring ikke er mulig, implementer scenarioet og rapporter at oppgraderingen fortsatt ikke er operasjonelt verifisert.
+Clearly distinguish local tests, harness tests and actual target-host runs. If a lab run is unavailable, implement the scenario and report that the upgrade remains operationally unverified.
 
-### 7. Leveranse
+### 7. Delivery
 
-Rapporter kort:
+Briefly report:
 
-1. Baseline-commit og testresultater før endringer.
-2. Hvilken dekning som allerede fantes.
-3. Nye tester og hvilke konkrete feil de beskytter mot.
-4. Historisk og ny revision brukt i upgrade-scenarioet.
-5. Testresultater, inkludert faktisk labkjøring.
-6. Eventuelle oppdagede produktfeil og verifikasjonshull.
-7. Om baseline er tilstrekkelig til å starte refaktoreringen.
+1. Baseline commit and test results before changes.
+2. Coverage that already existed.
+3. New tests and the concrete failures they guard against.
+4. Historical and new revisions used in the upgrade scenario.
+5. Test results, including actual lab execution.
+6. Any product bugs found and verification gaps.
+7. Whether the baseline is sufficient to begin refactoring.
 
-Oppdater relevant testdokumentasjon med garantiene og begrensningene.
+Update relevant test documentation with guarantees and limitations.
 
-Foretrekk noen få sterke tester fremfor mange overlappende tester.
+Prefer a few strong tests over many overlapping tests.
 
 ## 1. Deploy maintainability refactor
 
@@ -1063,40 +1108,40 @@ still contains Identity until item 9. The original task below is retained;
 compatibility boundary and checks. The later separate-bundle clarification takes
 precedence over the original embedded-platform assumptions in this task.
 
-Gi den delte komponenten `core` navnet `platform` i `gunstein/podman_offline`.
+Rename the shared `core` component to `platform` in `gunstein/podman_offline`.
 
-Dette er en avgrenset navneendring. Behold arkitektur, funksjonalitet, sikkerhetskontroller og komponentisolasjon. Ikke gjennomfør modulrefaktoreringen samtidig.
+This is a bounded rename. Retain architecture, functionality, security checks and component isolation. Do not perform the module refactor at the same time.
 
-### 1. Mål og begrepsbruk
+### 1. Goal and terminology
 
-Bruk `platform` om den delte komponenten som inneholder Identity, identitetsdatabasen og HTTPS-proxyen.
+Use `platform` for the shared component containing Identity, the identity database and the HTTPS proxy.
 
-App1, app2 og help skal fortsatt ha samme avhengighet til denne komponenten som de i dag har til core.
+App1, app2 and help must retain the same dependency on this component that they currently have on core.
 
-Omdøpingen skal være konsekvent i aktiv kode, konfigurasjon, manifester, tester og dokumentasjon.
+Apply the rename consistently across active code, config, manifests, tests and documentation.
 
-### 2. Kartlegg alle berørte navn før endringer
+### 2. Inventory affected names before changes
 
-Undersøk blant annet:
+Inspect at least:
 
 - `components/core/`.
 - `CORE_VERSION`.
-- Bundle-definisjoner og descriptors.
-- Funksjoner, variabler og feilmeldinger.
-- Persistent komponentmappe og installed-markør.
-- Quadlet-/systemd-navn.
-- Pod-, Secret-, PVC- og ConfigMap-navn.
-- Hostnames og `DB_HOST`.
-- Registrerings- og importarkivnavn.
-- Sertifikatgenerering og tilhørende filstier.
-- Dev-script, acceptance-script og fixtures.
-- README, verifikasjonsrapporter og backlog.
+- Bundle definitions and descriptors.
+- Functions, variables and error messages.
+- Persistent component directory and installed marker.
+- Quadlet/systemd names.
+- Pod, Secret, PVC and ConfigMap names.
+- Hostnames and `DB_HOST`.
+- Registration and import archive names.
+- Certificate generation and associated paths.
+- Dev scripts, acceptance scripts and fixtures.
+- README, verification reports and backlog.
 
-Skill mellom navn som tilhører komponenten, eksterne begreper og historiske referanser. Ikke bruk ukritisk global søk-og-erstatt.
+Distinguish component-owned names, external concepts and historical references. Do not apply an indiscriminate global replacement.
 
-### 3. Ønsket navngivning
+### 3. Intended names
 
-Bruk blant annet:
+Use names including:
 
 ```text
 components/platform/
@@ -1110,7 +1155,7 @@ myproduct-platform.kube
 myproduct-platform.yaml
 ```
 
-Ressurser med komponentprefikset `core-` skal få `platform-`, eksempelvis:
+Resources with the `core-` component prefix become `platform-`, for example:
 
 ```text
 platform-identity
@@ -1121,23 +1166,23 @@ platform-routes
 platform-clients
 ```
 
-Oppdater alle referanser til de omdøpte ressursene.
+Update every reference to renamed resources.
 
-Behold navn som ikke trenger å endres:
+Retain names that do not need to change:
 
-- Produktnavnet `myproduct`.
-- Det delte nettverket `myproduct`.
-- App1/app2/help og deres egne ressurser.
-- Offentlige URL-paths som `/identity/`, `/app1/`, `/app2/` og `/help/`.
-- Databasebrukere og databasenavn, eksempelvis `identity`.
-- OIDC-klient-ID-er og scopes.
-- Image-repositorier som ikke inneholder komponentnavnet.
+- Product name `myproduct`.
+- Shared network `myproduct`.
+- App1/app2/help and their own resources.
+- Public URL paths such as `/identity/`, `/app1/`, `/app2/` and `/help/`.
+- Database users and database names, for example `identity`.
+- OIDC client IDs and scopes.
+- Image repositories not containing the component name.
 
-Ikke endre credentials eller sertifikatinnhold bare fordi komponenten får nytt navn.
+Do not change credentials or certificate contents merely because the component is renamed.
 
-### 4. Bundle-modell og kommandoer
+### 4. Bundle model and commands
 
-Bundle-modellen skal bli:
+The bundle model becomes:
 
 ```yaml
 app1: [platform, app1]
@@ -1145,7 +1190,7 @@ app2: [platform, app2]
 help: [help]
 ```
 
-Behold de tre eksisterende bundle-typene og deres filnavnmønstre:
+Retain the three existing bundle types and filename patterns:
 
 ```text
 myproduct-app1-<version>-offline.tar.gz
@@ -1153,9 +1198,9 @@ myproduct-app2-<version>-offline.tar.gz
 myproduct-help-<version>-offline.tar.gz
 ```
 
-Det skal ikke opprettes en separat platform-bundle.
+Do not create a separate platform bundle.
 
-Behold rotkommandoene. Oppdater komponentargumentene:
+Retain root commands. Update component arguments:
 
 ```sh
 ./deploy.sh init-config platform
@@ -1163,421 +1208,420 @@ Behold rotkommandoene. Oppdater komponentargumentene:
 ./deploy.sh uninstall platform --delete-data
 ```
 
-Gamle `core`-argumenter skal ikke utføre utilsiktede operasjoner. Gi en tydelig melding om nytt navn dersom de brukes.
+Old `core` arguments must not perform unintended operations. Give a clear message about the new name if they are used.
 
-Platform skal fortsatt:
+Platform must still:
 
-- Installeres sammen med første app.
-- Beholdes ved lik platform-versjon, med eksisterende regler for registreringsendringer og restart.
-- Oppgraderes ved nyere platform-versjon.
-- Avvise nedgradering.
-- Ikke kunne avinstalleres mens app1, app2 eller help krever den.
+- Be installed with the first app.
+- Be retained at equal platform version, using existing registration-change and restart rules.
+- Be upgraded for a newer platform version.
+- Reject downgrades.
+- Refuse uninstallation while app1, app2 or help requires it.
 
-### 5. Eksisterende installasjoner og migrering
+### 5. Existing installations and migration
 
-Omdøpingen berører persistente ressursnavn. Den må ikke føre til at en eksisterende database erstattes av et nytt tomt volum uten at operatøren forstår det.
+The rename affects persistent resource names. It must not silently replace an existing database with a new empty volume.
 
-Denne oppgaven gir ikke tillatelse til å slette, resette eller migrere eksisterende produksjonsstate automatisk.
+This task does not authorise automatic deletion, reset or migration of existing production state.
 
-Bruk følgende avgrensning:
+Use these boundaries:
 
-- Implementer den nye navngivningen for nye installasjoner.
-- Ikke implementer automatisk migrering fra `core` til `platform`.
-- Oppdag gammel core-layout og avvis operasjoner som ellers kan opprette en parallell platform-installasjon eller påvirke gammel state.
-- Feil før generering av nye secrets, image-operasjoner, skriving av installert config/registreringer eller endringer i tjenester.
-- Gi en tydelig melding om at gammel installasjon krever en separat migreringsprosedyre eller en eksplisitt ny installasjon.
-- Avvis også blandet core/platform-state fremfor å gjette hvilken som er autoritativ.
+- Implement the new naming for new installations.
+- Do not implement automatic migration from `core` to `platform`.
+- Detect old core layout and reject operations that could create a parallel platform installation or affect old state.
+- Fail before new secret generation, image operations, installed config/registration writes or service changes.
+- Clearly explain that the old installation requires a separate migration procedure or an explicit fresh installation.
+- Also reject mixed core/platform state rather than guessing which is authoritative.
 
-Kontrollen må ikke bare bruke installed-markøren. Undersøk relevante gamle config-/tjenestefiler og persistente databasevolumer, siden avinstallasjon kan ha beholdt data.
+Do not rely only on the installed marker. Inspect relevant old config/service files and persistent database volumes, because uninstall may have retained data.
 
-Hold kontrollen konkret og avgrenset til produktets kjente ressurser. Feil ved nødvendige tilstandskontroller skal ikke tolkes som fravær.
+Keep the check concrete and bounded to known product resources. Failure of a required state check must not be treated as absence.
 
-Behold gamle filer og volumer urørt ved avvisning. Ikke legg til en automatisk «cleanup»-funksjon.
+Leave old files and volumes untouched on rejection. Do not add automatic cleanup.
 
-Dokumenter kompatibilitetsbruddet tydelig. Eksisterende installasjoner skal fortsatt kunne administreres med sin tidligere release.
+Clearly document the compatibility break. Existing installations must remain manageable with their previous release.
 
-### 6. Versjonering
+### 6. Versioning
 
-Ikke publiser endringen under samme releaseversjon som eksisterende layout.
+Do not publish the change under the same release version as the existing layout.
 
-Oppdater `VERSION` og den nye `PLATFORM_VERSION` i tråd med prosjektets versjoneringspraksis, og forklar at navneendringen påvirker oppgraderingskompatibilitet.
+Update `VERSION` and the new `PLATFORM_VERSION` according to project conventions, and explain the effect on upgrade compatibility.
 
-Ikke endre image-tags dersom image-innholdet er uendret. Hvis image-innhold faktisk må endres, bruk nye tags og behold prinsippet om immutable release-tags.
+Do not change image tags if image content is unchanged. If image content must change, use new tags and retain immutable release tags.
 
-### 7. Tester
+### 7. Tests
 
-Oppdater eksisterende tester til den nye navngivningen uten å svekke assertions.
+Update existing tests to the new naming without weakening assertions.
 
-Verifiser minst:
+Verify at least:
 
-- Korrekte platform-prefikser og referanser i rendret YAML.
-- Initialisering av platform-config.
-- App-config arver de riktige felles verdiene fra platform.
-- App1 og app2 kan hver være første installerte app.
-- Help alene avvises.
-- Lik, nyere og eldre `PLATFORM_VERSION` håndteres som før.
-- Help-only og app-only upgrade beholder upåvirkede komponenter.
-- Databasepassord og databasevolumer er koblet korrekt.
-- Platform-uninstall blokkeres når dependenter finnes.
-- `--delete-data` bare retter seg mot valgt komponents ressurser.
-- Bundle-innhold, image-utvalg og checksums er korrekte.
-- Gammel core-layout og blandet layout avvises uten endringer.
-- Gamle core-databasevolumer oppdages selv om installed-markøren mangler.
-- Feil ved tilstandskontroll gir kontrollert avvisning.
+- Correct platform prefixes and references in rendered YAML.
+- Platform config initialisation.
+- App config inherits the correct shared values from platform.
+- App1 and app2 can each be the first installed app.
+- Help alone is rejected.
+- Equal, newer and older `PLATFORM_VERSION` are handled as before.
+- Help-only and app-only upgrades retain unaffected components.
+- Database passwords and volumes are linked correctly.
+- Platform uninstall is blocked when dependents exist.
+- `--delete-data` targets only the selected component's resources.
+- Bundle contents, image selection and checksums are correct.
+- Old core layout and mixed layout are rejected without changes.
+- Old core database volumes are detected even without an installed marker.
+- State-check failures produce controlled rejection.
 
-Behold historiske fixtures og historiske release-kilder når de faktisk skal representere gammel kode.
+Retain historical fixtures and release sources when they are intended to represent old code.
 
-En test som tidligere oppgraderte fra en core-basert release kan ikke bare gis nye navn og fortsatt hevde å teste den historiske oppgraderingen. Behold relevant historisk dekning, men test tydelig avvisning ved denne nye kompatibilitetsgrensen.
+A test that previously upgraded from a core-based release cannot merely be renamed and still claim to test the historical upgrade. Retain relevant historical coverage, but explicitly test rejection at this new compatibility boundary.
 
-### 8. Dokumentasjon og opprydding
+### 8. Documentation and cleanup
 
-Oppdater aktive beskrivelser, kommandoer, filstier og diagrammer til `platform`.
+Update active descriptions, commands, paths and diagrams to `platform`.
 
-Søk gjennom hele repoet etter relevante forekomster av `core`, `CORE_VERSION` og `core-`.
+Search the entire repository for relevant occurrences of `core`, `CORE_VERSION` and `core-`.
 
-Forklar bevisst beholdte forekomster, eksempelvis:
+Explain deliberately retained occurrences, such as:
 
-- Gammel-layout-deteksjon.
-- Historiske fixtures.
-- Tidligere verifikasjonsrapporter.
-- Dokumenterte migreringsbegrensninger.
+- Old-layout detection.
+- Historical fixtures.
+- Earlier verification reports.
+- Documented migration restrictions.
 
-Ikke omskriv gamle testresultater eller historisk evidence slik at det ser ut som de ble kjørt med platform-layout.
+Do not rewrite old test results or historical evidence to suggest they ran with the platform layout.
 
-Oppdater backlog med eventuell fremtidig migreringsoppgave. Ikke bland den inn i modulrefaktoreringen.
+Update the backlog with any future migration task. Keep it separate from the module refactor.
 
-### 9. Verifikasjon og rapport
+### 9. Verification and report
 
-Kjør:
+Run:
 
-- Alle produkttester.
-- Alle acceptance-harness-tester.
-- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller.
+- All product tests.
+- All acceptance-harness tests.
+- Relevant ruff, format, pyright, vermin and shellcheck checks.
 
-Behold Python 3.6-kompatibilitet for host-verktøyene.
+Retain Python 3.6 compatibility for host tools.
 
-Kjør relevante nye installasjons- og livssyklusscenarioer i det etablerte labmiljøet dersom dette er tilgjengelig og autorisert. Ikke slett eksisterende state eller reset andre miljøer.
+Run relevant fresh-installation and lifecycle scenarios in the established lab if available and authorised. Do not delete existing state or reset other environments.
 
-Skill mellom lokale tester, harness-tester og faktiske målmaskinkjøringer.
+Distinguish local tests, harness tests and actual target-host runs.
 
-Rapporter:
+Report:
 
-1. Hvilke navn og filer som er endret.
-2. Hvilke navn som bevisst er beholdt.
-3. Hvordan gammel og blandet layout oppdages og avvises.
-4. Konsekvensen for eksisterende installasjoner.
-5. Versjonsendringer.
-6. Testresultater og verifikasjonshull.
-7. Arbeid som er utsatt, særlig eventuell migrering.
+1. Names and files changed.
+2. Names deliberately retained.
+3. How old and mixed layouts are detected and rejected.
+4. Consequences for existing installations.
+5. Version changes.
+6. Test results and verification gaps.
+7. Deferred work, particularly any migration.
 
-Foretrekk enkel og konsekvent navngivning fremfor et generisk alias- eller kompatibilitetsrammeverk.
+Prefer simple, consistent naming over a generic alias or compatibility framework.
 
 ## 9. Extract Identity into a separate component and bundle
 
 Status: done in 0.4.0; verified by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS), including the Identity upgrade
 scenario. Platform and Identity are separate bundles with explicit dependencies. See [Identity verification](acceptance/IDENTITY-SPLIT.md). The original task follows.
 
-Skill Identity ut av `platform` som en egen komponent med en egen separat offline-bundle i `gunstein/podman_offline`.
+Extract Identity from `platform` into its own component and separate offline bundle in `gunstein/podman_offline`.
 
-Dette er en funksjonell oppdeling som skal gjøres før den planlagte modulrefaktoreringen. Ikke gjennomfør modulrefaktoreringen samtidig.
+This functional split precedes the planned module refactor. Do not perform the module refactor at the same time.
 
-### 1. Undersøk dagens løsning først
+### 1. Inspect the current solution first
 
-Les gjeldende kode, bundle-definisjoner, avhengighetsmodell, tester og dokumentasjon.
+Read current code, bundle definitions, dependency model, tests and documentation.
 
-Platform er allerede ment som en separat bundle. Ikke ta utgangspunkt i den tidligere modellen hvor app-bundler inkluderte core/platform.
+Platform is already intended as a separate bundle. Do not start from the earlier model where app bundles included core/platform.
 
-Gjenbruk eksisterende mekanismer for komponenter, bundles, versjoner og avhengigheter. Ikke innfør et parallelt system eller et generisk plugin-rammeverk.
+Reuse existing component, bundle, version and dependency mechanisms. Do not introduce a parallel system or generic plugin framework.
 
-Registrer baseline-commit og kjør eksisterende produkt- og acceptance-harness-tester før endringer.
+Record the baseline commit and run existing product and acceptance-harness tests before changes.
 
-### 2. Ønsket ansvarsdeling
+### 2. Intended ownership
 
-Etter oppdelingen skal:
+After the split:
 
-| Komponent | Ansvar |
+| Component | Responsibility |
 |---|---|
-| `platform` | HTTPS-proxy, proxyens TLS-materiale og offentlige ruteregistreringer |
-| `identity` | IdentityServer, identitetsdatabase, databasepassord, signeringsmateriale, Data Protection-state, demobrukere og OIDC-klientregistreringer |
-| `app1` | App1, egen database og egne credentials |
-| `app2` | App2, egen database og egne credentials |
-| `help` | Hjelpeinnhold og egen ruteregistrering |
+| `platform` | HTTPS proxy, proxy TLS material and public route registrations |
+| `identity` | IdentityServer, identity database, database password, signing material, Data Protection state, demo users and OIDC client registrations |
+| `app1` | App1, its database and its credentials |
+| `app2` | App2, its database and its credentials |
+| `help` | Help content and its route registration |
 
-Behold eksisterende eierskap og sikre livssyklusregler for delt nettverk og eventuell felles demo-CA. Ikke slett eller regenerer felles materiale som følge av oppdelingen.
+Retain existing ownership and safe lifecycle rules for the shared network and any shared demo CA. Do not delete or regenerate shared material as a result of the split.
 
-Kartlegg alle eksisterende ressurser og filer før flytting, slik at ingen persistent state blir glemt.
+Inventory all existing resources and files before moving them so no persistent state is overlooked.
 
-### 3. Separate bundles og eksplisitte avhengigheter
+### 3. Separate bundles and explicit dependencies
 
-Bruk følgende logiske modell:
+Use this logical model:
 
-| Bundle | Innhold | Avhengigheter |
+| Bundle | Contents | Dependencies |
 |---|---|---|
-| `platform` | Platform-komponenten | Ingen |
-| `identity` | Identity-komponenten | Platform |
-| `app1` | App1-komponenten | Platform og identity |
-| `app2` | App2-komponenten | Platform og identity |
-| `help` | Help-komponenten | Platform |
+| `platform` | Platform component | None |
+| `identity` | Identity component | Platform |
+| `app1` | App1 component | Platform and identity |
+| `app2` | App2 component | Platform and identity |
+| `help` | Help component | Platform |
 
-Hver bundle skal bare inneholde egne komponentressurser og nødvendige images, i tillegg til felles deploy-kode og nødvendige metadata/defaults.
+Each bundle contains only its own component resources and required images, plus shared deploy code and necessary metadata/defaults.
 
-App-bundler skal ikke inkludere eller installere platform/identity automatisk. Identity-bundlen skal ikke inkludere platform.
+App bundles must not include or automatically install platform/identity. The Identity bundle must not include platform.
 
-Manglende avhengighet skal gi en tydelig feil. Ikke forsøk nettverksnedlasting eller automatisk installasjon fra andre release-mapper.
+A missing dependency must produce a clear error. Do not attempt network downloads or automatic installation from other release directories.
 
-Oppdater eksisterende bundle-bygging slik at alle definerte bundles produseres, inkludert separat identity-bundle, med prosjektets etablerte filnavnmønster.
+Update existing bundle building to produce all defined bundles, including separate identity, with the project's established filename pattern.
 
-### 4. Versjoner og kompatibilitet
+### 4. Versions and compatibility
 
-Identity skal kunne versjoneres og oppgraderes uavhengig av platform og appene.
+Identity must support versioning and upgrading independently of platform and apps.
 
-Bruk eksisterende versjoneringsmodell. Hvis denne bruker separate versjonsfiler, innfør en tilsvarende `IDENTITY_VERSION`. Ikke opprett et nytt versjoneringssystem hvis repoet allerede har en egnet modell.
+Use the existing versioning model. If it uses separate version files, introduce a corresponding `IDENTITY_VERSION`. Do not create a new versioning system if a suitable model already exists.
 
-Avhengigheter skal ha eksplisitte, dokumenterte versjonskrav. Gjenbruk eksisterende syntaks og sammenligningsregler. Hvis slike krav ikke finnes, innfør den minste mekanismen som dekker behovet, og begrunn valget.
+Dependencies must have explicit, documented version requirements. Reuse existing syntax and comparison rules. If no such requirements exist, introduce the smallest adequate mechanism and justify it.
 
-Valider:
+Validate:
 
-- At avhengighetene er installert.
-- At deres versjoner tilfredsstiller innkommende bundles krav.
-- At oppgradering av platform eller identity fortsatt tilfredsstiller kravene til installerte dependenter.
+- Dependencies are installed.
+- Their versions satisfy the incoming bundle's requirements.
+- Platform or identity upgrades still satisfy installed dependents' requirements.
 
-Oppbevar nødvendig avhengighetsmetadata som installert state. Kontrollene skal ikke avhenge av at gamle release-mapper fortsatt finnes.
+Retain required dependency metadata as installed state. Checks must not rely on old release directories still being present.
 
-Ikke anta kompatibilitet bare fordi en versjon er nyere.
+Do not assume compatibility merely because a version is newer.
 
-Behold eksisterende regler for reinstallasjon og nedgradering der de fortsatt er relevante. Dokumenter eventuelle nødvendige endringer.
+Retain existing reinstall and downgrade rules where relevant. Document necessary changes.
 
-Alle avhengighets- og versjonsavvisninger skal skje før secret-generering, image-load, skriving av registreringer/tjenestefiler eller restart.
+All dependency/version rejections must precede secret generation, image loading, registration/service-file writes and restarts.
 
-### 5. Skill ruteregistreringer fra OIDC-klientregistreringer
+### 5. Separate route registrations from OIDC client registrations
 
-I dagens samlede løsning kan begge registreringstypene påvirke samme komponent. Etter oppdelingen skal eierskapet være tydelig:
+In the current combined solution both registration types can affect one component. After the split, ownership must be explicit:
 
-- Platform konsumerer offentlige ruter.
-- Identity konsumerer offentlige OIDC-klientregistreringer.
-- Appene eier sine private klientnøkler og leverer bare offentlig klientmetadata og sertifikat til identity.
-- Identity registrerer sin egen offentlige route hos platform.
-- Help registrerer bare en route hos platform.
+- Platform consumes public routes.
+- Identity consumes public OIDC client registrations.
+- Apps own private client keys and deliver only public client metadata and certificates to identity.
+- Identity registers its own public route with platform.
+- Help registers only a route with platform.
 
-Behold indeksmekanismen som hindrer at gamle filer i importvolumer holder fjernede ruter eller klienter aktive.
+Retain the index mechanism preventing old import-volume files from keeping removed routes or clients active.
 
-Restartbeslutninger skal være separate:
+Restart decisions must be separate:
 
-| Endring | Forventet påvirkning |
+| Change | Expected effect |
 |---|---|
-| Bare app-route endres | Platform oppdateres/restartes |
-| Bare OIDC-klientregistrering endres | Identity oppdateres/restartes |
-| Begge endres | Begge berørte komponenter oppdateres/restartes |
-| Ingen registrering endres | Ingen unødvendig restart av platform/identity |
-| Help-route endres | Platform påvirkes, identity beholdes |
-| Identity oppgraderes uten endret offentlig route | Identity påvirkes, platform beholdes |
+| Only app route changes | Platform updated/restarted |
+| Only OIDC client registration changes | Identity updated/restarted |
+| Both change | Both affected components updated/restarted |
+| No registration changes | No unnecessary platform/identity restart |
+| Help route changes | Platform affected, identity retained |
+| Identity upgraded without changing its public route | Identity affected, platform retained |
 
-Appenes containere skal ikke restartes bare fordi platform eller identity restartes. Et kort avbrudd i tilgjengelighet eller innlogging er noe annet enn restart av appene.
+App containers must not restart merely because platform or identity restarts. A brief availability or login interruption differs from restarting the apps.
 
-Ikke legg til nye registreringskommandoer hvis eksisterende installasjonsflyt kan håndtere dette tydelig.
+Do not add registration commands if the existing installation flow can handle this clearly.
 
-### 6. Behold den offentlige innloggingskontrakten
+### 6. Retain the public login contract
 
-Oppdelingen skal ikke samtidig endre:
+The split must not also change:
 
 - `/identity/`.
-- Offentlig issuer-URL.
-- Appenes klient-ID-er og scopes.
-- Redirect-URI-er.
-- `/app1/`, `/app2/` og `/help/`.
-- Appenes cookie-navn og paths.
+- Public issuer URL.
+- App client IDs and scopes.
+- Redirect URIs.
+- `/app1/`, `/app2/` and `/help/`.
+- App cookie names and paths.
 
-Oppdater interne hostnames og upstream-referanser der det er nødvendig.
+Update internal hostnames and upstream references where necessary.
 
-Platform skal kunne kjøre og betjene help uten at identity er installert. Proxykonfigurasjonen må ikke kreve at en fraværende identity-tjeneste kan DNS-resolves ved oppstart.
+Platform must run and serve help without identity installed. Proxy configuration must not require DNS resolution of an absent identity service at startup.
 
-Verifiser fortsatt delt innlogging mellom app1 og app2.
+Verify shared login between app1 and app2 remains functional.
 
-### 7. Config, secrets og database
+### 7. Config, secrets and database
 
-Identity skal få egen komponentconfig og persistent mappe:
+Identity gets its own component config and persistent directory:
 
 ```text
 components/identity/config.defaults.yaml
 /var/lib/myproduct/identity/config.yaml
 ```
 
-Følg eksisterende configmodell:
+Follow the existing config model:
 
-- Defaults brukes ved initialisering og dev.
-- Produksjon bruker autoritativ persistent komponentconfig.
-- Upgrade overskriver ikke eksisterende config.
+- Defaults are used for initialisation and dev.
+- Production uses authoritative persistent component config.
+- Upgrade does not overwrite existing config.
 
-Identity skal arve relevante felles verdier fra installert platform ved config-initialisering, etter samme etablerte prinsipp som øvrige dependenter.
+Identity must inherit relevant shared values from installed platform during config initialisation, using the established approach for other dependents.
 
-Flytt identity-spesifikke DB-innstillinger, Secret-/volumdefinisjoner og generated-secret-oppføringer ut av platform.
+Move identity-specific DB settings, Secret/volume definitions and generated-secret entries out of platform.
 
-Behold:
+Retain:
 
-- Én persistent kilde for hvert databasepassord.
-- Samsvar mellom PostgreSQL-server og klient.
-- Beskyttelse mot å generere nytt passord når database-state allerede finnes.
-- Runtime-bygging av `ConnectionStrings__Default`.
-- Korrekt escaping og sikker feilhåndtering.
-- Eksisterende databasebruker og databasenavn hvis det ikke finnes en nødvendig grunn til å endre dem.
+- One persistent source for each database password.
+- Agreement between PostgreSQL server and client.
+- Protection against generating a new password when database state already exists.
+- Runtime construction of `ConnectionStrings__Default`.
+- Correct escaping and safe error handling.
+- Existing database user and database name unless there is a necessary reason to change them.
 
-Ikke innfør passordrotasjon, databaseprivilegium-endringer eller schema-migrering i denne oppgaven.
+Do not introduce password rotation, database-privilege changes or schema migration in this task.
 
-### 8. Eksisterende installasjoner: ikke migrer automatisk
+### 8. Existing installations: no automatic migration
 
-Oppdelingen berører persistent identitetsdatabase, credentials, signeringsnøkler, Data Protection-state og klientregistreringer.
+The split affects the persistent identity database, credentials, signing keys, Data Protection state and client registrations.
 
-Denne oppgaven gir ikke tillatelse til automatisk flytting, sletting eller reinitialisering av eksisterende installert state.
+This task does not authorise automatic relocation, deletion or reinitialisation of existing installed state.
 
-Implementer ny layout for nye installasjoner. Oppdag eksisterende layout hvor identity fortsatt inngår i platform, og avvis inkompatibel installasjon/oppgradering før endringer.
+Implement the new layout for new installations. Detect existing layout where identity remains inside platform and reject incompatible install/upgrade before changes.
 
-Kontrollen skal også håndtere:
+The check must also handle:
 
-- Beholdte databasevolumer uten installed-markør.
-- Blandet gammel og ny layout.
-- Delvis eksisterende credentials eller tjenestefiler.
-- Feil ved nødvendige tilstandskontroller.
+- Retained database volumes without an installed marker.
+- Mixed old and new layout.
+- Partially existing credentials or service files.
+- Failure of required state checks.
 
-Ikke bruk eksistensen av platform alene som tegn på gammel layout; platform er også en gyldig selvstendig komponent i den nye modellen.
+Do not treat platform's presence alone as proof of old layout; platform is also a valid standalone component in the new model.
 
-Gi en tydelig melding om at den gamle layouten krever en separat migreringsprosedyre eller eksplisitt ny installasjon. La eksisterende state være urørt og fortsatt administrerbar med tidligere release.
+Explain clearly that old layout requires a separate migration procedure or explicit fresh installation. Leave existing state untouched and manageable with its previous release.
 
-Ikke lag tom identitetsdatabase eller nye signeringsnøkler som skjult erstatning for gammel state.
+Do not silently replace old state with an empty identity database or new signing keys.
 
-Dokumenter kompatibilitetsbruddet og før eventuell migrering som egen backlog-oppgave.
+Document the compatibility break and track any migration as a separate backlog task.
 
-### 9. Avinstallasjon
+### 9. Uninstall
 
-Avhengigheter skal styre avinstallasjon:
+Dependencies must control uninstall:
 
-- Identity kan ikke fjernes mens installerte apper krever den.
-- Help skal ikke blokkere avinstallasjon av identity.
-- Platform kan ikke fjernes mens identity, app1, app2 eller help krever den.
+- Identity cannot be removed while installed apps require it.
+- Help must not block identity uninstall.
+- Platform cannot be removed while identity, app1, app2 or help requires it.
 
-Når en app fjernes:
+When removing an app:
 
-- Fjern dens route fra platform.
-- Fjern dens offentlige OIDC-klientregistrering fra identity.
-- Oppdater/restart bare de berørte tjenestene.
-- Behold andre komponenters registreringer, tjenester og data.
+- Remove its route from platform.
+- Remove its public OIDC client registration from identity.
+- Update/restart only affected services.
+- Retain other components' registrations, services and data.
 
-Når identity fjernes uten dependenter:
+When removing identity without dependents:
 
-- Fjern dens route fra platform.
-- Behold platform og eventuell help.
-- Behold identity-data som standard.
+- Remove its route from platform.
+- Retain platform and any help component.
+- Retain identity data by default.
 
-`--delete-data` skal bare slette valgt komponents egne data. Delt nettverk, felles CA og andre komponenters credentials skal ikke slettes.
+`--delete-data` must delete only the selected component's own data. Do not delete the shared network, shared CA or other components' credentials.
 
-### 10. Dev og bundling
+### 10. Dev and bundling
 
-Dev skal bruke samme komponentdeling og registreringsmodell som produksjon, selv om dev-helperen starter hele demosystemet samlet.
+Dev must use the same component split and registration model as production, even if the dev helper starts the entire demo system together.
 
-Oppdater image-bygging, image-utvalg og bundling etter behov.
+Update image building, image selection and bundling as necessary.
 
-Behold:
+Retain:
 
-- Manifestdrevet image-utvalg.
+- Manifest-driven image selection.
 - `imagePullPolicy: Never`.
-- Ekskludering av privat state og bytecode.
-- Checksums for alle leverte filer.
-- Eksisterende fapolicyd- og SELinux-modell.
+- Exclusion of private state and bytecode.
+- Checksums for all delivered files.
+- Existing fapolicyd and SELinux model.
 
-Identity-bundlen skal kunne transporteres og oppgraderes alene uten at platform- eller app-bundler må overføres på nytt.
+The Identity bundle must be transportable and upgradeable alone without retransferring platform or app bundles.
 
-Ikke endre immutable image-tags uten å bygge tilsvarende nye images.
+Do not change immutable image tags without building corresponding new images.
 
-### 11. Tester
+### 11. Tests
 
-Oppdater eksisterende tester uten å svekke sikkerhets- eller isolasjonskontroller. Legg til fokuserte tester for:
+Update existing tests without weakening security or isolation checks. Add focused tests for:
 
-#### Installasjon og avhengigheter
+#### Installation and dependencies
 
-- Platform kan installeres alene.
-- Platform og help fungerer uten identity.
-- Identity uten platform avvises før endringer.
-- App uten identity avvises før endringer.
-- Begge apprekkefølger fungerer etter platform og identity.
-- Manglende og inkompatible avhengigheter gir tydelige feil.
-- Oppgradering som bryter installerte dependenters versjonskrav avvises.
+- Platform installs alone.
+- Platform and help work without identity.
+- Identity without platform is rejected before changes.
+- An app without identity is rejected before changes.
+- Both app orders work after platform and identity.
+- Missing/incompatible dependencies produce clear errors.
+- Upgrades breaking installed dependents' version requirements are rejected.
 
-#### Registreringer og restart
+#### Registrations and restart
 
-- Bare route-endring påvirker platform.
-- Bare klientendring påvirker identity.
-- Begge endringer påvirker begge.
-- Uendrede registreringer gir ingen unødvendig restart.
-- Fjernede ruter/klienter er ikke aktive gjennom gamle importfiler.
+- Route-only changes affect platform.
+- Client-only changes affect identity.
+- Both changes affect both.
+- Unchanged registrations cause no unnecessary restart.
+- Removed routes/clients are not kept active through old import files.
 
-#### Selvstendig identity-upgrade
+#### Independent identity upgrade
 
-Legg til et reelt acceptance-scenario som:
+Add a real acceptance scenario that:
 
-1. Installerer platform, identity og begge apper.
-2. Oppretter brukerdata og verifiserer innlogging.
-3. Bygger og overfører bare en nyere identity-bundle.
-4. Installerer denne.
-5. Verifiserer at ny identity-versjon og nytt image faktisk kjører.
-6. Verifiserer innlogging og appenes databaseoperasjoner.
-7. Verifiserer at identity-data og eksisterende credentials er beholdt.
-8. Verifiserer at platform og appenes versjoner, tjenesteprosesser og konfigurasjon er uendret når registreringene ikke er endret.
+1. Installs platform, identity and both apps.
+2. Creates user data and verifies login.
+3. Builds and transfers only a newer identity bundle.
+4. Installs it.
+5. Verifies the new identity version and image are actually running.
+6. Verifies login and app database operations.
+7. Verifies retention of identity data and existing credentials.
+8. Verifies platform/app versions, service processes and configuration remain unchanged when registrations are unchanged.
 
-Bruk en observerbar endring eller image-identitet som bevis; en oppdatert versjonsmarkør alene er ikke tilstrekkelig.
+Use an observable change or image identity as evidence; an updated version marker alone is insufficient.
 
-#### Avinstallasjon og gammel state
+#### Uninstall and old state
 
-- Identity-avinstallasjon blokkeres av apper, men ikke help.
-- Platform-avinstallasjon blokkeres av dependenter.
-- Data beholdes som standard.
-- Eksplisitt sletting er avgrenset til riktig komponent.
-- Gammel samlet platform/identity-layout og blandet layout avvises uten endringer.
+- Identity uninstall is blocked by apps, but not help.
+- Platform uninstall is blocked by dependents.
+- Data is retained by default.
+- Explicit deletion is limited to the correct component.
+- Old combined platform/identity layout and mixed layout are rejected without changes.
 
-Behold relevant eksisterende dekning for help-only upgrade, app-only upgrade, offline installasjon, reboot og persistens. Tilpass forventningene til separate bundles.
+Retain relevant existing coverage for help-only upgrade, app-only upgrade, offline installation, reboot and persistence. Adapt expectations to separate bundles.
 
-### 12. Dokumentasjon
+### 12. Documentation
 
-Oppdater README og relevant arkitektur-/testdokumentasjon slik at det er enkelt å forstå:
+Update README and relevant architecture/test documentation to make it easy to understand:
 
-- Hva hver komponent eier.
-- Hva hver bundle inneholder.
-- Installasjonsrekkefølgen.
-- Hvordan avhengigheter og versjonskrav kontrolleres.
-- Hvem som konsumerer ruter og OIDC-klienter.
-- Hvilke endringer som restarter hvilke tjenester.
-- Hvordan identity oppgraderes alene.
-- Hvilken state som er persistent.
-- Hvorfor gammel samlet layout ikke oppgraderes automatisk.
+- What each component owns.
+- What each bundle contains.
+- Installation order.
+- How dependencies and version requirements are checked.
+- Who consumes routes and OIDC clients.
+- Which changes restart which services.
+- How identity is upgraded alone.
+- Which state is persistent.
+- Why old combined layout is not upgraded automatically.
 
-Oppdater aktive kommandoeksempler og fjern foreldede antakelser om at app-bundler inneholder platform.
+Update active command examples and remove obsolete assumptions that app bundles include platform.
 
-Ikke omskriv historiske verifikasjonsrapporter som om de ble kjørt med den nye arkitekturen.
+Do not rewrite historical verification reports as if they ran against the new architecture.
 
-### 13. Verifikasjon og leveranse
+### 13. Verification and delivery
 
-Kjør:
+Run:
 
-- Alle produkttester.
-- Alle acceptance-harness-tester.
-- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller.
+- All product tests.
+- All acceptance-harness tests.
+- Relevant ruff, format, pyright, vermin and shellcheck checks.
 
-Behold Python 3.6-kompatibilitet for host-verktøyene.
+Retain Python 3.6 compatibility for host tools.
 
-Kjør relevante faktiske acceptance-scenarioer i etablert labmiljø dersom dette er tilgjengelig og autorisert. Ikke reset eller endre andre miljøer.
+Run relevant actual acceptance scenarios in the established lab if available and authorised. Do not reset or change other environments.
 
-Skill tydelig mellom lokale tester, harness-tester og målmaskinkjøringer. Hvis labkjøring ikke kan utføres, rapporter hvilke garantier som fortsatt er uverifisert.
+Clearly distinguish local tests, harness tests and target-host execution. If lab execution is unavailable, report which guarantees remain unverified.
 
-Rapporter:
+Report:
 
-1. Ny komponent- og bundle-struktur.
-2. Ressurser og state som har fått ny eier.
-3. Avhengighets- og versjonsmodellen.
-4. Restartreglene for ruter og klienter.
-5. Konsekvensen for eksisterende installasjoner.
-6. Testresultater og verifikasjonshull.
-7. Utsatt arbeid, særlig migrering og modulrefaktorering.
+1. New component and bundle structure.
+2. Resources and state with a new owner.
+3. Dependency and version model.
+4. Restart rules for routes and clients.
+5. Consequences for existing installations.
+6. Test results and verification gaps.
+7. Deferred work, particularly migration and module refactoring.
 
-Hold funksjonell oppdeling og senere modulrefaktorering adskilt. Foretrekk eksplisitte, enkle regler fremfor generelle abstraksjoner.
-
+Keep the functional split and later module refactor separate. Prefer explicit, simple rules over general abstractions.
 
 ## 11. Plan an explicit retained core-to-platform migration
 
@@ -1608,49 +1652,49 @@ refactor (item 1) is implemented; see its verification report.
 This task uses fresh state only and requires no migration or backward compatibility.
 The full agent message follows, with heading levels adjusted for this document.
 
-Erstatt katalognavnet `generated-certificates/` med `credentials/` for komponentenes passord, sesjonsnøkler, private nøkler og sertifikater i `gunstein/podman_offline`.
+Replace `generated-certificates/` with `credentials/` for component passwords, session keys, private keys and certificates in `gunstein/podman_offline`.
 
-Navnet `generated-certificates` beskriver innholdet feil: mappen inneholder også databasepassord og sesjonsnøkler, og materialet kan være både generert og eksternt levert.
+The name `generated-certificates` misrepresents the contents: the directory also contains database passwords and session keys, and material may be generated or externally supplied.
 
-Dette er en avgrenset opprydding av filstier. Ikke kombiner den med modulrefaktorering, passordrotasjon eller andre arkitekturendringer.
+This is a bounded path cleanup. Do not combine it with module refactoring, password rotation or other architecture changes.
 
-### 1. Ingen migrering eller bakoverkompatibilitet
+### 1. No migration or backward compatibility
 
-Det finnes ingen eksisterende installasjoner som skal oppgraderes.
+There are no existing installations to upgrade.
 
-Implementer bare den nye layouten:
+Implement only the new layout:
 
-- Ikke lag migreringskode.
-- Ikke lag fallback til `generated-certificates/`.
-- Ikke legg til aliaser eller kompatibilitetsgrener.
-- Ikke lag en flytteprosedyre for gammel state.
-- Bruk fersk, isolert state i testene.
+- No migration code.
+- No fallback to `generated-certificates/`.
+- No aliases or compatibility branches.
+- No procedure for moving old state.
+- Use fresh isolated state in tests.
 
-Sletting av andre eksisterende filer, credentials eller databasevolumer inngår ikke i oppgaven.
+Deleting other existing files, credentials or database volumes is outside scope.
 
-Historiske verifikasjonsrapporter og evidence skal beholdes uendret.
+Keep historical verification reports and evidence unchanged.
 
-### 2. Undersøk gjeldende kode
+### 2. Inspect current code
 
-Ta utgangspunkt i faktisk repo-status, inkludert eventuell gjennomført omdøping fra core til platform og utskilling av identity.
+Start from actual repository state, including any completed core-to-platform rename and identity split.
 
-Kartlegg aktive referanser til `generated-certificates`, blant annet i:
+Inventory active `generated-certificates` references, including:
 
-- Komponentenes config-defaults.
-- `GENERATED_SECRETS`, `SECRET_FILES` og `VOLUME_FILES`.
-- Sertifikatscript og andre generatorer.
-- OIDC-klientdescriptors og offentlig sertifikatregistrering.
-- Database-preflight.
-- Dev-script og smoke-tester.
-- Acceptance-script og persistensobservasjoner.
-- Bundle-beskyttelse mot private filer.
-- README, PKI-dokumentasjon og eksempler.
+- Component config defaults.
+- `GENERATED_SECRETS`, `SECRET_FILES` and `VOLUME_FILES`.
+- Certificate scripts and other generators.
+- OIDC client descriptors and public certificate registration.
+- Database preflight.
+- Dev scripts and smoke tests.
+- Acceptance scripts and persistence observations.
+- Bundle protection against private files.
+- README, PKI documentation and examples.
 
-### 3. Ny standardstruktur
+### 3. New default structure
 
-Bruk `credentials/` under hver komponents state-mappe.
+Use `credentials/` under each component's state directory.
 
-For app1 kan strukturen være:
+For app1, the structure could be:
 ```
 /var/lib/myproduct/app1/
 ├── config.yaml
@@ -1664,12 +1708,12 @@ For app1 kan strukturen være:
         └── ca.crt
 ```
 
-Dev bruker tilsvarende:
+Dev uses the equivalent:
 ```
 build/dev/app1/credentials/
 ```
 
-Oppdater config, eksempelvis:
+Update config, for example:
 ```
 GENERATED_SECRETS:
 - credentials/todo/session-key
@@ -1684,114 +1728,114 @@ VOLUME_FILES:
   - credentials/todo
 ```
 
-Bruk samme prinsipp for øvrige komponenter.
+Apply the same principle to other components.
 
-Behold eksisterende undermapper og filnavn når de fortsatt er meningsfulle. Ikke utvid oppgaven til en generell reorganisering av credentials.
+Retain existing subdirectories and filenames where still meaningful. Do not expand this into general credential reorganisation.
 
-Felles PKI/CA-state utenfor komponentenes `generated-certificates/` skal ikke flyttes som en bieffekt.
+Shared PKI/CA state outside component `generated-certificates/` directories must not move as a side effect.
 
-### 4. Behold eksisterende funksjonalitet
+### 4. Retain existing functionality
 
-Dette er en endring av host-side filstier. Behold:
+This changes host-side paths. Retain:
 
-- Secret-navn og keys.
-- PVC-/volumnavn.
-- Pod- og tjenestenavn.
-- Containerens mount-paths, eksempelvis `/run/secrets/database/password` og `/certificates`.
-- Databasebrukere og databasenavn.
-- OIDC-klient-ID-er, scopes og offentlige URL-er.
-- Runtime-mekanismen for connection strings.
-- Config-precedence og autoritativ persistent produksjonsconfig.
+- Secret names and keys.
+- PVC/volume names.
+- Pod and service names.
+- Container mount paths, for example `/run/secrets/database/password` and `/certificates`.
+- Database users and database names.
+- OIDC client IDs, scopes and public URLs.
+- Runtime connection-string mechanism.
+- Config precedence and authoritative persistent production config.
 
-Oppdater alle host-side referanser, også sertifikatstier i `client.yaml` eller tilsvarende descriptors.
+Update all host-side references, including certificate paths in `client.yaml` or equivalent descriptors.
 
-Unngå endringer i applikasjonskode og images når containergrensesnittet er uendret.
+Avoid application-code and image changes when the container interface is unchanged.
 
-### 5. Behold genererings- og sikkerhetsreglene
+### 5. Retain generation and security rules
 
-Databasepassord og sesjonsnøkler skal fortsatt genereres gjennom eksisterende `GENERATED_SECRETS`.
+Database passwords and session keys must still be generated through existing `GENERATED_SECRETS`.
 
-Sertifikatscriptet skal skrive sitt materiale til de nye stiene. Ikke flytt databasepassordgenerering tilbake til sertifikatscriptet.
+The certificate script must write material to the new paths. Do not move database-password generation back into that script.
 
-Behold eksisterende garantier:
+Retain existing guarantees:
 
-- Manglende hemmeligheter opprettes bare når dette er tillatt.
-- Eksisterende gyldige filer beholdes byte-for-byte ved restart/redeploy.
-- Tomme eller ugyldige filer gir feil.
-- Manglende databasepassord med eksisterende databasevolum avvises.
-- Private fil- og katalogrettigheter beholdes.
-- Symlink-escape og utrygge output-stier avvises.
-- Credentials og komplette connection strings eksponeres ikke i logger.
+- Missing secrets are created only when allowed.
+- Existing valid files are retained byte-for-byte on restart/redeploy.
+- Empty or invalid files produce errors.
+- A missing database password with an existing database volume is rejected.
+- Private file and directory permissions are retained.
+- Symlink escape and unsafe output paths are rejected.
+- Credentials and complete connection strings are not exposed in logs.
 
-Disse kontrollene gjelder vanlig drift av den nye layouten. Det skal ikke innføres egne kontroller eller fallback-regler for gammel layout.
+These checks apply to normal operation of the new layout. Do not introduce separate checks or fallback rules for old layout.
 
-### 6. Dev, bundling og acceptance
+### 6. Dev, bundling and acceptance
 
-Oppdater alle helper-script som leser, genererer, overfører eller sammenligner credentials.
+Update all helper scripts that read, generate, transfer or compare credentials.
 
-Nye dev- og produksjonsinstallasjoner skal bruke samme layout under sine respektive komponentmapper.
+New dev and production installations must use the same layout under their respective component directories.
 
-Bundle-beskyttelsen skal fortsatt hindre at credentials følger med offline-arkivene, inkludert kopiering gjennom symlink-aliaser.
+Bundle protection must still prevent credentials from entering offline archives, including copies through symlink aliases.
 
-Behold kontrollene som følger deklarerte secret-filer. Ikke erstatt dem med bare et enkelt navnefilter for mappen `credentials`.
+Retain checks following declared secret files. Do not replace them with a simple directory-name filter for `credentials`.
 
-Behold checksum-garantier, offline-egenskaper og eksisterende SELinux-/fapolicyd-kontroller.
+Retain checksum guarantees, offline properties and existing SELinux/fapolicyd checks.
 
-### 7. Tester
+### 7. Tests
 
-Oppdater eksisterende tester og legg bare til fokuserte regresjoner der dekning mangler.
+Update existing tests and add only focused regressions where coverage is missing.
 
-Verifiser:
+Verify:
 
-- Defaults og config-initialisering bruker `credentials/`.
-- Genererte filer havner på riktige stier i dev og produksjon.
-- Sertifikatscriptet bruker de nye stiene.
-- OIDC-klientregistrering finner riktig offentlig sertifikat.
-- Server og klient fortsatt bruker samme databasepassord.
-- Restart/redeploy beholder credentials byte-for-byte.
-- Database-preflight fortsatt avviser manglende passord når volumet finnes.
-- Secret-/PVC-navn og container-mounts er uendret.
-- Private filer og symlink-aliaser ikke havner i bundles.
-- Smoke- og acceptance-script bruker de nye plasseringene.
+- Defaults and config initialisation use `credentials/`.
+- Generated files use the correct dev and production paths.
+- The certificate script uses the new paths.
+- OIDC client registration finds the correct public certificate.
+- Server and client still use the same database password.
+- Restart/redeploy retains credentials byte-for-byte.
+- Database preflight still rejects missing passwords when the volume exists.
+- Secret/PVC names and container mounts are unchanged.
+- Private files and symlink aliases do not enter bundles.
+- Smoke and acceptance scripts use the new locations.
 
-Ikke legg til migreringstester eller tester som krever støtte for gamle configstier.
+Do not add migration tests or tests requiring old config paths.
 
-### 8. Dokumentasjon og opprydding
+### 8. Documentation and cleanup
 
-Dokumenter rollene tydelig:
+Clearly document the roles:
 
-- `credentials/` inneholder passord, nøkler og sertifikater.
-- `GENERATED_SECRETS` angir hvilke filer som genereres.
-- `SECRET_FILES` og `VOLUME_FILES` angir hvordan filene leveres til containerne.
+- `credentials/` contains passwords, keys and certificates.
+- `GENERATED_SECRETS` specifies generated files.
+- `SECRET_FILES` and `VOLUME_FILES` specify delivery to containers.
 
-Søk gjennom hele repoet etter `generated-certificates`. Oppdater aktive referanser i kode, config, tester, eksempler og operatørdokumentasjon.
+Search the entire repository for `generated-certificates`. Update active references in code, config, tests, examples and operator documentation.
 
-Behold historiske rapporter og eventuelle fixtures som eksplisitt representerer en historisk release. Forklar gjenværende forekomster i sluttrapporten.
+Retain historical reports and fixtures explicitly representing a historical release. Explain remaining occurrences in the final report.
 
-Ikke marker tidligere labresultater som verifikasjon av denne endringen.
+Do not present earlier lab results as verification of this change.
 
-### 9. Verifikasjon og leveranse
+### 9. Verification and delivery
 
-Kjør:
+Run:
 
-- Alle produkttester.
-- Alle acceptance-harness-tester.
-- Relevante ruff-, format-, pyright-, vermin- og shellcheck-kontroller med prosjektets eksisterende oppsett.
+- All product tests.
+- All acceptance-harness tests.
+- Relevant ruff, format, pyright, vermin and shellcheck checks with the existing project setup.
 
-Behold Python 3.6-kompatibilitet for host-verktøyene.
+Retain Python 3.6 compatibility for host tools.
 
-Kjør relevante ferske installasjons-/e2e-scenarioer i etablert labmiljø dersom dette er tilgjengelig og autorisert. Ikke reset andre miljøer.
+Run relevant fresh-install/e2e scenarios in the established lab if available and authorised. Do not reset other environments.
 
-Skill tydelig mellom lokale tester, harness-tester og faktisk container-/målmaskinverifikasjon. Oppgi hva som ikke kunne kjøres.
+Clearly distinguish local tests, harness tests and actual container/target verification. State what could not be run.
 
-Rapporter kort:
+Briefly report:
 
-1. Hvilke stier og filer som er endret.
-2. Eventuelle bevisst beholdte historiske referanser.
-3. Testresultater og verifikasjonshull.
-4. Bekreftelse på at det ikke er innført migreringskode eller fallback til gammel layout.
+1. Paths and files changed.
+2. Deliberately retained historical references.
+3. Test results and verification gaps.
+4. Confirmation that no migration code or fallback to old layout was introduced.
 
-Foretrekk en enkel, konsekvent navneendring fremfor nye abstraksjoner.
+Prefer a simple, consistent rename over new abstractions.
 
 ## 13. Retry-safe install and uninstall
 
@@ -1802,18 +1846,18 @@ This is a bounded correctness fix for retrying failed operations, not a transact
 framework or module refactor. The full agent message follows, with Markdown
 formatting adjusted for this document.
 
-Implementer trygg gjentakelse etter feil i installasjon og avinstallasjon i gunstein/podman_offline.
+Implement safe retries after installation and uninstallation failures in gunstein/podman_offline.
 
-Oppgaven gjelder to konkrete feil i deploy.py:
+This task addresses two concrete deploy.py bugs:
 
-1. Et nytt installasjonsforsøk kan hoppe over nødvendige omstarter av Identity/platform etter et mislykket forsøk.
-2. En avinstallasjon kan bli stående halvferdig, samtidig som neste forsøk avvises fordi installasjonsmarkøren allerede er slettet.
+1. A retry can skip required Identity/platform restarts after a failed installation.
+2. Uninstall can remain incomplete while the next attempt is rejected because the installation marker has already been deleted.
 
-Dette er en avgrenset feilretting. Ikke gjennomfør den planlagte modulrefaktoreringen, endre komponentarkitekturen eller innfør et generelt transaksjonsrammeverk.
+This is a bounded correctness fix. Do not perform the planned module refactor, change component architecture or introduce a general transaction framework.
 
-### 1. Les og forstå eksisterende flyt
+### 1. Read and understand the existing flow
 
-Les først:
+First read:
 
 - install_components()
 - install_component_plan()
@@ -1821,258 +1865,258 @@ Les først:
 - registration_stage()
 - component_imports()
 - uninstall()
-- relevante tester for installasjonsfeil, komponenter og Identity
+- Relevant installation-failure, component and Identity tests.
 
-Funksjonsnavnene kan ha endret seg. Finn tilsvarende kode i gjeldende branch.
+Function names may have changed. Find the equivalent current-branch code.
 
-Komponentmodellen er:
+The component model is:
 
-- platform eier proxy og ruteregistreringer.
-- identity eier IdentityServer og klientregistreringer.
-- app1 og app2 avhenger av platform og identity.
-- help avhenger av platform.
+- platform owns the proxy and route registrations.
+- identity owns IdentityServer and client registrations.
+- app1 and app2 depend on platform and identity.
+- help depends on platform.
 
-Ruteregistreringer og klientregistreringer skal fortsatt behandles separat. En route-endring skal normalt påvirke platform, mens en klientendring skal påvirke identity.
+Route and client registrations must remain separate. A route change normally affects platform, while a client change affects identity.
 
-### 2. Feilen ved installasjon
+### 2. Installation bug
 
-Dagens flyt skriver registreringer før alle nødvendige tjenester er restartet.
+The current flow writes registrations before all necessary services have restarted.
 
-Et eksempel:
+For example:
 
-1. App1 har en ny route og klientregistrering.
-2. Installer skriver begge registreringene til persistent state.
-3. Restart av app1 feiler.
-4. Installer avslutter før Identity og platform er restartet.
-5. Operatøren kjører samme installasjon på nytt.
-6. Registreringsfilene har allerede riktig innhold og regnes som uendret.
-7. Identity og platform blir derfor ikke restartet.
+1. App1 has a new route and client registration.
+2. The installer writes both registrations to persistent state.
+3. App1 restart fails.
+4. The installer exits before Identity and platform restart.
+5. The operator repeats the same installation.
+6. Registration files already contain the intended content and are considered unchanged.
+7. Identity and platform therefore do not restart.
 
-Det andre forsøket kan rapportere suksess selv om de kjørende tjenestene ikke har tatt i bruk registreringene.
+The second attempt can report success even though running services have not applied the registrations.
 
-En tilsvarende feil kan oppstå dersom skriving av importarkiver eller restart av en av registreringseierne feiler.
+A similar failure can occur if writing import archives or restarting a registration owner fails.
 
-Krav: Et nytt installasjonsforsøk må fullføre nødvendig arbeid fra forrige forsøk. Det er ikke tilstrekkelig å sammenligne nye registreringer med filene som allerede ligger på disk.
+Requirement: a retry must complete required work from the previous attempt. Comparing new registrations with files already on disk is insufficient.
 
-### 3. Løsning for installasjon
+### 3. Installation solution
 
-Velg en enkel, eksplisitt mekanisme for å huske ufullført arbeid mellom prosesskjøringer.
+Choose a simple, explicit mechanism to remember incomplete work between processes.
 
-En liten persistent pending-fil er et mulig valg. Den kan for eksempel angi at registreringene til identity og/eller platform ennå ikke er bekreftet tatt i bruk.
+A small persistent pending file is one option. It could record that identity and/or platform registrations have not yet been confirmed applied.
 
-Det konkrete filnavnet og formatet kan tilpasses eksisterende kode. Følg disse reglene:
+Adapt the filename and format to existing code. Follow these rules:
 
-- Registrer nødvendig arbeid før endringer som ellers kan gjøre at behovet blir glemt.
-- Pending-state skal overleve at installer avslutter eller prosessen avbrytes.
-- Ved neste forsøk skal pending-state leses og kombineres med eventuelle nye endringer.
-- Nødvendige importarkiver må skrives på nytt dersom forrige forsøk ikke fullførte dette.
-- Berørte tjenester må restartes og kontrolleres med eksisterende suksesskriterier.
-- Fjern bare pending-state for arbeid som faktisk er fullført.
-- Hvis en restart eller kontroll feiler, skal ufullført arbeid fortsatt være registrert.
-- Et nytt forsøk med identiske registreringsfiler må fortsatt utføre pending arbeid.
+- Record required work before changes that could hide its necessity.
+- Pending state must survive installer exit or process interruption.
+- On retry, read pending state and combine it with new changes.
+- Rewrite required import archives if the previous attempt did not complete them.
+- Restart affected services and check them against existing success criteria.
+- Remove pending state only for work actually completed.
+- If restart or validation fails, unfinished work must remain recorded.
+- A retry with identical registration files must still perform pending work.
 
-Pending-state skal inneholde bare nødvendig metadata, aldri passord, private nøkler eller komplette konfigurasjoner.
+Pending state contains only required metadata, never passwords, private keys or complete configurations.
 
-Bruk eksisterende mønstre for private filrettigheter og trygg filskriving. Ikke følg symlinker til vilkårlige steder. Ugyldig pending-state skal gi en tydelig feil, ikke ignoreres.
+Use existing private-permission and safe-write patterns. Do not follow symlinks to arbitrary locations. Invalid pending state must produce a clear error, not be ignored.
 
-Ikke løs problemet ved å restarte alle tjenester på hver installasjon.
+Do not solve this by restarting all services on every install.
 
-Bevar normal oppførsel:
+Preserve normal behaviour:
 
-- Uendrede registreringer uten pending arbeid skal ikke restarte Identity/platform.
-- Bare route-endring skal normalt restarte platform.
-- Bare klientendring skal normalt restarte identity.
-- Begge endringer skal restarte begge.
-- Sibling-applikasjoner skal ikke restartes som en bivirkning.
+- Unchanged registrations without pending work do not restart Identity/platform.
+- Route-only changes normally restart platform.
+- Client-only changes normally restart identity.
+- Both changes restart both.
+- Sibling apps must not restart as a side effect.
 
-Hvis du velger en annen løsning enn pending-state, må den dekke de samme feiltilfellene og forklares tydelig.
+If choosing an alternative to pending state, cover the same failure cases and explain it clearly.
 
-### 4. Feilen ved avinstallasjon
+### 4. Uninstall bug
 
-Dagens avinstallasjon sletter blant annet installasjonsmarkøren før hele operasjonen er fullført.
+Current uninstall deletes the installation marker, among other things, before the entire operation completes.
 
-Et eksempel:
+For example:
 
-1. App1 stoppes.
-2. Quadlet/YAML og registreringer slettes.
-3. Installasjonsmarkøren slettes.
-4. Restart av Identity eller platform feiler.
-5. Operatøren kjører uninstall på nytt.
-6. Installer avviser forsøket fordi app1 ikke lenger regnes som installert.
+1. App1 stops.
+2. Quadlet/YAML and registrations are deleted.
+3. The installation marker is deleted.
+4. Identity or platform restart fails.
+5. The operator retries uninstall.
+6. The installer rejects the attempt because app1 is no longer considered installed.
 
-Med --delete-data kan også volumfjerning feile etter at installasjonsmarkøren er borte.
+With --delete-data, volume removal can also fail after the installation marker is gone.
 
-Krav: Operatøren skal kunne gjenta avinstallasjonen og fullføre den uten manuell rekonstruksjon av markører, YAML eller registreringer.
+Requirement: the operator can repeat and complete uninstall without manually reconstructing markers, YAML or registrations.
 
-### 5. Løsning for avinstallasjon
+### 5. Uninstall solution
 
-Gjør avinstallasjonen mulig å fortsette etter delvis gjennomføring.
+Make partially completed uninstall resumable.
 
-Ikke løs dette bare ved å flytte sletting av installasjonsmarkøren til slutten. Tidligere slettet YAML eller andre filer kan fortsatt være nødvendige for å vite hva som gjenstår.
+Do not solve this only by moving marker deletion to the end. Previously deleted YAML or other files may still be needed to determine remaining work.
 
-Før destruktive steg må nødvendig informasjon være validert og bevart slik at neste kjøring vet:
+Before destructive steps, validate and retain enough information for the next run to know:
 
-- hvilken komponent som avinstalleres
-- om operasjonen inkluderer --delete-data
-- hvilke tjenester som skal stoppes eller oppdateres
-- hvilke registreringseiere som må oppdateres
-- hvilke konkrete volumer som eventuelt skal slettes
+- Which component is being uninstalled.
+- Whether --delete-data is included.
+- Which services must stop or update.
+- Which registration owners must update.
+- Which specific volumes, if any, must be deleted.
 
-Bruk en liten, eksplisitt tilstand for pågående avinstallasjon dersom det er nødvendig. Ikke lag en generell operasjonsmotor.
+Use small, explicit state for ongoing uninstall if needed. Do not build a general operation engine.
 
-Følg disse kravene:
+Follow these requirements:
 
-- Avhengighetskontroller skal fortsatt kjøres før avinstallasjonen starter.
-- En komponent med pågående avinstallasjon må ikke behandles som en frisk, tilgjengelig avhengighet for nye installasjoner.
-- Gjentatt sletting av filer som allerede er fjernet av samme operasjon skal være trygg.
-- Manglende volum ved retry kan regnes som allerede slettet.
-- Feil ved kontroll av et volum skal fortsatt være en feil; det må ikke tolkes som at volumet mangler.
-- Volumlisten skal komme fra validert, komponentavgrenset informasjon.
-- Ikke utvid sletting til andre komponenters volumer eller state.
-- Oppdatering av registreringer og nødvendige omstarter må kunne gjentas.
-- Marker operasjonen som fullført først når alle nødvendige steg har lykkes.
-- Rydd opp i pending-state etter fullført operasjon.
+- Run dependency checks before uninstall starts.
+- A component undergoing uninstall must not count as a healthy available dependency for new installations.
+- Repeated deletion of files already removed by the same operation must be safe.
+- A missing volume on retry can count as already deleted.
+- A volume-inspection error remains an error; do not interpret it as absence.
+- The volume list must come from validated component-scoped information.
+- Do not expand deletion to other components' volumes or state.
+- Registration updates and required restarts must be repeatable.
+- Mark completion only after every required step succeeds.
+- Clean up pending state after completion.
 
-Bevar forskjellen mellom:
+Preserve the distinction between:
 
-- uninstall: behold data, config og credentials.
-- uninstall --delete-data: slett bare den valgte komponentens relevante data og state.
+- uninstall: retain data, config and credentials.
+- uninstall --delete-data: delete only the selected component's relevant data and state.
 
-Et retry må ikke utilsiktet endre en avinstallasjon uten datasletting til en avinstallasjon med datasletting. Definer og dokumenter hvordan avvikende flagg håndteres. Den enkleste løsningen er å kreve samme valg som da operasjonen startet og gi en tydelig feil ved avvik.
+A retry must not accidentally change a retaining uninstall into a data-deleting uninstall. Define and document handling of conflicting flags. The simplest solution is to require the original selection and clearly reject a mismatch.
 
-### 6. Samspill mellom installasjon og avinstallasjon
+### 6. Interaction between installation and uninstallation
 
-Definer enkel og tydelig oppførsel dersom en ny kommando møter en ufullført operasjon.
+Define simple, clear behaviour when a new command encounters unfinished work.
 
-For eksempel:
+For example:
 
-- install må ikke ignorere en pågående avinstallasjon av samme komponent.
-- uninstall må ikke slette eller overse pending registreringsarbeid på en måte som etterlater feil runtime-state.
-- En operasjon må ikke fjerne pending arbeid som tilhører en annen operasjon.
+- install must not ignore an ongoing uninstall of the same component.
+- uninstall must not delete or ignore pending registration work in a way that leaves incorrect runtime state.
+- An operation must not remove another operation's pending work.
 
-Det er akseptabelt å avvise en konflikt med en tydelig melding om hvilken kommando operatøren må kjøre for å fullføre først.
+It is acceptable to reject a conflict with a clear message naming the command the operator must complete first.
 
-Ikke innfør automatisk rollback eller automatiske reparasjoner av ukjent state.
+Do not introduce automatic rollback or automatic repair of unknown state.
 
-### 7. Tester for installasjon
+### 7. Installation tests
 
-Bruk eksisterende testoppsett og feilinjeksjon. Legg minst til følgende scenarioer:
+Use existing test infrastructure and fault injection. Add at least these scenarios:
 
-#### A. App-restart feiler etter registreringsskriving
+#### A. App restart fails after registration writes
 
-1. Installer en app med endret route og klientregistrering.
-2. La app-restart feile etter at registreringene er skrevet.
-3. Verifiser at installasjonen feiler.
-4. Kjør samme installasjon igjen uten feilen.
-5. Verifiser at nødvendige importarkiver oppdateres og både Identity og platform restartes.
-6. Verifiser at pending-state fjernes etter suksess.
+1. Install an app with changed route and client registration.
+2. Fail app restart after registration writes.
+3. Verify installation fails.
+4. Repeat installation without the fault.
+5. Verify required import archives update and both Identity and platform restart.
+6. Verify pending state is removed after success.
 
-#### B. En registreringseier feiler
+#### B. A registration owner fails
 
-1. La restart eller etterfølgende kontroll av Identity/platform feile.
-2. Kjør installasjonen igjen.
-3. Verifiser at ufullført arbeid utføres, selv om registreringsfilene er identiske.
+1. Fail Identity/platform restart or its subsequent check.
+2. Repeat installation.
+3. Verify unfinished work runs even with identical registration files.
 
-#### C. Importarkivskriving feiler
+#### C. Import archive write fails
 
-1. La skriving av et nødvendig importarkiv feile etter at registreringer er skrevet.
-2. Kjør installasjonen igjen.
-3. Verifiser at importarkivet faktisk oppdateres før operasjonen regnes som fullført.
+1. Fail a required import archive write after registration writes.
+2. Repeat installation.
+3. Verify the import archive actually updates before completion is acknowledged.
 
-#### D. Normal installasjon er fortsatt avgrenset
+#### D. Normal installation remains scoped
 
-Verifiser fortsatt de fire kombinasjonene:
+Continue checking all four combinations:
 
-- ingen registreringsendring
-- bare route-endring
-- bare klientendring
-- begge endringer
+- No registration change.
+- Route-only change.
+- Client-only change.
+- Both changes.
 
-Uten pending arbeid skal ingen ekstra fellestjenester restartes.
+Without pending work, no additional shared services should restart.
 
-### 8. Tester for avinstallasjon
+### 8. Uninstall tests
 
-Legg minst til følgende scenarioer:
+Add at least these scenarios:
 
-#### A. Restart av registreringseier feiler
+#### A. Registration-owner restart fails
 
-1. Start avinstallasjon av en installert app.
-2. La restart av Identity eller platform feile.
-3. Kjør avinstallasjonen igjen.
-4. Verifiser at den fullføres selv om noen filer allerede er slettet.
-5. Verifiser at registreringene er fjernet fra de oppdaterte importarkivene.
-6. Verifiser at pending-state ryddes opp.
+1. Begin uninstalling an installed app.
+2. Fail Identity or platform restart.
+3. Repeat uninstall.
+4. Verify completion even though some files are already deleted.
+5. Verify registrations are removed from updated import archives.
+6. Verify pending-state cleanup.
 
-#### B. Volumsletting feiler
+#### B. Volume deletion fails
 
-1. Start uninstall --delete-data med flere komponentvolumer.
-2. La sletting av et senere volum feile etter at et tidligere volum er fjernet.
-3. Kjør samme kommando igjen.
-4. Verifiser at allerede slettede volumer håndteres og resterende arbeid fullføres.
-5. Verifiser at andre komponenters state er uendret.
+1. Begin uninstall --delete-data with several component volumes.
+2. Fail deletion of a later volume after an earlier volume is removed.
+3. Repeat the same command.
+4. Verify already deleted volumes are handled and remaining work completes.
+5. Verify other components' state is unchanged.
 
-#### C. Avinstallasjon uten datasletting
+#### C. Uninstall without data deletion
 
-Et mislykket forsøk og retry skal bevare bytes i config og credentials samt databasevolumer.
+A failed attempt and retry must preserve config/credential bytes and database volumes.
 
-#### D. Konflikter og ugyldig state
+#### D. Conflicts and invalid state
 
 Test:
 
-- retry med avvikende valg for --delete-data
-- installasjon mens samme komponent har pågående avinstallasjon
-- ny installasjon som krever en komponent med pågående avinstallasjon
-- ugyldig eller symlinket pending-state
+- Retry with a conflicting --delete-data selection.
+- Installation while the same component is being uninstalled.
+- A new installation depending on a component being uninstalled.
+- Invalid or symlinked pending state.
 
-Retry-testene må representere en ny prosesskjøring: løsningen skal ikke være avhengig av variabler fra første forsøk. Bruk samme persistente testkatalog, men nullstill midlertidig tilstand mellom forsøkene.
+Retry tests must represent a new process: the solution must not depend on variables from the first attempt. Use the same persistent test directory but reset temporary state between attempts.
 
-### 9. Avgrensning og kompatibilitet
+### 9. Scope and compatibility
 
-Bevar:
+Preserve:
 
-- eksisterende rotkommandoer
-- Python 3.6-kompatibilitet for deploy-koden
-- bundle-avhengigheter og versjonsregler
-- checksums og offline installasjon
-- eksisterende secret-generering og credential-stier
-- SELinux- og fapolicyd-kontroller
-- komponentisolasjon og persistente data
+- Existing root commands.
+- Python 3.6 compatibility for deploy code.
+- Bundle dependencies and version rules.
+- Checksums and offline installation.
+- Existing secret generation and credential paths.
+- SELinux and fapolicyd checks.
+- Component isolation and persistent data.
 
-Ikke:
+Do not:
 
-- flytt deploy til en Python-pakke som del av denne oppgaven
-- legg til passordrotasjon
-- regenerer credentials ved retry
-- innfør ny migreringslogikk
-- endre normale tjenesteomstarter utover det feilrettingen krever
-- legg pending-state i release-katalogen eller offline-bundlen
+- Move deploy into a Python package as part of this task.
+- Add password rotation.
+- Regenerate credentials on retry.
+- Introduce migration logic.
+- Change normal service restarts beyond what the fix requires.
+- Put pending state in the release directory or offline bundle.
 
-### 10. Dokumentasjon, sjekker og rapport
+### 10. Documentation, checks and report
 
-Dokumenter kort hvordan operatøren gjentar en mislykket installasjon eller avinstallasjon, og hvordan eventuelle konflikter rapporteres.
+Briefly document how the operator retries failed install/uninstall and how conflicts are reported.
 
-Kjør:
+Run:
 
-- produkttestene
-- acceptance-harness-testene
-- ruff
-- formatkontroll
-- pyright
-- vermin
-- shellcheck
+- Product tests.
+- Acceptance-harness tests.
+- ruff.
+- Format checks.
+- pyright.
+- vermin.
+- shellcheck.
 
-Legg bare til nye reelle acceptance-scenarioer dersom de gir nødvendig dekning utover målrettede feilinjeksjonstester. Ikke påstå at stubbet testing beviser faktisk Podman/systemd-oppførsel.
+Add real acceptance scenarios only where they provide necessary coverage beyond focused fault-injection tests. Do not claim stubbed tests prove actual Podman/systemd behaviour.
 
-Rapporter:
+Report:
 
-1. Årsaken til de to feilene.
-2. Hvordan ufullført arbeid lagres og fullføres ved retry.
-3. Hvilke filer som er endret.
-4. Hvilke nye feilscenarioer testene dekker.
-5. Faktiske testresultater og sjekker som ikke kunne kjøres.
-6. Eventuelle begrensninger.
+1. Causes of the two bugs.
+2. How unfinished work is stored and completed on retry.
+3. Files changed.
+4. New failure scenarios covered by tests.
+5. Actual test results and checks that could not run.
+6. Limitations.
 
-Foretrekk små, tydelige funksjoner og eksplisitte steg. Målet er at en middels erfaren Python-utvikler enkelt skal kunne forstå hvorfor et nytt forsøk er trygt.
+Prefer small, clear functions and explicit steps. A moderately experienced Python developer should readily understand why retry is safe.
 
 ## 14. Tighten app credential delivery and remove unused API secret
 
@@ -2080,116 +2124,118 @@ Status: done in 0.4.4; delivery and modes are checked on the target
 (`08-credentials`) by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS); see
 [credential delivery](acceptance/CREDENTIAL-DELIVERY.md). The original agent message follows.
 
-Rett credential-håndteringen i `gunstein/podman_offline` med en liten, målrettet endring.
-Behold dagens komponentarkitektur og offline installasjonsmodell.
+Fix credential handling in `gunstein/podman_offline` with a small, focused change.
+Retain current component architecture and the offline installation model.
 
-### 1. Bakgrunn og bekreftede observasjoner
+### 1. Background and confirmed observations
 
-App1 og app2 deklarerer `credentials/todo/session-key` i `GENERATED_SECRETS`.
-Hele `credentials/todo/`, inkludert session key og privat klientnøkkel, leveres i dag
-gjennom `VOLUME_FILES` til appens signing-PVC og monteres skrivebeskyttet på
-`/certificates` i backend. Frontend får ikke denne mounten.
+App1 and app2 declare `credentials/todo/session-key` in `GENERATED_SECRETS`.
+The entire `credentials/todo/` directory, including the session key and private
+client key, currently travels through `VOLUME_FILES` to the app's signing PVC
+and is mounted read-only at `/certificates` in the backend. The frontend does
+not receive this mount.
 
-`deployment/render.py: generate_secrets()` oppretter originalfilen med modus `0600`.
-`write_file_archives()` oppretter selve arkivet med `0600`, men `normalize()` setter
-vanlige filer inne i arkivet til `0644`. Dette er lokalt reprodusert med en syntetisk
-session key. Faktiske rettigheter etter Podman-import er ikke verifisert her.
-PVC-bruk alene er ikke et bekreftet sikkerhetshull; vurder tilgang og livssyklus,
-ikke bare navnet på YAML-ressursen.
+`deployment/render.py: generate_secrets()` creates the original file with `0600`.
+`write_file_archives()` creates the archive itself with `0600`, but `normalize()`
+sets ordinary archive members to `0644`. This was reproduced locally with a
+synthetic session key. Actual permissions after Podman import are unverified here.
+Using a PVC alone is not a confirmed vulnerability; assess access and lifecycle,
+not just the YAML resource's name.
 
-Identity deklarerer også `credentials/app/ApiResources__0__ApiSecrets__0__Value` og
-leverer den via `identity-api-secrets` og `envFrom`. Gjennomgangen fant ingen bruk
-av verdien i dagens Identity-kode. Bekreft dette før den fjernes.
+Identity also declares `credentials/app/ApiResources__0__ApiSecrets__0__Value`
+and delivers it through `identity-api-secrets` and `envFrom`. Review found no
+use of the value in current Identity code. Confirm that before removing it.
 
-### 2. Kartlegg før endring
+### 2. Inventory before changes
 
-Les `AGENTS.md` dersom den finnes, README, ARCHITECTURE og relevante tester.
-Følg de faktiske filene gjennom:
+Read `AGENTS.md` if present, README, ARCHITECTURE and relevant tests.
+Trace actual files through:
 
-- `components/app1/config.defaults.yaml` og tilsvarende for app2/identity.
-- Komponentenes manifester og `scripts/generate-certificates.sh`.
-- `deployment/render.py`: generering, filgrupper, Secret/PVC og importarkiver.
-- `deployment/deploy.py`: installasjon, retry og avinstallasjon.
-- `apps/todo-backend/app.py` og `apps/identity/Program.cs`.
+- `components/app1/config.defaults.yaml` and app2/identity equivalents.
+- Component manifests and `scripts/generate-certificates.sh`.
+- `deployment/render.py`: generation, file groups, Secret/PVC and import archives.
+- `deployment/deploy.py`: install, retry and uninstall.
+- `apps/todo-backend/app.py` and `apps/identity/Program.cs`.
 
-Session key brukes som Flask `SECRET_KEY` til sesjonscookies. Den private
-klientnøkkelen brukes til `private_key_jwt` mot Identity. Dette er forskjellige
-hemmeligheter med forskjellige oppgaver; ingen av dem skal leveres til frontend.
+The session key is Flask's `SECRET_KEY` for session cookies. The private client
+key is used for `private_key_jwt` against Identity. These are distinct secrets
+with distinct purposes; neither belongs in the frontend.
 
-### 3. Stram inn levering og rettigheter
+### 3. Tighten delivery and permissions
 
-Foretrekk å levere session key og privat klientnøkkel gjennom eksisterende
-`SECRET_FILES`, som for databasepassord og Identitys signeringsnøkkel. Avklar at
-valgt løsning støttes av målversjonen av Podman og eksisterende `.kube`-flyt.
-En liten credential-gruppe per app er tilstrekkelig; ikke innfør et nytt rammeverk.
+Prefer delivering the session key and private client key through existing
+`SECRET_FILES`, as with database passwords and Identity's signing key. Confirm
+support in the target Podman version and existing `.kube` flow. A small credential
+group per app is sufficient; do not introduce a new framework.
 
-- Behold persistente originalfiler og samme bytes gjennom normale oppgraderinger,
-  gjentatt installasjon og retry. Ikke regenerer eller roter nøkler ved flyttingen.
-- Sørg for eksplisitte restriktive rettigheter for hemmelige filer i containeren,
-  for eksempel `0400` eller `0600`, med eierskap som passer prosessen som leser dem.
-  Verifiser at Podman faktisk anvender feltene; ikke anta Kubernetes-oppførsel.
-- Behold skrivebeskyttet mount og tilgang bare i backend. Behold eksisterende
-  filstier i containeren hvis dette gir den enkleste og tydeligste løsningen.
-- Offentlige sertifikater kan følge samme beskyttede gruppe når det forenkler
-  mounten; ikke skap ekstra abstraksjoner bare for å skille offentlige filer.
-- Session key og privat klientnøkkel skal ikke samtidig bli liggende i et aktivt
-  generert `VOLUME_FILES`-arkiv etter endringen.
-- Ikke sett alle generelle importfiler til `0600` uten å vurdere offentlige
-  payloads, katalogtilgang og containernes UID/GID. Dersom hemmeligheter fortsatt
-  må leveres gjennom importarkiv, begrunn valget og bevar restriktive rettigheter.
-- Bevar avinstallasjonens skille mellom å beholde state og eksplisitt
-  `--delete-data`. Sletting skal fortsatt være avgrenset til valgt komponent.
+- Retain persistent originals and identical bytes through normal upgrades,
+  repeated installation and retry. Do not regenerate or rotate keys during relocation.
+- Set explicit restrictive permissions for secret files in containers, such as
+  `0400` or `0600`, with ownership appropriate to the reader process. Verify
+  Podman actually applies the fields; do not assume Kubernetes behaviour.
+- Retain read-only mounting and backend-only access. Keep existing container
+  paths if that gives the simplest, clearest solution.
+- Public certificates may share the protected group when that simplifies the
+  mount; do not add abstractions merely to separate public files.
+- The session key and private client key must not also remain in an active
+  generated `VOLUME_FILES` archive after the change.
+- Do not set every general import file to `0600` without considering public
+  payloads, directory access and container UID/GID. If secrets still require
+  archive delivery, justify it and retain restrictive permissions.
+- Preserve uninstall's distinction between retention and explicit `--delete-data`.
+  Deletion remains limited to the selected component.
 
-En Secret gir ikke automatisk kryptering eller minnebasert lagring i Podman.
-Renderet YAML med base64-kodede secrets er sensitiv. Beskytt YAML, originalfiler,
-eventuelle arkiver og runtime-kopier, og unngå verdier i logger og testutskrifter.
+A Secret does not automatically provide encryption or memory-only storage in
+Podman. Rendered YAML containing base64 secrets is sensitive. Protect YAML,
+original files, any archives and runtime copies, and keep values out of logs
+and test output.
 
-### 4. Fjern ubrukt API-secret
+### 4. Remove the unused API secret
 
-Hvis kartleggingen bekrefter at API-secret-en er ubrukt, fjern dens generering,
-Secret-deklarasjon, `envFrom`-referanse og eventuelle unødvendige katalogopprettelser.
-Oppdater relevante tester og dokumentasjon. Ikke fjern legitime API-scopes,
-klientsertifikatautentisering, databasepassord eller Identitys tokensignering.
-Ingen automatisk sletting av ukjente eksisterende credential-filer.
+If investigation confirms the API secret is unused, remove its generation,
+Secret declaration, `envFrom` reference and unnecessary directory creation.
+Update relevant tests and documentation. Do not remove legitimate API scopes,
+client-certificate authentication, database passwords or Identity token signing.
+Do not automatically delete unknown existing credential files.
 
-### 5. Tester og dokumentasjon
+### 5. Tests and documentation
 
-Legg til målrettede tester som verifiserer:
+Add focused tests verifying:
 
-- Riktig leveringsmåte, mount, eierskap/rettighetsinnstillinger og uendrede
-  credential-bytes. Undersøk faktisk generert YAML og eventuelle arkivmedlemmer.
-- Separate nøkler for app1 og app2 og ingen credential-mount i frontend.
-- Ingen duplisert privat nøkkel/session key i appens genererte importarkiv.
-- Installasjon, upgrade og retry beholder nøklene, samt fortsatt trygg og avgrenset
-  avinstallasjon med og uten datasletting.
-- Ubrukt API-secret genereres eller refereres ikke lenger.
-- Private filer og bytecode følger fortsatt ikke med i offline-bundles.
+- Correct delivery, mount, ownership/permissions and unchanged credential bytes.
+  Inspect actual generated YAML and any archive members.
+- Separate app1/app2 keys and no credential mount in the frontend.
+- No duplicated private key/session key in the app's generated import archive.
+- Install, upgrade and retry retain keys; uninstall remains safe and scoped
+  with and without data deletion.
+- The unused API secret is no longer generated or referenced.
+- Private files and bytecode remain excluded from offline bundles.
 
-Oppdater README og relevant test-/arkitekturdokumentasjon med faktisk filflyt og
-skillet mellom en hemmelig verdi og YAML-typen `Secret`. Brukerens diagramskisser
-er foreløpig til diskusjon; ikke legg dem inn uten egen avtale.
+Update README and relevant test/architecture documentation with the actual file
+flow and the distinction between a secret value and YAML type `Secret`. The
+user's diagram sketches are still under discussion; do not add them without agreement.
 
-Kjør repoets dokumenterte produkttester, acceptance-harness-tester, ruff,
-formatkontroll, pyright, vermin og shellcheck. Behold Python 3.6-kompatibilitet
-for host-verktøyene. Oppdater berørte image-/releaseversjoner etter repoets
-konvensjoner dersom endringen krever nye images; ikke gjenbruk en uforanderlig tag.
+Run documented product tests, acceptance-harness tests, ruff, format checks,
+pyright, vermin and shellcheck. Retain Python 3.6 compatibility for host tools.
+Update affected image/release versions following repository conventions if new
+images are required; do not reuse an immutable tag.
 
-Beskriv eller utvid målrettet labverifikasjon av reelle filmoduser, lesetilgang,
-innlogging, sesjoner etter restart/upgrade, klientautentisering og avinstallasjon.
-Ikke start destruktive VM-/snapshot-kjøringer uten eksplisitt autorisasjon.
-Skill mellom lokale tester, statisk vurdering og faktisk Podman-verifikasjon.
+Describe or extend focused lab verification of real file modes, read access,
+login, sessions after restart/upgrade, client authentication and uninstall.
+Do not start destructive VM/snapshot runs without explicit authorisation.
+Distinguish local tests, static assessment and actual Podman verification.
 
-### 6. Avgrensning og leveranse
+### 6. Scope and delivery
 
-Ingen eksisterende installasjoner trenger migrering fra gamle layouts. Ikke bygg
-migreringskode, fallback, automatisk nøkkelrotasjon eller en ny secret manager.
-Normale oppgraderinger i den støttede modellen skal fortsatt bevare private filer
-og data. Ikke redesign Flask-/OIDC-autentiseringen eller tilpass demoen til en
-hypotetisk C#/GraphQL-applikasjon som del av denne oppgaven.
+No existing installations need migration from old layouts. Do not build migration
+code, fallback, automatic key rotation or a new secret manager. Normal upgrades
+within the supported model must still retain private files and data. Do not
+redesign Flask/OIDC authentication or adapt the demo to a hypothetical C#/GraphQL
+application as part of this task.
 
-Rapporter valgt løsning, konkrete endringer, testresultater og hva som gjenstår i
-lab. Forklar hvilke sikkerhetsegenskaper som faktisk er forbedret, uten å påstå at
-et bytte fra PVC til Secret alene gir kryptering eller en ny isolasjonsgrense.
+Report the chosen solution, concrete changes, test results and remaining lab
+work. Explain which security properties actually improved without claiming that
+switching from PVC to Secret alone provides encryption or a new isolation boundary.
 
 ## 15. Remove obsolete legacy layout refusal checks
 
@@ -2197,36 +2243,35 @@ Status: done in 0.4.5; fresh installs without the removed checks are verified by
 the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS); see [layout cleanup](acceptance/LEGACY-CHECK-CLEANUP.md). The original
 agent message follows. No existing installations require migration.
 
-Melding til agenten:
+Message to the agent:
 
-Fjern kontrollene som bare oppdager og avviser historisk core-layout eller
-kombinert platform/Identity-layout i `gunstein/podman_offline`.
-`core-identity-data` i `deployment/deploy.py` er ett konkret eksempel; dagens
-Identity-volum heter `identity-data`. Det gamle navnet brukes til avvisning,
-ikke som et aktivt databasevolum.
+Remove checks that only detect and reject historical core layout or combined
+platform/Identity layout in `gunstein/podman_offline`. `core-identity-data` in
+`deployment/deploy.py` is one example; today's Identity volume is `identity-data`.
+The old name is used for rejection, not as an active database volume.
 
-- Kartlegg `reject_legacy_layout()`, `reject_combined_platform()`,
-  `legacy_volume_exists()` og tilsvarende kontroller i sertifikat-/dev-script,
-  tester og aktive acceptance-scenarioer. Ta utgangspunkt i siste repo-status.
-- Fjern avvisningskontrollene, tilhørende kall og feiltekster om separate
-  migreringsprosedyrer. Ikke bare erstatt gamle volumnavn med nye navn i disse
-  kontrollene; dagens volumer skal ikke avvises som historisk state.
-- Oppdater tester og aktiv operatørdokumentasjon slik at de beskriver dagens
-  støttede layout. Behold historiske rapporter, evidence og fixtures som
-  eksplisitt representerer gamle releaser; forklar gjenværende gamle navn.
-- Ikke innfør migrering, fallback, aliaser, kompatibilitetsgrener, automatisk
-  opprydding eller sletting/flytting av gamle filer eller volumer. Oppgavene 4
-  og 11 skal ikke implementeres; de er historiske forslag som er erstattet av
-  presiseringen om at ingen eksisterende installasjoner trenger migrering.
-- Behold normal oppgradering og retry i dagens komponentmodell: config,
-  credentials og data skal fortsatt bevares. Behold database-preflight,
-  avhengighets-/versjonskontroller, pending-state-validering, komponentisolasjon,
-  sikre filstier/rettigheter og bundle-beskyttelse.
+- Inventory `reject_legacy_layout()`, `reject_combined_platform()`,
+  `legacy_volume_exists()` and equivalent checks in certificate/dev scripts,
+  tests and active acceptance scenarios. Start from current repository state.
+- Remove rejection checks, their calls and errors about separate migration
+  procedures. Do not merely replace old volume names with new names in these
+  checks; current volumes must not be rejected as historical state.
+- Update tests and active operator documentation to describe the supported
+  layout. Retain historical reports, evidence and fixtures explicitly representing
+  old releases; explain remaining old names.
+- Do not introduce migration, fallback, aliases, compatibility branches, automatic
+  cleanup or deletion/movement of old files or volumes. Do not implement items 4
+  and 11; those historical proposals were superseded by the clarification that
+  no existing installations need migration.
+- Retain normal upgrade and retry in the current component model: config,
+  credentials and data must still be retained. Keep database preflight,
+  dependency/version checks, pending-state validation, component isolation,
+  safe paths/permissions and bundle protection.
 
-Kjør produkttester, acceptance-harness-tester og repoets relevante ruff-, format-,
-pyright-, vermin- og shellcheck-kontroller samt `git diff --check`. Behold Python
-3.6-kompatibilitet for host-verktøyene. Rapporter hva som er fjernet, hvilke
-historiske referanser som er beholdt, testresultater og eventuelle labhull.
+Run product tests, acceptance-harness tests and relevant ruff, format, pyright,
+vermin and shellcheck checks, plus `git diff --check`. Retain Python 3.6
+compatibility for host tools. Report removals, retained historical references,
+test results and any lab gaps.
 
 ## 16. Combine secret generation and file delivery declarations
 
@@ -2235,15 +2280,15 @@ for both delivery groups and verified (examples `03-example-*` and generated
 database passwords) by the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS). See [file sources](acceptance/FILE-SOURCES.md) for
 verification and remaining lab work. The original agent message follows.
 
-Melding til agenten:
+Message to the agent:
 
-Forenkle config-modellen i `gunstein/podman_offline` slik at eventuell generering
-deklareres sammen med filene som leveres gjennom `SECRET_FILES` eller
-`VOLUME_FILES`. Fjern behovet for en separat `GENERATED_SECRETS`-liste og dobbelt
-vedlikehold av samme filsti. Målet er at en middels erfaren utvikler enkelt skal
-forstå både hvor en fil kommer fra og hvordan den leveres til containeren.
+Simplify config in `gunstein/podman_offline` so optional generation is declared
+alongside files delivered through `SECRET_FILES` or `VOLUME_FILES`. Remove the
+need for a separate `GENERATED_SECRETS` list and duplicate path maintenance.
+A moderately experienced developer should readily understand both where a file
+comes from and how it reaches the container.
 
-Et mulig format, som et utgangspunkt for vurdering, er:
+One possible format to assess is:
 
 ```yaml
 SECRET_FILES:
@@ -2255,44 +2300,42 @@ SECRET_FILES:
     directory: credentials/identity
 ```
 
-Her er `generate` relativt til den deklarerte katalogen og angir bare filer som
-skal opprettes hvis de mangler. Uten `generate` brukes eksisterende filer.
-Støtt samme prinsipp for `VOLUME_FILES`, siden genererte sesjonsnøkler i dagens
-modell leveres gjennom volumer. Undersøk om formatet bør bruke en liste med
-filkilder fremfor én `directory`, slik at nødvendig støtte for flere kildefiler
-og kataloger ikke forsvinner. Velg én enkel og konsekvent modell; ikke innfør et
-generelt generator-/pluginrammeverk eller to parallelle config-formater.
+Here `generate` is relative to the declared directory and names only files to
+create when missing. Without `generate`, use existing files. Support the same
+principle for `VOLUME_FILES`, because current generated session keys use volumes.
+Consider whether a list of file sources is needed instead of one `directory`,
+so required support for multiple files/directories is retained. Choose one
+simple, consistent model; do not introduce a general generator/plugin framework
+or two parallel config formats.
 
-- Les gjeldende defaults, config-validering, generering, rendering, database-
-  preflight, bundling, dev-/sertifikatscript og tester før formatet bestemmes.
-- Behold dagens genereringsregler og tidspunkt: bare eksplisitt deklarerte
-  manglende filer opprettes der dette er tillatt. Eksisterende gyldige filer
-  beholdes byte-for-byte; tomme/ugyldige filer gir feil. Manglende databasepassord
-  med eksisterende databasevolum skal fortsatt avvises før generering.
-- Sertifikater og private signeringsnøkler skal fortsatt forberedes separat.
-  Den nye deklarasjonen skal ikke gjøre deploy til en sertifikatutsteder.
-- Behold credential-stier, Secret-navn og keys, volum-/PVC-navn, container-mounts,
-  passordformat/-lengde, config-precedence og autoritativ persistent config.
-  Behold sikre filstier, symlink-kontroller og private fil-/katalogrettigheter.
-- Bundle-beskyttelsen må fortsatt følge deklarerte private filer, inkludert
-  symlink-aliaser, og ikke bare filtrere på katalog- eller filnavn. Credentials
-  og komplette connection strings skal ikke eksponeres i logger eller bundles.
-- Oppdater alle aktive configs, eksempler, hjelpere, tester og dokumentasjon til
-  den nye deklarasjonen. Behold historiske rapporter og eksplisitte historiske
-  release-fixtures. Ingen eksisterende installasjoner trenger config-migrering:
-  ikke lag migreringskode, fallback, aliaser eller støtte for gammelt format.
+- Read current defaults, config validation, generation, rendering, database
+  preflight, bundling, dev/certificate scripts and tests before choosing the format.
+- Retain current generation rules and timing: create only explicitly declared
+  missing files where allowed. Retain valid files byte-for-byte; reject empty or
+  invalid files. Reject missing database passwords with existing volumes before generation.
+- Certificates and private signing keys remain separately prepared. The new
+  declaration must not turn deploy into a certificate issuer.
+- Retain credential paths, Secret names/keys, volume/PVC names, container mounts,
+  password format/length, config precedence and authoritative persistent config.
+  Keep safe paths, symlink checks and private file/directory permissions.
+- Bundle protection must still follow declared private files, including symlink
+  aliases, rather than filtering only by names. Credentials and complete
+  connection strings must not appear in logs or bundles.
+- Update all active configs, examples, helpers, tests and documentation. Retain
+  historical reports and explicit historical-release fixtures. No existing
+  installation needs config migration: no migration code, fallback, aliases or
+  old-format support.
 
-Legg til målrettet dekning av genererte og eksternt leverte filer, begge
-leveringsmåter, ugyldige deklarasjoner/stier, config-initialisering, database-
-preflight, byte-bevaring ved restart/redeploy/retry og bundle-beskyttelse.
-Behold config, credentials og data ved normale oppgraderinger i den nye modellen.
-Ikke kombiner med passordrotasjon, endret komponentarkitektur eller bred
-modulrefaktorering.
+Add focused coverage for generated and externally supplied files, both delivery
+methods, invalid declarations/paths, config initialisation, database preflight,
+byte retention on restart/redeploy/retry and bundle protection. Retain config,
+credentials and data during normal upgrades in the new model. Do not combine
+this with password rotation, component architecture changes or broad module refactoring.
 
-Kjør produkttester, acceptance-harness-tester og relevante ruff-, format-,
-pyright-, vermin- og shellcheck-kontroller samt `git diff --check`. Behold Python
-3.6-kompatibilitet for host-verktøyene. Rapporter valgt format, endrede filer,
-testresultater og hva som eventuelt gjenstår å verifisere i lab.
+Run product tests, acceptance-harness tests, relevant ruff, format, pyright,
+vermin and shellcheck checks, and `git diff --check`. Retain Python 3.6 compatibility
+for host tools. Report the chosen format, changed files, test results and any
+remaining lab verification.
 
 ## 17. Use an init container for database preparation in one demo app
 
@@ -2302,42 +2345,41 @@ authentication steps; the renamed `orders` init container exits 0). Local checks
 verification are documented in [app1 init verification](acceptance/APP1-INIT.md).
 The original agent message follows.
 
-Melding til agenten:
+Message to the agent:
 
-La én av appene i `gunstein/podman_offline` bruke `initContainers` til reell
-databaseklargjøring før backend starter. Velg og begrunn en egnet app ut fra
-gjeldende kode og manifests, fortrinnsvis app1 eller app2. Dagens Todo-backend
-oppretter tabellen i oppstartskoden, mens Identity klargjør brukertabellen selv.
-Flytt et konkret, nødvendig klargjøringssteg til init-containeren; ikke legg til
-en symbolsk init-container som bare kjører `echo` eller en ventekommando.
+Use `initContainers` in one app in `gunstein/podman_offline` for actual database
+preparation before backend startup. Choose and justify a suitable app from
+current code/manifests, preferably app1 or app2. The current Todo backend creates
+its table during startup; Identity prepares its own user table. Move a concrete,
+necessary preparation step into the init container; do not add a symbolic init
+container running only `echo` or a wait command.
 
-- Undersøk Podman/Quadlet-oppstarten og hvor PostgreSQL kjører før løsningen
-  velges. En init-container må ikke vente på en ordinær databasecontainer i
-  samme pod som først starter etter init-containeren. Dokumenter hvordan
-  databasen faktisk blir tilgjengelig før klargjøringssteget kjører.
-- Backend skal starte først etter vellykket init. Databaseventing skal være
-  tidsbegrenset, og init-feil skal gi en tydelig feil uten å eksponere passord
-  eller komplette connection strings. Bruk appens eksisterende credential-
-  mekanisme og samme databasepassord som databasen og backend.
-- Klargjøringen skal være idempotent: fersk installasjon oppretter nødvendig
-  skjema; restart, redeploy og retry bevarer eksisterende databaseinnhold og
-  credentials. Ikke innfør passordrotasjon, destruktive resets, migrering fra
-  historiske layouts eller et generelt database-migreringsrammeverk.
-- Behold den andre appens virkemåte. Appene deler backend-kilde/image i dagens
-  modell; unngå utilsiktet å kreve init-klargjøring også i appen som ikke endres.
-  Behold isolasjon fra platform, identity og sibling-appens data og tjenester.
-- Oppdater nødvendig appkode, manifests, dev-flyt, bundling, tester og README.
-  Offline-bundlen skal inneholde alle nødvendige images; ingen nedlasting av
-  kode eller pakker ved init. Følg repoets regler for nye image-/releaseversjoner.
+- Inspect Podman/Quadlet startup and PostgreSQL placement before choosing the
+  solution. An init container must not wait for an ordinary database container
+  in the same pod that starts only after init completes. Document how the
+  database becomes available before preparation runs.
+- Start the backend only after successful init. Database waiting must be bounded,
+  and init failure must give a clear error without passwords or complete connection
+  strings. Use the app's existing credential mechanism and the same database
+  password as the database and backend.
+- Preparation must be idempotent: fresh install creates required schema;
+  restart, redeploy and retry retain database contents and credentials. No
+  password rotation, destructive resets, historical-layout migration or general
+  database migration framework.
+- Retain the other app's behaviour. Apps currently share backend source/image;
+  avoid accidentally requiring init preparation in the unchanged app. Retain
+  isolation from platform, identity and sibling-app data/services.
+- Update required app code, manifests, dev flow, bundling, tests and README.
+  The offline bundle must contain all required images; no code/package downloads
+  during init. Follow repository rules for new image/release versions.
 
-Legg til målrettede tester for oppstartsrekkefølge, init-feil, tidsavbrudd og
-gjentatt klargjøring uten datatap. Kjør produkttester, acceptance-harness-tester
-og relevante lint-, format-, type-, kompatibilitets- og shellkontroller samt
-`git diff --check`. Behold Python 3.6-kompatibilitet for host-verktøyene.
-Beskriv nødvendig labverifikasjon av faktisk Podman-oppførsel, inkludert fersk
-installasjon og restart med beholdte data. Ikke påstå at stubbede tester beviser
-reell init-container-rekkefølge. Rapporter valgt app, konkret flyt, endrede filer,
-testresultater og verifikasjonshull.
+Add focused tests for startup order, init failure, timeout and repeated
+preparation without data loss. Run product tests, acceptance-harness tests,
+relevant lint, format, type, compatibility and shell checks, and `git diff --check`.
+Retain Python 3.6 compatibility for host tools. Describe required lab verification
+of actual Podman behaviour, including fresh installation and restart with retained
+data. Do not claim stubbed tests prove real init-container ordering. Report the
+chosen app, concrete flow, changed files, test results and verification gaps.
 
 ## 18. Move proxy configuration out of apps and use stock nginx from YAML
 
@@ -2347,93 +2389,90 @@ the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS) (HTTPS e2e through
 [proxy verification](acceptance/NGINX-YAML.md) for checks and remaining lab work.
 The original revised agent message follows.
 
-Melding til agenten:
+Message to the agent:
 
-Fjern den egendefinerte proxyen fra `apps/` i `gunstein/podman_offline`. Platform
-skal referere et versjonert standard nginx-image direkte, og alt som trengs for
-proxyens konfigurasjon/oppstart skal deklareres i manifest-YAML under platform.
-Det skal ikke lenger bygges et eget proxy-image.
+Remove the custom proxy from `apps/` in `gunstein/podman_offline`. Platform must
+reference a versioned stock nginx image directly, with all proxy configuration
+and startup requirements declared in platform manifest YAML. Stop building a
+separate proxy image.
 
-Image-byggingen for de øvrige appene skal være som i dag. Ikke flytt byggelogikk
-til Python og ikke refaktorer `dev/build-images.sh`, `dev/pull-images.sh` eller
-bundle-verktøyet som del av denne oppgaven. Behold eksisterende
-komponentarkitektur, CLI og offline installasjonsmodell.
+Image building for other apps stays as it is. Do not move build logic into
+Python or refactor `dev/build-images.sh`, `dev/pull-images.sh` or bundle tooling
+as part of this task. Retain component architecture, CLI and offline installation.
 
-### 1. Les eksisterende flyt
+### 1. Read the existing flow
 
-Les `AGENTS.md` dersom den finnes, README, ARCHITECTURE, BACKLOG og relevante
-tester. Undersøk minst `dev/build-images.sh`, `dev/pull-images.sh`,
-`bundle.py: manifest_images()` / image-validering / arkivering,
-`apps/*/Containerfile`, `apps/proxy/default.conf`, `15-resolver.envsh`,
-platform-manifestene, ruteregistreringene og image-/registry-acceptance-hjelperne.
-Funksjonsnavn og filer kan ha endret seg; bruk faktisk gjeldende repo-status.
+Read `AGENTS.md` if present, README, ARCHITECTURE, BACKLOG and relevant tests.
+Inspect at least `dev/build-images.sh`, `dev/pull-images.sh`,
+`bundle.py: manifest_images()` / image validation / archiving,
+`apps/*/Containerfile`, `apps/proxy/default.conf`, `15-resolver.envsh`, platform
+manifests, route registrations and image/registry acceptance helpers. Functions
+and files may have changed; use actual current repository state.
 
-### 2. Behold eksisterende image-bygging
+### 2. Retain existing image building
 
-- Behold `dev/build-images.sh` og dagens oppskrifter/build contexts/tags for
-  øvrige app-images. Ikke lag en ny Python-fil eller wrapper for image-bygging.
-- Behold manifestdrevet image-discovery, skille mellom lokale demo-builds og
-  registry-pull, PostgreSQLs gjeldende upstream-pull/lokale tag, feilkoder og
-  validering. Ikke legg til fallback-bygging ved pull-feil.
-- Det eneste tilsiktede utslaget i image-flyten er at proxyen blir et vanlig
-  registry-image: den hentes av eksisterende pull-flyt og bygges ikke lokalt.
-  Tilpass bare hjelpere som konkret avhenger av det gamle proxy-imaget.
+- Keep `dev/build-images.sh` and current recipes/build contexts/tags for other
+  app images. Do not add a Python file or wrapper for image building.
+- Retain manifest-driven image discovery, the distinction between local demo
+  builds and registry pulls, PostgreSQL's upstream pull/local tag, exit codes
+  and validation. No fallback building after a pull failure.
+- The only intended image-flow change is that the proxy becomes an ordinary
+  registry image: existing pull flow fetches it rather than building locally.
+  Adapt only helpers concretely depending on the old proxy image.
 
-### 3. Proxy uten eget image-bygg
+### 3. Proxy without a custom image build
 
-- Erstatt `localhost/myproduct-proxy:...` med et fullt kvalifisert, eksplisitt
-  versjonert standard nginx-image i platform-manifestet. Ikke bruk `latest`.
-  Undersøk dagens baseimage og unngå en unødvendig nginx-versjonsendring.
-- Flytt nødvendig nginx-konfigurasjon, template og eventuell liten oppstartskode
-  inn i YAML, for eksempel ConfigMap-data og eksplisitt command/args eller det
-  valgte imagets støttede entrypoint-mekanisme. Det skal ikke kreves et nytt
-  image, proxy-Containerfile eller separate proxy-konfigurasjons-/scriptfiler i
-  `apps/proxy/`. Fjern disse når aktive avhengigheter er erstattet.
-- Behold runtime DNS fra containerens `/etc/resolv.conf` og dynamisk oppslag av
-  komponentnavn. Platform må kunne starte uten appene/Identity, og routes skal
-  fungere når tjenester kommer til eller restartes med nye adresser.
-- Behold HTTPS_PORT, TLS-filer, begrensninger, `/livez`, ukjent-route 404 og
-  `/routes/installed.conf`. Ikke hardkod app-/Identity-ruter i proxyens grunnconfig.
-  Behold TLS-mount, rutemount, readOnly, hostname, hostIP/port og healthcheck.
-- Respekter rendererens eksisterende hele-verdi-`@@...@@`-kontrakt. Hvis nginx-
-  templating skjer ved containeroppstart, begrens variabelsubstitusjon slik at
-  nginx-variabler i konfigurasjon/ruter ikke utilsiktet erstattes. Ikke innfør en
-  generell endring av deploy-rendereren for å løse proxy-templating.
-- Verifiser nødvendig shell/verktøystøtte, ConfigMap-mounts, filmoduser og
-  oppstartsrekkefølge for faktisk valgt image og Podman-versjon. Ikke skriv til
-  skrivebeskyttede mounts; kjør nginx som hovedprosess med korrekt signalhåndtering.
+- Replace `localhost/myproduct-proxy:...` with a fully qualified, explicitly
+  versioned stock nginx image in the platform manifest. Do not use `latest`.
+  Inspect the current base image and avoid an unnecessary nginx version change.
+- Move required nginx config, templates and any small startup code into YAML,
+  such as ConfigMap data and explicit command/args or the image's supported
+  entrypoint mechanism. No new image, proxy Containerfile or separate proxy
+  config/script files in `apps/proxy/` should be required. Remove those files
+  once active dependencies are replaced.
+- Retain runtime DNS from container `/etc/resolv.conf` and dynamic component
+  name resolution. Platform must start without apps/Identity, and routes must
+  work as services appear or restart with new addresses.
+- Retain HTTPS_PORT, TLS files, restrictions, `/livez`, unknown-route 404 and
+  `/routes/installed.conf`. Do not hardcode app/Identity routes in base proxy
+  config. Keep TLS/route mounts, readOnly, hostname, hostIP/port and healthcheck.
+- Respect the renderer's whole-value `@@...@@` contract. If nginx templating
+  occurs at startup, restrict substitution so nginx variables in config/routes
+  are not unintentionally replaced. Do not make a general deploy-renderer change
+  to solve proxy templating.
+- Verify shell/tool support, ConfigMap mounts, modes and startup order for the
+  selected image and Podman version. Do not write to read-only mounts; run nginx
+  as the main process with correct signal handling.
 
-### 4. Offline, tester og dokumentasjon
+### 4. Offline operation, tests and documentation
 
-Det nye nginx-imaget skal oppdages fra manifestet, hentes på byggemaskinen via
-pull-flyten, arkiveres med platform-bundlen og lastes/verifiseres før installasjon.
-Behold `imagePullPolicy: Never` på målmaskinen, checksums, image-navnvalidering og
-isolasjon mellom bundles. Produksjon skal ikke hente images eller pakker fra nett.
-Oppdater dev-/acceptance-hjelpere som fortsatt forventer egen proxy-build eller
-filene under `apps/proxy`. Ikke endre historiske rapporter eller pinned fixtures.
+Discover the nginx image from the manifest, fetch it on the build machine through
+the pull flow, archive it in the platform bundle and load/verify it before install.
+Retain `imagePullPolicy: Never` on the target, checksums, image-name validation
+and bundle isolation. Production must not fetch images/packages from the network.
+Update dev/acceptance helpers still expecting a custom proxy build or files under
+`apps/proxy`. Do not change historical reports or pinned fixtures.
 
-Behold testene for dagens image-bygging og pull-feil. Legg til målrettet dekning
-av at nginx ikke bygges, men oppdages og hentes gjennom eksisterende pull-flyt,
-og at øvrige app-builds bruker samme tags og contexts som før. Verifiser renderet
-proxy-YAML, runtime-templating/DNS, bevarte
-nginx-variabler, image-inkludering i offline-bundle og uendrede TLS-/rutemounts.
-Oppdater tester som tidligere leste `apps/proxy/default.conf`, uten å svekke
-kontrollene for separate komponenter og dynamiske ruteregistreringer.
+Retain current image-build and pull-failure tests. Add focused coverage that
+nginx is discovered and pulled through existing flow instead of built, and
+other app builds retain their tags/contexts. Verify rendered proxy YAML, runtime
+templating/DNS, retained nginx variables, offline image inclusion and unchanged
+TLS/route mounts. Update tests previously reading `apps/proxy/default.conf`
+without weakening component separation or dynamic-registration checks.
 
-Kjør produkttester, acceptance-harness-tester, ruff, formatkontroll, pyright,
-vermin, shellcheck og `git diff --check` med repoets oppsett. Oppdater relevante
-releaseversjoner etter repoets regler, uten å endre uendrede app-images/tags.
-Dokumenter at app-byggingen er uendret, og hvordan standard nginx hentes og
-proxyen konfigureres fra YAML. Beskriv nødvendig
-labverifikasjon av HTTPS, innlogging, platform/help uten Identity, app-tillegg,
-DNS etter restart, helse og offline installasjon. Ikke reset labmiljøer uten
-autorisasjon og ikke påstå at stubbede tester beviser faktisk nginx/Podman-atferd.
+Run product tests, acceptance-harness tests, ruff, format checks, pyright, vermin,
+shellcheck and `git diff --check` with repository configuration. Update relevant
+release versions according to conventions without changing unchanged app images/tags.
+Document unchanged app building, how stock nginx is fetched and how YAML configures
+the proxy. Describe required lab verification of HTTPS, login, platform/help
+without Identity, app addition, DNS after restart, health and offline installation.
+Do not reset labs without authorisation or claim stubbed tests prove actual
+nginx/Podman behaviour.
 
-Ingen config-/credential-migrering, fallback for gammel proxy-layout,
-passordrotasjon, ny komponentmodell eller bred deploy-refaktorering. Behold
-persistente config-/credential-bytes, databasedata, retry og SELinux-/fapolicyd-
-kontroller. Rapporter endrede filer, valgt YAML-/entrypoint-løsning, faktiske
-testresultater og verifikasjonshull.
+No config/credential migration, old-proxy-layout fallback, password rotation,
+new component model or broad deploy refactor. Retain persistent config/credential
+bytes, database data, retry and SELinux/fapolicyd checks. Report changed files,
+chosen YAML/entrypoint solution, actual test results and verification gaps.
 
 ## 19. Remove branches whose changes are already in main
 
@@ -2442,27 +2481,26 @@ Status: done. On 2026-10-17 `git ls-remote --heads origin` listed only `main`;
 Their content was confirmed in `main` on 2026-10-16 as described below. Who deleted
 them is not recorded here. No source, release version or `main` history changed.
 
-Melding til agenten:
+Message to the agent:
 
-Rydd opp i de to branchene `fix/atomic-install-records` og `improvements-0-2`
-i `gunstein/podman_offline`. Behold `main`.
+Clean up `fix/atomic-install-records` and `improvements-0-2` in
+`gunstein/podman_offline`. Retain `main`.
 
-Ved kontroll 16. oktober 2026 var `improvements-0-2` inkludert i historikken til
-`main`. De tre commitene på `fix/atomic-install-records` var samlet i commit
-`c1e26e2369c94350aae36ead018fc5f82117ffc0` på `main`, med identisk innhold i de
-tre berørte filene. Den branchen trenger derfor ingen ekstra merge.
+On 16 October 2026, verification found `improvements-0-2` included in `main`
+history. The three commits on `fix/atomic-install-records` were combined into
+`c1e26e2369c94350aae36ead018fc5f82117ffc0` on `main`, with identical contents in
+the three affected files. That branch therefore needs no additional merge.
 
-Hent oppdatert remote-status før sletting og kontroller at ingen av branchene
-har fått nye endringer som mangler i `main`. For atomic-install-records må
-kontrollen ta høyde for at endringene er samlet i én commit; manglende felles
-commit-ID alene betyr ikke at innholdet mangler. Hvis nytt arbeid mangler i
-`main`, rapporter dette og behold den aktuelle branchen.
+Fetch current remote state before deleting and verify neither branch has new
+changes missing from `main`. For atomic-install-records, account for the combined
+commit: absence of shared commit IDs alone does not imply missing content. If
+new work is missing from `main`, report it and retain the affected branch.
 
-Slett bare de to navngitte remote-branchene når innholdet er bekreftet ivaretatt.
-Rydd eventuelle tilsvarende lokale brancher og foreldede remote-referanser uten
-å miste lokale endringer. Ikke endre kildekode, releaseversjoner eller historikk
-på `main`, og ikke opprett en ny merge bare for å markere branchene som merget.
-Rapporter hvilke brancher som ble slettet og hvordan innholdet ble kontrollert.
+Delete only the two named remote branches once their content is confirmed
+preserved. Clean up corresponding local branches and stale remote references
+without losing local changes. Do not change source code, release versions or
+`main` history, and do not create a merge merely to mark branches as merged.
+Report deleted branches and how their content was checked.
 
 ## 20. Make components and bundles declarative instead of hardcoding demo names
 

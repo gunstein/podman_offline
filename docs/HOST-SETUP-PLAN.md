@@ -1,6 +1,9 @@
 # Item 65 implementation plan: host setup and operator guide
 
-Status: implementation plan, 2026-10-24. **Not implemented or runtime verified.**
+Status: implemented on `feature/65-host-setup`, 2026-10-24; current-change real
+OL9 and unassisted human verification remain outstanding. See
+[implementation/evidence](../acceptance/HOST-SETUP.md). This plan records the
+constraints; current operator commands live in the production manual.
 Read [item 65](../BACKLOG.md#65-one-command-host-preparation-and-a-short-operator-guide),
 the [review guide](REVIEW_GUIDE.md), and the
 [manual installation report](../acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)
@@ -20,10 +23,10 @@ validates and installs each component. Item 65 does not run those lifecycle
 commands as root or impersonate the operator to create the home bootstrap file.
 
 Item 66 owns the install-set manifest, dependency ordering and one-command
-runtime installation of multiple components. Item 67 owns the shared automated
-real-SSH login/reboot path. Item 65 must connect its documented setup to that
-path; until available, the combined operator verification is outstanding. Do not
-claim a sudo-u substitute covers it. No automatic
+runtime installation of multiple components. Item 65 supplies the focused manual-matched setup and initial real-SSH path.
+Item 67 extends it through full logout/reboot/upgrade/retirement verification;
+that complete operator verification remains outstanding. Do not claim a sudo-u
+substitute covers it. No automatic
 account creation, package installation, network access, key rotation, retirement,
 legacy migration or new certificate-tool packaging belongs in 65.
 
@@ -46,7 +49,7 @@ installation remains a visible prerequisite, not a self-verification claim.
 
 ## Operator interface
 
-Planned syntax, **not available in the current CLI**:
+Implemented administrator syntax (substitute delivered versions/digest):
 
 ```sh
 gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - setup \
@@ -87,9 +90,11 @@ config values or credentials. Print `PASS` after each completed step and one
 final `PASS: host setup`; a failure must not print the final success line.
 
 The final report lists release paths, account, port and journal change, then the
-exact first runtime-account command to create/check its private bootstrap file.
-Print a safe rerunnable command that preserves an existing matching file and
-refuses conflicting/linked files; root must neither read nor create that file.
+exact `deploy.sh init-layout` command for the runtime account. This small explicit
+command was added during implementation to replace manual shell file creation.
+It validates the prepared root, syncs a private temporary file and atomically
+publishes the bootstrap without replacement, or
+preserves a matching existing file, and refuses conflicting/linked files; root must neither read nor create that file.
 Do not imply that the product services have been installed or started.
 
 ## Trusted tool bootstrap
@@ -352,7 +357,7 @@ operator-document link checks in source and unpacked bundles and
 `git diff --check`. Report pre-existing lint separately; do not fix unrelated
 findings. Exercise bootstrap/guest code with the same static compatibility checks.
 
-Planned lab commands, available **only after `--host-setup` is implemented**:
+Implemented focused lab commands (not executed for this change):
 
 ```sh
 python3 acceptance/acceptance.py --run host65-normal --first-app app1 --host-setup run
@@ -421,5 +426,6 @@ Understandability review must trace both:
 
 Planning review outcome: the current trust, host privilege separation, product
 identity, offline and retry contracts have been traced to their owning code.
-This plan introduces no runtime behavior or verification claim. Implementation
-must repeat the understandability review on the actual diff and final flow.
+The final implementation review and actual local results are recorded in the
+linked implementation/evidence report. Neither this plan nor those local tests
+establish current-change real-host or human usability verification.

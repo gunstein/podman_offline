@@ -15,6 +15,7 @@ def main():
         "install": deploy.install,
         "uninstall": deploy.uninstall,
         "init-config": deploy.init_config,
+        "init-layout": deploy.init_layout,
         "validate": validation.validate,
         "status": status.status,
     }
@@ -47,7 +48,7 @@ def main():
     ):
         print(
             "Usage: ./deploy.sh validate|prepare|install|uninstall [<component>] "
-            "[--delete-data] | init-config <component> | status [--json]"
+            "[--delete-data] | init-layout | init-config <component> | status [--json]"
         )
         return 2
 

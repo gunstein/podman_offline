@@ -52,7 +52,8 @@ python3 -B tests/run.py platform
 ```
 
 The export contains the runner, platform tests/helpers/declarative fixtures,
-`deployment/`, bundle/entry-point scripts, Quadlet/examples and the three dev
+`deployment/`, bundle/entry-point scripts, the production manual (its bootstrap
+block is executable regression input), Quadlet/examples and the three dev
 helpers tested by the platform group. Its root catalog/components/version files
 come from synthetic fixtures. It contains neither `apps/`, `demo_tests/` nor the
 shipped demo component tree. `--isolate` builds and runs the same copy temporarily;
@@ -65,8 +66,8 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory: 378
-platform tests and 65 demo tests (443 unique tests), plus 218 separate
+renamed-inventory regressions protect the separation. Current inventory after item 65: 485
+platform tests and 66 demo tests (551 unique tests), plus 266 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
 
 # Host preparation boundary (backlog 46)

@@ -993,73 +993,34 @@ journal. A fresh OL9 host has no `/var/log/journal`; create it once with
 /var/log/journal` and `sudo journalctl --flush`. Do not add the account to
 `systemd-journal` or `adm` instead.
 
-Run as the operator with sudo. Install the `platform` bundle first.
-For an app installation, install `identity` next, then `app1` and/or `app2` in
-either order. For a platform/help-only installation, install `help` after
-`platform`; help requires neither Identity nor either app. Platform can also
-remain installed on its own.
+Follow the complete [production installation manual](docs/PRODUCTION-INSTALL.md).
+It gives machine/account/access, copyable commands, expected results and recovery
+in one sequence. The administrator authenticates and installs `release.py.gz`,
+then runs its `setup` operation with explicit release selections and a host release.
+The runtime account logs in itself over SSH without sudo and runs `deploy.sh
+init-layout`, config/credential steps, validate and install. Multiple-component
+runtime orchestration remains backlog 66.
 
-`--port`, every `HTTPS_PORT` and the port in `PUBLIC_ORIGIN` must agree.
-The administrator obtains `scripts/release.py` from a separately authenticated,
-reviewed commit. Its bootstrap is independent of the incoming application bundle:
-a helper extracted from an unverified bundle cannot establish its own trust.
-On the trusted source workstation, compress that reviewed helper with
-`gzip -n -c scripts/release.py > release.py.gz`. Deliver its SHA256 digest through
-an independent authenticated administrative channel, not merely a checksum file
-beside the candidate upload.
+The manual's `tool-bootstrap` block is the canonical initial tool installation
+procedure and is executed by its regression tests. It snapshots the compressed
+candidate into a root-protected location, verifies the independently delivered
+SHA256 on those exact bytes, fsyncs and atomically publishes the helper before
+execution. The bootstrap never imports candidate code. A reviewed organisation
+OS package can provision the same trusted helper instead. Incoming application
+bundles cannot authenticate their own bootstrap. Compressed transport and isolated
+stdin execution preserve fapolicyd rules; no source-file trust exception is added.
 
-Before provisioning, the administrator confirms that `/usr/local/libexec` and
-all its ancestors are root-owned, nonwritable by service users through modes or
-ACLs, and contain no symlinks. Refuse an existing linked, nonregular, foreign-owned
-or service-writable helper target instead of repairing it. Install the compressed
-helper as root-owned 0644
-`/usr/local/libexec/podman-offline-release.py.gz`, then authenticate that exact
-protected copy against the independently obtained digest before first execution:
+The independently authenticated public key and its digest are passed to `setup`.
+It reuses `provision-key`, immutable publication and exact fapolicyd trust, refuses
+key rotation/conflicting release bytes, establishes persistent journals only for
+compatible host policy, and delegates host work to the authenticated selected
+release's existing `prepare-host.sh`. Preflight does not install packages or tune
+security services. Detailed code/evidence and lab commands are in
+[host setup verification](acceptance/HOST-SETUP.md); human verification remains
+separate from automated execution.
 
-```sh
-# helper_sha256 comes from the independent trusted channel.
-sudo install -o root -g root -m 0644 release.py.gz /usr/local/libexec/podman-offline-release.py.gz
-printf '%s  %s\n' "$helper_sha256" /usr/local/libexec/podman-offline-release.py.gz | sudo sha256sum -c -
-```
-
-Only proceed if the protected-copy digest matches. Updating the helper repeats
-this separate reviewed administrative procedure. An organisation-signed OS
-package can provision it instead. A raw untrusted Python file can be denied by
-fapolicyd even when only hashing it; compressed transport plus stdin avoids that
-problem without changing rules or enrolling the helper's source as application
-code. The lab uses equivalent authenticated-controller delivery over SSH and a
-Bash printf pipe. The public bundle-signing key is also provisioned independently
-of application archives. These are trusted administrator actions; the product
-service account has no authority over helper/key provisioning.
-
-The helper requires Python 3.6+, packaged PyYAML, gpgv and fapolicyd-cli on the
-host; no online dependencies are fetched. Decode the authenticated root-protected
-helper directly into the interpreter's stdin with isolated imports (`-I`),
-excluding CWD, PYTHONPATH and user site packages from privileged execution:
-
-```sh
-release_tool() {
-    gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - "$@"
-}
-product_name=myproduct  # product: in bundles.yaml; names /var/lib/<product>
-service_user=produser   # an existing login account, chosen explicitly
-bundle=platform
-version=0.4.11
-archive="$PWD/$product_name-$bundle-$version-offline.tar.gz"
-# Authenticate the organisation's public key out of band before provisioning it.
-# Existing different keyrings are refused; key rotation is an admin operation.
-# bundle_key_sha256 is the public key export's independently authenticated digest.
-release_tool provision-key --product "$product_name" --keyring "$PWD/bundle-signing.gpg" \
-    --key-sha256 "$bundle_key_sha256"
-release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-    --archive "$archive" --signature "$archive.asc"
-release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
-sudo bash "$release/scripts/prepare-host.sh" --port 8443 --user "$service_user"
-# The bootstrap file. In production the service user logs in itself and has
-# no sudo (docs/PRODUCTION-INSTALL.md); this reference uses the admin's sudo.
-sudo -iu "$service_user" bash -c 'umask 077; mkdir -p ~/.'"$product_name"' &&
-    printf "INSTALL_ROOT=/var/lib/%s\n" '"$product_name"' > ~/.'"$product_name/$product_name"'.env'
-```
+The existing individual release operations remain available for administration
+and retirement; they are not an alternate ordinary installation recipe.
 
 The helper snapshots the archive/signature into a private directory under the
 protected `/var/lib/<product>` anchor and verifies that exact copy before extraction.
