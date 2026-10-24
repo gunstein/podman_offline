@@ -47,9 +47,10 @@ review and the full OL9 matrix still pending. Item 63 (operator request) then
 parameterises image versions through build-time `config/images.yaml`.
 Item 62 is implemented with local regression coverage for misplaced container
 fields ([verification](acceptance/MANIFEST-STRUCTURE.md)). Item 59 is implemented
-with local regression coverage: consistent Quadlet markers and early validation
+with local regression coverage and the 2026-10-24 CLEAN PASS lab matrix:
+consistent Quadlet markers and early validation
 ([verification](acceptance/QUADLET-TEMPLATES.md)).
-Item 60 is implemented locally: the CLI wrapper is `deploy.sh`
+Item 60 is implemented and lab-verified in that matrix: the CLI wrapper is `deploy.sh`
 ([verification](acceptance/CLI-WRAPPER.md));
 items 48/49 then cover proxy ingress trust and logging; item 50 is
 lower-priority production hardening. Item 42 remains before item 3; implementation and
@@ -3788,7 +3789,9 @@ standalone paragraph consistent.
 Review baseline: [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md). Apply its relevant
 contracts and mandatory understandability review alongside this task message.
 
-Status: done on `main` (0 early evictions in the lab with the documented cache size). `acceptance/fapolicyd-reload-probe.sh` reproduces
+Status: fix on `main`; earlier lab runs had 0 early evictions with the documented
+cache size. A later counter observation remains to monitor (below).
+`acceptance/fapolicyd-reload-probe.sh` reproduces
 the sequence on the PROD VM (trust add/delete, `fapolicyd-cli --update`, wait
 0–15 s, restart a user unit) and reports failed restarts per delay, the
 effective rules, `fapolicyd.conf`, fapolicyd's journal and every FANOTIFY/AVC
@@ -3831,6 +3834,15 @@ audit action (test: `test_clean_prod_audit_check_reports_fapolicyd_cache`).
 Confirmed in `fapo-stats-app1-first` on `8629614` (CLEAN PASS): cache size
 16381, 0 early evictions, 19 % of slots in use, 453 evictions, maximum queue
 depth 7.
+
+Follow-up observation, 2026-10-24: `status39-20261024-070515-renamed` on
+`137a2da` ended CLEAN PASS with no FANOTIFY/AVC events, but its final audit
+reported 6 early subject cache evictions at cache size 16381 (3559 slots in use,
+805 total evictions, maximum queue depth 14/800). The other five final matrix
+audits reported zero early evictions. This does not diagnose a new failure or
+justify changing policy/cache settings during evidence recording; retain it for
+monitoring and investigation if launch failures recur. The cache size is not a
+guarantee of zero evictions. [Run provenance and limits](acceptance/STATUS.md#completed-real-lab-verification-2026-10-24).
 
 ### Observation
 
@@ -4230,10 +4242,13 @@ write succeeds. Fresh-process install/failure/status/retry regression coverage
 preserves the previous completed version and the `newer-only` skip policy.
 The fix is committed as `bd0cc77`. The coverage follow-up demonstrates the test
 failing against `b46d548` and adds an opt-in `--status-retry` acceptance probe,
-including actual container consumption after retry; the new lab path is unrun.
+including actual container consumption after retry. The 2026-10-24 six-scenario
+matrix is CLEAN PASS, including the probe in all five applicable scenarios.
 [Verification and understandability review](acceptance/STATUS.md).
-Current-change real Podman/systemd verification remains pending. The original
-request (2026-10-19) and task follow.
+Current-change real Podman/systemd verification is recorded with exact revisions,
+477 verified step logs and the non-blocking fapolicyd counter observation in that
+report. Python 3.6 runtime and the separate 65–67 operator work remain outstanding.
+The original request (2026-10-19) and task follow.
 
 ### Problem
 
@@ -6625,8 +6640,9 @@ Status: implemented with local product/harness regression checks (2026-10-23).
 an internal-only resolver; both templates are checked before host queries,
 generation or writes, including standalone and equal-version `newer-only`.
 [Verification and understandability review](acceptance/QUADLET-TEMPLATES.md).
-Real Podman/systemd verification of this change remains pending. The original
-analysis and task follow.
+Real Podman/systemd verification passed in the 2026-10-24 six-scenario matrix;
+see [run provenance and limits](acceptance/STATUS.md#completed-real-lab-verification-2026-10-24).
+The original analysis and task follow.
 
 ### Analysis and decision
 
@@ -6759,8 +6775,9 @@ Status: implemented with local product and harness regression checks (2026-10-24
 current documentation; no old-name alias is shipped. Based on item 59 commit
 `6c9a461`, on branch `fix/60-deploy-sh`.
 [Verification and understandability review](acceptance/CLI-WRAPPER.md).
-Real Podman/systemd verification of this change remains pending. The original
-rename brief follows.
+Real Podman/systemd verification passed in the 2026-10-24 six-scenario matrix;
+see [run provenance and limits](acceptance/STATUS.md#completed-real-lab-verification-2026-10-24).
+The original rename brief follows.
 
 ### Analysis and implementation brief
 

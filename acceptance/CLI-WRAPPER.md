@@ -1,7 +1,7 @@
 # CLI wrapper name (backlog 60)
 
 Implemented on `fix/60-deploy-sh` (2026-10-24), based on item 59 commit `6c9a461`.
-The two changes are stacked; this does not merge either branch into main.
+The two changes are stacked and included in `feature/39-component-status`.
 
 ## Contract and changes
 
@@ -96,8 +96,12 @@ Fresh-process retry continues to use the same durable state. Source, bundle,
 error and isolated release paths were traced separately from automated checks;
 the understandability review passed.
 
-No real Podman/systemd/SELinux/fapolicyd run or Python 3.6 interpreter run was
-performed for this change. Historical/manual installation evidence does not verify
-this rename. A fresh committed lab matrix can use the existing app1-first and
-renamed-product scenarios from [acceptance instructions](README.md), with unique
-run IDs on the configured disposable VMs; those real runs remain outstanding.
+The subsequent [2026-10-24 real lab matrix](STATUS.md#completed-real-lab-verification-2026-10-24)
+completed all six scenarios with CLEAN PASS, including normal and renamed
+products, on identical product/harness code at `7ef9671` and `137a2da` (only
+documentation differs). It verifies actual wrapper execution on OL9 with
+Podman/systemd, SELinux Enforcing and fapolicyd. See that report for exact run IDs,
+log verification, warnings and the early-cache-eviction observation.
+Python 3.6 interpreter execution remains outstanding. Automated execution does
+not establish operator usability; the [AI findings and pending human trial](OPERATOR-REVIEW.md)
+remain separate.

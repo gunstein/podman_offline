@@ -98,13 +98,14 @@ The initial isolated run failed because the retry driver still bypassed only
 an absent production bootstrap. The driver was updated to preserve its existing
 fixture identity/layout boundary; tests were not excluded.
 
-## Runtime verification gap
+## Runtime verification and remaining gaps
 
-No real Podman/systemd/SELinux/fapolicyd run was performed for this change.
-The previous manual production installation and historical lab matrices do not
-verify the new templates or renderer. Python 3.6 was checked statically; no Python
-3.6 interpreter was run. For current-change runtime evidence, use a clean committed
-checkout and the existing app1-first and renamed-product lab scenarios from
-[acceptance instructions](README.md), with unique run IDs. They reset the configured
-disposable VMs and cover real template consumption, repeated installation, upgrade
-and shared networking; they have not been run here.
+The [2026-10-24 real lab matrix](STATUS.md#completed-real-lab-verification-2026-10-24)
+completed all six scenarios with CLEAN PASS on identical product/harness code
+at `7ef9671` and `137a2da` (only documentation differs). It exercises actual
+template consumption, repeated installation, upgrades and shared networking,
+including renamed components, on OL9 with SELinux Enforcing and fapolicyd.
+See the report for exact run IDs, 477 verified step-log hashes, warnings and the
+early-cache-eviction observation. Invalid-template refusal retains its separate
+focused product-test evidence. Python 3.6 was checked statically; no Python 3.6
+interpreter run is established by this matrix.

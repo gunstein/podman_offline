@@ -1,8 +1,8 @@
 # Installed component status (backlog 39)
 
 Implemented on `feature/39-component-status` (2026-10-24), based on the CLI rename
-commit `88f3110` (which includes item 59). These local branches have not been
-merged into main by this work.
+commit `88f3110` (which includes item 59). Current-change real lab verification
+was completed on 2026-10-24; see the recorded matrix below.
 
 ## Command and authority
 
@@ -155,7 +155,8 @@ exit code and skips the status check.
 Four new harness tests exercise the actual embedded probe and shell wiring:
 correct CLI/JSON, wrong versions/products/pending/completion/unit values,
 subprocess failures/redaction, install-failure propagation and scenario wiring.
-These tests stub runtime; the real lab steps are runnable but have not run here.
+These tests stub runtime; the real lab steps subsequently passed in the
+2026-10-24 matrix recorded below.
 
 ## Opt-in same-version lab probe
 
@@ -197,10 +198,10 @@ python3 acceptance/acceptance.py --run status-retry-normal --status-retry run
 python3 acceptance/acceptance.py --run status-retry-renamed --renamed-product --status-retry run
 ```
 
-These are normal harness runs and include its VM snapshot resets. **Neither has
-been executed for this implementation.** The existing six-scenario matrix does
-not cover this failure path unless the new flag is explicitly supplied. Earlier
-matrix results cannot verify it. Logs identify `07-status-retry`; run metadata
+These are normal harness runs and include its VM snapshot resets. The
+2026-10-24 matrix below exercised the probe in all five applicable scenarios,
+including normal and renamed products. A matrix without the explicit flag does
+not cover this failure path. Logs identify `07-status-retry`; run metadata
 records whether the flag was selected.
 
 Seven focused harness tests cover the probe's success/restoration, false-success
@@ -213,8 +214,9 @@ any run is created. These are simulated runtime checks, not lab runs.
 ## Current-change checks
 
 The lifecycle fix was committed as `bd0cc77`. The coverage/lab-probe follow-up
-is based on that commit. Current local results are recorded below; real runtime
-verification is still outstanding.
+was committed as `7ef9671`. The implementation-time local results are recorded
+below, separately from the subsequent real runtime evidence. These commands were
+not rerun merely to record the lab results in documentation.
 
 | Evidence | Result |
 | --- | --- |
@@ -234,8 +236,85 @@ retains that ordering and changes no production lifecycle code.
 
 Full-tree Ruff retains the 12 existing findings in the three item 61 files noted
 in [CLI wrapper verification](CLI-WRAPPER.md); this separate gate is not green.
-ShellCheck is unavailable. No real Podman/systemd/SELinux/fapolicyd run or Python
-3.6 interpreter run was performed for this change. Historical/manual installation
-results do not verify this new command. Fresh committed lab scenarios from
-[acceptance instructions](README.md), including ordinary and renamed installs,
-will now exercise the status CLI automatically after installation.
+ShellCheck was unavailable. A Python 3.6 interpreter run remains outstanding;
+static compatibility checks do not substitute for it. Real runtime verification
+is now recorded separately below.
+
+## Completed real lab verification (2026-10-24)
+
+The operator supplied `akseptanselogger-20261024-123334.tar.gz`, SHA256
+`defc7156fd70100676afc6c01ae35236b074b46e609e9c47913f0da68202865f`.
+The archive includes older runs; this assessment uses only the six
+`status39-20261024-070515-*` directories. Original reports, records and full logs
+remain outside Git under `~/podman-offline-acceptance-runs/<run-id>/` and in that
+archive. No credentials or raw diagnostic logs are added to the repository.
+
+| Run suffix | Source revision | Recorded steps | Status-retry probe | Result |
+| --- | --- | ---: | --- | --- |
+| `platform-help` | `7ef9671e0d906efab35c85bc2191463472616732` | 39 | Not applicable: no app consumer | CLEAN PASS |
+| `app1` | `7ef9671e0d906efab35c85bc2191463472616732` | 126 | PASS | CLEAN PASS |
+| `app2` | `7ef9671e0d906efab35c85bc2191463472616732` | 126 | PASS | CLEAN PASS |
+| `help` | `137a2dabcf947250f8c5192f1e38b38469c822ba` | 61 | PASS | CLEAN PASS |
+| `identity` | `137a2dabcf947250f8c5192f1e38b38469c822ba` | 67 | PASS | CLEAN PASS |
+| `renamed` | `137a2dabcf947250f8c5192f1e38b38469c822ba` | 58 | PASS | CLEAN PASS |
+
+All six reports record clean source checkouts. The revision changed during the
+sequential matrix, but `git diff 7ef9671..137a2da` changes only `BACKLOG.md`,
+`docs/REVIEW_GUIDE.md`, `docs/HOST-SETUP-PLAN.md` and
+`acceptance/OPERATOR-REVIEW.md`; product and harness code are identical.
+Do not describe the matrix as six runs of a single revision. The evidence-recording
+commit also changes documentation only and is not itself claimed as a lab-tested
+commit.
+
+All **477 recorded steps** have result PASS and exit 0. Every referenced log is
+present, and all 477 full-log SHA256 values match their `EVIDENCE.md` entries.
+These are scenario steps, not 477 unit tests. `03-unit` ran 520 product/demo tests
+successfully in each of the five non-renamed runs. The separate local
+acceptance-harness result remains 254 tests as recorded above; it is not inferred
+from the uploaded lab archive.
+
+The real hosts report Oracle Linux 9.8, Podman 5.8.2, systemd 252 and PyYAML 5.4.1.
+PROD ran with SELinux Enforcing, active fapolicyd and firewalld, from the
+`clean-agent` snapshot; DEV used `clean-dev`. The applicable scenarios exercise
+real installation, status, repeated install, service lifecycle/reboot, upgrades,
+retirement, retention, offline behavior and renamed component identities. This
+also supplies current runtime evidence for the item 59 Quadlet templates and
+item 60 `deploy.sh` wrapper.
+
+Every `07-status-retry` stdout records all three required outcomes:
+
+- The failed same-version install is pending/incomplete while the old container
+  remains active.
+- An ordinary retry completes and the changed public value is consumed by the
+  replacement container.
+- The original config is restored through install and protected code is unchanged.
+
+### Observations and verification limits
+
+All six final PROD audits report no FANOTIFY/AVC events since their run start.
+The renamed run's final audit reports **6 early subject cache evictions** with
+subject cache size 16381, 3559 slots in use, 805 total evictions and maximum queue
+depth 14 of 800. The other five final audits report zero early evictions. This is
+a reported counter, not evidence of six new denials or a diagnosed regression;
+the renamed scenario still passed. Record and monitor it under
+[backlog 29](../BACKLOG.md#29-fapolicyd-denies-systemds-podman-launch-just-after-a-trust-update).
+Do not claim the documented cache size guarantees zero early evictions.
+
+Reports also retain SSH post-quantum key-exchange warnings and, where the dev
+environment is prepared, pip root-user/version warnings. These did not fail the
+runs. No security policy or cache tuning was changed while recording this evidence.
+
+The status contract, whole-operation pending receipt, successful retry, retained
+configuration, protected release and renamed-product paths have current runtime
+evidence. Minimal owner-free fixtures, status config/credential read guards,
+last-owner/marker failure and other injected process-death cases retain their
+separate product-test evidence; the lab probe is not claimed to cover them all.
+The existing code-understandability review above remains applicable: recording
+this evidence introduces no lifecycle or state changes.
+
+Runtime commands in this matrix use the existing harness account transport.
+They do not verify the future manual-matched real-SSH flow in backlog 65–67 or
+unassisted human usability. The [AI operator assessment](OPERATOR-REVIEW.md) still
+has findings; the qualifying human trial remains outstanding. Python 3.6 runtime,
+non-baseline fapolicyd integrity modes and customer-specific external images are
+not established by this matrix. No new lab run was launched during evidence review.

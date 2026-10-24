@@ -18,7 +18,8 @@ separate final acknowledgement after its scoped removal steps.
 
 Fresh-process regressions cover same-version daemon-reload failure, last-owner
 acknowledgement followed by marker failure, and read-only status/retry. An opt-in
-lab probe is implemented but not run; see [current evidence and commands](STATUS.md).
+lab probe passed in all five applicable scenarios of the 2026-10-24 matrix;
+see [current evidence and commands](STATUS.md#completed-real-lab-verification-2026-10-24).
 The counts and host evidence in the original report below are historical.
 
 ## Cause and fix
