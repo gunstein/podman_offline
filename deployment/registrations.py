@@ -337,6 +337,24 @@ def registration_changes(updates, owners, state=None, removals=()):
     return changed - {None}
 
 
+def begin_install(component, product):
+    """Keep the attempt pending until its completion marker is durably written.
+
+    Even with no registration owners, a reinstall can change deployed files
+    while its old version marker and running service still look successful.
+    """
+    pending = check_pending("install", component, product)
+    if pending is None:
+        pending = {
+            "operation": "install",
+            "component": component,
+            "product": product,
+            "owners": [],
+        }
+        save_pending(pending)
+    return pending
+
+
 def apply_registration_updates(component, product, updates, removals, owners):
     """Record unfinished owners durably before writing or deleting registrations."""
     pending = check_pending("install", component, product)
@@ -420,8 +438,6 @@ def load_pending():
                 or len(set(volumes)) != len(volumes)
             ):
                 raise ValueError("uninstall fields")
-        elif not owners:
-            raise ValueError("empty install work")
     except (OSError, ValueError, TypeError, UnicodeError):
         raise common.DeployError(
             "Invalid pending-operation state; no changes made"
@@ -500,14 +516,11 @@ def clear_pending():
     sync_pending_directory()
 
 
-def acknowledge_owner(state, owner, clear_when_done=False):
+def acknowledge_owner(state, owner):
     """Record that one owner's restart finished, so a retry skips only that owner.
 
-    An install record is finished once no owner is left; an uninstall record
-    still has its own final steps, so it is cleared by uninstall itself.
+    Both lifecycle operations still have final steps after the last owner;
+    only the operation itself clears its record after those steps succeed.
     """
     state["owners"].remove(owner)
-    if state["owners"] or not clear_when_done:
-        save_pending(state)
-    else:
-        clear_pending()
+    save_pending(state)

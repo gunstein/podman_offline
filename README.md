@@ -1251,7 +1251,9 @@ Product name and pending operation/component/owners follow the text rows.
 
 A missing completion marker is shown as `incomplete`, with version `-`. If an
 upgrade wrote newer metadata before completion, the old completed version stays
-visible alongside the recorded target version. Config and credentials are never
+visible alongside the recorded target version. A pending attempt also makes its
+component `incomplete` when both versions match, including a failed reinstall
+while the old service remains active. Config and credentials are never
 read; pending work is reported and retained for the normal lifecycle retry.
 The only host queries are bounded `systemctl --user is-active` calls. This reports
 systemd unit state; application health remains covered by install/acceptance checks.
@@ -1280,9 +1282,11 @@ must allow the requested version.
 Failed lifecycle commands can be repeated from the same component's verified,
 trusted bundle. Retry `./deploy.sh install`, or repeat `./deploy.sh uninstall` with
 exactly the original `--delete-data` choice. The private
-`<state>/pending-operation.json` records unfinished registration owners or the scoped
-uninstall plan before relevant changes. Required imports are rebuilt and owners
-restart until the existing `is-active` check succeeds. Confirmed owners are
+`<state>/pending-operation.json` records the install attempt and unfinished
+registration owners, or the scoped uninstall plan, before relevant changes.
+An install remains pending even with no owners, until all required work succeeds
+and the completed version marker is durably written. Required imports are rebuilt
+and owners restart until the existing `is-active` check succeeds. Confirmed owners are
 removed from pending work individually; uninstall remains resumable after its
 YAML or data has been removed. Config and credentials remain untouched unless
 the original uninstall explicitly requested data deletion.

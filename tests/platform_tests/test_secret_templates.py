@@ -515,7 +515,7 @@ class TemplateLifecycleTests(ProductFixture):
         self.assertNotEqual(initial, output.read_bytes())
         self.assertEqual(before, password.read_bytes())
         self.process.side_effect = original
-        self.install(releases["worker"])
+        deploy.install()  # Resume pending work; init-config is a conflicting operation.
         password.write_bytes(b"ControlledReplacement")
         previous = output.read_bytes()
         self.install(releases["worker"])

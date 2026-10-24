@@ -76,7 +76,11 @@ def collect():
                 "version": version,
                 "recorded_version": recorded,
                 "unit": catalog.unit_name(name) + ".service",
-                "complete": version is not None and version == recorded,
+                "complete": (
+                    version is not None
+                    and version == recorded
+                    and not (pending is not None and pending["component"] == name)
+                ),
             }
         )
     # Validate all state files before the first host query.

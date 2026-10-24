@@ -57,7 +57,8 @@ writes nothing else. Then:
    pull policy, mounts, duplicates and the links to config and imported registration volumes. It
    writes nothing.
 3. `deploy.database_preflight()` reads those documents, so Podman is asked
-   about the configured volume. It is the first host command.
+   about the configured volume. It is the first Podman query when a database
+   check is needed; production install checks the user-manager environment earlier.
 4. `render.materialize()` then creates allowed missing secrets, reads the file
    groups, composes `SECRET_TEMPLATES` using those loaded file bytes (checks that
    need file bytes run here), and returns the YAML and
@@ -112,12 +113,13 @@ a demo component. The demo's certificate and user provisioning is the explicit
 `install_components()` validates before any write: the bundle descriptor, the
 installed metadata plus this descriptor as one set of known components
 (conflicting owners refused), pending conflicts, dependency and dependent
-ranges and the declared `public_from` settings. It then stages and validates
-registrations in a temporary directory (`registration_stage`), and only then
+ranges and the declared `public_from` settings. `production_environment()` then
+checks the runtime and queries the systemd user-manager environment. Install stages
+and validates registrations in a temporary directory (`registration_stage`), and only then
 checks the effective manifests and DB state (`check_manifests`), whose
-database preflight is the first host command. A `newer-only` component with an equal installed version is excluded
-from rendering; its images are still verified and its registrations still
-staged.
+database preflight precedes image loading and secret generation. A `newer-only`
+component with an equal installed version is excluded from rendering; its images
+are still verified and its registrations still staged.
 
 The incoming release is authoritative for its own registrations: staging never
 copies the selected component's installed route or client, and a role the
@@ -130,14 +132,21 @@ never means removal.
    is fully qualified, then materialize the validated manifests once
    (`render.materialize`: generate missing secrets, render YAML).
 2. Load this bundle's archive and verify every required image.
-3. Write the installed metadata, so registrations name a known component.
+3. Persist the install attempt with `begin_install()`, then write the installed
+   metadata, so registrations name a known component.
 4. Record unfinished registration owners, including owners of removed
    registrations, then write or delete public registrations.
 5. Write the rendered YAML, its import archives, Quadlets and changed owner
    imports.
 6. Reload systemd, restart the component and then changed owners
    (`restart_order`), check `is-active` and acknowledge each owner.
-7. Write the installed version marker last as completion.
+7. Write the completed version marker, then clear the pending install record.
+
+The pending record remains even when no registration owners need work. Owner
+acknowledgement only removes owners; it never closes the install attempt. Thus a
+failed same-version reinstall remains incomplete in `status` while the previous
+completed version stays available. Retry uses the same upgrade/render policy;
+an equal-version `newer-only` retry still skips rendering and component restart.
 
 The sequence describes the established behavior, including secret materialization
 before image loading and possible persistent file changes before a service
@@ -172,9 +181,11 @@ changing a diagram ([install](docs/diagrams/deploy-install.png),
 
 ### `./deploy.sh install` from an unpacked bundle
 
-Validation happens before any write or host command; the database preflight
-is the first host command; `pending-operation.json` is saved before
-registrations change; the version marker is written last.
+Declaration checks precede the read-only systemd user-manager environment query.
+Staging and effective-manifest validation precede database Podman queries and
+secret generation. After image verification, `pending-operation.json` is saved
+before installed metadata or service files change and retained through restarts
+and the completion-marker write.
 
 ```mermaid
 sequenceDiagram
@@ -199,6 +210,7 @@ sequenceDiagram
     Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
     D->>R: load_config, validate_component_config
     D->>D: check_public_settings (public_from)
+    D->>H: production_environment: check user-manager environment (read-only)
     D->>G: registration_stage (temp dir): imports, updates, removals
     D->>R: effective_config, effective_documents
     Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links - no writes
@@ -207,12 +219,14 @@ sequenceDiagram
     P->>S: install_preconditions: shared network, image archive, find_images
     P->>R: materialize: generate missing secrets, read files, render YAML
     P->>H: podman load + podman image exists
+    P->>G: begin_install: persist pending attempt, even without owners
     P->>S: write metadata/ID.json
     P->>G: apply_registration_updates: save_pending,<br/>then write/delete routes/ and clients/
     P->>S: write rendered YAML, import archives, Quadlet .kube, owner imports
     P->>H: daemon-reload, restart component then owners (restart_order),<br/>each waiting for healthy containers (health.py)
-    P->>G: acknowledge_owner for each owner, clear_pending
+    P->>G: acknowledge_owner for each owner, retain pending attempt
     P->>S: write installed/ID (completion)
+    P->>G: clear_pending after durable completion marker
 ```
 
 ### `./build-bundle.sh` in the source checkout

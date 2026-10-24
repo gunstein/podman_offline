@@ -4,13 +4,16 @@ import copy
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Tuple
 from unittest import mock
 
+import yaml
 from deployment import catalog, cli, common, layout, registrations, status
 
 from helpers.product_fixture import ProductFixture, pod
+from helpers.retry_fixture import DRIVER, REAL_RUN, SOURCE
 
 
 def snapshot(root):
@@ -292,3 +295,164 @@ class StatusTests(ProductFixture):
         self.use_root(self.source)
         with self.assertRaisesRegex(common.DeployError, "unpacked component bundle"):
             status.collect()
+
+
+class StatusLifecycleTests(ProductFixture):
+    """Real installs and status in separate processes, with only host transport stubbed."""
+
+    def setUp(self):
+        super().setUp()
+        self.product_name = "cedar"
+        self.write_product(
+            {
+                "worker": {
+                    "catalog": {},
+                    "defaults": {"MESSAGE": "original"},
+                    "manifests": [
+                        pod(
+                            "worker-job",
+                            "registry.example.test/worker:1",
+                            env={"MESSAGE": "@@MESSAGE@@"},
+                        )
+                    ],
+                }
+            }
+        )
+        self.release = self.build_and_unpack()["worker"]
+        shutil.rmtree(self.source)
+        self.use_root(self.release)
+        self.pids = set()
+        self.attempt("init-config")
+        self.attempt("install")
+        self.marker = common.STATE / "installed/worker"
+        self.config = common.STATE / "worker/config.yaml"
+        self.output = common.QUADLET_DIR / "cedar-worker.yaml"
+        self.pending = common.STATE / "pending-operation.json"
+
+    def attempt(self, action, expected=0, **options):
+        record = self.root / "attempt.json"
+        result = REAL_RUN(
+            [sys.executable, "-B", str(DRIVER)],
+            input=json.dumps(
+                dict(
+                    root=str(self.release),
+                    home=str(common.STATE),
+                    source=str(SOURCE),
+                    record=str(record),
+                    action=action,
+                    **options,
+                )
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        # init-config has no host calls; all other invocations record their PID.
+        if action != "init-config":
+            evidence = json.loads(record.read_text())
+            self.assertNotIn(evidence["pid"], self.pids)
+            self.pids.add(evidence["pid"])
+            events = evidence["events"]
+        else:
+            events = []
+        return result.stdout, events
+
+    def report(self, complete, version="1.0.0", recorded="1.0.0"):
+        before = snapshot(common.STATE)
+        output, events = self.attempt("status", expected=0 if complete else 1)
+        self.assertEqual(snapshot(common.STATE), before)
+        self.assertEqual(
+            events, [["systemctl", "--user", "is-active", "cedar-worker.service"]]
+        )
+        report = json.loads(output)
+        self.assertEqual(
+            report["components"],
+            [
+                {
+                    "name": "worker",
+                    "version": version,
+                    "recorded_version": recorded,
+                    "unit": "cedar-worker.service",
+                    "state": "active",
+                    "complete": complete,
+                }
+            ],
+        )
+        self.assertEqual(
+            report["pending"],
+            None
+            if complete
+            else {
+                "operation": "install",
+                "component": "worker",
+                "owners": [],
+            },
+        )
+
+    def test_same_version_failures_remain_incomplete_until_fresh_process_retry(self):
+        self.report(True)
+        reload_command = ["systemctl", "--user", "daemon-reload"]
+        failures = [
+            {"failure": reload_command},
+            {"interrupt": reload_command},
+            {"record_failure": "installed/worker"},
+            {"clear_failure": True},
+        ]
+        retained = common.STATE / "worker/credentials/operator-key"
+        retained.parent.mkdir()
+        retained.write_bytes(b"retained-private-key")
+        for index, failure in enumerate(failures):
+            with self.subTest(failure=failure):
+                message = "changed-" + str(index)
+                self.config.write_text(yaml.safe_dump({"MESSAGE": message}))
+                before_marker = self.marker.read_bytes()
+                _, events = self.attempt(
+                    "install", expected=99 if "interrupt" in failure else 1, **failure
+                )
+                self.assertIn(message, self.output.read_text())
+                self.assertEqual(self.marker.read_bytes(), before_marker)
+                if "failure" in failure or "interrupt" in failure:
+                    self.assertNotIn(
+                        ["systemctl", "--user", "restart", "cedar-worker.service"],
+                        events,
+                    )
+                self.report(False)
+                # A conflicting uninstall cannot discard the unfinished attempt.
+                pending = self.pending.read_bytes()
+                self.attempt("uninstall", expected=1)
+                self.assertEqual(self.pending.read_bytes(), pending)
+                _, events = self.attempt("install")
+                self.assertIn(
+                    ["systemctl", "--user", "restart", "cedar-worker.service"], events
+                )
+                self.report(True)
+                self.assertEqual(
+                    yaml.safe_load(self.config.read_text()), {"MESSAGE": message}
+                )
+                self.assertEqual(retained.read_bytes(), b"retained-private-key")
+
+    def test_newer_only_retry_preserves_previous_version_and_equal_version_skip(self):
+        path = self.release / "bundle.yaml"
+        descriptor = yaml.safe_load(path.read_text())
+        descriptor.update(upgrade="newer-only", version="1.0.1")
+        path.write_text(yaml.safe_dump(descriptor))
+        self.config.write_text(yaml.safe_dump({"MESSAGE": "upgraded"}))
+        self.attempt(
+            "install", expected=1, failure=["systemctl", "--user", "daemon-reload"]
+        )
+        self.report(False, recorded="1.0.1")
+        self.attempt("install")
+        self.report(True, version="1.0.1", recorded="1.0.1")
+        # An equal-version attempt still keeps its original no-render policy.
+        before = self.output.read_bytes()
+        self.config.write_text(yaml.safe_dump({"MESSAGE": "not selected"}))
+        self.attempt("install", expected=1, clear_failure=True)
+        self.report(False, version="1.0.1", recorded="1.0.1")
+        _, events = self.attempt("install")
+        self.assertFalse(
+            any(event[:3] == ["systemctl", "--user", "restart"] for event in events)
+        )
+        self.assertEqual(self.output.read_bytes(), before)
+        self.report(True, version="1.0.1", recorded="1.0.1")

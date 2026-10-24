@@ -388,10 +388,10 @@ would pass some checks and skip others.
 /var/lib/<product>/state/
 ├── <id>/config.yaml        authoritative config (init-config, then you)
 ├── metadata/<id>.json      compiled descriptor, written before registrations
-├── installed/<id>          version, written last: the install is complete
+├── installed/<id>          last completed version; retained during retries
 ├── routes/<id>.conf        registered routes
 ├── clients/<id>/           registered public client files
-└── pending-operation.json  unfinished owner work for a retry
+└── pending-operation.json  install attempt/owners or scoped uninstall work
 ```
 
 Quadlets live in `/var/lib/<product>/config/containers/systemd/` and Podman
@@ -408,7 +408,11 @@ bundle as the runtime account to inspect this state without reading config or
 credentials. Rows follow installed descriptor dependencies and show the completion
 marker's version, the product-prefixed unit and its systemd state. Missing markers
 and a marker older than its metadata are shown as incomplete; JSON keeps both
-`version` and `recorded_version`. Pending install/uninstall work remains visible
+`version` and `recorded_version`. A component with a pending attempt is incomplete
+even when the versions match and its old service is active. The install record is
+saved after image verification, before installed metadata or service files change,
+and cleared only after the completion marker is durably written, including
+installs with no registration owners. Pending install/uninstall work remains visible
 even after the selected component's metadata has been removed, and is never
 acknowledged by status. The installation root and bootstrap file must already be
 prepared; status runs no init-config, Podman or lifecycle operation.

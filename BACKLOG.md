@@ -4151,8 +4151,12 @@ contracts and mandatory understandability review alongside this task message.
 Status: implemented with local product and harness checks (2026-10-24), on
 `feature/39-component-status`, based on CLI rename commit `88f3110`.
 `./deploy.sh status [--json]` reports installed versions and unit states in
-recorded dependency order, incomplete installs/upgrades and pending owner work;
+recorded dependency order, incomplete installs/upgrades/reinstalls and pending work;
 it reads `/var/lib/<product>/state` without config/credential reads or writes.
+Review follow-up: the existing pending record now covers the full install attempt,
+including same-version reinstalls without owners, until the completion-marker
+write succeeds. Fresh-process install/failure/status/retry regression coverage
+preserves the previous completed version and the `newer-only` skip policy.
 [Verification and understandability review](acceptance/STATUS.md).
 Current-change real Podman/systemd verification remains pending. The original
 request (2026-10-19) and task follow.

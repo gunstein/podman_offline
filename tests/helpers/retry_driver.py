@@ -59,7 +59,8 @@ def main():
             volumes.write_text(json.dumps(names))
         if check and status:
             raise subprocess.CalledProcessError(status, args)
-        return subprocess.CompletedProcess(args, status)
+        output = "active\n" if args[:3] == ["systemctl", "--user", "is-active"] else ""
+        return subprocess.CompletedProcess(args, status, output, "")
 
     subprocess.run = command
 
@@ -126,6 +127,8 @@ def main():
             state["install"]()
         elif parameters["action"] == "init-config":
             state["init_config"](state["bundle_descriptor"]()["name"])
+        elif parameters["action"] == "status":
+            return importlib.import_module("deployment.status").status(json_output=True)
         else:
             state["uninstall"](delete_data=parameters.get("delete_data", False))
     except (common.DeployError, OSError, subprocess.CalledProcessError) as error:

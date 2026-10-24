@@ -375,8 +375,8 @@ def check_manifests(config, config_path, manifests, component=None, imported=())
     """Validate the component, then check database volumes; no writes.
 
     Every path (install, prepare, standalone) runs this before generating any
-    secret: declarations are validated first, so a broken manifest never
-    reaches a host command, and the preflight is the first host command.
+    secret: declarations are validated before any Podman command. Production
+    install has already checked the user-manager environment at this point.
     """
     documents = validate_component(config, config_path, manifests, component, imported)
     database_preflight(config, config_path, documents)
@@ -835,9 +835,7 @@ def restart_component_services(components, changed, pending, known):
     for component in restart_order(known, set(components) | changed):
         restart_service(component)
         if pending and component in pending["owners"]:
-            registrations.acknowledge_owner(pending, component, clear_when_done=True)
-            if not pending["owners"]:
-                pending = None
+            registrations.acknowledge_owner(pending, component)
 
 
 def restart_service(component):
@@ -881,7 +879,7 @@ def write_installed_metadata(descriptor):
 
 
 def write_installed_marker(descriptor):
-    """Publish the version last; it confirms the install completed."""
+    """Publish the completed version before acknowledging the install attempt."""
     write_install_record(
         common.STATE / "installed" / descriptor["name"], descriptor["version"] + "\n"
     )
@@ -918,6 +916,7 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     network, network_text, archive = install_preconditions(name, checked)
     rendered = materialize_component_manifests(checked, imports, known)
     load_and_verify_images(archive, components, [name], rendered)
+    registrations.begin_install(name, descriptor["product"])
     write_installed_metadata(descriptor)
     changed, pending = registrations.apply_registration_updates(
         name, descriptor["product"], updates, removals, owners
@@ -926,6 +925,7 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
     write_installed_marker(descriptor)
+    registrations.clear_pending()
     run("podman", "ps", "--all", "--pod")
 
 
