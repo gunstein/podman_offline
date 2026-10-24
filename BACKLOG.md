@@ -524,7 +524,9 @@ scope and usability findings explicitly recorded.
 
 ## 66. Install sets: several signed bundles through one entry point
 
-Status: planned, high priority (2026-10-23), after item 65. Requested by the
+Status: planned, high priority (2026-10-23), after item 65. Implementation
+plan with decisions to confirm: [INSTALL-SET-PLAN.md](docs/INSTALL-SET-PLAN.md)
+(2026-10-24). Requested by the
 operator after the manual backlog 64 run: put e.g. platform, identity and app1
 in one directory and have one `install.sh` install them all.
 
