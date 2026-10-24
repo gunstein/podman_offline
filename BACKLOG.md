@@ -525,8 +525,12 @@ scope and usability findings explicitly recorded.
 ## 66. Install sets: several signed bundles through one entry point
 
 Status: planned, high priority (2026-10-23), after item 65. Implementation
-plan with decisions to confirm: [INSTALL-SET-PLAN.md](docs/INSTALL-SET-PLAN.md)
-(2026-10-24). Requested by the
+plan: [INSTALL-SET-PLAN.md](docs/INSTALL-SET-PLAN.md), revised 2026-10-24 with
+the product owner: no supplier set manifest (bundles arrive one per DVD or many
+per USB stick); `install-set` installs the newest published version of every
+published component; publication is the selection; no rollback (needs a
+database restore, backlog 3). Where the text below says manifest, the plan
+supersedes it. Requested by the
 operator after the manual backlog 64 run: put e.g. platform, identity and app1
 in one directory and have one `install.sh` install them all.
 
