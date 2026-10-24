@@ -411,7 +411,11 @@ application refactoring or unrelated backlog cleanup belongs in this task.
 
 ## 65. One-command host preparation and a short operator guide
 
-Status: planned, high priority (2026-10-23). Found in the manual backlog 64 run
+Status: planned, high priority (2026-10-23); implementation plan written
+2026-10-24, not implemented. Read the
+[implementation plan](docs/HOST-SETUP-PLAN.md) before starting: it fixes the CLI,
+bootstrap trust, journal policy, scope against 66/67, failure/retry behavior and
+test gates. Found in the manual backlog 64 run
 ([report](acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)).
 The operator's verdict: "Klargjøringen av maskinen må bli enklere. Jeg forsto
 ingenting av hva som foregikk." Installation worked only with step-by-step help.
@@ -421,20 +425,24 @@ PFX guide: fapolicyd cache, persistent journal, transfer area, checksums,
 independent key/tool hashes, protected copy of the release tool,
 `provision-key`, `prepare` per release, `prepare-host.sh`, later `retire`.
 
-Deliver one administrator entry point (extend `prepare-host.sh` or a small
-wrapper beside it; no second release helper) that takes product, existing
+Deliver one administrator entry point (`setup` in the existing independently
+authenticated `scripts/release.py`, calling the protected `prepare-host.sh`;
+no second release helper) that takes product, existing
 runtime account, HTTPS port, the trusted public key with its independent SHA256,
-and the transfer directory, and then:
+the transfer directory, explicit release selections and a selected host-script
+release, and then:
 
 - checks every prerequisite first and names the exact fix (OL9, SELinux
   Enforcing, fapolicyd and `subj_cache_size`, firewalld, packages, account
   exists and has no sudo, space under `/var/lib` and `/var/tmp`);
-- establishes or verifies the persistent journal (`/var/log/journal`), so
-  `journalctl --user` works for the account without extra groups; decide and
-  document whether this is changed or only checked, since it is host-wide;
-- installs the authenticated release tool and pins the key once;
+- establishes the persistent journal for supported `auto`/`persistent` plus
+  `SplitMode=uid` policy, without extra groups; refuses explicit incompatible
+  policy rather than overwriting it. Document the host-wide change;
+- uses the separately installed/authenticated release tool and pins the key
+  once; consolidate and test the initial tool bootstrap procedure;
 - runs the existing `prepare` for the selected bundles and the existing host
-  preparation, in dependency order;
+  preparation once. Publication follows explicit selection order; dependency
+  ordering for runtime installation belongs to item 66;
 - is safe to rerun after interruption and says which step completed;
 - ends with a short report and the exact next command for the runtime account.
 
@@ -446,8 +454,30 @@ Rewrite `docs/PRODUCTION-INSTALL.md` around it: each step names machine,
 account, one command and the expected output; one example product that matches
 the demo (or a clear substitution table); PEM and PFX credential paths shown
 separately; HTTPS checks against endpoints the component answers. Move design
-detail to linked documents. Verify by a new person following the guide
-literally on a fresh host (manual) plus item 67.
+detail to linked documents; keep every required action, including tool bootstrap
+and the selected credential path, in the one manual.
+
+Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review).
+For 65, the AI walkthrough must cover transfer/tool authentication, prerequisite
+failure and remedy, initial setup, identical rerun and interrupted setup retry,
+then handoff to real SSH login as the non-sudo runtime account. Each step states
+machine, user, access, copyable command and expected result. Count commands,
+manual edits and account switches; simplify the tool if these make setup hard.
+Errors must give a safe diagnosis, corrective action and exact continuation.
+
+The acceptance path must execute the manual's bootstrap and `setup` command,
+including first run, repeat and interruption/retry, with a checked mapping to
+manual steps. No controller-provided helper execution, direct `prepare-host.sh`
+call, journal setup or product/bootstrap-file creation may substitute for those
+operator steps. Runtime steps use real SSH without sudo; coordinate this shared
+path with 67, and mark its absence as a verification gap until implemented.
+Preserve the existing hostile-input/security probes as additional tests.
+
+Record a separate fresh-host trial by a person with limited Linux experience,
+without oral help: time, errors, stops and explanations needed. Human verification
+is outstanding; the assisted 2026-10-23 run does not qualify. The current
+[AI assessment](acceptance/OPERATOR-REVIEW.md) has findings; repeat it on the final
+manual. Automated success alone does not make 65 customer-ready.
 
 ## 66. Install sets: several signed bundles through one entry point
 
@@ -472,6 +502,27 @@ Coordinate with item 60 (CLI name) and the per-component lifecycle; do not add a
 second deployment engine. Tests: dependency order, partial failure and retry,
 manifest/bundle mismatch, and a real OL9 run.
 
+Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review)
+to the complete multi-bundle task. One manual must show how to supply/select the
+install set, run 65's administrator preparation, log in through SSH without sudo,
+provide required public config/credentials, and invoke the runtime installation
+command. Give exact continuation commands when it stops for input or fails after
+one component. Do not make the operator infer dependency order, choose internal
+helpers or display sensitive values to diagnose a stop.
+
+The automated scenario must use those same public commands and manual steps for
+first installation, unchanged rerun and partial-failure continuation in a fresh
+SSH session, asserting retained config/credentials and no unnecessary restart of
+completed components. No harness loop over lower-level component commands may
+stand in for the documented install-set entry point. Reuse 65/67's preparation
+and SSH path, with drift tests for the manual-command mapping.
+
+Document an AI walkthrough and a separate unassisted human trial of the whole
+install set, including command/edit counts, elapsed time, errors, stops and
+explanations requested. Both assessments of the future install-set procedure
+remain outstanding; existing per-component tests/manual runs do not prove them.
+The [current operator baseline](acceptance/OPERATOR-REVIEW.md) records the gaps.
+
 ## 67. Acceptance scenario with a real ssh login as the runtime account
 
 Status: planned, high priority (2026-10-23). The automated matrix runs runtime
@@ -487,8 +538,28 @@ HTTPS including the identity discovery endpoint, logout, reboot before login,
 a fresh login with the same checks, upgrade with state comparison and `retire`.
 Start from a host without `/var/log/journal` so the journal contract chosen in
 item 65 is verified. Do not grant `systemd-journal`/`adm` or sudo to make it
-pass. Where possible, drive the commands from `docs/PRODUCTION-INSTALL.md` so the
-guide and the harness cannot drift. Remove the lab key in cleanup.
+pass. Drive the commands from `docs/PRODUCTION-INSTALL.md` or a tested explicit
+mapping from its step IDs; fail harness tests when command, account, prerequisites
+or order drift. Remove the lab key in cleanup.
+
+Exercise the exact manual bootstrap/preparation command from 65 and the runtime
+flow from 66 when available. Cover first execution on a fresh host, successful
+repeat, and interrupted preparation/installation followed by a new SSH session
+and the documented continuation command. Do not pre-create journals, product
+directories, pinned keys, manager drop-ins or the runtime bootstrap file through
+private harness logic. VM reset, artifact delivery and the disposable SSH key
+are test infrastructure; any supplied OS/account baseline must match the stated
+manual prerequisites. Missing prerequisites must exercise documented diagnosis
+and remedy, not an invisible harness fix.
+
+Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review)
+separately from harness/code review. Record an AI literal walkthrough of the
+tested manual and a separate limited-Linux-experience human trial on a fresh
+host, without oral help. Record time, errors, stops, command/edit counts and
+explanations needed; assisted tasks require a new unassisted trial after fixes.
+The human trial is outstanding, and the [current AI baseline](acceptance/OPERATOR-REVIEW.md)
+has findings. A green SSH acceptance scenario proves execution of that path,
+not that the manual is easy to understand; report these outcomes separately.
 
 ## 61. Verify Secret-derived environment values in init containers
 
