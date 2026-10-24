@@ -56,7 +56,7 @@ def command(args, allowed=(0,)):
     if args[0] == "id":
         stdout = "operator-a\n"
     elif args[0] == "sudo":
-        stdout, code = "User operator-a is not allowed to run sudo on fixture.\n", 1
+        stdout, code = "User operator-a is not allowed to run sudo on fixture.\n", 0
     elif args[0] == "getenforce":
         stdout = "Enforcing\n"
     elif args[:2] == ["systemctl", "is-active"]:

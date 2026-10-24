@@ -1,8 +1,45 @@
 # Host setup and operator procedure (backlog 65)
 
 Implemented on `feature/65-host-setup`, based on `f52b797` (2026-10-24).
-**Current-change real OL9 execution and an unassisted human trial are outstanding.**
+**The first real OL9 run stopped in preflight; a successful rerun and an
+unassisted human trial are outstanding.** See the lab finding below.
 Historical item 39/54/64 lab results do not verify this change.
+
+## First real lab attempt and sudo regression (2026-10-24)
+
+Run `host65-20261024-141431-normal` at clean revision `8559a2a` ended
+**NOT CLEAN** at `06-manual-setup-first`. Delivery and the manual tool bootstrap
+passed; later setup, runtime SSH and install steps were not tested. Final audit
+and cleanup passed. Source evidence is `akseptanselogger-20261024-142333.tar.gz`,
+SHA256 `5cb35020815a466602217f9f947482acdefcc7a675ea44cd5ad1f3705af31b57`.
+
+Preflight reported the expected fapolicyd cache prerequisite and an unexpected
+sudo-policy rejection. A read-only follow-up on the same OL9.8 host, using the
+helper's clean PATH/LC_ALL environment, confirmed `sudo -n -l -U myproduct-ops`
+returned **0**, stdout `User myproduct-ops is not allowed to run sudo on
+todo-standby.`, and empty stderr. The implementation incorrectly required exit 1
+even for that explicit denial. SSH/PIP warnings were not the stopping cause.
+
+The fix retains the bounded command exit codes (0/1) and requires the complete
+denial for the selected account; a zero exit alone, grants, wrong account,
+additional output and policy errors remain insufficient. The new regression
+failed against the original code for both stdout/stderr placement. The real
+signed-publication/fresh-process retry fixture now also uses the observed zero
+exit. No harness bypass or permission change is introduced. The existing harness
+still only applies the documented cache remedy when it is the sole failure.
+
+Understanding/operator recheck: the same preflight remains before product writes
+and repeats under the lock; successful denial continues through existing setup,
+while ambiguous results stop with the existing administrator diagnosis and same
+retry command. The manual requires no change. No VM reset or lab rerun was
+performed for this fix; only the read-only policy query was executed remotely.
+
+Follow-up local verification: 19 focused host-setup tests, 481 isolated platform
+tests and 264 acceptance-harness tests passed. Changed Python files passed Ruff
+lint/format and Vermin (minimum Python 3.6); the full documented Pyright check
+reported zero errors. `git diff --check` passed. The 66 demo tests passed in the
+operator's preceding run at `8559a2a`; they were not rerun for this account-check
+fix. These local results do not establish real setup/install completion.
 
 ## Contract and implementation
 

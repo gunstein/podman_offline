@@ -319,6 +319,12 @@ class HostAccountTests(unittest.TestCase):
             (1, "sudo: policy lookup failed"),
             (1, "a password is required"),
             (1, ""),
+            (0, ""),
+            (0, "User other-user is not allowed to run sudo on host."),
+            (
+                0,
+                "User operator-a is not allowed to run sudo on host.\n(root) /bin/true",
+            ),
         ):
             result = types.SimpleNamespace(stdout=output, stderr="", returncode=code)
             with self.subTest(output=output), self.assertRaises(release.ReleaseError):
@@ -331,6 +337,19 @@ class HostAccountTests(unittest.TestCase):
         for group in ("wheel", "adm", "systemd-journal", "root"):
             with self.subTest(group=group), self.assertRaises(release.ReleaseError):
                 self.check(result=denied, groups="operator-a " + group)
+
+    def test_ol9_successful_policy_query_reports_no_sudo_grants(self):
+        # Observed on OL9.8: a successful root policy query returns zero even
+        # when the named account has no grants. Require the complete denial.
+        for stream in ("stdout", "stderr"):
+            result = types.SimpleNamespace(stdout="", stderr="", returncode=0)
+            setattr(
+                result,
+                stream,
+                "User operator-a is not allowed to run sudo on todo-standby.\n",
+            )
+            with self.subTest(stream=stream):
+                self.assertEqual(self.check(result=result).pw_uid, 1000)
 
 
 class HostSetupCliTests(unittest.TestCase):

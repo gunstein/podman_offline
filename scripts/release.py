@@ -956,8 +956,10 @@ def check_host_account(args):
         r"User " + re.escape(args.user) + r" is not allowed to run sudo on [^\n]+\."
     )
     lines = (result.stdout + result.stderr).strip()
+    # OL9 sudo may return zero for a successful policy query with no grants.
+    # The complete explicit denial, not the query exit code, proves no access.
     require(
-        result.returncode == 1 and re.fullmatch(denial, lines),
+        re.fullmatch(denial, lines),
         "sudo policy grants access or could not be verified; administrator must check "
         "sudo -l -U " + args.user + " and use an account with no grants",
     )
