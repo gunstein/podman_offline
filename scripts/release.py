@@ -183,7 +183,7 @@ def product_lock(product):
         os.close(fd)
 
 
-def command(arguments, allowed=(0,)):
+def command(arguments, allowed=(0,), diagnose=None):
     result = subprocess.run(
         arguments,
         stdout=subprocess.PIPE,
@@ -193,8 +193,86 @@ def command(arguments, allowed=(0,)):
         check=False,
     )
     if result.returncode not in allowed:
+        if diagnose is not None:
+            raise diagnose(result)
         raise CommandError(arguments[0], result.returncode)
     return result
+
+
+def host_preparation_error(result):
+    """Translate bounded, recognized diagnostics; never relay arbitrary output."""
+    phases = {
+        "preflight": "check the documented OS packages, account and active firewalld",
+        "directories": "inspect product directory ownership, links and ACLs; do not recursively chown",
+        "subordinate-ids": "inspect /etc/subuid and /etc/subgid; preserve mappings used by existing containers",
+        "selinux": "check getenforce and semanage fcontext -l -C; resolve the conflicting product label mapping",
+        "user-manager": "check systemctl --failed and the runtime account's user-manager drop-in under /etc/systemd/system",
+        "firewall": "check firewall-cmd --state and the configured HTTPS port",
+    }
+    errors = {
+        "ERROR: Overlap in subuid/subgid": (
+            "overlapping subordinate ID ranges",
+            "have the account administrator resolve overlapping entries in /etc/subuid and /etc/subgid without changing mappings used by existing containers",
+        ),
+        "ERROR: No free subuid/subgid block": (
+            "no free subordinate ID block",
+            "have the account administrator allocate a free block of at least 65536 IDs in /etc/subuid and /etc/subgid",
+        ),
+    }
+    phase = "host-script"
+    reason = None
+    action = "check the documented host prerequisites with the system administrator"
+    # Limit parsing and only return our fixed strings, never paths/values or
+    # arbitrary child output (which can contain private or terminal-control data).
+    for line in (
+        (result.stdout or "")[-32768:] + "\n" + (result.stderr or "")[-32768:]
+    ).splitlines():
+        if line.startswith("HOST-PHASE: ") and line[12:] in phases:
+            phase = line[12:]
+            action = phases[phase]
+        if line in errors:
+            reason, action = errors[line]
+            break
+        if re.fullmatch(
+            r"ERROR: [A-Za-z_][A-Za-z0-9_.-]{0,31} needs at least 65536 subordinate IDs",
+            line,
+        ):
+            reason = "runtime account has fewer than 65536 subordinate IDs"
+            action = phases["subordinate-ids"]
+            break
+        if line.startswith("ERROR: Unexpected SELinux equivalence:"):
+            reason = "conflicting SELinux equivalence"
+            action = phases["selinux"]
+            break
+        if line.startswith(
+            (
+                "ERROR: Installation directory relabeling failed;",
+                "ERROR: Storage-directory relabeling failed;",
+            )
+        ):
+            reason = "installation directory SELinux relabeling failed"
+            action = "have the system administrator check getenforce, product label mappings and directory access; do not retry relabeling as root"
+            break
+        if line.startswith(
+            (
+                "ERROR: Unsafe or inaccessible installation directory;",
+                "ERROR: Installation directory preparation failed;",
+            )
+        ):
+            reason = "unsafe or inaccessible installation directory"
+            action = phases["directories"]
+            break
+    return ReleaseError(
+        "host preparation phase="
+        + phase
+        + " exit="
+        + str(result.returncode)
+        + ": "
+        + (reason or "phase failed")
+        + "; administrator must "
+        + action
+        + "; then rerun the same administrator setup command from manual step 3"
+    )
 
 
 def copy_input(source, target):
@@ -1251,7 +1329,8 @@ def setup_host(args, selections):
                 str(args.port),
                 "--user",
                 args.user,
-            ]
+            ],
+            diagnose=host_preparation_error,
         )
         print("PASS: existing host preparation", flush=True)
         verify_host_setup(args, account)

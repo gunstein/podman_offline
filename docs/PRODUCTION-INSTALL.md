@@ -114,10 +114,13 @@ kopieres senere med driftsbrukerens konto.
 
 <!-- operator: transfer -->
 ```sh
+(
+set -eu
 scp release.py.gz bundle-signing.gpg "$product-$gateway-$gateway_version-offline.tar.gz" "$product-$gateway-$gateway_version-offline.tar.gz.asc" "$admin@$server:$upload/"
 if [ "$with_identity" = yes ]; then
   scp "$product-$login_component-$login_version-offline.tar.gz" "$product-$login_component-$login_version-offline.tar.gz.asc" "$admin@$server:$upload/"
 fi
+)
 ```
 
 **Forventet:** scp fullfører uten feil. Mangler en fil: hent den fra leverandøren,
@@ -208,7 +211,7 @@ Bare komponentene som er angitt her behandles. Andre filer i katalogen ignoreres
 <!-- operator: setup -->
 ```sh
 (
-set -o pipefail
+set -euo pipefail
 set -- --release "$gateway@$gateway_version"
 if [ "$with_identity" = yes ]; then
   set -- "$@" --release "$login_component@$login_version"
@@ -283,6 +286,8 @@ bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" i
 Steget kan gjentas; eksisterende gyldige innstillinger beholdes. Ved konflikt:
 be administratoren undersøke produkt-/kontotilknytningen og fortsett deretter
 med samme kommando. Ikke slett eller overskriv en eksisterende innstillingsfil.
+Ved avbrudd kjører du samme `init-layout`-kommando på nytt som driftsbruker.
+En uferdig midlertidig fil tas ikke i bruk og hindrer ikke neste forsøk.
 
 ## 5. Konfigurasjon og private credentials
 
@@ -290,6 +295,8 @@ med samme kommando. Ikke slett eller overskriv en eksisterende innstillingsfil.
 
 <!-- operator: gateway-config -->
 ```sh
+(
+set -eu
 bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" init-config "$gateway"
 python3 - "$product" "$gateway" "$public_origin" "$port" "$bind_ip" <<'PY'
 from pathlib import Path
@@ -302,18 +309,24 @@ p.write_text(yaml.safe_dump(v))
 print('OK: public gateway settings saved; continue with credentials')
 PY
 install -d -m 0700 "$credentials"
+)
 ```
 
 **Forventet:** init-config viser at config er opprettet eller beholdt, etterfulgt
 av `OK: public gateway settings saved`. Innstillingene kommer fra verdiblokken.
 Dette er et eksplisitt redigeringssteg: ved vanlig retry/oppgradering skal du
 ikke kjøre redigeringssteget på nytt med gamle verdier.
+Blokken stopper ved første feil. Hvis `init-config` feiler, blir eksisterende
+config ikke redigert. Rett den oppgitte årsaken, kontroller verdiblokken og gjenta
+denne blokken som driftsbruker på serveren før du går videre.
 
 **Maskin:** laptop. **Bruker:** driftsbrukerens innlogging. Stå i katalogen med
 private filer fra leverandøren. Kjør verdiblokken på laptopen først.
 
 <!-- operator: credentials-transfer -->
 ```sh
+(
+set -eu
 scp web.crt web.key ca.crt "$runtime@$server:$credentials/"
 if [ "$with_identity" = yes ]; then
   case "$credential_format" in
@@ -322,6 +335,7 @@ if [ "$with_identity" = yes ]; then
     *) printf 'STOP: credential_format må være pem eller pfx fra leverandørens verdiliste.\n' >&2; false;;
   esac
 fi
+)
 ```
 
 **Forventet:** ingen scp-feil. Bruk aldri chat, terminalutskrift eller Git til å
@@ -444,9 +458,12 @@ eller manuelle XDG-eksporter trengs.
 
 <!-- operator: status -->
 ```sh
+(
+set -eu
 bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" status
 systemctl --user is-active "$product-$gateway.service"
 journalctl --user -u "$product-$gateway.service" -b -n 10 --no-pager --output=json --output-fields=__REALTIME_TIMESTAMP,_SYSTEMD_USER_UNIT,USER_UNIT,PRIORITY
+)
 ```
 
 **Forventet:** status viser complete/active og ingen pending, is-active viser
@@ -482,7 +499,7 @@ satt `old_gateway_version` til versjonen som faktisk er erstattet:
 
 ```sh
 (
-set -o pipefail
+set -euo pipefail
 gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - retire \
   --product "$product" --component "$gateway" --version "$gateway_version" --old-version "$old_gateway_version"
 )

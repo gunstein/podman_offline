@@ -45,7 +45,7 @@ release.pwd.getpwnam = lambda name: types.SimpleNamespace(
 real_command = release.command
 
 
-def command(args, allowed=(0,)):
+def command(args, allowed=(0,), diagnose=None):
     with (root / "calls.jsonl").open("a") as stream:
         stream.write(json.dumps(args) + "\n")
     stdout, code = "", 0
@@ -82,6 +82,13 @@ def command(args, allowed=(0,)):
         )
     elif args[0] == "/usr/bin/bash":
         if failure == "host":
+            result = types.SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="HOST-PHASE: subordinate-ids\nERROR: Overlap in subuid/subgid\n",
+            )
+            if diagnose is not None:
+                raise diagnose(result)
             raise release.CommandError("bash", 1)
         for name in ("state", "config", "storage"):
             (release.BASE / "cedar" / name).mkdir(mode=0o700, exist_ok=True)

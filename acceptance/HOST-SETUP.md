@@ -43,6 +43,63 @@ fix. These local results do not establish real setup/install completion.
 
 ## Contract and implementation
 
+### Review follow-up: manual failure, bootstrap interruption and host diagnostics
+
+Review of the two commits through `15f6e4b` found three gaps despite green local
+tests. Gateway config could continue editing after failed init-config;
+init-layout could leave an empty final bootstrap after SIGKILL; setup discarded
+actionable host-script errors. The earlier AI assessment of complete execution
+instructions was too strong and is superseded by the findings in
+[OPERATOR-REVIEW.md](OPERATOR-REVIEW.md).
+
+The manual now owns fail-stop behavior in its multi-command config, transfer and
+status blocks. The focused harness supplies worksheet assignments and ordinary
+`bash -s`, without adding `set -eu` or `bash -e`. A literal-block regression
+injects init-config exit 23, then checks the original config and absence of later
+directory creation. It failed against the old block (exit 0). Separate first-scp
+failure checks ensure later transfers are not attempted.
+
+`layout.initialize` writes a private exclusive temporary file through the held
+directory, flushes/fsyncs it, and uses Linux `renameat2(RENAME_NOREPLACE)` before
+syncing the directories. The single rename avoids both truncation and the
+two-hard-link interruption window that would violate bootstrap-reader checks.
+A concurrent final file is validated and retained; no replacing rename fallback
+is used. Each attempt cleans only its own temporary file on ordinary failure.
+SIGKILL may leave a private temporary file, which is not authoritative and does
+not block retry. The regression kills a separate process just after creation,
+after fsync and after publication, then retries in a fresh process. Before the
+fix it reproduced the empty final file. Another test races publication against
+a concurrently created valid bootstrap and requires preservation.
+
+The authenticated host script emits fixed phase names. The release command's
+optional diagnostic callback is used only for this script; it maps recognized
+errors such as overlapping/exhausted subordinate IDs and conflicting SELinux
+equivalences to distinct fixed diagnoses and administrator actions. Unknown
+output is not forwarded: a recognized phase gives a bounded action, exit code
+and the same setup command from manual step 3. Tests cover distinct failures,
+suppression of arbitrary/private/control-character output and real setup-flow
+failure followed by fresh-process retry using retained authenticated releases.
+
+Understanding review: preflight and signed publication still precede privileged
+host execution. The bootstrap's sole authoritative name becomes visible only
+after complete file content is durable; failure before it leaves retryable
+temporary state, and failure after it leaves a complete private file. The host
+script owns phase reporting and the release coordinator owns safe presentation;
+no new pending protocol or silent host repair is introduced. Code review passes
+for these focused changes. Real OL9 rerun, actual SELinux/fapolicyd behavior and
+unassisted human usability remain outstanding.
+
+Follow-up verification: 40 focused layout/setup tests and 18 host-script tests
+passed. The final isolated platform suite passed 485 tests, the demo suite
+passed 66 tests, and the acceptance-harness suite passed 266 tests. Changed Python lint and full
+format checks passed (155 files); full documented Pyright reported zero errors,
+and Vermin retained minimum Python 3.6. No real host commands or VM resets were
+run for this review follow-up. All 20 manual Bash blocks passed syntax checking,
+198 relative file links across the changed documents exist, the reviewed manual
+digest matches, and `git diff --check` passed.
+
+### Original implementation
+
 `scripts/release.py setup` takes the product, an existing unprivileged login
 account, HTTPS port, input directory, independently authenticated public-key
 digest, explicit `--release COMPONENT@VERSION` selections, and one selected
@@ -143,7 +200,8 @@ controller instrumentation in memory: it checks the installed helper digest and
 kills that attempt just before journal tmpfiles, with no on-disk release/policy
 changes or production failure switch. Retry must retain key/release records.
 
-Actual local results on this working change:
+Original implementation results before the review follow-up (kept as historical
+local evidence; current follow-up results are recorded above):
 
 | Evidence | Result |
 | --- | --- |

@@ -21,11 +21,15 @@ passed. This verifies document consistency, not execution of manual commands.
 
 ## Current item 65 AI walkthrough (2026-10-24)
 
-Result: the supported declared-baseline path has no identified missing execution
-step after the fixes below. This is a static AI assessment plus local execution
-of manual-block regressions, not real server execution or human approval.
+Result: **findings; customer usability is not established**. The earlier claim
+that no execution steps were missing was too strong. Review at `15f6e4b` found
+that manual failure behavior differed from the harness and that host diagnostics
+could hide the corrective action. The targeted fixes below have local regression
+evidence; that does not establish that all operator steps or failure cases are
+resolved. This assessment combines static walkthrough with local manual-block
+tests, not a successful real-server run or human approval.
 Reviewed working-tree guide SHA256:
-`db9a2a9bb7de9ee4725ce7fb71f9ff437ea52ac8189ff2ae16d9b133c2475ef7`; implementation branch `feature/65-host-setup`,
+`953744f079c6846cc9fb27936f07cee7790ac65019765986298dd42373a7cb14`; implementation branch `feature/65-host-setup`,
 based on `f52b797`. The earlier table and literal walkthrough below are a
 **historical baseline** against `7ef9671`, not a claim about the rewritten guide.
 Current local evidence is in [HOST-SETUP.md](HOST-SETUP.md).
@@ -39,7 +43,27 @@ checks. Retry instructions name the account, retained state and exact repeated
 block. No remembered shell functions, implicit exports, inferred dependency order
 or required instructions from other documents are needed for this example.
 
-Findings corrected during this walkthrough:
+Review follow-up at `15f6e4b`:
+
+- The pasted gateway config block now stops on init-config failure before any
+  config edit or credential-directory creation. Transfer/status blocks also own
+  their failure handling. Harness worksheet setup and SSH no longer add stronger
+  shell options; the literal-block regression executes plain Bash and verifies
+  unchanged existing config after failure.
+- Interrupted init-layout no longer publishes an empty final file. The same
+  runtime command retries from a new process; any partial temporary file is not
+  used. Existing valid files and concurrently published settings are retained.
+- Host-script failures expose fixed phase/reason/action diagnostics. For example,
+  overlapping subordinate IDs direct the administrator to resolve /etc/subuid and
+  /etc/subgid safely, then repeat the manual's setup command. Unknown/private
+  child output is withheld rather than becoming shareable diagnostic text.
+
+These address the three concrete review findings. The success and interruption
+paths were re-traced: explicit administrator preparation precedes runtime login,
+manual blocks stop themselves, and retry uses retained state. Broader difficulty,
+correctness of the real host flow and human comprehension remain open.
+
+Findings corrected during the original walkthrough:
 
 - Added the administrator login command; merely labelling a step "server" did
   not show a limited-experience reader how to reach it.
@@ -85,8 +109,8 @@ A larger file or fewer pasted blocks alone does not establish easier operation.
 
 The human trial is still **not performed / outstanding**. No time, mistakes or
 questions are invented. The original assisted run remains evidence of difficulty;
-it cannot approve this new manual. The focused SSH scenario is implemented but
-unrun, and the full reboot/upgrade flow in 67 is still pending. Neither code review,
+it cannot approve this new manual. The first focused OL9 scenario at `8559a2a` stopped in preflight; a successful
+run of the corrected flow remains outstanding, and the full reboot/upgrade flow in 67 is still pending. Neither code review,
 local tests nor this AI walkthrough establishes customer usability.
 
 ## AI literal walkthrough

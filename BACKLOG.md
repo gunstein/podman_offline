@@ -416,7 +416,10 @@ Status: implemented on `feature/65-host-setup` with local regression coverage
 (2026-10-24). The first real OL9 run at `8559a2a` stopped in preflight: sudo
 reported explicit denial with exit 0, which setup incorrectly rejected. The
 follow-up fix has regression coverage; a successful lab rerun and unassisted
-human verification remain outstanding.
+human verification remain outstanding. Review follow-up fixes literal manual
+fail-stop behavior, interruption-safe bootstrap publication and bounded host
+phase/error diagnostics, with regression coverage and a revised AI operator
+assessment.
 [Implementation, evidence and lab commands](acceptance/HOST-SETUP.md). Read the
 [implementation plan](docs/HOST-SETUP-PLAN.md) before starting: it fixes the CLI,
 bootstrap trust, journal policy, scope against 66/67, failure/retry behavior and

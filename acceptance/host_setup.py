@@ -49,10 +49,7 @@ def blocks(text=None):
 
 def assignments(values):
     return (
-        "set -eu\n"
-        + "\n".join(
-            key + "=" + shlex.quote(str(value)) for key, value in values.items()
-        )
+        "\n".join(key + "=" + shlex.quote(str(value)) for key, value in values.items())
         + "\n"
     )
 
@@ -64,8 +61,21 @@ def script(step, values):
 def operator(run, step, values, runtime=False):
     code = script(step, values)
     if runtime:
-        return run.command(run.operator_ssh + ["bash -se"], code)
-    return run.ssh("PROD", code)
+        return run.command(run.operator_ssh + ["bash -s"], code)
+    return run.command(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "ConnectTimeout=8",
+            run.host("PROD"),
+            "bash -s",
+        ],
+        code,
+    )
 
 
 def infrastructure(run, values):
@@ -209,7 +219,7 @@ namespace['main']()
             "-o",
             "StrictHostKeyChecking=yes",
             run.host("PROD"),
-            "bash -se",
+            "bash -s",
         ],
         input=code,
         capture_output=True,
@@ -238,7 +248,7 @@ def initial_setup(run, values):
             "-o",
             "StrictHostKeyChecking=yes",
             run.host("PROD"),
-            "bash -se",
+            "bash -s",
         ],
         input=code,
         capture_output=True,

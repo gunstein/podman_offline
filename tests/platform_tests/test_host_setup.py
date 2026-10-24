@@ -163,7 +163,11 @@ class HostSetupTests(unittest.TestCase):
     def test_every_persistence_boundary_retries_in_a_new_process(self):
         for failure in ("trust", "flush", "host", "kill-journal"):
             with self.subTest(failure=failure):
-                self.run_setup(failure, success=False)
+                failed = self.run_setup(failure, success=False)
+                if failure == "host":
+                    self.assertIn("overlapping subordinate ID ranges", failed.stdout)
+                    self.assertIn("/etc/subuid and /etc/subgid", failed.stdout)
+                    self.assertIn("same administrator setup command", failed.stdout)
                 record = (
                     self.root / "lib/cedar/releases/cedar-worker-1.0.0/.release.json"
                 )
@@ -273,6 +277,63 @@ class HostSetupTests(unittest.TestCase):
         self.assertFalse(
             any(c[0] in ("journalctl", "/usr/bin/bash") for c in self.calls())
         )
+
+
+class HostDiagnosticsTests(unittest.TestCase):
+    def test_host_failures_keep_distinct_safe_reason_and_next_action(self):
+        cases = (
+            (
+                "subordinate-ids",
+                "ERROR: Overlap in subuid/subgid",
+                "overlapping subordinate ID ranges",
+                "/etc/subuid",
+            ),
+            (
+                "subordinate-ids",
+                "ERROR: No free subuid/subgid block",
+                "no free subordinate ID block",
+                "65536",
+            ),
+            (
+                "selinux",
+                "ERROR: Unexpected SELinux equivalence: private-value",
+                "conflicting SELinux equivalence",
+                "semanage fcontext -l -C",
+            ),
+            ("firewall", "private-value", "phase=firewall", "firewall-cmd --state"),
+            ("user-manager", "private-value", "phase=user-manager", "systemctl"),
+        )
+        for phase, error, expected, action in cases:
+            result = types.SimpleNamespace(
+                returncode=42,
+                stdout="private-value",
+                stderr="HOST-PHASE: " + phase + "\n" + error + "\n",
+            )
+            with self.subTest(phase=phase, error=error), mock.patch.object(
+                release.subprocess, "run", return_value=result
+            ):
+                with self.assertRaises(release.ReleaseError) as caught:
+                    release.command(
+                        ["/usr/bin/bash", "protected/prepare-host.sh"],
+                        diagnose=release.host_preparation_error,
+                    )
+                message = str(caught.exception)
+                self.assertIn(expected, message)
+                self.assertIn(action, message)
+                self.assertIn("manual step 3", message)
+                self.assertNotIn("private-value", message)
+
+    def test_unknown_child_output_is_not_exposed(self):
+        result = types.SimpleNamespace(
+            returncode=1,
+            stdout="private-value" * 10000,
+            stderr="HOST-PHASE: attacker-secret\nERROR: secret-token\x1b[31m",
+        )
+        message = str(release.host_preparation_error(result))
+        self.assertLess(len(message), 500)
+        self.assertIn("phase=host-script", message)
+        for private in ("private-value", "attacker-secret", "secret-token", "\x1b"):
+            self.assertNotIn(private, message)
 
 
 class HostAccountTests(unittest.TestCase):

@@ -1,5 +1,6 @@
 """Manual-step mapping and focused setup scenario gates, without a lab."""
 
+import shlex
 import subprocess
 import tempfile
 import types
@@ -12,6 +13,33 @@ from test_acceptance import runner
 
 
 class HostSetupHarnessTests(unittest.TestCase):
+    def test_literal_gateway_config_stops_before_editing_after_init_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = root / "cedar/releases/cedar-worker-1.0.0"
+            release.mkdir(parents=True)
+            (release / "deploy.sh").write_text("exit 23\n")
+            config = root / "cedar/state/worker/config.yaml"
+            config.parent.mkdir(parents=True)
+            original = "PUBLIC_ORIGIN: https://retained.invalid\n"
+            config.write_text(original)
+            values = dict(
+                self.values,
+                public_origin="https://new.invalid",
+                bind_ip="127.0.0.1",
+                credentials=str(root / "incoming"),
+            )
+            # Exactly the pasted block, with only public worksheet values and
+            # fixture paths. No harness assignments(), bash -e or outer set -e.
+            code = "\n".join(k + "=" + shlex.quote(v) for k, v in values.items()) + "\n"
+            code += host_setup.blocks()["gateway-config"].replace("/var/lib", str(root))
+            result = subprocess.run(
+                ["bash"], input=code, capture_output=True, text=True, check=False
+            )
+            self.assertEqual(result.returncode, 23, result.stderr)
+            self.assertEqual(config.read_text(), original)
+            self.assertFalse((root / "incoming").exists())
+
     def setUp(self):
         self.values = {
             "product": "cedar",
@@ -52,13 +80,50 @@ class HostSetupHarnessTests(unittest.TestCase):
                 )
             )
 
+    def test_literal_transfers_stop_on_first_scp_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stub = root / "scp"
+            calls = root / "calls"
+            stub.write_text(
+                "#!/bin/sh\nprintf 'called\\n' >> "
+                + shlex.quote(str(calls))
+                + "\nexit 17\n"
+            )
+            stub.chmod(0o700)
+            values = dict(
+                self.values,
+                admin="admin",
+                server="host",
+                credentials="/private/incoming",
+            )
+            for step in ("transfer", "credentials-transfer"):
+                with self.subTest(step=step):
+                    code = host_setup.assignments(values)
+                    code += "PATH=" + shlex.quote(str(root)) + ":$PATH\n"
+                    code += host_setup.blocks()[step]
+                    result = subprocess.run(
+                        ["bash"],
+                        input=code,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 17, result.stderr)
+                    self.assertEqual(calls.read_text(), "called\n")
+                    calls.unlink()
+
     def test_runtime_transport_is_ssh_without_sudo_or_xdg_injection(self):
         host_setup.operator(self.harness, "init-layout", self.values, True)
         args, script = self.harness.command.call_args.args
-        self.assertEqual(args[-2:], ["operator-a@host", "bash -se"])
+        self.assertEqual(args[-2:], ["operator-a@host", "bash -s"])
         self.assertIn(" init-layout", script)
         self.assertNotIn("sudo", script)
         self.assertNotIn("XDG_", script)
+        self.harness.ssh.assert_not_called()
+        self.assertFalse(script.startswith("set -"))
+        host_setup.operator(self.harness, "init-layout", self.values, False)
+        self.assertEqual(self.harness.command.call_args.args[0][-1], "bash -s")
         self.harness.ssh.assert_not_called()
         self.assertEqual(host_setup.blocks()["login"], 'ssh "$runtime@$server"')
 
@@ -262,7 +327,7 @@ class HostSetupHarnessTests(unittest.TestCase):
 
             def execute():
                 return subprocess.run(
-                    ["bash", "-se"],
+                    ["bash", "-s"],
                     input=code,
                     capture_output=True,
                     text=True,

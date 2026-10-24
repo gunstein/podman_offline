@@ -92,7 +92,8 @@ final `PASS: host setup`; a failure must not print the final success line.
 The final report lists release paths, account, port and journal change, then the
 exact `deploy.sh init-layout` command for the runtime account. This small explicit
 command was added during implementation to replace manual shell file creation.
-It validates the prepared root, exclusively creates a private bootstrap or
+It validates the prepared root, syncs a private temporary file and atomically
+publishes the bootstrap without replacement, or
 preserves a matching existing file, and refuses conflicting/linked files; root must neither read nor create that file.
 Do not imply that the product services have been installed or started.
 
