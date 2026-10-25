@@ -70,6 +70,7 @@ class TrustRefreshTests(unittest.TestCase):
             (["Updated"], None),
             (["Updated", "Updated"], None),
             (["Updated", op.REFRESH_START, "Updated"], "2"),
+            ([op.REFRESH_START, "Updated", op.REFRESH_START], None),
             (["Updating trust database", "Updated", "Updated"], None),
             (["Updating trust database"], None),
             (["Updated", "Updating trust database"], None),

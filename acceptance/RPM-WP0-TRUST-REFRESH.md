@@ -125,9 +125,12 @@ invalid UTF-8. No exit code is invented (`exit` is null). Tests exercise both
 journal and CLI arguments with bytes, text and missing partial output.
 
 The pre-transaction state and subsequent start/completion are observations,
-not a causal transaction token from fapolicyd. An unrelated writer or queued
-unobserved request remains outside the isolated-case assumption; this change
-must not be described as eliminating every possible native read/write race.
+not a causal transaction token from fapolicyd. The runner's own earlier setup
+transactions can leave a queued refresh that has not yet logged its start.
+Observed idle state cannot exclude that window, even in an isolated case.
+The R4 evidence contains such delayed refresh starts. The correction reduces
+the risk but does not eliminate every native read/write race or prove causal
+association with a particular DNF transaction.
 Missing or truncated readiness history stops rather than assuming idle state.
 No changes were made to policy, trust predicates, snapshots or product code.
 
@@ -145,11 +148,33 @@ R4 and E/A need current-revision verification too. Human usability is untested.
 
 The plan still enumerates only the three original automation adaptations;
 journal/daemon observations are declared in the runner metadata and runbook.
-The task explicitly forbids editing `docs/`, so this plan discrepancy is left
-for the product owner/plan author, not silently rewritten here.
+Plan alignment for journal/daemon observation and the separate pre-transaction
+30-second wait remains outstanding with the product owner and plan author.
 
 Local checks after the independent-review correction: 338 acceptance-harness
 tests passed (72 WP0 tests). WP0 Ruff, formatting, Pyright, ShellCheck and
 `git diff --check` passed. Relative links and the public historical JSON
 projection were checked. Product/unit tests and real OL9/Podman/systemd tests
 were not rerun. The selected-05 results remain historical at `47b14ca`.
+
+
+## Follow-up regression coverage
+
+The review of `de2ea44..6f4ff34` found one surviving mutation: removing the
+invalidation of a completed refresh when a new enclosing refresh starts.
+The real parser regression now includes `[START, Updated, START] → None`,
+without mocking `completed_refresh`. A temporary in-memory mutant with that
+invalidation removed fails the regression. Runtime code is unchanged.
+
+The remaining diagnostic limitation is that pre-transaction idle timeout uses
+`bounded_poll`'s generic `Timed out waiting for trust` message. The transcript
+and absence of a DNF command distinguish this phase, but the message itself
+does not. A phase-specific diagnostic remains a follow-up. New lab evidence,
+plan alignment and human usability verification remain outstanding.
+
+Follow-up checks: all 338 acceptance-harness tests passed (the new sequence is
+an additional case inside an existing test method). The isolated mutation was
+caught. WP0 Ruff, formatting, Pyright, ShellCheck, relative links and diff checks
+passed. Static understandability review found no new control-flow change;
+the parser contract and remaining limitations are stated explicitly. No lab
+contact, product/unit test run, RPM build or merge occurred.
