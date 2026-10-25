@@ -151,7 +151,7 @@ except (RuntimeError, OSError, ValueError) as error:
 cat {base}/version > /run/wp0-probe/upgrade-observed
 fi
 python3 -B /usr/libexec/wp0/mechanisms.py guard {name}-{version}-1 release "$1"''',
-                "Requires: myproduct-tools",
+                "Requires: myproduct-tools\nRequires(preun): myproduct-tools",
             )
     delivered = OUT / "myproduct-tools-2.0-1.noarch.rpm"
     unsigned = OUT / "unsigned.rpm"

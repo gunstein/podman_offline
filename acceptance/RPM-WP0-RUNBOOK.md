@@ -42,6 +42,11 @@ After the separate review and authorization, one command runs the entire
 python3 -B acceptance/rpm_wp0/run.py --run wp0-matrix-01 --execute
 ```
 
+No measured duration is available: this implementation has not run in the lab.
+The matrix performs 24 serial rollbacks/boots and includes the real deployment
+in A; machine waits and RPM fixture building will dominate. Infrastructure
+timeouts are failure bounds, not an estimate of completion time.
+
 One command per case group, optionally restricted to a supported profile:
 
 ```sh
@@ -73,6 +78,13 @@ of any current volume, no child of `clean-agent`, and the current parent
 This check uses Proxmox-managed snapshot metadata; storage snapshots created
 outside Proxmox are outside its visibility and must not exist in the declared
 lab baseline. Older managed snapshots are never changed.
+
+If preflight rejects managed snapshot metadata, stop and give the product owner
+the sanitized stop reason; do not delete snapshots or change the baseline.
+An unmanaged storage snapshot cannot be detected by this preflight. If it causes
+rollback to fail, PROD may already be stopped. Preserve the evidence and ask
+the product owner/storage administrator to investigate outside this runner;
+only after resolution, review and authorization use a fresh run ID.
 
 Each case/profile is an independent run, in this order:
 
@@ -115,7 +127,19 @@ are required before every authorizing import, including the subkey fixture.
 Foreign-key imports are explicitly labeled negative setup, checked for one
 primary, and never enter an authorizing product database.
 
-C1 checks all seven signature variants on fresh private copies/databases.
+C1 checks all seven signature variants with the actual paper OS commands on
+fresh private copies/databases. `paper_delivery` constructs one disposable
+medium directory per case containing only its public key and assigned tools
+candidate. Old/new repair setup RPMs remain outside that directory. Signature
+variants are renamed to the paper's `myproduct-tools-*.rpm` basename without
+changing bytes; the source, target, SHA256 and temporary GnuPG environment are
+recorded as fixture setup. `paper_verify` executes `rm`, `mkdir`, `cd`, `cp`,
+ordinary `gpg --show-keys` and the wildcard `rpmkeys -K` command. Scripted reading
+counts the ordinary `pub` lines, compares the following full fingerprint with
+the independent constant, then requires exactly one signature result line.
+No colon-format output replaces the paper's displayed key check. D continues
+to test the installed tools' safe-open implementation of the same predicates.
+
 C2 runs the actual bootstrap against two-primary and wrong-primary keys and
 asserts the stop diagnostic, absent isolated database, unchanged global keys
 and absent tools. Its leftovers case first establishes the foreign artifacts,
@@ -133,6 +157,9 @@ root wrapper execution, and clean audit. R3 also retains an installed sibling
 release. R5 takes the newer-version stop without installation and checks that
 package identity and files remain unchanged. First install is not repair
 coverage; R4 is explicitly ordinary upgrade coverage.
+Every repair runs the paper copy/key/isolated-verification lines before deciding
+or changing the installed package set. R1–R4 then use `rpm --import` and the
+paper wildcard `dnf` install/reinstall line. R5 stops before those lines.
 
 D installs signed, rpmdb-trusted miniature tools, runs the same seven candidate
 checks using their code, then downloads a valid product candidate from a local
@@ -146,6 +173,8 @@ F/G/H use signed **probe implementations**, not future product code:
 `/var/lib/wp0-probe` and `/run/wp0-probe`.
 The F/G check child models the uninitialized retirement-state row only; the
 later product eligibility planner is not implemented by these fixtures.
+Release fixtures declare both `Requires: myproduct-tools` and
+`Requires(preun): myproduct-tools`, including the scriptlet-ordering dependency.
 
 F checks plain release/tools erase refusals and intact siblings, exact package
 authorization, wrong package/boot/dead/reused PID records, non-ancestor refusal,
@@ -159,6 +188,10 @@ authorization/identity records, which the next rollback discards.
 H verifies a positive execution control, then detects mismatching/missing
 root-owned identities in both entry points before `init-layout`. The upgrade
 scriptlet records that new content was present when old `%preun` ran.
+
+Audit production and parsing both use `LC_ALL=C`: the controller captures
+`date '+%x %X'`, matching ausearch's locale date format (two-digit year).
+The guest rejects malformed or four-digit-year input before invoking ausearch.
 
 `TRUST_TIMEOUT = 30` and `LOCK_TIMEOUT = 5` are controller constants approved
 by the product owner. Local fake-clock tests cover timeout and late success.
@@ -221,8 +254,8 @@ AI procedure review is static only; an unassisted human trial was not performed.
 | Exact policies and live P2 | `contracts.check_profile/derive_p2_sources`, `guest.apply_p2` |
 | A: real SSH runtime and health | `Investigation.prototype`, `contracts.runtime_health` |
 | B/E: Python and immediate execution | `guest.main`, `Investigation.probe`, `operations.wait_trust` |
-| C1/D: signatures and downloaded candidate | `guest.signature_matrix`, `operations.import_product/verify` |
-| C2: pre-import stop and separate observation | `guest.stop_rules`, `contracts.authorize_key`, `operations.bootstrap` |
+| C1/D: signatures and downloaded candidate | `guest.signature_matrix`, `operations.paper_verify`, `operations.import_product/verify` |
+| C2: pre-import stop and separate observation | `guest.stop_rules`, `contracts.authorize_paper_key`, `operations.bootstrap` |
 | C3: injected states and repair | `guest.repair`, `contracts.repair_decision` |
 | F: erase guard | `guest.guards`, `mechanisms.guard_record/guard/erase` |
 | G: bounded lock and descriptor handover | `guest.locks`, `mechanisms.acquire/inherited/locked_check` |
@@ -259,10 +292,14 @@ blindly. The first execution blocker is intentional: separate code review and
 product-owner authorization are still required. This is an investigator's
 procedure, not a paper installation or human-usability result.
 
-Local verification of this implementation: **317 acceptance-harness tests
-passed**, including 51 focused WP0 tests. Ruff, Ruff formatting, Pyright,
+Local verification of this implementation: **324 acceptance-harness tests
+passed**, including 58 focused WP0 tests. Ruff, Ruff formatting, Pyright,
 ShellCheck and `git diff --check` passed. The tests use disposable local files,
-real local locks/sockets and mocked host/API boundaries. Product tests were not
+real local locks/sockets, actual shell copying/glob expansion and local glibc
+date parsing, with mocked host/API/RPM/GnuPG/DNF boundaries. Regression cases
+cover a contaminated three-package medium, pre-import key stops, and B's
+account-created descendants rather than root-created parent directories.
+These checks do not establish OL9 ausearch, RPM or DNF behavior. Product tests were not
 rerun because product code is unchanged. Neither the RPM build container nor
 the runner was executed against OL9, Proxmox or any VM. All 24 real case/profile
 results remain unverified; no WP0 go/no-go result is claimed.

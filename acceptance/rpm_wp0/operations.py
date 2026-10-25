@@ -1,8 +1,10 @@
 """WP0 probe operations on OL9; not product code. Imported by stdin probes and RPM fixtures."""
 
+import contextlib
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -13,6 +15,7 @@ from contracts import (
     APPROVED_FINGERPRINT,
     TRUST_TIMEOUT,
     authorize_key,
+    authorize_paper_key,
     bounded_poll,
     require,
     signature_ok,
@@ -118,18 +121,92 @@ def verify(path, database):
     return signature_ok(result.returncode, result.stdout + result.stderr)
 
 
+@contextlib.contextmanager
+def paper_delivery(key_name="RPM-GPG-KEY-myproduct", package=DELIVERED):
+    """Select one test delivery; old/new repair setup RPMs are not on the medium."""
+    with tempfile.TemporaryDirectory(prefix="wp0-paper-delivery-") as temporary:
+        delivery = Path(temporary)
+        key = copy_candidate(key_name, delivery)
+        key.rename(delivery / "RPM-GPG-KEY-myproduct")
+        candidate = copy_candidate(package, delivery)
+        # Signature variants keep their bytes; only the delivery basename changes
+        # so the paper's wildcard selects the assigned candidate.
+        candidate.rename(delivery / DELIVERED)
+        TRANSCRIPT.append(
+            {
+                "paper_fixture_setup": {
+                    "key_source": key_name,
+                    "candidate_source": package,
+                    "delivery": str(delivery),
+                    "candidate_basename": DELIVERED,
+                    "candidate_sha256": file_digest(delivery / DELIVERED),
+                    "gpg_state": "temporary GNUPGHOME; paper gpg arguments unchanged",
+                }
+            }
+        )
+        yield delivery
+
+
+def paper_command(script, **kwargs):
+    # These fixed OS commands contain public paths only. Record their exact
+    # shell source explicitly; arbitrary stdin and credential bytes stay private.
+    TRANSCRIPT.append({"paper_command": script, "cwd": str(kwargs.get("cwd", ""))})
+    return command(["bash", "-se"], input=script, **kwargs)
+
+
+def paper_verify(delivery):
+    """Execute the paper's OS commands, stopping between lines for its checks."""
+    scratch, medium = shlex.quote(str(PKG)), shlex.quote(str(delivery))
+    paper_command(
+        f"""rm -rf {scratch}
+mkdir -m 0700 {scratch}
+cd {scratch}
+cp {medium}/RPM-GPG-KEY-myproduct {medium}/myproduct-tools-*.rpm .
+""",
+    )
+    # GnuPG state is temporary, without changing the paper command's arguments.
+    with tempfile.TemporaryDirectory(prefix="wp0-paper-gpg-") as home:
+        displayed = command(
+            ["gpg", "--show-keys", "RPM-GPG-KEY-myproduct"],
+            cwd=PKG,
+            env=dict(os.environ, GNUPGHOME=home, LC_ALL="C"),
+        )
+    authorize_paper_key(displayed.stdout, APPROVED_FINGERPRINT)
+    command(
+        ["rpmkeys", "--dbpath", str(PKG / "db"), "--import", "RPM-GPG-KEY-myproduct"],
+        cwd=PKG,
+    )
+    result = paper_command(
+        f"rpmkeys --dbpath {scratch}/db --define '_pkgverify_level all' -K myproduct-tools-*.rpm\n",
+        cwd=PKG,
+        allowed=tuple(range(256)),
+    )
+    return signature_ok(result.returncode, result.stdout + result.stderr)
+
+
+def verify_paper_delivery(key_name="RPM-GPG-KEY-myproduct", package=DELIVERED):
+    with paper_delivery(key_name, package) as delivery:
+        return paper_verify(delivery)
+
+
+def paper_install(action):
+    require(action in ("install", "reinstall"), "Unknown paper repair action")
+    command(["rpm", "--import", "RPM-GPG-KEY-myproduct"], cwd=PKG)
+    paper_command(
+        "dnf --disablerepo='*' --setopt=localpkg_gpgcheck=1 -y "
+        + action
+        + " ./myproduct-tools-*.rpm\n",
+        cwd=PKG,
+    )
+    return True
+
+
 def bootstrap(key_name="RPM-GPG-KEY-myproduct", package=DELIVERED, action="install"):
-    fresh_directory()
-    key = copy_candidate(key_name)
-    candidate = copy_candidate(package)
-    import_product(key, PKG / "db")
     require(
-        verify(candidate, PKG / "db"),
+        verify_paper_delivery(key_name, package),
         "STOP: package signature or digests differ from paper",
     )
-    import_product(key)
-    dnf(action, str(candidate))
-    return True
+    return paper_install(action)
 
 
 def install_verified(names):

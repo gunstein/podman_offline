@@ -249,10 +249,7 @@ print(json.dumps({"accepted": op.verify(candidate, op.PKG / "db"), "commands": o
                 "Missing tools verdict",
             )
         else:
-            op.fresh_directory()
-            key = op.copy_candidate(key_name)
-            op.import_product(key, op.PKG / "db")
-            accepted = op.verify(op.copy_candidate(package), op.PKG / "db")
+            accepted = op.verify_paper_delivery(key_name, package)
         check(
             ("" if name == "repository-download" else "signature-") + name,
             accepted == (name in ("product", "product-subkey", "repository-download")),
@@ -386,6 +383,7 @@ def repair(state):
     elif state in ("R4", "R5"):
         op.install_verified([old if state == "R4" else new])
         check("diagnosis", op.versions() == (["1.0"] if state == "R4" else ["3.0"]))
+    require(op.verify_paper_delivery(), "Paper verification failed before repair")
     before = op.versions()
     if state == "R5":
         identity = mech.package_identity(op.TOOLS)
@@ -415,7 +413,7 @@ def repair(state):
         action in ("install", "reinstall"),
         "Repair diagnosis does not permit installation",
     )
-    op.bootstrap(action=action)
+    op.paper_install(action)
     check("repair-version", op.versions() == [TOOLS_VERSION])
     check("repair-integrity", op.rpm_clean(op.TOOLS))
     check("repair-trust", op.wait_trust([op.TOOLS]))
@@ -674,7 +672,14 @@ def identities():
 
 def audit(start):
     result = op.command(
-        ["ausearch", "-m", "FANOTIFY,AVC", "-ts", *start.split(), "--raw"],
+        [
+            "ausearch",
+            "-m",
+            "FANOTIFY,AVC",
+            "-ts",
+            *contracts.audit_start_fields(start),
+            "--raw",
+        ],
         allowed=(0, 1),
     )
     output = result.stdout + result.stderr
@@ -690,6 +695,22 @@ def audit(start):
             "Malformed audit result",
         )
     return {"lines": lines, "no_events": result.returncode == 1, "output": output}
+
+
+def account_python_prepared(root, uid):
+    # Root creates only state/config/storage. These descendants and the lock
+    # are created by prepare-host's embedded Python after the privilege drop.
+    return all(
+        (root / name).is_dir() and (root / name).stat().st_uid == uid
+        for name in (
+            "config/cni/net.d",
+            "config/containers/systemd",
+            "storage/containers/storage",
+        )
+    ) and (
+        (root / "config/cni/net.d/cni.lock").is_file()
+        and (root / "config/cni/net.d/cni.lock").stat().st_uid == uid
+    )
 
 
 def main(action, arguments):
@@ -728,10 +749,7 @@ def main(action, arguments):
         account = pwd.getpwnam(ACCOUNT)
         check(
             "account-python",
-            all(
-                (Path("/var/lib/myproduct") / name).stat().st_uid == account.pw_uid
-                for name in ("state", "config", "storage")
-            ),
+            account_python_prepared(Path("/var/lib/myproduct"), account.pw_uid),
         )
     elif action == "C1":
         signature_matrix()

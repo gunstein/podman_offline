@@ -331,26 +331,16 @@ class BootstrapTests(unittest.TestCase):
                     self.assertFalse(database.exists())
 
     def test_bootstrap_stops_without_install_and_verifies_private_copy(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            with (
-                mock.patch.object(op, "PKG", root),
-                mock.patch.object(op, "fresh_directory") as fresh,
-                mock.patch.object(
-                    op, "copy_candidate", side_effect=lambda name: root / name
-                ),
-                mock.patch.object(op, "import_product") as imported,
-                mock.patch.object(op, "verify", return_value=False) as verify,
-                mock.patch.object(op, "dnf") as dnf,
-            ):
-                with self.assertRaisesRegex(RuntimeError, "signature"):
-                    op.bootstrap()
-                fresh.assert_called_once_with()
-                imported.assert_called_once_with(
-                    root / "RPM-GPG-KEY-myproduct", root / "db"
-                )
-                verify.assert_called_once_with(root / op.DELIVERED, root / "db")
-                dnf.assert_not_called()
+        with (
+            mock.patch.object(
+                op, "verify_paper_delivery", return_value=False
+            ) as verify,
+            mock.patch.object(op, "paper_install") as install,
+            self.assertRaisesRegex(RuntimeError, "signature"),
+        ):
+            op.bootstrap()
+        verify.assert_called_once_with("RPM-GPG-KEY-myproduct", op.DELIVERED)
+        install.assert_not_called()
 
     def test_validated_key_precedes_import_and_database_creation(self):
         calls = []
@@ -758,8 +748,8 @@ class FlowTests(unittest.TestCase):
                         returncode=0, stdout="WP0 trusted module", stderr=""
                     )
 
-                def bootstrap(expected=action, installed=installed, **kwargs):
-                    self.assertEqual(kwargs["action"], expected)
+                def install(actual, expected=action, installed=installed):
+                    self.assertEqual(actual, expected)
                     installed[:] = ["2.0"]
 
                 with (
@@ -770,7 +760,8 @@ class FlowTests(unittest.TestCase):
                         "versions",
                         side_effect=lambda installed=installed: list(installed),
                     ),
-                    mock.patch.object(op, "bootstrap", side_effect=bootstrap),
+                    mock.patch.object(op, "verify_paper_delivery", return_value=True),
+                    mock.patch.object(op, "paper_install", side_effect=install),
                     mock.patch.object(op, "rpm_clean", return_value=True),
                     mock.patch.object(op, "wait_trust", return_value=True),
                     mock.patch.object(Path, "unlink"),
@@ -805,6 +796,13 @@ class FlowTests(unittest.TestCase):
             )
 
             def build(name, version, payload, guard, *args):
+                if name.startswith("wp0-release-"):
+                    self.assertEqual(
+                        args,
+                        (
+                            "Requires: myproduct-tools\nRequires(preun): myproduct-tools",
+                        ),
+                    )
                 built.append((name, version, payload, guard))
                 (output / (name + "-" + version + "-1.noarch.rpm")).write_bytes(
                     fake_rpm
@@ -993,8 +991,8 @@ class FinalFlowRegressions(unittest.TestCase):
             events.append("deduplicate")
             installed[:] = ["2.0"]
 
-        def bootstrap(**kwargs):
-            self.assertEqual(kwargs["action"], "reinstall")
+        def install(action):
+            self.assertEqual(action, "reinstall")
             events.append("reinstall")
 
         with (
@@ -1014,14 +1012,21 @@ class FinalFlowRegressions(unittest.TestCase):
                     ["1.0"] if package == "wp0-release-sibling" else list(installed)
                 ),
             ),
-            mock.patch.object(op, "bootstrap", side_effect=bootstrap),
+            mock.patch.object(
+                op,
+                "verify_paper_delivery",
+                side_effect=lambda: events.append("paper-verify") or True,
+            ),
+            mock.patch.object(op, "paper_install", side_effect=install),
             mock.patch.object(op, "rpm_clean", return_value=True),
             mock.patch.object(op, "wait_trust", return_value=True),
             mock.patch.object(m, "record_identity"),
             mock.patch.object(Path, "mkdir"),
         ):
             self.assertTrue(guest.repair("R3"))
-        self.assertEqual(events, ["register-delivered", "deduplicate", "reinstall"])
+        self.assertEqual(
+            events, ["register-delivered", "paper-verify", "deduplicate", "reinstall"]
+        )
         self.assertEqual(set(guest.PREDICATES), wp0.expected_predicates("R3"))
 
     def test_newer_tools_stop_never_installs_and_detects_changed_state(self):
@@ -1043,7 +1048,10 @@ class FinalFlowRegressions(unittest.TestCase):
                     mock.patch.object(m, "package_identity", side_effect=identities),
                     mock.patch.object(Path, "glob", return_value=[path]),
                     mock.patch.object(op, "rpm_clean", return_value=True),
-                    mock.patch.object(op, "bootstrap") as bootstrap,
+                    mock.patch.object(
+                        op, "verify_paper_delivery", return_value=True
+                    ) as verify,
+                    mock.patch.object(op, "paper_install") as install,
                 ):
                     if changed:
                         with self.assertRaisesRegex(RuntimeError, "unchanged"):
@@ -1053,7 +1061,8 @@ class FinalFlowRegressions(unittest.TestCase):
                         self.assertEqual(
                             set(guest.PREDICATES), wp0.expected_predicates("R5")
                         )
-                    bootstrap.assert_not_called()
+                    verify.assert_called_once_with()
+                    install.assert_not_called()
 
     def test_a_uses_manual_flow_and_nonoptional_final_health_predicate(self):
         import ast
@@ -1113,7 +1122,7 @@ class EvidenceBoundaryRegressions(unittest.TestCase):
                 returncode=1, stdout="", stderr="<no matches>"
             ),
         ):
-            self.assertTrue(guest.audit("10/25/2026 12:00:00")["no_events"])
+            self.assertTrue(guest.audit("10/25/26 12:00:00")["no_events"])
         for code, output in (
             (1, "read failed"),
             (1, "read failed\n<no matches>"),
@@ -1130,7 +1139,7 @@ class EvidenceBoundaryRegressions(unittest.TestCase):
                 ),
                 self.assertRaises(RuntimeError),
             ):
-                guest.audit("10/25/2026 12:00:00")
+                guest.audit("10/25/26 12:00:00")
         with mock.patch.object(
             op,
             "command",
@@ -1138,7 +1147,7 @@ class EvidenceBoundaryRegressions(unittest.TestCase):
                 returncode=0, stdout="type=AVC msg=fixture", stderr=""
             ),
         ):
-            self.assertFalse(guest.audit("10/25/2026 12:00:00")["no_events"])
+            self.assertFalse(guest.audit("10/25/26 12:00:00")["no_events"])
 
     def test_global_key_inventory_compares_public_bytes_not_key_ids(self):
         from types import SimpleNamespace
@@ -1240,6 +1249,242 @@ class CompletionRegressions(unittest.TestCase):
             report = (evidence.folder / "REPORT.md").read_text()
             self.assertIn("SELECTED CASES PASS", report)
             self.assertNotIn("WP0 MATRIX PASS", report)
+
+
+class IndependentReviewRegressions(unittest.TestCase):
+    def test_c1_uses_paper_gate_for_each_signature_fixture(self):
+        from types import SimpleNamespace
+
+        guest.PREDICATES.clear()
+        with (
+            mock.patch.object(op, "key_text", return_value=key("A" * 40)),
+            mock.patch.object(
+                op,
+                "command",
+                return_value=SimpleNamespace(
+                    returncode=0, stdout="foreign.rpm: digests signatures OK", stderr=""
+                ),
+            ),
+            mock.patch.object(
+                op,
+                "verify_paper_delivery",
+                side_effect=[True, False, False, False, False, True, False],
+            ) as paper,
+            mock.patch.object(op, "verify") as tools_gate,
+        ):
+            self.assertTrue(guest.signature_matrix())
+        self.assertEqual(
+            paper.call_args_list,
+            [
+                mock.call("RPM-GPG-KEY-myproduct", op.DELIVERED),
+                mock.call("RPM-GPG-KEY-myproduct", "unsigned.rpm"),
+                mock.call("RPM-GPG-KEY-myproduct", "foreign.rpm"),
+                mock.call("RPM-GPG-KEY-myproduct", "tampered-header.rpm"),
+                mock.call("RPM-GPG-KEY-myproduct", "tampered-payload.rpm"),
+                mock.call("product-subkey.asc", "product-subkey.rpm"),
+                mock.call("RPM-GPG-KEY-myproduct", "foreign-subkey.rpm"),
+            ],
+        )
+        tools_gate.assert_not_called()
+        self.assertEqual(set(guest.PREDICATES), wp0.expected_predicates("C1"))
+
+    def test_audit_date_round_trips_through_c_locale_libc_parser(self):
+        import ctypes
+        import locale
+
+        start = subprocess.check_output(
+            ["bash", "-c", c.AUDIT_START_COMMAND], text=True
+        ).strip()
+        previous = locale.setlocale(locale.LC_TIME)
+        try:
+            locale.setlocale(locale.LC_TIME, "C")
+            libc = ctypes.CDLL(None)
+            libc.strptime.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p]
+            libc.strptime.restype = ctypes.c_char_p
+            # Oversized, aligned storage for struct tm; no clock or host changes.
+            storage = (ctypes.c_long * 32)()
+            self.assertEqual(
+                libc.strptime(start.encode(), b"%x %X", ctypes.byref(storage)), b""
+            )
+        finally:
+            locale.setlocale(locale.LC_TIME, previous)
+        self.assertEqual(c.audit_start_fields(start), start.split())
+        with (
+            mock.patch.object(op, "command") as command,
+            self.assertRaisesRegex(RuntimeError, "C-locale"),
+        ):
+            guest.audit("10/25/2026 12:00:00")
+        command.assert_not_called()
+
+    def test_paper_commands_use_real_shell_globs_and_stop_before_import(self):
+        from contextlib import nullcontext
+
+        for case in (
+            "valid",
+            "wrong",
+            "two-primary",
+            "three-packages",
+            "bad-signature",
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                medium, scratch, executables = (
+                    root / "medium",
+                    root / "pkg",
+                    root / "bin",
+                )
+                for path in (medium, scratch, executables):
+                    path.mkdir()
+                (scratch / "obsolete.rpm").write_text("foreign fixture")
+                (medium / "RPM-GPG-KEY-myproduct").write_text("public fixture")
+                (medium / op.DELIVERED).write_text("assigned candidate")
+                if case == "three-packages":
+                    for version in ("1.0", "3.0"):
+                        (medium / f"myproduct-tools-{version}-1.noarch.rpm").write_text(
+                            "setup fixture"
+                        )
+                fingerprint = "A" * 40 if case == "wrong" else c.APPROVED_FINGERPRINT
+                displayed = "pub   rsa2048 2026-10-25 [SC]\n      " + fingerprint + "\n"
+                if case == "two-primary":
+                    displayed += (
+                        "pub   rsa2048 2026-10-25 [SC]\n      " + "A" * 40 + "\n"
+                    )
+                key_output = root / "key-output"
+                key_output.write_text(displayed)
+                log = root / "calls"
+                prefix = '#!/bin/bash\nprintf "%s %s\\n" "${0##*/}" "$*" >> "$WP0_TEST_LOG"\n'
+                bodies = {
+                    "gpg": 'cat "$WP0_TEST_KEY_OUTPUT"\n',
+                    "rpmkeys": """if [[ "$*" == *--import* ]]; then
+mkdir -p "$2"
+exit 0
+fi
+if [[ "$WP0_TEST_CASE" == bad-signature ]]; then
+echo 'signature NOT OK'
+exit 1
+fi
+for arg in "$@"; do
+case "$arg" in
+myproduct-tools-*.rpm) printf '%s: digests signatures OK\\n' "$arg";;
+esac
+done
+""",
+                    "rpm": "exit 0\n",
+                    "dnf": "exit 0\n",
+                }
+                for name, body in bodies.items():
+                    path = executables / name
+                    path.write_text(prefix + body)
+                    path.chmod(0o755)
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "PATH": str(executables) + os.pathsep + os.environ["PATH"],
+                            "WP0_TEST_LOG": str(log),
+                            "WP0_TEST_KEY_OUTPUT": str(key_output),
+                            "WP0_TEST_CASE": case,
+                        },
+                    ),
+                    mock.patch.object(op, "PKG", scratch),
+                    mock.patch.object(
+                        op,
+                        "paper_delivery",
+                        side_effect=lambda *_, medium=medium: nullcontext(medium),
+                    ),
+                    mock.patch.object(op, "TRANSCRIPT", []),
+                ):
+                    if case == "valid":
+                        self.assertTrue(op.bootstrap())
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "STOP:"):
+                            op.bootstrap()
+                calls = log.read_text()
+                self.assertIn("gpg --show-keys RPM-GPG-KEY-myproduct", calls)
+                self.assertFalse((scratch / "obsolete.rpm").exists())
+                self.assertEqual(scratch.stat().st_mode & 0o777, 0o700)
+                if case in ("wrong", "two-primary"):
+                    self.assertFalse((scratch / "db").exists())
+                    self.assertNotIn("rpmkeys ", calls)
+                else:
+                    self.assertTrue((scratch / "db").is_dir())
+                if case == "valid":
+                    self.assertIn("rpm --import RPM-GPG-KEY-myproduct", calls)
+                    self.assertIn(
+                        "dnf --disablerepo=* --setopt=localpkg_gpgcheck=1 -y install ./"
+                        + op.DELIVERED,
+                        calls,
+                    )
+                else:
+                    self.assertNotIn("\nrpm --import", calls)
+                    self.assertNotIn("\ndnf ", calls)
+                if case == "three-packages":
+                    self.assertEqual(
+                        len(list(scratch.glob("myproduct-tools-*.rpm"))), 3
+                    )
+                    self.assertIn("myproduct-tools-1.0-1.noarch.rpm", calls)
+                    self.assertIn("myproduct-tools-3.0-1.noarch.rpm", calls)
+
+    def test_paper_delivery_selects_one_candidate_without_changing_bytes(self):
+        def copy(name, destination):
+            target = destination / name
+            target.write_bytes(name.encode())
+            return target
+
+        with mock.patch.object(op, "copy_candidate", side_effect=copy):
+            with op.paper_delivery(
+                "product-subkey.asc", "product-subkey.rpm"
+            ) as delivery:
+                self.assertEqual(
+                    {p.name for p in delivery.iterdir()},
+                    {"RPM-GPG-KEY-myproduct", op.DELIVERED},
+                )
+                self.assertEqual(
+                    (delivery / op.DELIVERED).read_bytes(), b"product-subkey.rpm"
+                )
+                self.assertEqual(
+                    (delivery / "RPM-GPG-KEY-myproduct").read_bytes(),
+                    b"product-subkey.asc",
+                )
+            self.assertFalse(delivery.exists())
+
+    def test_paper_display_requires_one_primary_and_its_full_fingerprint(self):
+        displayed = (
+            "pub   rsa2048\n    " + c.APPROVED_FINGERPRINT + "\nuid WP0\nsub rsa2048\n"
+        )
+        self.assertTrue(c.authorize_paper_key(displayed))
+        for invalid in (
+            displayed + displayed,
+            displayed.replace(c.APPROVED_FINGERPRINT, "A" * 40),
+            "pub rsa2048\n",
+            "sub rsa2048\n" + c.APPROVED_FINGERPRINT,
+        ):
+            with self.assertRaises(RuntimeError):
+                c.authorize_paper_key(invalid)
+
+    def test_account_python_requires_descendants_and_lock_not_root_chown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("state", "config", "storage"):
+                (root / name).mkdir()
+            self.assertFalse(guest.account_python_prepared(root, os.getuid()))
+            for name in (
+                "config/cni/net.d",
+                "config/containers/systemd",
+                "storage/containers/storage",
+            ):
+                (root / name).mkdir(parents=True)
+            self.assertFalse(guest.account_python_prepared(root, os.getuid()))
+            (root / "config/cni/net.d/cni.lock").touch()
+            self.assertTrue(guest.account_python_prepared(root, os.getuid()))
+            self.assertFalse(guest.account_python_prepared(root, os.getuid() + 1))
+
+    def test_build_mounts_only_disposable_copies_for_selinux_relabel(self):
+        source = (HERE / "build.sh").read_text()
+        self.assertIn('cp -a "$here" "$work/support"', source)
+        self.assertNotIn('-v "$here"', source)
+        self.assertNotIn('-v "$here/', source)
+        self.assertIn('-v "$work/support":/support:ro,Z', source)
 
 
 if __name__ == "__main__":

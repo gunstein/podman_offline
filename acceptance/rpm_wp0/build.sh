@@ -20,7 +20,9 @@ RPM_KEY_HOME="$work/key" TOOLS_VERSION=0.202610250832 \
     "$bundles/myproduct-platform-0.4.13-offline.tar.gz"
 mkdir "$work/fixtures"
 cp "$work/source/dist/rpm/"* "$work/fixtures/"
+# Relabel only disposable copies, never the repository on an SELinux host.
+cp -a "$here" "$work/support"
 podman run --rm -v "$work/key":/key:Z -v "$work/fixtures":/out:Z \
-    -v "$here":/support:ro,Z \
-    -v "$here/signatures.sh":/fixtures.sh:ro,Z \
+    -v "$work/support":/support:ro,Z \
+    -v "$work/support/signatures.sh":/fixtures.sh:ro,Z \
     docker.io/library/oraclelinux:9 bash /fixtures.sh

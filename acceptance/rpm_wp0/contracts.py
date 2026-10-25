@@ -8,6 +8,8 @@ APPROVED_FINGERPRINT = "425584C83A44FFC9F7E5E1A4E2021B0CC1DD70E3"
 # Explicitly approved by the product owner after plan revision 3.2.
 TRUST_TIMEOUT = 30
 LOCK_TIMEOUT = 5
+# ausearch parses %x in its own LC_ALL=C environment, including a two-digit year.
+AUDIT_START_COMMAND = "LC_ALL=C date '+%x %X'"
 TOOLS_VERSION = "2.0"
 ACCOUNT = "myproduct-ops"
 GROUPS = ("A", "B", "C1", "C2", "R1", "R2", "R3", "R4", "R5", "D", "E", "F", "G", "H")
@@ -87,6 +89,32 @@ def authorize_key(colons, expected=APPROVED_FINGERPRINT):
     require(len(fingerprints) == 1, "STOP: expected exactly one primary key")
     require(fingerprints[0] == expected, "STOP: primary fingerprint differs from paper")
     return True
+
+
+def authorize_paper_key(output, expected=APPROVED_FINGERPRINT):
+    """Read the ordinary gpg --show-keys output named by the paper procedure."""
+    lines = output.splitlines()
+    primaries = [i for i, line in enumerate(lines) if line.startswith("pub ")]
+    require(len(primaries) == 1, "STOP: expected exactly one primary key")
+    index = primaries[0] + 1
+    require(index < len(lines), "STOP: missing primary fingerprint")
+    fingerprint = "".join(lines[index].split())
+    require(
+        bool(re.fullmatch(r"[A-F0-9]{40}", fingerprint)),
+        "STOP: missing primary fingerprint",
+    )
+    require(fingerprint == expected, "STOP: primary fingerprint differs from paper")
+    return True
+
+
+def audit_start_fields(start):
+    require(
+        isinstance(start, str)
+        and bool(re.fullmatch(r"\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}", start)),
+        "Invalid C-locale audit start",
+    )
+    time.strptime(start, "%m/%d/%y %H:%M:%S")
+    return start.split()
 
 
 def repair_decision(installed, delivered=TOOLS_VERSION):

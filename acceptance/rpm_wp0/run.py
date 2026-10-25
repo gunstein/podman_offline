@@ -672,7 +672,7 @@ HEALTH
     def probe(self, group, private, credentials):
         self.account(private)
         self.audit_start = self.execute_command(
-            SSH + [self.host, "date '+%m/%d/%Y %H:%M:%S'"]
+            SSH + [self.host, contract.AUDIT_START_COMMAND]
         ).strip()
         if group == "A":
             return self.prototype(credentials)
