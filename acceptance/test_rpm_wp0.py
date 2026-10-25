@@ -1376,7 +1376,7 @@ done
                     "rpm": "exit 0\n",
                     "dnf": "exit 0\n",
                     "systemctl": "printf 'ActiveState=active\\nMainPID=42\\n'\n",
-                    "journalctl": 'echo \'{"__CURSOR":"before","MESSAGE":"ready"}\'\n',
+                    "journalctl": 'echo \'{"__CURSOR":"before","MESSAGE":"Starting to listen for events"}\'\n',
                 }
                 for name, body in bodies.items():
                     path = executables / name

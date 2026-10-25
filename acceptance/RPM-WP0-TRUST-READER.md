@@ -1,5 +1,11 @@
 # WP0 trust-dump reader correction
 
+**Superseded historical implementation note.** `guarded_trust_dump` and
+`test_rpm_wp0_reader.py` described below were removed in `47b14ca`. They are
+not current entry points or tests. See the [current refresh observation
+implementation](RPM-WP0-TRUST-REFRESH.md), including its independent-review
+correction and verification limits. The remainder records earlier work.
+
 The second matrix run stopped in R4/P1 when `fapolicyd-cli --dump-db`
 aborted inside LMDB. The historical evidence remains in
 [RPM-WP0-LAB-20261025-RUN02.md](RPM-WP0-LAB-20261025-RUN02.md).

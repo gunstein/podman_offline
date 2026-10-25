@@ -42,9 +42,10 @@ JOURNAL = [
     "json",
     "--output-fields=__CURSOR,MESSAGE",
 ]
+REFRESH_START = "It looks like there was an update of the system... Syncing DB."
 REFRESH_MESSAGES = frozenset(
     (
-        "It looks like there was an update of the system... Syncing DB.",
+        REFRESH_START,
         "Updating trust database",
         "Updated",
     )
@@ -81,34 +82,97 @@ def journal_records(args, timeout=10):
 
 
 def capture_trust_cursor():
+    """Observe idle state before DNF; publish no cursor on failure or timeout."""
     global TRUST_CURSOR, TRUST_SERVICE
     TRUST_CURSOR = None
-    TRUST_SERVICE = service_identity()
-    records = journal_records(["-n", "1"])
-    require(len(records) == 1, "Missing pre-transaction journal cursor")
-    TRUST_CURSOR = records[0]["__CURSOR"]
+    TRUST_SERVICE = None
+    service = service_identity()
+    candidate = None
+
+    def idle(remaining):
+        nonlocal candidate
+        deadline = time.monotonic() + remaining
+        records = journal_records(["-b", "_PID=" + service, "-n", "100"], remaining)
+        require(bool(records), "Missing pre-transaction journal cursor")
+        seconds = deadline - time.monotonic()
+        require(seconds > 0, "Pre-transaction observation exceeded the poll deadline")
+        require(
+            service_identity(seconds) == service,
+            "fapolicyd restarted before transaction",
+        )
+        states = [
+            r["MESSAGE"]
+            for r in records
+            if r["MESSAGE"] in REFRESH_MESSAGES
+            or r["MESSAGE"] == "Starting to listen for events"
+        ]
+        if not states or states[-1] not in ("Updated", "Starting to listen for events"):
+            return False
+        candidate = records[-1]["__CURSOR"]
+        return True
+
+    bounded_poll(idle, TRUST_TIMEOUT)
+    TRUST_SERVICE = service
+    TRUST_CURSOR = candidate
 
 
 def completed_refresh(timeout):
     cursor = TRUST_CURSOR
     if not isinstance(cursor, str) or not cursor:
         raise RuntimeError("Missing pre-transaction trust observation")
-    records = journal_records(["--after-cursor=" + cursor], timeout)
-    updates = [r for r in records if r["MESSAGE"] in REFRESH_MESSAGES]
-    if not updates or updates[-1]["MESSAGE"] != "Updated":
-        return None
-    return updates[-1]["__CURSOR"]
+    records = journal_records(
+        ["-b", "_PID=" + str(TRUST_SERVICE), "--after-cursor=" + cursor], timeout
+    )
+    started = False
+    completed = None
+    for record in records:
+        message = record["MESSAGE"]
+        if message == REFRESH_START:
+            started = True
+            completed = None
+        elif message == "Updating trust database":
+            # Backend rebuilding can begin after the cursor even when the
+            # enclosing refresh began before it. It cannot establish a start.
+            completed = None
+        elif message == "Updated":
+            # An old refresh may finish after the cursor. Its completion alone
+            # is never evidence of a new refresh, including same-byte reinstall.
+            completed = record["__CURSOR"] if started else None
+            started = False
+    return completed
 
 
 def command(args, allowed=(0,), timeout=120, **kwargs):
-    result = subprocess.run(
-        list(map(str, args)),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-        **kwargs,
-    )
+    argv = list(map(str, args))
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            **kwargs,
+        )
+    except subprocess.TimeoutExpired as error:
+
+        def partial(value):
+            return (
+                value.decode("utf-8", errors="replace")
+                if isinstance(value, bytes)
+                else value or ""
+            )
+
+        TRANSCRIPT.append(
+            {
+                "argv": argv,
+                "exit": None,
+                "timed_out": True,
+                "timeout_seconds": timeout,
+                "stdout": partial(error.stdout),
+                "stderr": partial(error.stderr),
+            }
+        )
+        raise
     TRANSCRIPT.append(
         {
             "argv": list(map(str, args)),

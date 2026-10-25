@@ -8,6 +8,25 @@ registration, observes refresh completion, and preserves the exact trust gate
 and 30-second bound. All six selected case/profile runs passed on actual OL9.
 No failed case was bypassed or retried.
 
+## Subsequent independent-review finding
+
+These are historical script verdicts at `47b14ca`, not verification of the
+later gate correction. Review found that both R4 pre-paper-DNF cursors were
+taken during a previous refresh. P1's cursor was at `16:18:29.465055Z`; that
+refresh completed at `16:18:30.166126Z`, before the next refresh began at
+`16:18:30.383511Z`. P2 likewise had a 313 ms completion/start gap. The old gate
+could have opened inside either gap. The observed runs passed, but their timing
+does not establish that the old gate was safe or associated with the intended
+transaction. What originally triggered the earlier refresh was not established.
+
+The [public observation projection](rpm_wp0/results/authorized-20261025-selected05-refresh-observations.json)
+now supplies ordered journal messages, cursor timestamps/references, daemon
+PID/state results and a bounded trust-dump sample from the original private
+records. Cursor references are SHA256 prefixes, not raw cursor identifiers;
+timestamps are decoded from the original cursor's realtime field. No new lab
+operations were used to produce this projection. The original summary remains
+unchanged. See the [corrected flow and outstanding verification](RPM-WP0-TRUST-REFRESH.md#independent-review-correction-local-only).
+
 ## Exact commands and evidence
 
 Controller laptop, repository contributor, sequentially (continue only after
@@ -59,8 +78,9 @@ Each E profile needed one CLI dump after daemon refresh completion. A crossed
 the trust boundary where runs 03/04 stopped and completed the real application
 flow. R4 crossed the upgrade boundary where run 02 stopped; its recorded
 predicates were `diagnosis`, `repair-version`, `repair-integrity`,
-`repair-trust`, `repair-execution` on both profiles. These observations verify
-the replacement trust-observation flow on the selected cases; they do not prove
+`repair-trust`, `repair-execution` on both profiles. These observations establish the selected script outcomes at this revision;
+the review limitation above prevents treating them as proof of the gate's
+transaction association; they do not prove
 the exact native cause of the removed reader's interaction with fapolicyd.
 
 C1, C2, C3/R1–R3/R5, B, D, F, G and H were not rerun. C has no aggregate PASS,

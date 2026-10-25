@@ -211,10 +211,12 @@ failure, never proof of a clean window.
 `TRUST_TIMEOUT = 30` and `LOCK_TIMEOUT = 5` are controller constants approved
 by the product owner. Local fake-clock tests cover timeout and late success.
 Other SSH/transaction timeouts bound infrastructure hangs, not these criteria.
-Trust observation captures a journal cursor before each installing DNF command,
-then waits for a completed daemon refresh before dumping. The daemon must stay
+Before each installing DNF command, trust observation waits up to 30 seconds
+for journal-observed idle state and only then captures a cursor. After DNF, a
+separate 30-second trust budget requires a new enclosing refresh start followed
+by completion after that cursor before dumping. A lone completion is rejected. The daemon must stay
 active with the same PID; the refresh must remain unchanged across the dump.
-All observations share the 30-second budget. No LMDB reader is registered by
+All post-install observations share that post-install budget. No LMDB reader is registered by
 the runner. See the [refresh correction](RPM-WP0-TRUST-REFRESH.md).
 Automation adaptations are recorded separately: `dnf -y`, SCP input instead
 of mounted media, scripted reading of paper output, and journal/daemon
