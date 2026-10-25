@@ -614,6 +614,12 @@ refuse anything outside it before changes. Add a lab profile with
 the recipe there before choosing a design; RPM delivery is the only option
 expected to work under every variant.
 
+**RPM prototype (2026-10-25).** At the product owner's request a lab prototype
+wraps built bundles as signed, side-by-side-versioned RPMs plus a
+`<product>-host-setup` command: [RPM-PROTOTYPE.md](acceptance/RPM-PROTOTYPE.md)
+(`rpm-prototype/`). Not built or run yet; to be tested on the offline lab
+network. No product code changes; no automated regression coverage.
+
 - Does the default OL9 fapolicyd policy deny `bash setup.sh` for an untrusted
   shell script on DVD/USB or in the upload directory? (For Python this was
   observed in the item 54 lab runs; for shell it is not verified.)
