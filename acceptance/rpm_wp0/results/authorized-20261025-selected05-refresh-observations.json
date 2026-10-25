@@ -1,0 +1,1594 @@
+{
+  "scope": "Historical observations at 47b14ca; no verification of the later correction",
+  "runs": [
+    {
+      "run_id": "wp0-e-20261025-authorized-05",
+      "guest_actions": [
+        {
+          "file": "E-P1-E-14.json",
+          "observations": [
+            {
+              "command_index": 5,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=765",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 6,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "77c3e66d27d1a5c9",
+                  "realtime_utc": "2026-10-25T16:09:43.491789+00:00",
+                  "message": "Starting to listen for events"
+                }
+              ]
+            },
+            {
+              "command_index": 9,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=765",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 10,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "77c3e66d27d1a5c9",
+                "realtime_utc": "2026-10-25T16:09:43.491789+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "138e00e90ad0fa08",
+                  "realtime_utc": "2026-10-25T16:09:55.548510+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 11,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=765",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 12,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "77c3e66d27d1a5c9",
+                "realtime_utc": "2026-10-25T16:09:43.491789+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "138e00e90ad0fa08",
+                  "realtime_utc": "2026-10-25T16:09:55.548510+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 13,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=765",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 14,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "77c3e66d27d1a5c9",
+                "realtime_utc": "2026-10-25T16:09:43.491789+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "138e00e90ad0fa08",
+                  "realtime_utc": "2026-10-25T16:09:55.548510+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 15,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=765",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 16,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "77c3e66d27d1a5c9",
+                "realtime_utc": "2026-10-25T16:09:43.491789+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "138e00e90ad0fa08",
+                  "realtime_utc": "2026-10-25T16:09:55.548510+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "26cde9b586706aa6",
+                  "realtime_utc": "2026-10-25T16:09:56.134439+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "4f109ab04c34b59b",
+                  "realtime_utc": "2026-10-25T16:09:56.134685+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "0f3788c5fc85485d",
+                  "realtime_utc": "2026-10-25T16:09:56.134714+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "4269c7fa2973b529",
+                  "realtime_utc": "2026-10-25T16:09:56.158361+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "510ef070fe32a16a",
+                  "realtime_utc": "2026-10-25T16:09:56.158394+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "bcaa3c952443a8c7",
+                  "realtime_utc": "2026-10-25T16:09:56.168482+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 17,
+              "kind": "trust-dump",
+              "exit": 0,
+              "sample_rows": [
+                "rpmdb /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61"
+              ]
+            },
+            {
+              "command_index": 18,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "77c3e66d27d1a5c9",
+                "realtime_utc": "2026-10-25T16:09:43.491789+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "138e00e90ad0fa08",
+                  "realtime_utc": "2026-10-25T16:09:55.548510+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "26cde9b586706aa6",
+                  "realtime_utc": "2026-10-25T16:09:56.134439+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "4f109ab04c34b59b",
+                  "realtime_utc": "2026-10-25T16:09:56.134685+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "0f3788c5fc85485d",
+                  "realtime_utc": "2026-10-25T16:09:56.134714+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "4269c7fa2973b529",
+                  "realtime_utc": "2026-10-25T16:09:56.158361+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "510ef070fe32a16a",
+                  "realtime_utc": "2026-10-25T16:09:56.158394+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "bcaa3c952443a8c7",
+                  "realtime_utc": "2026-10-25T16:09:56.168482+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 19,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=765",
+                "ActiveState=active"
+              ]
+            }
+          ]
+        },
+        {
+          "file": "E-P2-E-27.json",
+          "observations": [
+            {
+              "command_index": 5,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1587",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 6,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "89132c9c81f312d5",
+                  "realtime_utc": "2026-10-25T16:10:20.215517+00:00",
+                  "message": "Starting to listen for events"
+                }
+              ]
+            },
+            {
+              "command_index": 9,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1587",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 10,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "89132c9c81f312d5",
+                "realtime_utc": "2026-10-25T16:10:20.215517+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8290a494b1a2fef2",
+                  "realtime_utc": "2026-10-25T16:10:27.833208+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 11,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1587",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 12,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "89132c9c81f312d5",
+                "realtime_utc": "2026-10-25T16:10:20.215517+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8290a494b1a2fef2",
+                  "realtime_utc": "2026-10-25T16:10:27.833208+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 13,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1587",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 14,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "89132c9c81f312d5",
+                "realtime_utc": "2026-10-25T16:10:20.215517+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8290a494b1a2fef2",
+                  "realtime_utc": "2026-10-25T16:10:27.833208+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 15,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1587",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 16,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "89132c9c81f312d5",
+                "realtime_utc": "2026-10-25T16:10:20.215517+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8290a494b1a2fef2",
+                  "realtime_utc": "2026-10-25T16:10:27.833208+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "21785f45ee800673",
+                  "realtime_utc": "2026-10-25T16:10:28.433355+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "4aaa72818a9aa225",
+                  "realtime_utc": "2026-10-25T16:10:28.433628+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "0c474c7572d98d8c",
+                  "realtime_utc": "2026-10-25T16:10:28.433650+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "ec25d220b3796b3d",
+                  "realtime_utc": "2026-10-25T16:10:28.457384+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "415c050b73e20b36",
+                  "realtime_utc": "2026-10-25T16:10:28.467457+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 17,
+              "kind": "trust-dump",
+              "exit": 0,
+              "sample_rows": [
+                "rpmdb /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61"
+              ]
+            },
+            {
+              "command_index": 18,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "89132c9c81f312d5",
+                "realtime_utc": "2026-10-25T16:10:20.215517+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8290a494b1a2fef2",
+                  "realtime_utc": "2026-10-25T16:10:27.833208+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "21785f45ee800673",
+                  "realtime_utc": "2026-10-25T16:10:28.433355+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "4aaa72818a9aa225",
+                  "realtime_utc": "2026-10-25T16:10:28.433628+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "0c474c7572d98d8c",
+                  "realtime_utc": "2026-10-25T16:10:28.433650+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "ec25d220b3796b3d",
+                  "realtime_utc": "2026-10-25T16:10:28.457384+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "415c050b73e20b36",
+                  "realtime_utc": "2026-10-25T16:10:28.467457+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 19,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1587",
+                "ActiveState=active"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "wp0-a-20261025-authorized-05",
+      "guest_actions": [
+        {
+          "file": "A-P1-install-prototype-14.json",
+          "observations": [
+            {
+              "command_index": 7,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 8,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "384a230bce47a0a5",
+                  "realtime_utc": "2026-10-25T16:12:49.623188+00:00",
+                  "message": "Starting to listen for events"
+                }
+              ]
+            },
+            {
+              "command_index": 13,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 14,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "384a230bce47a0a5",
+                "realtime_utc": "2026-10-25T16:12:49.623188+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "0658a123f2558a0e",
+                  "realtime_utc": "2026-10-25T16:13:12.312032+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 15,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 16,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "384a230bce47a0a5",
+                "realtime_utc": "2026-10-25T16:12:49.623188+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "0658a123f2558a0e",
+                  "realtime_utc": "2026-10-25T16:13:12.312032+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 17,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 18,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "384a230bce47a0a5",
+                "realtime_utc": "2026-10-25T16:12:49.623188+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "0658a123f2558a0e",
+                  "realtime_utc": "2026-10-25T16:13:12.312032+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "e20e718bf96aca22",
+                  "realtime_utc": "2026-10-25T16:13:12.949852+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "ead24b84ab4737ce",
+                  "realtime_utc": "2026-10-25T16:13:12.950103+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "26989f484186803b",
+                  "realtime_utc": "2026-10-25T16:13:12.950123+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "b2e4606d5416247c",
+                  "realtime_utc": "2026-10-25T16:13:12.974123+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "5a4f69354b1ea727",
+                  "realtime_utc": "2026-10-25T16:13:12.974152+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "945095904a8cb45b",
+                  "realtime_utc": "2026-10-25T16:13:12.984165+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 19,
+              "kind": "trust-dump",
+              "exit": 0,
+              "sample_rows": [
+                "rpmdb /usr/sbin/myproduct-host-setup 2827 de5621ec898ad7fb98bd75279b078919591ddb94377a6c4a93c70bae4d4f4408"
+              ]
+            },
+            {
+              "command_index": 20,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "384a230bce47a0a5",
+                "realtime_utc": "2026-10-25T16:12:49.623188+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "0658a123f2558a0e",
+                  "realtime_utc": "2026-10-25T16:13:12.312032+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "e20e718bf96aca22",
+                  "realtime_utc": "2026-10-25T16:13:12.949852+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "ead24b84ab4737ce",
+                  "realtime_utc": "2026-10-25T16:13:12.950103+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "26989f484186803b",
+                  "realtime_utc": "2026-10-25T16:13:12.950123+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "b2e4606d5416247c",
+                  "realtime_utc": "2026-10-25T16:13:12.974123+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "5a4f69354b1ea727",
+                  "realtime_utc": "2026-10-25T16:13:12.974152+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "945095904a8cb45b",
+                  "realtime_utc": "2026-10-25T16:13:12.984165+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 21,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            }
+          ]
+        },
+        {
+          "file": "A-P2-install-prototype-43.json",
+          "observations": [
+            {
+              "command_index": 7,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1590",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 8,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "ddcdc3840feb10ae",
+                  "realtime_utc": "2026-10-25T16:14:36.258267+00:00",
+                  "message": "Starting to listen for events"
+                }
+              ]
+            },
+            {
+              "command_index": 13,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1590",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 14,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "ddcdc3840feb10ae",
+                "realtime_utc": "2026-10-25T16:14:36.258267+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "aa72052f411473df",
+                  "realtime_utc": "2026-10-25T16:14:55.123155+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 15,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1590",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 16,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "ddcdc3840feb10ae",
+                "realtime_utc": "2026-10-25T16:14:36.258267+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "aa72052f411473df",
+                  "realtime_utc": "2026-10-25T16:14:55.123155+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 17,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1590",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 18,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "ddcdc3840feb10ae",
+                "realtime_utc": "2026-10-25T16:14:36.258267+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "aa72052f411473df",
+                  "realtime_utc": "2026-10-25T16:14:55.123155+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "18f03d36a67a3bbc",
+                  "realtime_utc": "2026-10-25T16:14:55.778754+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3998c866bbf4c011",
+                  "realtime_utc": "2026-10-25T16:14:55.779005+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "fc20351d3b7ae9da",
+                  "realtime_utc": "2026-10-25T16:14:55.779026+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "bf4130c445bfe9d6",
+                  "realtime_utc": "2026-10-25T16:14:55.803977+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "0027faa0f822b326",
+                  "realtime_utc": "2026-10-25T16:14:55.814105+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 19,
+              "kind": "trust-dump",
+              "exit": 0,
+              "sample_rows": [
+                "rpmdb /usr/sbin/myproduct-host-setup 2827 de5621ec898ad7fb98bd75279b078919591ddb94377a6c4a93c70bae4d4f4408"
+              ]
+            },
+            {
+              "command_index": 20,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "ddcdc3840feb10ae",
+                "realtime_utc": "2026-10-25T16:14:36.258267+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "aa72052f411473df",
+                  "realtime_utc": "2026-10-25T16:14:55.123155+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "18f03d36a67a3bbc",
+                  "realtime_utc": "2026-10-25T16:14:55.778754+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3998c866bbf4c011",
+                  "realtime_utc": "2026-10-25T16:14:55.779005+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "fc20351d3b7ae9da",
+                  "realtime_utc": "2026-10-25T16:14:55.779026+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "bf4130c445bfe9d6",
+                  "realtime_utc": "2026-10-25T16:14:55.803977+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "0027faa0f822b326",
+                  "realtime_utc": "2026-10-25T16:14:55.814105+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 21,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1590",
+                "ActiveState=active"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "wp0-r4-20261025-authorized-05",
+      "guest_actions": [
+        {
+          "file": "R4-P1-R4-14.json",
+          "observations": [
+            {
+              "command_index": 5,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 6,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "c0b9af8ba7ab6dee",
+                  "realtime_utc": "2026-10-25T16:18:16.800297+00:00",
+                  "message": "Starting to listen for events"
+                }
+              ]
+            },
+            {
+              "command_index": 19,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 20,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "d84e43975e498298",
+                  "realtime_utc": "2026-10-25T16:18:29.465055+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 26,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 27,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "d84e43975e498298",
+                "realtime_utc": "2026-10-25T16:18:29.465055+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "62a9ddba6a5d65c8",
+                  "realtime_utc": "2026-10-25T16:18:30.130548+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "5ba74eac8f52e47d",
+                  "realtime_utc": "2026-10-25T16:18:30.134534+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "24df87dd69288646",
+                  "realtime_utc": "2026-10-25T16:18:30.134587+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "6ad72f73cdaa3fce",
+                  "realtime_utc": "2026-10-25T16:18:30.158052+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "de6a1e1cba01a9a5",
+                  "realtime_utc": "2026-10-25T16:18:30.158141+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "72cf3f92b2040822",
+                  "realtime_utc": "2026-10-25T16:18:30.166126+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a1bb8ae9593425f9",
+                  "realtime_utc": "2026-10-25T16:18:30.383511+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 28,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 29,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "d84e43975e498298",
+                "realtime_utc": "2026-10-25T16:18:29.465055+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "62a9ddba6a5d65c8",
+                  "realtime_utc": "2026-10-25T16:18:30.130548+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "5ba74eac8f52e47d",
+                  "realtime_utc": "2026-10-25T16:18:30.134534+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "24df87dd69288646",
+                  "realtime_utc": "2026-10-25T16:18:30.134587+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "6ad72f73cdaa3fce",
+                  "realtime_utc": "2026-10-25T16:18:30.158052+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "de6a1e1cba01a9a5",
+                  "realtime_utc": "2026-10-25T16:18:30.158141+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "72cf3f92b2040822",
+                  "realtime_utc": "2026-10-25T16:18:30.166126+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a1bb8ae9593425f9",
+                  "realtime_utc": "2026-10-25T16:18:30.383511+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 30,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 31,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "d84e43975e498298",
+                "realtime_utc": "2026-10-25T16:18:29.465055+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "62a9ddba6a5d65c8",
+                  "realtime_utc": "2026-10-25T16:18:30.130548+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "5ba74eac8f52e47d",
+                  "realtime_utc": "2026-10-25T16:18:30.134534+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "24df87dd69288646",
+                  "realtime_utc": "2026-10-25T16:18:30.134587+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "6ad72f73cdaa3fce",
+                  "realtime_utc": "2026-10-25T16:18:30.158052+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "de6a1e1cba01a9a5",
+                  "realtime_utc": "2026-10-25T16:18:30.158141+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "72cf3f92b2040822",
+                  "realtime_utc": "2026-10-25T16:18:30.166126+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a1bb8ae9593425f9",
+                  "realtime_utc": "2026-10-25T16:18:30.383511+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 32,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 33,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "d84e43975e498298",
+                "realtime_utc": "2026-10-25T16:18:29.465055+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "62a9ddba6a5d65c8",
+                  "realtime_utc": "2026-10-25T16:18:30.130548+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "5ba74eac8f52e47d",
+                  "realtime_utc": "2026-10-25T16:18:30.134534+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "24df87dd69288646",
+                  "realtime_utc": "2026-10-25T16:18:30.134587+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "6ad72f73cdaa3fce",
+                  "realtime_utc": "2026-10-25T16:18:30.158052+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "de6a1e1cba01a9a5",
+                  "realtime_utc": "2026-10-25T16:18:30.158141+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "72cf3f92b2040822",
+                  "realtime_utc": "2026-10-25T16:18:30.166126+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a1bb8ae9593425f9",
+                  "realtime_utc": "2026-10-25T16:18:30.383511+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "4551577509871782",
+                  "realtime_utc": "2026-10-25T16:18:30.970296+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "97e8806eb98d6fbe",
+                  "realtime_utc": "2026-10-25T16:18:30.970648+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a4a652d7961a28d0",
+                  "realtime_utc": "2026-10-25T16:18:30.970669+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "d2f0c3b0b450af37",
+                  "realtime_utc": "2026-10-25T16:18:30.994909+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "d5db8c8bd4f7749c",
+                  "realtime_utc": "2026-10-25T16:18:30.994941+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "aca947cae42565dd",
+                  "realtime_utc": "2026-10-25T16:18:31.001595+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 34,
+              "kind": "trust-dump",
+              "exit": 0,
+              "sample_rows": [
+                "rpmdb /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61"
+              ]
+            },
+            {
+              "command_index": 35,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "d84e43975e498298",
+                "realtime_utc": "2026-10-25T16:18:29.465055+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "62a9ddba6a5d65c8",
+                  "realtime_utc": "2026-10-25T16:18:30.130548+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "5ba74eac8f52e47d",
+                  "realtime_utc": "2026-10-25T16:18:30.134534+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "24df87dd69288646",
+                  "realtime_utc": "2026-10-25T16:18:30.134587+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "6ad72f73cdaa3fce",
+                  "realtime_utc": "2026-10-25T16:18:30.158052+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "de6a1e1cba01a9a5",
+                  "realtime_utc": "2026-10-25T16:18:30.158141+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "72cf3f92b2040822",
+                  "realtime_utc": "2026-10-25T16:18:30.166126+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a1bb8ae9593425f9",
+                  "realtime_utc": "2026-10-25T16:18:30.383511+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "4551577509871782",
+                  "realtime_utc": "2026-10-25T16:18:30.970296+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "97e8806eb98d6fbe",
+                  "realtime_utc": "2026-10-25T16:18:30.970648+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a4a652d7961a28d0",
+                  "realtime_utc": "2026-10-25T16:18:30.970669+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "d2f0c3b0b450af37",
+                  "realtime_utc": "2026-10-25T16:18:30.994909+00:00",
+                  "message": "Loading trust data from file backend"
+                },
+                {
+                  "reference": "d5db8c8bd4f7749c",
+                  "realtime_utc": "2026-10-25T16:18:30.994941+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "aca947cae42565dd",
+                  "realtime_utc": "2026-10-25T16:18:31.001595+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 36,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=767",
+                "ActiveState=active"
+              ]
+            }
+          ]
+        },
+        {
+          "file": "R4-P2-R4-26.json",
+          "observations": [
+            {
+              "command_index": 5,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 6,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "4a3db7d4028e363d",
+                  "realtime_utc": "2026-10-25T16:18:55.261931+00:00",
+                  "message": "Starting to listen for events"
+                }
+              ]
+            },
+            {
+              "command_index": 19,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 20,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": null,
+              "rows": [
+                {
+                  "reference": "977661588ca09815",
+                  "realtime_utc": "2026-10-25T16:19:03.171164+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 26,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 27,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "977661588ca09815",
+                "realtime_utc": "2026-10-25T16:19:03.171164+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8470470f9bfb5b66",
+                  "realtime_utc": "2026-10-25T16:19:03.808772+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3d5586de739d4005",
+                  "realtime_utc": "2026-10-25T16:19:03.809287+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a556ad0b499952fc",
+                  "realtime_utc": "2026-10-25T16:19:03.809313+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "10e37c74d36548e8",
+                  "realtime_utc": "2026-10-25T16:19:03.835682+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "7a55dc74f8f86fd3",
+                  "realtime_utc": "2026-10-25T16:19:03.843852+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a46a52f096cb6162",
+                  "realtime_utc": "2026-10-25T16:19:04.157174+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 28,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 29,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "977661588ca09815",
+                "realtime_utc": "2026-10-25T16:19:03.171164+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8470470f9bfb5b66",
+                  "realtime_utc": "2026-10-25T16:19:03.808772+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3d5586de739d4005",
+                  "realtime_utc": "2026-10-25T16:19:03.809287+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a556ad0b499952fc",
+                  "realtime_utc": "2026-10-25T16:19:03.809313+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "10e37c74d36548e8",
+                  "realtime_utc": "2026-10-25T16:19:03.835682+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "7a55dc74f8f86fd3",
+                  "realtime_utc": "2026-10-25T16:19:03.843852+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a46a52f096cb6162",
+                  "realtime_utc": "2026-10-25T16:19:04.157174+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                }
+              ]
+            },
+            {
+              "command_index": 30,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 31,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "977661588ca09815",
+                "realtime_utc": "2026-10-25T16:19:03.171164+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8470470f9bfb5b66",
+                  "realtime_utc": "2026-10-25T16:19:03.808772+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3d5586de739d4005",
+                  "realtime_utc": "2026-10-25T16:19:03.809287+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a556ad0b499952fc",
+                  "realtime_utc": "2026-10-25T16:19:03.809313+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "10e37c74d36548e8",
+                  "realtime_utc": "2026-10-25T16:19:03.835682+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "7a55dc74f8f86fd3",
+                  "realtime_utc": "2026-10-25T16:19:03.843852+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a46a52f096cb6162",
+                  "realtime_utc": "2026-10-25T16:19:04.157174+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "faa2f19dc9189200",
+                  "realtime_utc": "2026-10-25T16:19:04.740557+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "9cf1f9eff1ee68ff",
+                  "realtime_utc": "2026-10-25T16:19:04.740899+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "12eb0995a62ec0ee",
+                  "realtime_utc": "2026-10-25T16:19:04.740921+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                }
+              ]
+            },
+            {
+              "command_index": 32,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            },
+            {
+              "command_index": 33,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "977661588ca09815",
+                "realtime_utc": "2026-10-25T16:19:03.171164+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8470470f9bfb5b66",
+                  "realtime_utc": "2026-10-25T16:19:03.808772+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3d5586de739d4005",
+                  "realtime_utc": "2026-10-25T16:19:03.809287+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a556ad0b499952fc",
+                  "realtime_utc": "2026-10-25T16:19:03.809313+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "10e37c74d36548e8",
+                  "realtime_utc": "2026-10-25T16:19:03.835682+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "7a55dc74f8f86fd3",
+                  "realtime_utc": "2026-10-25T16:19:03.843852+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a46a52f096cb6162",
+                  "realtime_utc": "2026-10-25T16:19:04.157174+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "faa2f19dc9189200",
+                  "realtime_utc": "2026-10-25T16:19:04.740557+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "9cf1f9eff1ee68ff",
+                  "realtime_utc": "2026-10-25T16:19:04.740899+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "12eb0995a62ec0ee",
+                  "realtime_utc": "2026-10-25T16:19:04.740921+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "a1b1874080b2e0ae",
+                  "realtime_utc": "2026-10-25T16:19:04.767299+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "ab798d2fd18cd4ba",
+                  "realtime_utc": "2026-10-25T16:19:04.774066+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 34,
+              "kind": "trust-dump",
+              "exit": 0,
+              "sample_rows": [
+                "rpmdb /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61"
+              ]
+            },
+            {
+              "command_index": 35,
+              "kind": "journal",
+              "exit": 0,
+              "after_cursor": {
+                "reference": "977661588ca09815",
+                "realtime_utc": "2026-10-25T16:19:03.171164+00:00"
+              },
+              "rows": [
+                {
+                  "reference": "8470470f9bfb5b66",
+                  "realtime_utc": "2026-10-25T16:19:03.808772+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "3d5586de739d4005",
+                  "realtime_utc": "2026-10-25T16:19:03.809287+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "a556ad0b499952fc",
+                  "realtime_utc": "2026-10-25T16:19:03.809313+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "10e37c74d36548e8",
+                  "realtime_utc": "2026-10-25T16:19:03.835682+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "7a55dc74f8f86fd3",
+                  "realtime_utc": "2026-10-25T16:19:03.843852+00:00",
+                  "message": "Updated"
+                },
+                {
+                  "reference": "a46a52f096cb6162",
+                  "realtime_utc": "2026-10-25T16:19:04.157174+00:00",
+                  "message": "It looks like there was an update of the system... Syncing DB."
+                },
+                {
+                  "reference": "faa2f19dc9189200",
+                  "realtime_utc": "2026-10-25T16:19:04.740557+00:00",
+                  "message": "Updating trust database"
+                },
+                {
+                  "reference": "9cf1f9eff1ee68ff",
+                  "realtime_utc": "2026-10-25T16:19:04.740899+00:00",
+                  "message": "Creating trust database"
+                },
+                {
+                  "reference": "12eb0995a62ec0ee",
+                  "realtime_utc": "2026-10-25T16:19:04.740921+00:00",
+                  "message": "Loading trust data from rpmdb backend"
+                },
+                {
+                  "reference": "a1b1874080b2e0ae",
+                  "realtime_utc": "2026-10-25T16:19:04.767299+00:00",
+                  "message": "Trust database at 2% capacity - might consider shrinking the size to save space"
+                },
+                {
+                  "reference": "ab798d2fd18cd4ba",
+                  "realtime_utc": "2026-10-25T16:19:04.774066+00:00",
+                  "message": "Updated"
+                }
+              ]
+            },
+            {
+              "command_index": 36,
+              "kind": "daemon",
+              "exit": 0,
+              "fields": [
+                "MainPID=1588",
+                "ActiveState=active"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

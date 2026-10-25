@@ -1,0 +1,485 @@
+{
+  "revision": "47b14cadb9db216bcf58d99878ea9c03ae70500c",
+  "scope": "Selected E, A and R4 cases only; not full WP0",
+  "runs": [
+    {
+      "run_id": "wp0-e-20261025-authorized-05",
+      "verdict": "SELECTED CASES PASS",
+      "original_signing_home_unchanged": true,
+      "steps": [
+        {
+          "step": "controller-source",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:07:28.220024+00:00"
+        },
+        {
+          "step": "controller-config",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:07:28.227693+00:00"
+        },
+        {
+          "step": "snapshot-preflight",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:07:28.230315+00:00"
+        },
+        {
+          "step": "build-fixtures",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:07:28.324637+00:00"
+        },
+        {
+          "step": "E-P1-rollback",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:24.427765+00:00"
+        },
+        {
+          "step": "E-P1-baseline",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:46.090301+00:00"
+        },
+        {
+          "step": "E-P1-profile",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:47.158709+00:00"
+        },
+        {
+          "step": "E-P1-isolation",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:47.458097+00:00"
+        },
+        {
+          "step": "E-P1-transfer",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:48.376281+00:00"
+        },
+        {
+          "step": "E-P1-probe",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:54.426177+00:00"
+        },
+        {
+          "step": "E-P1-audit",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:57.258404+00:00"
+        },
+        {
+          "step": "E-P2-rollback",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:09:57.553434+00:00"
+        },
+        {
+          "step": "E-P2-baseline",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:18.336910+00:00"
+        },
+        {
+          "step": "E-P2-profile",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:19.344710+00:00"
+        },
+        {
+          "step": "E-P2-isolation",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:20.336816+00:00"
+        },
+        {
+          "step": "E-P2-transfer",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:21.761221+00:00"
+        },
+        {
+          "step": "E-P2-probe",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:26.783822+00:00"
+        },
+        {
+          "step": "E-P2-audit",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:29.858051+00:00"
+        }
+      ],
+      "cases": [
+        {
+          "case": "E-P1",
+          "verdict": "PASS",
+          "audit": {
+            "lines": [],
+            "no_events": true,
+            "output": "<no matches>\n"
+          },
+          "trust_observations": [
+            {
+              "exit": 0,
+              "product_source_counts": {
+                "rpmdb": 7
+              }
+            }
+          ],
+          "guest_predicates": [
+            "trust-visible"
+          ]
+        },
+        {
+          "case": "E-P2",
+          "verdict": "PASS",
+          "audit": {
+            "lines": [],
+            "no_events": true,
+            "output": "<no matches>\n"
+          },
+          "trust_observations": [
+            {
+              "exit": 0,
+              "product_source_counts": {
+                "rpmdb": 7
+              }
+            }
+          ],
+          "guest_predicates": [
+            "trust-visible"
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "wp0-a-20261025-authorized-05",
+      "verdict": "SELECTED CASES PASS",
+      "original_signing_home_unchanged": true,
+      "steps": [
+        {
+          "step": "controller-source",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:32.829276+00:00"
+        },
+        {
+          "step": "controller-config",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:32.837005+00:00"
+        },
+        {
+          "step": "snapshot-preflight",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:32.839568+00:00"
+        },
+        {
+          "step": "build-fixtures",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:10:32.928890+00:00"
+        },
+        {
+          "step": "A-P1-rollback",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:12:30.943047+00:00"
+        },
+        {
+          "step": "A-P1-baseline",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:12:52.597428+00:00"
+        },
+        {
+          "step": "A-P1-profile",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:12:53.484765+00:00"
+        },
+        {
+          "step": "A-P1-isolation",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:12:53.769633+00:00"
+        },
+        {
+          "step": "A-P1-transfer",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:12:54.694858+00:00"
+        },
+        {
+          "step": "A-P1-probe",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:13:00.695472+00:00"
+        },
+        {
+          "step": "A-P1-audit",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:12.967046+00:00"
+        },
+        {
+          "step": "A-P2-rollback",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:13.273003+00:00"
+        },
+        {
+          "step": "A-P2-baseline",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:34.014603+00:00"
+        },
+        {
+          "step": "A-P2-profile",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:35.059090+00:00"
+        },
+        {
+          "step": "A-P2-isolation",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:36.095089+00:00"
+        },
+        {
+          "step": "A-P2-transfer",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:37.420829+00:00"
+        },
+        {
+          "step": "A-P2-probe",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:14:42.683425+00:00"
+        },
+        {
+          "step": "A-P2-audit",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:15:56.176504+00:00"
+        }
+      ],
+      "cases": [
+        {
+          "case": "A-P1",
+          "verdict": "PASS",
+          "audit": {
+            "lines": [],
+            "no_events": true,
+            "output": "<no matches>\n"
+          },
+          "trust_observations": [
+            {
+              "exit": 0,
+              "product_source_counts": {
+                "rpmdb": 60
+              }
+            }
+          ],
+          "guest_predicates": [
+            "prototype-trust"
+          ]
+        },
+        {
+          "case": "A-P2",
+          "verdict": "PASS",
+          "audit": {
+            "lines": [],
+            "no_events": true,
+            "output": "<no matches>\n"
+          },
+          "trust_observations": [
+            {
+              "exit": 0,
+              "product_source_counts": {
+                "rpmdb": 60
+              }
+            }
+          ],
+          "guest_predicates": [
+            "prototype-trust"
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "wp0-r4-20261025-authorized-05",
+      "verdict": "SELECTED CASES PASS",
+      "original_signing_home_unchanged": true,
+      "steps": [
+        {
+          "step": "controller-source",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:16:01.649059+00:00"
+        },
+        {
+          "step": "controller-config",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:16:01.654916+00:00"
+        },
+        {
+          "step": "snapshot-preflight",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:16:01.657298+00:00"
+        },
+        {
+          "step": "build-fixtures",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:16:01.757785+00:00"
+        },
+        {
+          "step": "R4-P1-rollback",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:17:57.802317+00:00"
+        },
+        {
+          "step": "R4-P1-baseline",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:19.445367+00:00"
+        },
+        {
+          "step": "R4-P1-profile",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:20.381786+00:00"
+        },
+        {
+          "step": "R4-P1-isolation",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:20.687434+00:00"
+        },
+        {
+          "step": "R4-P1-transfer",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:21.711597+00:00"
+        },
+        {
+          "step": "R4-P1-probe",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:28.494100+00:00"
+        },
+        {
+          "step": "R4-P1-audit",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:32.123080+00:00"
+        },
+        {
+          "step": "R4-P2-rollback",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:32.463425+00:00"
+        },
+        {
+          "step": "R4-P2-baseline",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:53.337499+00:00"
+        },
+        {
+          "step": "R4-P2-profile",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:54.377868+00:00"
+        },
+        {
+          "step": "R4-P2-isolation",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:55.305658+00:00"
+        },
+        {
+          "step": "R4-P2-transfer",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:18:56.547367+00:00"
+        },
+        {
+          "step": "R4-P2-probe",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:19:02.159271+00:00"
+        },
+        {
+          "step": "R4-P2-audit",
+          "result": "PASS",
+          "reason": "",
+          "started": "2026-10-25T16:19:05.682509+00:00"
+        }
+      ],
+      "cases": [
+        {
+          "case": "R4-P1",
+          "verdict": "PASS",
+          "audit": {
+            "lines": [],
+            "no_events": true,
+            "output": "<no matches>\n"
+          },
+          "trust_observations": [
+            {
+              "exit": 0,
+              "product_source_counts": {
+                "rpmdb": 7
+              }
+            }
+          ],
+          "guest_predicates": [
+            "diagnosis",
+            "repair-version",
+            "repair-integrity",
+            "repair-trust",
+            "repair-execution"
+          ]
+        },
+        {
+          "case": "R4-P2",
+          "verdict": "PASS",
+          "audit": {
+            "lines": [],
+            "no_events": true,
+            "output": "<no matches>\n"
+          },
+          "trust_observations": [
+            {
+              "exit": 0,
+              "product_source_counts": {
+                "rpmdb": 7
+              }
+            }
+          ],
+          "guest_predicates": [
+            "diagnosis",
+            "repair-version",
+            "repair-integrity",
+            "repair-trust",
+            "repair-execution"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -683,7 +683,8 @@ the closed lab are not feasible.
   sessions are limited to one short paper/human trial (item 68).
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
-revision 3 after AI reviews of revisions 1 and 2 (not implemented). Product-owner
+revision 3.2 after AI reviews and a first WP0 attempt that stopped before
+any probe ([report](acceptance/RPM-WP0.md)); not implemented. Product-owner
 decisions recorded there: trust bound to the product key, immutable versions,
 and a conservative guard also for plain `dnf remove`. Work package 0 is an
 investigation with explicit go/no-go criteria.
