@@ -1428,6 +1428,65 @@ class IndependentReviewRegressions(unittest.TestCase):
             guest.audit("10/25/2026 12:00:00")
         command.assert_not_called()
 
+    def test_audit_capture_and_query_share_utc_across_dst_transitions(self):
+        from types import SimpleNamespace
+
+        # Freeze GNU date without replacing its locale/timezone conversion.
+        # Model ausearch-time.c's mktime(date), strptime(time), mktime sequence
+        # in a child process so TZ and tzset never change the test runner.
+        parser = """import sys, time
+time.tzset()
+day = time.strptime(sys.argv[1], '%m/%d/%y')
+midnight = time.localtime(time.mktime(day[:8] + (0,)))
+clock = time.strptime(sys.argv[2], '%H:%M:%S')
+print(int(time.mktime(midnight[:3] + clock[3:6] + midnight[6:])))
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            shim = Path(directory) / "date"
+            shim.write_text(
+                '#!/bin/sh\nexec /usr/bin/date --date="@$WP0_TEST_EPOCH" "$@"\n'
+            )
+            shim.chmod(0o755)
+            for instant in (
+                "2026-10-25T18:15:23+00:00",
+                "2026-03-29T18:15:23+00:00",
+                "2026-10-24T22:00:00+00:00",
+            ):
+                import datetime
+
+                epoch = int(datetime.datetime.fromisoformat(instant).timestamp())
+                for zone in ("Europe/Oslo", "America/New_York", "UTC"):
+                    with self.subTest(instant=instant, zone=zone):
+                        capture_env = dict(
+                            os.environ,
+                            TZ=zone,
+                            WP0_TEST_EPOCH=str(epoch),
+                            PATH=directory + ":" + os.environ["PATH"],
+                        )
+                        start = subprocess.check_output(
+                            ["bash", "-c", c.AUDIT_START_COMMAND],
+                            env=capture_env,
+                            text=True,
+                        ).strip()
+                        with mock.patch.object(
+                            op,
+                            "command",
+                            return_value=SimpleNamespace(
+                                returncode=1, stdout="", stderr="<no matches>\n"
+                            ),
+                        ) as command:
+                            self.assertTrue(guest.audit(start)["no_events"])
+                        args, kwargs = command.call_args
+                        actual = int(
+                            subprocess.check_output(
+                                [sys.executable, "-c", parser, *args[0][-2:]],
+                                env=kwargs["env"],
+                                text=True,
+                            ).strip()
+                        )
+                        self.assertEqual(actual, epoch)
+                        self.assertEqual(kwargs["env"]["LC_ALL"], "C")
+
     def test_paper_commands_use_real_shell_globs_and_stop_before_import(self):
         from contextlib import nullcontext
 
@@ -1763,6 +1822,7 @@ class LabFailureRegressions(unittest.TestCase):
             ],
             allowed=(0, 1),
             stdin=subprocess.DEVNULL,
+            env=dict(os.environ, LC_ALL="C", TZ="UTC"),
         )
         # Raw mode's empty status-1 result must still never turn into a PASS.
         with (

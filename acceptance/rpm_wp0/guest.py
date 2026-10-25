@@ -684,6 +684,7 @@ def audit(start):
         ],
         allowed=(0, 1),
         stdin=subprocess.DEVNULL,
+        env=dict(os.environ, LC_ALL="C", TZ="UTC"),
     )
     output = result.stdout + result.stderr
     lines = [line for line in output.splitlines() if line.startswith("type=")]

@@ -110,7 +110,10 @@ Each case/profile is an independent run, in this order:
    the input directory. The expected fingerprint travels in the SSH program.
 6. Provision the ordinary runtime account and a lab-only public SSH key, start
    an audit window, run the case and check every named predicate.
-7. Collect FANOTIFY/AVC records from that window. No case intentionally needs
+7. Collect FANOTIFY/AVC records from that window. Both the start timestamp and
+   ausearch use UTC and the C locale; displayed audit times are UTC. See the
+   [DST correction and local OL9 reproduction](RPM-WP0-AUDIT-UTC.md).
+   No case intentionally needs
    policy denials: guard/signature/lock refusals are expected CLI errors,
    recorded separately. Any FANOTIFY/AVC event fails. Missing audit is failure,
    never evidence of no events.

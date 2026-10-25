@@ -8,8 +8,9 @@ APPROVED_FINGERPRINT = "425584C83A44FFC9F7E5E1A4E2021B0CC1DD70E3"
 # Explicitly approved by the product owner after plan revision 3.2.
 TRUST_TIMEOUT = 30
 LOCK_TIMEOUT = 5
-# ausearch parses %x in its own LC_ALL=C environment, including a two-digit year.
-AUDIT_START_COMMAND = "LC_ALL=C date '+%x %X'"
+# Match ausearch's C locale and UTC: its two-stage date/time parser can retain
+# midnight's DST flag across a clock change when interpreting local time.
+AUDIT_START_COMMAND = "LC_ALL=C TZ=UTC date '+%x %X'"
 TOOLS_VERSION = "2.0"
 ACCOUNT = "myproduct-ops"
 GROUPS = ("A", "B", "C1", "C2", "R1", "R2", "R3", "R4", "R5", "D", "E", "F", "G", "H")
