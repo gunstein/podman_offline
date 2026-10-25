@@ -1,6 +1,9 @@
 # WP0 runner: local implementation, not lab verification
 
 This runner implements the investigation matrix in plan revision 3.2.
+The [second authorized run](RPM-WP0-LAB-20261025-RUN02.md) at `9b2cfb3` passed
+13 case/profile runs, then stopped in R4/P1 on a trust-dump assertion.
+WP0 remains incomplete; no later cases were run after that failure.
 The implementation-stage review and a later explicit product-owner authorization
 were followed by an [authorized lab run](RPM-WP0-LAB-20261025.md) at `0060a24`.
 It stopped in A/P1; WP0 remains incomplete. A separate code review and explicit

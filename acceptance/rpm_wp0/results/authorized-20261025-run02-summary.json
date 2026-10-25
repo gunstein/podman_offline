@@ -1,0 +1,403 @@
+{
+  "source_revision": "9b2cfb3dfc0d5a2349e09def223d0e25c91f50c8",
+  "run_id": "wp0-matrix-20261025-authorized-02",
+  "overall": "NOT CLEAN",
+  "original_signing_home_unchanged": true,
+  "cases": [
+    {
+      "case": "A-P1",
+      "verdict": "PASS",
+      "steps": {
+        "A-P1-rollback": "PASS",
+        "A-P1-baseline": "PASS",
+        "A-P1-profile": "PASS",
+        "A-P1-isolation": "PASS",
+        "A-P1-transfer": "PASS",
+        "A-P1-probe": "PASS",
+        "A-P1-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "A-P2",
+      "verdict": "PASS",
+      "steps": {
+        "A-P2-rollback": "PASS",
+        "A-P2-baseline": "PASS",
+        "A-P2-profile": "PASS",
+        "A-P2-isolation": "PASS",
+        "A-P2-transfer": "PASS",
+        "A-P2-probe": "PASS",
+        "A-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "B-P2",
+      "verdict": "PASS",
+      "steps": {
+        "B-P2-rollback": "PASS",
+        "B-P2-baseline": "PASS",
+        "B-P2-profile": "PASS",
+        "B-P2-isolation": "PASS",
+        "B-P2-transfer": "PASS",
+        "B-P2-probe": "PASS",
+        "B-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "C1-P1",
+      "verdict": "PASS",
+      "steps": {
+        "C1-P1-rollback": "PASS",
+        "C1-P1-baseline": "PASS",
+        "C1-P1-profile": "PASS",
+        "C1-P1-isolation": "PASS",
+        "C1-P1-transfer": "PASS",
+        "C1-P1-probe": "PASS",
+        "C1-P1-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "C1-P2",
+      "verdict": "PASS",
+      "steps": {
+        "C1-P2-rollback": "PASS",
+        "C1-P2-baseline": "PASS",
+        "C1-P2-profile": "PASS",
+        "C1-P2-isolation": "PASS",
+        "C1-P2-transfer": "PASS",
+        "C1-P2-probe": "PASS",
+        "C1-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "C2-P1",
+      "verdict": "PASS",
+      "steps": {
+        "C2-P1-rollback": "PASS",
+        "C2-P1-baseline": "PASS",
+        "C2-P1-profile": "PASS",
+        "C2-P1-isolation": "PASS",
+        "C2-P1-transfer": "PASS",
+        "C2-P1-probe": "PASS",
+        "C2-P1-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      },
+      "separate_observations": [
+        {
+          "kind": "two-primary-rpm-import-NOT-A-GATE",
+          "exit": 0,
+          "messages": "",
+          "primary_fingerprints": [
+            "425584C83A44FFC9F7E5E1A4E2021B0CC1DD70E3",
+            "6F333635D21FC4DEF6C0812FD70B24C96CF608BD"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "C2-P2",
+      "verdict": "PASS",
+      "steps": {
+        "C2-P2-rollback": "PASS",
+        "C2-P2-baseline": "PASS",
+        "C2-P2-profile": "PASS",
+        "C2-P2-isolation": "PASS",
+        "C2-P2-transfer": "PASS",
+        "C2-P2-probe": "PASS",
+        "C2-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      },
+      "separate_observations": [
+        {
+          "kind": "two-primary-rpm-import-NOT-A-GATE",
+          "exit": 0,
+          "messages": "",
+          "primary_fingerprints": [
+            "425584C83A44FFC9F7E5E1A4E2021B0CC1DD70E3",
+            "6F333635D21FC4DEF6C0812FD70B24C96CF608BD"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "R1-P1",
+      "verdict": "PASS",
+      "steps": {
+        "R1-P1-rollback": "PASS",
+        "R1-P1-baseline": "PASS",
+        "R1-P1-profile": "PASS",
+        "R1-P1-isolation": "PASS",
+        "R1-P1-transfer": "PASS",
+        "R1-P1-probe": "PASS",
+        "R1-P1-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R1-P2",
+      "verdict": "PASS",
+      "steps": {
+        "R1-P2-rollback": "PASS",
+        "R1-P2-baseline": "PASS",
+        "R1-P2-profile": "PASS",
+        "R1-P2-isolation": "PASS",
+        "R1-P2-transfer": "PASS",
+        "R1-P2-probe": "PASS",
+        "R1-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R2-P1",
+      "verdict": "PASS",
+      "steps": {
+        "R2-P1-rollback": "PASS",
+        "R2-P1-baseline": "PASS",
+        "R2-P1-profile": "PASS",
+        "R2-P1-isolation": "PASS",
+        "R2-P1-transfer": "PASS",
+        "R2-P1-probe": "PASS",
+        "R2-P1-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R2-P2",
+      "verdict": "PASS",
+      "steps": {
+        "R2-P2-rollback": "PASS",
+        "R2-P2-baseline": "PASS",
+        "R2-P2-profile": "PASS",
+        "R2-P2-isolation": "PASS",
+        "R2-P2-transfer": "PASS",
+        "R2-P2-probe": "PASS",
+        "R2-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R3-P1",
+      "verdict": "PASS",
+      "steps": {
+        "R3-P1-rollback": "PASS",
+        "R3-P1-baseline": "PASS",
+        "R3-P1-profile": "PASS",
+        "R3-P1-isolation": "PASS",
+        "R3-P1-transfer": "PASS",
+        "R3-P1-probe": "PASS",
+        "R3-P1-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R3-P2",
+      "verdict": "PASS",
+      "steps": {
+        "R3-P2-rollback": "PASS",
+        "R3-P2-baseline": "PASS",
+        "R3-P2-profile": "PASS",
+        "R3-P2-isolation": "PASS",
+        "R3-P2-transfer": "PASS",
+        "R3-P2-probe": "PASS",
+        "R3-P2-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R4-P1",
+      "verdict": "FAIL",
+      "steps": {
+        "R4-P1-rollback": "PASS",
+        "R4-P1-baseline": "PASS",
+        "R4-P1-profile": "PASS",
+        "R4-P1-isolation": "PASS",
+        "R4-P1-transfer": "PASS",
+        "R4-P1-probe": "FAIL",
+        "R4-P1-failure-audit": "PASS"
+      },
+      "audit": {
+        "lines": [],
+        "no_events": true,
+        "output": "<no matches>\n"
+      }
+    },
+    {
+      "case": "R4-P2",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "R5-P1",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "R5-P2",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "D-P1",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "E-P1",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "E-P2",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "F-P1",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "F-P2",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "G-P1",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    },
+    {
+      "case": "H-P1",
+      "verdict": "NOT TESTED",
+      "steps": {}
+    }
+  ],
+  "failure": {
+    "case": "R4-P1",
+    "error": "RuntimeError: Command failed: fapolicyd-cli",
+    "established_predicates": [
+      "diagnosis",
+      "repair-version",
+      "repair-integrity"
+    ],
+    "dump_attempts": [
+      {
+        "exit": 0,
+        "stdout_bytes": 1607229,
+        "stderr": "",
+        "probe_records": [
+          "src_unknown /usr/bin/wp0-admin 233 fab54c77bfed6c8cecefec7c42543998074b548c0202e763de84278274351a67",
+          "rpmdb /usr/bin/wp0-admin 233 fab54c77bfed6c8cecefec7c42543998074b548c0202e763de84278274351a67",
+          "src_unknown /usr/bin/wp0-runtime 280 379164be1441b46167da2fa54589834960537d11afdc816cd75bb8961b518bee",
+          "rpmdb /usr/bin/wp0-runtime 280 379164be1441b46167da2fa54589834960537d11afdc816cd75bb8961b518bee",
+          "src_unknown /usr/bin/wp0-selfcheck 131 ce6d833772bf60acaa679c656e15848fb3cc1670fcf04a1cb1a85846a38affd4",
+          "rpmdb /usr/bin/wp0-selfcheck 131 ce6d833772bf60acaa679c656e15848fb3cc1670fcf04a1cb1a85846a38affd4",
+          "src_unknown /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61",
+          "rpmdb /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61",
+          "src_unknown /usr/libexec/wp0/mechanisms.py 13268 9c155e78f3f4bab64e1bcdcb3d62c3f287f3bc76343767b2c34165382b92f736",
+          "rpmdb /usr/libexec/wp0/mechanisms.py 13268 9c155e78f3f4bab64e1bcdcb3d62c3f287f3bc76343767b2c34165382b92f736",
+          "src_unknown /usr/libexec/wp0/operations.py 10195 18dbf61cc414112ae67c42c8e20074cb2500bb9224bb678eb8dc103861351c34",
+          "rpmdb /usr/libexec/wp0/operations.py 10195 18dbf61cc414112ae67c42c8e20074cb2500bb9224bb678eb8dc103861351c34",
+          "src_unknown /usr/libexec/wp0/probe_module.py 29 dbf4b988a069a86915fbf862c54cb0d4bddedc7100080a99adb258f7dab216b1",
+          "rpmdb /usr/libexec/wp0/probe_module.py 29 dbf4b988a069a86915fbf862c54cb0d4bddedc7100080a99adb258f7dab216b1"
+        ]
+      },
+      {
+        "exit": 0,
+        "stdout_bytes": 1607229,
+        "stderr": "",
+        "probe_records": [
+          "src_unknown /usr/bin/wp0-admin 233 fab54c77bfed6c8cecefec7c42543998074b548c0202e763de84278274351a67",
+          "rpmdb /usr/bin/wp0-admin 233 fab54c77bfed6c8cecefec7c42543998074b548c0202e763de84278274351a67",
+          "src_unknown /usr/bin/wp0-runtime 280 379164be1441b46167da2fa54589834960537d11afdc816cd75bb8961b518bee",
+          "rpmdb /usr/bin/wp0-runtime 280 379164be1441b46167da2fa54589834960537d11afdc816cd75bb8961b518bee",
+          "src_unknown /usr/bin/wp0-selfcheck 131 ce6d833772bf60acaa679c656e15848fb3cc1670fcf04a1cb1a85846a38affd4",
+          "rpmdb /usr/bin/wp0-selfcheck 131 ce6d833772bf60acaa679c656e15848fb3cc1670fcf04a1cb1a85846a38affd4",
+          "src_unknown /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61",
+          "rpmdb /usr/libexec/wp0/contracts.py 13295 8b9cfa8f42521f4ad9ff5c998302eba285fa9fe2cd5c2bada15e9f8230c58d61",
+          "src_unknown /usr/libexec/wp0/mechanisms.py 13268 9c155e78f3f4bab64e1bcdcb3d62c3f287f3bc76343767b2c34165382b92f736",
+          "rpmdb /usr/libexec/wp0/mechanisms.py 13268 9c155e78f3f4bab64e1bcdcb3d62c3f287f3bc76343767b2c34165382b92f736",
+          "src_unknown /usr/libexec/wp0/operations.py 10195 18dbf61cc414112ae67c42c8e20074cb2500bb9224bb678eb8dc103861351c34",
+          "rpmdb /usr/libexec/wp0/operations.py 10195 18dbf61cc414112ae67c42c8e20074cb2500bb9224bb678eb8dc103861351c34",
+          "src_unknown /usr/libexec/wp0/probe_module.py 29 dbf4b988a069a86915fbf862c54cb0d4bddedc7100080a99adb258f7dab216b1",
+          "rpmdb /usr/libexec/wp0/probe_module.py 29 dbf4b988a069a86915fbf862c54cb0d4bddedc7100080a99adb258f7dab216b1"
+        ]
+      },
+      {
+        "exit": -6,
+        "stdout_bytes": 208896,
+        "stderr": "mdb.c:5856: Assertion 'IS_BRANCH(mc->mc_pg[mc->mc_top])' failed in mdb_cursor_sibling()\n",
+        "probe_records": [
+          "src_unknown /usr/bin/wp0-admin 233 fab54c77bfed6c8cecefec7c42543998074b548c0202e763de84278274351a67",
+          "rpmdb /usr/bin/wp0-admin 233 fab54c77bfed6c8cecefec7c42543998074b548c0202e763de84278274351a67",
+          "src_unknown /usr/bin/wp0-runtime 280 379164be1441b46167da2fa54589834960537d11afdc816cd75bb8961b518bee",
+          "rpmdb /usr/bin/wp0-runtime 280 379164be1441b46167da2fa54589834960537d11afdc816cd75bb8961b518bee",
+          "src_unknown /usr/bin/wp0-selfcheck 131 ce6d833772bf60acaa679c656e15848fb3cc1670fcf04a1cb1a85846a38affd4",
+          "rpmdb /usr/bin/wp0-selfcheck 131 ce6d833772bf60acaa679c656e15848fb3cc1670fcf04a1cb1a85846a38affd4"
+        ]
+      }
+    ],
+    "audit": {
+      "lines": [],
+      "no_events": true,
+      "output": "<no matches>\n"
+    }
+  }
+}
