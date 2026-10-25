@@ -65,6 +65,68 @@ credential generation (backlog 45b), changes to the per-component commands.
 | App needs a newer platform | publish both | `install-set` upgrades platform first, then the app |
 | New platform incompatible with an installed app | publish | `install-set` stops before touching platform, naming the app and range |
 
+## Sequence (planned)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor S as Supplier
+    actor A as Administrator (sudo)
+    participant U as Upload dir<br/>/var/tmp/myproduct-upload
+    participant R as release.py setup (root)
+    participant P as Published releases<br/>/var/lib/myproduct/releases
+    actor D as Runtime user (SSH, no sudo)
+    participant I as deploy.sh install-set
+    participant C as Component deploy.sh<br/>(own release)
+    participant Y as systemd --user / Podman
+
+    S->>A: signed bundles (.tar.gz + .asc) on DVD or USB
+    A->>U: copy files (scp / mount)
+    A->>R: setup --all-in-input-dir (or --release c@v)
+    R->>R: preflight: OS, SELinux, fapolicyd, account, space
+    loop each selected bundle
+        R->>U: snapshot archive + signature
+        R->>R: verify signature with pinned key
+        R->>P: extract, publish immutable release
+        R->>R: fapolicyd trust for exactly these files
+    end
+    R->>R: host preparation (first time only)
+    R-->>A: PASS + exact install-set command
+
+    D->>I: install-set --settings file --credentials dir
+    I->>P: newest published version per component
+    I->>I: dependency order + version range checks
+    alt missing or incompatible dependency
+        I-->>D: STOP: who must act; nothing changed
+    else plan ok
+        loop each component in dependency order
+            alt already installed at this version
+                I-->>D: [OK] skipped, no restart
+            else not installed or older
+                I->>C: init-config (only if config missing)
+                I->>I: apply settings to new config, copy missing credentials
+                I->>C: validate
+                alt needs input
+                    I-->>D: STOP (exit 3): file/key to supply, same command
+                else valid
+                    I->>C: install
+                    C->>Y: load images, write Quadlets, restart service
+                    Y-->>C: healthy
+                    C-->>I: complete
+                end
+            end
+        end
+        I-->>D: status table + PASS
+    end
+    opt after an upgrade has been checked
+        A->>R: retire old release
+    end
+```
+
+On a stop the runtime user supplies what is named and runs the same command; a
+failure inside one component leaves its pending record and the next run resumes
+that component first.
+
 ## Runtime algorithm (`deploy.sh install-set`)
 
 Read-only first:
