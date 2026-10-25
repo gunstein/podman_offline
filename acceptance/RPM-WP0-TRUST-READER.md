@@ -70,3 +70,26 @@ The product/unit suite was not rerun: only probe infrastructure changed.
 The [third lab run](RPM-WP0-LAB-20261025-RUN03.md) failed in A/P1 because
 OL9 could not resolve `liblmdb.so.0`. The correction is therefore not verified
 on the required baseline; the original R4 failure was not reached.
+
+## OL9 library-name correction after run 03
+
+The owner's next instruction authorized correction and another matrix run.
+Two bounded read-only SSH diagnostics on retained PROD found the installed
+SONAME `liblmdb.so.0.0.0`, then successfully loaded it and resolved all five
+required reader API symbols. The [public observation](rpm_wp0/results/lmdb-library-20261025.json)
+contains only the library name and symbol-check result. Neither diagnostic
+opened the trust database or changed the VM policy/package state.
+
+The supervisor now uses `ctypes.util.find_library("lmdb")`, requiring a nonempty
+result before `CDLL`. It never falls back to `CDLL(None)`. A regression executes
+the actual helper source with a mocked resolver to verify the OL9 SONAME is
+passed unchanged and a missing library stops before loading anything. The real
+local concurrent-writer fixture still tests the complete reader lifetime.
+
+Before run 04, all 332 acceptance-harness tests passed, including 66 WP0 tests.
+WP0 Ruff, formatting, Pyright, ShellCheck and diff checks passed. Product/unit
+tests were not rerun. Static understandability review: pass; library discovery
+is explicit before reader acquisition, with the existing error/evidence path.
+Static operator review: pass for this bounded correction; commands and recovery
+are unchanged. Human usability remains untested. These diagnostics verify
+library loading on OL9, not the full trust-poll mechanism or a WP0 PASS.

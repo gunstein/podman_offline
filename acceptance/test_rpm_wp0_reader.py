@@ -1,5 +1,7 @@
 """Local LMDB concurrency and fail-closed tests; no lab access."""
 
+import ctypes
+import ctypes.util
 import importlib
 import os
 import signal
@@ -87,6 +89,27 @@ print("snapshot preserved across 128 writer transactions")
 class TrustReaderTests(unittest.TestCase):
     def setUp(self):
         op.TRANSCRIPT.clear()
+
+    def test_reader_resolves_ol9_soname_and_refuses_missing_library(self):
+        for library in ("liblmdb.so.0.0.0", None):
+            with (
+                self.subTest(library=library),
+                mock.patch.object(
+                    ctypes.util, "find_library", return_value=library
+                ) as find,
+                mock.patch.object(
+                    ctypes, "CDLL", side_effect=RuntimeError("load sentinel")
+                ) as load,
+                self.assertRaisesRegex(
+                    RuntimeError, "load sentinel" if library else "not found"
+                ),
+            ):
+                exec(op.TRUST_DUMP_READER, {})  # noqa: S102 - fixed repository helper source
+            find.assert_called_once_with("lmdb")
+            if library:
+                load.assert_called_once_with(library)
+            else:
+                load.assert_not_called()
 
     def test_registered_reader_protects_real_lmdb_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:

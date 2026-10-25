@@ -34,10 +34,14 @@ TRANSCRIPT = []
 TRUST_DB = Path("/var/lib/fapolicyd")
 TRUST_DUMP_READER = r"""
 import ctypes as c
+import ctypes.util
 import os
 import subprocess
 import sys
-lib = c.CDLL("liblmdb.so.0")
+library = ctypes.util.find_library("lmdb")
+if not library:
+    raise RuntimeError("LMDB shared library was not found")
+lib = c.CDLL(library)
 lib.mdb_env_create.argtypes = [c.POINTER(c.c_void_p)]
 lib.mdb_env_create.restype = c.c_int
 lib.mdb_env_open.argtypes = [c.c_void_p, c.c_char_p, c.c_uint, c.c_uint]
