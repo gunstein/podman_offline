@@ -1,10 +1,13 @@
 # Item 69 implementation plan: signed RPM delivery, one command per role
 
-Status: plan, revision 3.2 (2026-10-25), after AI reviews of revision 1
+Status: plan, revision 3.3 (2026-10-25), after AI reviews of revision 1
 (`7a9f9cf`), revision 2 (`f05f63b`) and revision 3 (`05fb034`, which cleared
 WP0 to start as a bounded investigation), and a first WP0 attempt that
 stopped before any probe; WP0 now runs every probe from `clean-agent` without
-new snapshots; not implemented. Work package 0 is an
+new snapshots (revision 3.2, `a404e91`). Revision 3.3 declares the WP0
+journal/daemon trust observations as an automation adaptation and records
+WP0 verification status after the bounded-investigation merge (`3dc304e`).
+Not implemented; WP0 is not complete. Work package 0 is an
 investigation; statements marked "confirm in WP0" are hypotheses about rpm,
 dnf or fapolicyd behaviour, and WP1 starts only when every mandatory probe
 passes. Read
@@ -559,10 +562,56 @@ as interruption coverage. A first installation never counts as a repair case.
 **Paper procedure versus automation.** The probe runs the paper commands
 unchanged except for declared automation adaptations, each recorded in the
 results: non-interactive confirmation (`dnf -y`), an SSH-delivered input
-directory instead of a mounted medium, and scripted reading of the output
-lines the paper names. A pass shows that the commands and their stop rules
-behave as the paper says; it is not a paper-usability result (console typing,
+directory instead of a mounted medium, scripted reading of the output
+lines the paper names, and journal/daemon trust observations around each
+installing DNF command (next section). A pass shows that the commands and
+their stop rules behave as the paper says; it is not a paper-usability result (console typing,
 medium handling and reading are left to the AI walkthrough and item 68).
+
+### Trust observation around DNF (automation adaptation)
+
+The paper command lines stay unchanged; the runner adds observations before
+and after every DNF `install`/`reinstall`, including the paper repair line.
+Details and rationale: [refresh correction](../acceptance/RPM-WP0-TRUST-REFRESH.md);
+implementation: `capture_trust_cursor`, `completed_refresh` and `wait_trust`
+in `acceptance/rpm_wp0/operations.py`; local tests:
+`acceptance/test_rpm_wp0_trust.py`.
+
+1. **Before DNF:** wait for journal-observed idle state of the active
+   fapolicyd main process in the current boot: its latest refresh message is
+   `Updated`, or startup reached `Starting to listen for events`. This wait
+   has its own 30-second bound. The PID is checked again after reading the
+   journal; only then is the journal cursor published. A missing or
+   unrecognized history, an in-progress refresh at the deadline, a daemon
+   that is not active or a changed PID stops before DNF runs.
+2. **After DNF:** the trust poll keeps one shared 30-second bound for all
+   following observations, separate from the wait in step 1. The E criterion
+   ("within the poll bound") refers to this post-install bound.
+3. **Dump gate:** after the cursor, the journal must show a new refresh start
+   (`It looks like there was an update of the system... Syncing DB.`)
+   followed by `Updated`. A lone `Updated`, or only the backend message
+   `Updating trust database` before `Updated`, is insufficient; a later start
+   invalidates the preceding completion.
+4. **Around the dump:** the daemon must be active with the same PID before and
+   after; the completed refresh must be the same before and after the
+   unchanged `fapolicyd-cli --dump-db`, so a dump overlapping another refresh
+   never passes. The trust predicate is unchanged: every inventoried file
+   appears from `rpmdb` with exact path, size and SHA256; `src_unknown`, file
+   trust and other sources are refused.
+5. **Failures:** timeouts, command failures, malformed or missing journal
+   records and daemon death/restart stop the run without retry as success.
+   Each command is recorded; a timed-out command keeps its partial stdout and
+   stderr when available.
+
+**Limitation.** Journal-observed idle state is neither a lock nor a
+transaction identifier. A refresh triggered by the runner's own earlier
+transaction may still be pending without having logged its start when idle
+state is observed; the subsequent start/`Updated` pair can then belong to that
+refresh rather than to the DNF command that follows. The observations reduce,
+but do not eliminate, concurrent reads by the unregistered CLI reader, and
+they do not prove a causal link between one refresh and one particular DNF
+transaction. This adaptation is test infrastructure only; it is not a design
+for the trust poll of `<product>-admin` (WP2).
 
 ### Before the next lab run
 
@@ -576,6 +625,20 @@ medium handling and reading are left to the AI walkthrough and item 68).
   give PASS without its predicate.
 - A separate code review of the runner before the product owner authorizes
   the lab run.
+
+### WP0 verification status (2026-10-25)
+
+- The runner is merged (`3dc304e`) as a bounded WP0 investigation. This is
+  neither a completed WP0 nor clearance for WP1.
+- Selected cases E, A and C3/R4 passed on P1 and P2 at `47b14ca`
+  ([report](../acceptance/RPM-WP0-LAB-20261025-SELECTED05.md)). Review later
+  found that both R4 cursors were taken during an earlier refresh, so these
+  runs do not verify the corrected gate above.
+- The corrected gate is locally tested and independently reviewed, but not
+  verified in the lab.
+- WP0 ends only when the complete A–H matrix passes on the final revision,
+  under the lab rules, run order and stop rule above. C3/R1 and C3/R3 are
+  particularly relevant because they reinstall identical content.
 
 ## Required tests
 
