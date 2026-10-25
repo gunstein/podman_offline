@@ -7,6 +7,10 @@ the [review guide](REVIEW_GUIDE.md) (including section 7), the
 [item 65 plan](HOST-SETUP-PLAN.md) and the current
 [production manual](PRODUCTION-INSTALL.md) before implementing.
 
+Backlog 69 (paper-first installation) applies: before fixing the operator
+commands below, settle its lab questions and requirements. Options such as
+`--settings` and `--credentials` may become prompts or default locations.
+
 ## Outcome and scope
 
 Today the runtime user installs each component with its own block in the manual:

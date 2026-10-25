@@ -256,6 +256,16 @@ outcomes for the AI walkthrough and human trial; never treat one as the other.
   document whether the tool or workflow needs simplification; adding more prose
   or hiding many manual steps in a large pasted script is not sufficient alone.
 
+### Paper manual and closed networks
+
+Assume the operator may follow a **printed** manual in a closed lab, possibly
+at a console only, and may hold both the administrator and runtime accounts.
+Ordinary steps must be typeable without copy/paste: short commands, prompts
+with defaults instead of long option lists, digests and fingerprints compared
+rather than typed, and account switches by a real login, not `su -` or
+`sudo -iu`. Record typed characters as well as commands per task. A procedure
+that only works by pasting large blocks has a finding (backlog 69).
+
 ### Two separately documented assessments
 
 1. **AI walkthrough:** start only from the manual's stated prerequisites and
