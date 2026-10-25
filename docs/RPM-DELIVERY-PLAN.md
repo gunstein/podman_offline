@@ -1,8 +1,10 @@
 # Item 69 implementation plan: signed RPM delivery, one command per role
 
-Status: plan, revision 3.1 (2026-10-25), after AI reviews of revision 1
+Status: plan, revision 3.2 (2026-10-25), after AI reviews of revision 1
 (`7a9f9cf`), revision 2 (`f05f63b`) and revision 3 (`05fb034`, which cleared
-WP0 to start as a bounded investigation); not implemented. Work package 0 is an
+WP0 to start as a bounded investigation), and a first WP0 attempt that
+stopped before any probe; WP0 now runs every probe from `clean-agent` without
+new snapshots; not implemented. Work package 0 is an
 investigation; statements marked "confirm in WP0" are hypotheses about rpm,
 dnf or fapolicyd behaviour, and WP1 starts only when every mandatory probe
 passes. Read
@@ -369,7 +371,7 @@ the setting and who acts:
 | Profile | Definition |
 | --- | --- |
 | P1 default | OL9.8 `clean-agent`: `trust = rpmdb,file`, `integrity = none`, default rules (as in `PAPER-FIRST-LAB.md`) |
-| P2 strict | P1 with `trust = rpmdb`, `integrity = sha256`, rules 1, 2 and 12 removed |
+| P2 strict | P1 with `trust = rpmdb`, `integrity = sha256`, rules 1, 2 and 12 removed (in WP0 created in the running VM after each rollback to `clean-agent`, never snapshotted) |
 
 PASS also requires the trust poll and the runtime self-check. Other policies
 are not claimed until verified.
@@ -405,7 +407,7 @@ prerequisite.
 | --- | --- | --- |
 | Bootstrap fingerprint or signature check | nothing installed | stop; contact the supplier |
 | Missing bootstrap prerequisite | key imported, nothing else | install the named OS package from the OS media; repeat the dnf line |
-| Tools damaged (interrupted tools install/upgrade; wrapper or module missing) | rpm may or may not list a tools package, possibly another version | **tools repair**: the bootstrap lines up to the isolated check, then `rpm -q myproduct-tools` decides the last line: not installed → the bootstrap `dnf ... install`; same version as delivered → `dnf ... reinstall`; older than delivered → `dnf ... install` (completes the upgrade); newer than delivered → stop, ask the supplier for the current tools package. All with `--disablerepo='*' --setopt=localpkg_gpgcheck=1`; then the same admin command |
+| Tools damaged (interrupted tools install/upgrade; wrapper or module missing) | rpm may or may not list a tools package, possibly another version | **tools repair**: the bootstrap lines up to the isolated check, then `rpm -q myproduct-tools` decides the last line: not installed → the bootstrap `dnf ... install`; same version as delivered → `dnf ... reinstall`; older than delivered → `dnf ... install` (completes the upgrade); two versions listed (interrupted upgrade) → `dnf ... remove --duplicates`, then `rpm -q` again (the tools `%preun` allows this erase because another instance remains; confirm in WP0 probe C3/R3); newer than delivered → stop, ask the supplier for the current tools package. All with `--disablerepo='*' --setopt=localpkg_gpgcheck=1`; then the same admin command |
 | Product preflight | nothing changed after tools | named party fixes it; same command |
 | Candidate refused (signature, identity, older version, interface) | nothing installed by this run | supplier delivers a correct package; same command |
 | Release install interrupted | some packages installed, one possibly partly | same command: identity and `rpm -V` checks, reinstall a damaged identical package, install the rest |
@@ -419,31 +421,161 @@ prerequisite.
 
 ## Work package 0: investigation (decides go/no-go)
 
-Investigation scripts in `acceptance/` using existing harness pieces (`pve.py`
-snapshots, the existing network isolation that keeps administration access,
-repositories disabled). `clean-agent` stays unchanged; P2 is a new
-product-free snapshot made from it, with its effective policy recorded. Probes
-use `rpm-prototype/` plus minimal probe packages; nothing here is a product
-gate. **Every probe is mandatory; WP1 starts only when all pass. Recording an
-unsafe result does not satisfy a pass criterion.** A failing probe stops the
-work until a new technical solution within the product-owner decisions passes;
-any weakening needs a new product-owner decision before the plan changes.
+WP0 is an investigation in `acceptance/` with existing harness pieces
+(`pve.py`, the existing network isolation that keeps administration access,
+repositories disabled). Probes use `rpm-prototype/` plus minimal probe
+packages; nothing here is a product gate. **Every probe is mandatory; WP1
+starts only when all pass. Recording an unsafe result does not satisfy a pass
+criterion.** A failing probe stops the work until a new technical solution
+within the product-owner decisions passes; any weakening needs a new
+product-owner decision before the plan changes.
+
+History: the first attempt (recorded in
+[RPM-WP0.md](../acceptance/RPM-WP0.md), historical evidence) created a
+separate P2 snapshot on the ZFS-backed PROD disk, which blocked further
+rollback to `clean-agent` and stopped WP0 before any probe. That design is
+replaced below. The product owner removed that snapshot and restored the lab.
+
+### Lab rules
+
+- **One snapshot only.** Every isolated probe run starts with a rollback to
+  `clean-agent`. The controller never creates, deletes or modifies a
+  snapshot; its Proxmox calls are limited to an allowlist (read-only `GET`s,
+  `status/stop`, `status/shutdown`, `status/start` and
+  `snapshot/clean-agent/rollback` for the configured PROD VM only), enforced
+  in code and covered by a local test.
+- **Snapshot preflight before the first change:** the configured PROD VM is
+  not HA-managed, `clean-agent` exists and is the most recent snapshot of
+  every PROD disk (so a rollback is possible on ZFS); older snapshots, if
+  any, are left untouched. Anything else stops before any VM operation.
+- **P2 is created per run in the running VM**, after the rollback: `trust =
+  rpmdb`, `integrity = sha256`, the original rules 1, 2 and 12 removed (matched
+  by rule text), rules recompiled and fapolicyd restarted. P2 is never
+  snapshotted; the next run's rollback discards it.
+
+### Order of one isolated probe run
+
+Each step decides PASS/FAIL automatically and the first failure stops the run.
+
+1. **Rollback and start:** snapshot preflight, rollback to `clean-agent`,
+   start, wait for SSH.
+2. **Clean baseline check:** OL9.8, SELinux Enforcing, fapolicyd and firewalld
+   active; P1 policy exactly as recorded (`trust = rpmdb,file`,
+   `integrity = none`, `permissive = 0`, the 14 rules of the recorded
+   baseline by text); no `/var/lib/<product>`, no product RPMs, no imported
+   product or probe `gpg-pubkey`, no `/root/pkg`, no WP0 artifacts.
+3. **Apply and record the profile:** P1 unchanged; P2 as above. Capture the
+   effective profile (`fapolicyd-cli --list`, configuration, RPM filter,
+   plugin) and check automatically that it equals the profile definition
+   (P2: exactly the three rules removed and only `trust`/`integrity` changed).
+4. **Isolate the network** with the existing harness isolation and check it;
+   repositories disabled.
+5. **Transfer inputs** to a probe directory. Expected values used for
+   decisions (for example the approved fingerprint) are never transferred
+   with the inputs (see probe C).
+6. **Run the probe.** Each criterion is a scripted predicate on recorded
+   output and state; nothing is judged afterwards by reading logs.
+7. **Collect evidence:** FANOTIFY/AVC lines since the probe start, the step
+   records and logs. A positive run requires none; a negative run records
+   them as expected or unexpected per case.
+
+The unit of isolation is one probe case group on one profile. Positive runs
+(A, B, E) never share a run with negative cases (C, F, G, H, and the negative
+parts of D); a positive run's audit result is taken only from that run, and
+A's "no FANOTIFY/AVC" criterion is never satisfied by evidence from another
+run.
+
+### Probes
 
 | Probe | Profiles | Pass criterion |
 | --- | --- | --- |
 | A. Prototype RPMs installed locally, today's runtime flow over real SSH, non-interactive | P1, P2 | services healthy; release files trusted from rpmdb only; no FANOTIFY/AVC in this positive run |
 | B. Root Python from stdin and Python as the account (`prepare-host.sh`) | P2 | both run |
-| C. Full paper bootstrap as written above, on a root-only copy | P1, P2 | product-signed tools accepted; unsigned, other imported key, tampered header, tampered payload and subkey-signed (product subkey: accepted; other key's subkey: refused) behave as stated; a key file with a second primary key and a leftover `/root/pkg` with old packages and key database are handled by the stop rules; each tools repair state (not installed, same version, older) works; output readable from paper |
-| D. The same isolated check run by tools code on candidates, including repository download | P1 | same results as C; `dnf download` available or an equivalent recorded |
+| C. Paper bootstrap on a root-only copy (details below) | P1, P2 | every case in C1–C3 as defined below |
+| D. The same isolated check run by tools code on candidates, including repository download | P1 | same results as C1; `dnf download` available or an equivalent recorded |
 | E. Immediate execution after install | P1, P2 | trust visible in `--dump-db` within the poll bound; first execution not denied |
 | F. Guard: probe release and tools packages with the `%preun` described above | P1, P2 | plain `dnf remove` and `rpm -e` of a release refused; plain `dnf remove` of tools refused and every release still installed and intact; admin-authorized erase of exactly one package succeeds; a record naming another package, another boot, a dead or reused PID refuses; a separate plain `dnf remove` of the authorized package started while the record exists is refused (not an ancestor); user manager stopped does not change the result |
 | G. Lock protocol | P1 | the lock blocks a concurrent runtime run (bounded wait, clear message) and does not block the authorized `%preun`; it stays held when the check child exits before `%preun` and when the admin command is killed after `%preun` approved, until dnf ends; inherited descriptor accepted, forged descriptor refused |
 | H. Plain `dnf` upgrade of a release package with changed content, and a release installed without the admin command | P1 | the next `<product>-admin` and `<product>` stop on the missing or mismatching identity record before any code of that release runs, including `init-layout` |
 
-Negative probes (C, F, G, H) may produce errors or denials on purpose; they
-are recorded separately from the positive run A. Probes D, F, G and H use
-small, clearly marked probe implementations; a pass shows that the mechanism
-works on OL9, not that the later product implementation does.
+Probes D, F, G and H use small, clearly marked probe implementations; a pass
+shows that the mechanism works on OL9, not that the later product
+implementation does.
+
+### Probe C in detail
+
+**Trusted expected fingerprint.** The approved primary fingerprint comes from
+a source outside the delivery: a constant committed with the probe controller
+and reviewed against the paper value of the lab key. The controller checks,
+before transfer, that the fixture product key has that fingerprint (wrong
+fixture → stop). On the VM the constant is part of the probe script sent over
+SSH, never a file in the input directory, and it is never computed from the
+key file under test.
+
+**One primary key before any import.** Every key file used for authorization,
+including the product key with an added signing subkey, is checked before any
+import: `gpg --show-keys --with-colons` shows exactly one `pub` record, and
+its fingerprint equals the trusted constant. Only then is the isolated
+database created and the file imported.
+
+**C1, signature matrix** (one run per profile, after the checks above on the
+delivered key): product-signed tools accepted; unsigned, signed by another
+imported key, tampered header and tampered payload refused; signed by a
+signing subkey of the product key accepted (with the subkey key file, which
+passes the one-primary and fingerprint checks); signed by another key's
+subkey refused. Each verdict uses the paper's predicate: exactly one output
+line ending in `digests signatures OK`, exit status 0.
+
+**C2, stop rules before authorizing import** (one run per profile):
+
+| Case | Expected | Postconditions |
+| --- | --- | --- |
+| key file with a second primary key | the bootstrap procedure stops at the one-primary check with its stop message | no isolated database was created; global `gpg-pubkey` set unchanged; no tools package installed |
+| key file with one primary key whose fingerprint differs from the constant | stop at the fingerprint check | as above |
+| leftover `/root/pkg` with an obsolete foreign-signed package and a key database containing the foreign key | the first lines remove and recreate `/root/pkg`; the verification step sees exactly one tools package and a database holding only the product key | the obsolete package and foreign key are absent from the isolated database; the tools package installed is the delivered one |
+
+**Observation (not a pass criterion), recorded separately:** how OL9
+`rpmkeys --import` handles the two-primary key file in a disposable
+database (which keys appear, exit status, messages). It shows why the
+one-primary rule is needed; it never authorizes anything.
+
+**C3, tools repair states** (one isolated run per state and profile). Each
+state is produced by deterministic fault injection as root on the disposable
+VM, documented as probe setup, not product behaviour. Killing a real
+transaction at a chosen point is not deterministic; these runs cover the
+listed end states, not every interruption point.
+
+| State | Setup | Expected diagnosis | Repair (paper) | Postconditions |
+| --- | --- | --- | --- | --- |
+| R1 registered, files missing | install delivered tools, delete the wrapper and one module | `rpm -V` reports missing files; `rpm -q` shows the delivered version | `reinstall` | exactly one tools version, the delivered one; `rpm -V` clean; wrapper runs as root; tools files trusted from rpmdb; no unexpected FANOTIFY/AVC |
+| R2 files present, not registered | install delivered tools, then remove only the rpmdb entry (`rpm -e --justdb --noscripts`) | `rpm -q` says not installed while files exist | `install` | as R1 |
+| R3 two versions registered (interrupted upgrade) | install an older signed tools fixture, then force-register the delivered version beside it | `rpm -q` lists two versions | the repair line defined for this state (see "Failure and retry"; confirm in WP0) | as R1; the older version absent; no release package removed |
+| R4 older version installed cleanly | install an older signed tools fixture | `rpm -q` shows an older version | `install` (upgrade) | as R1 |
+| R5 newer version installed than delivered | install a newer signed tools fixture | `rpm -q` shows a newer version | stop: contact the supplier | nothing changed |
+
+R4 is an ordinary upgrade and is listed for completeness; it does not count
+as interruption coverage. A first installation never counts as a repair case.
+
+**Paper procedure versus automation.** The probe runs the paper commands
+unchanged except for declared automation adaptations, each recorded in the
+results: non-interactive confirmation (`dnf -y`), an SSH-delivered input
+directory instead of a mounted medium, and scripted reading of the output
+lines the paper names. A pass shows that the commands and their stop rules
+behave as the paper says; it is not a paper-usability result (console typing,
+medium handling and reading are left to the AI walkthrough and item 68).
+
+### Before the next lab run
+
+- A complete A–H runner, implementing every probe and case above, the lab
+  rules and the run order, with one command for the whole matrix and one per
+  probe case group.
+- Local tests: the Proxmox allowlist and snapshot preflight, the baseline and
+  profile checks (P1 exact, P2 derivation and refusal of other differences),
+  the probe C predicates and stop rules, the fingerprint source, positive and
+  negative run separation, reporting after any failure, and that no step can
+  give PASS without its predicate.
+- A separate code review of the runner before the product owner authorizes
+  the lab run.
 
 ## Required tests
 
@@ -487,7 +619,9 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
 
 ## Work packages
 
-0. Investigation above; results in `acceptance/`; plan revised if needed.
+0. Investigation above (lab rules, run order, probes A–H, complete runner,
+   local tests and a separate code review before the lab run); results in
+   `acceptance/`; plan revised if needed.
 1. Supplier build: productise `rpm-prototype/` (release and tools RPMs,
    explicit requirements, guard scriptlets, ledger, interface checks), tests.
 2. `<product>-admin`: isolated verification, selection, identity, preflight,
