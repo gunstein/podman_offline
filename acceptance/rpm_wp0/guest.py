@@ -403,7 +403,7 @@ def repair(state):
         )
         return True
     if contracts.repair_decision(before) == "deduplicate":
-        op.dnf("remove", "--duplicates", op.TOOLS)
+        op.dnf("remove", "--duplicates")
         check(
             "duplicate-cleanup",
             op.versions() == [TOOLS_VERSION] and op.rpm_clean("wp0-release-sibling"),

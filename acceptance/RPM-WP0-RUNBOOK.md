@@ -151,7 +151,8 @@ C3 performs the specified deterministic fault injection and diagnostic:
 R1 deletes wrapper/module, R2 removes only rpmdb registration, R3 registers
 old and delivered versions together, R4 installs clean older tools, and R5
 installs newer tools. Repair selection comes from the observed rpmdb versions.
-R3 uses `remove --duplicates`, rechecks versions, then takes the same-version
+R3 uses exactly the plan's `dnf ... remove --duplicates`, without a package
+argument, rechecks versions, then takes the same-version
 reinstall branch. R1–R4 require exact version, clean RPM verification, trust,
 root wrapper execution, and clean audit. R3 also retains an installed sibling
 release. R5 takes the newer-version stop without installation and checks that

@@ -987,7 +987,11 @@ class FinalFlowRegressions(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout="WP0 trusted module", stderr="")
 
         def dnf(*args):
-            self.assertEqual(args, ("remove", "--duplicates", op.TOOLS))
+            self.assertEqual(args, ("remove", "--duplicates"))
+            # Tie the expectation to the paper command, rather than reproducing
+            # an implementation-specific package restriction in the fixture.
+            plan = (HERE.parents[1] / "docs/RPM-DELIVERY-PLAN.md").read_text()
+            self.assertIn("`dnf ... " + " ".join(args) + "`", plan)
             events.append("deduplicate")
             installed[:] = ["2.0"]
 
