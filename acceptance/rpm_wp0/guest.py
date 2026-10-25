@@ -631,7 +631,9 @@ def identities():
     marker = mech.STATE / "executed"
     # Positive control proves these entry points really attempt init-layout
     # when verification succeeds; later marker absence is not vacuous.
-    op.command(mech.dropped("/usr/bin/wp0-runtime", base))
+    # rpm -V opens the current directory even with an explicit package name.
+    # Do not inherit the root SSH session's inaccessible working directory.
+    op.command(mech.dropped("/usr/bin/wp0-runtime", base), cwd="/")
     require(
         marker.read_text().strip() == "release-code-ran",
         "Missing release execution control",
@@ -649,7 +651,7 @@ def identities():
         args = [mech.ADMIN, "use", base]
         if account == "runtime":
             args = mech.dropped("/usr/bin/wp0-runtime", base)
-        result = op.command(args, allowed=(3,))
+        result = op.command(args, allowed=(3,), cwd="/")
         check(
             "mismatch-" + account,
             "mismatching identity" in result.stderr and not marker.exists(),
@@ -662,7 +664,7 @@ def identities():
         args = [mech.ADMIN, "use", sibling]
         if account == "runtime":
             args = mech.dropped("/usr/bin/wp0-runtime", sibling)
-        result = op.command(args, allowed=(3,))
+        result = op.command(args, allowed=(3,), cwd="/")
         check(
             "missing-" + account,
             "missing identity" in result.stderr and not marker.exists(),
@@ -682,6 +684,7 @@ def audit(start):
         ],
         allowed=(0, 1),
         stdin=subprocess.DEVNULL,
+        env=dict(os.environ, LC_ALL="C", TZ="UTC"),
     )
     output = result.stdout + result.stderr
     lines = [line for line in output.splitlines() if line.startswith("type=")]

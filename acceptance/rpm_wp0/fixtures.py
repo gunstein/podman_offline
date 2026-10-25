@@ -29,7 +29,7 @@ def sign(path, key):
     run(["rpm", "--define", "_gpg_name " + key + "!", "--addsign", str(path)])
 
 
-def build(name, version, payload, guard, requires=""):
+def build(name, version, payload, guard, requires="", owned_directories=()):
     staging = TOP / (name + "-" + version)
     for path, (data, mode) in payload.items():
         target = staging / path.lstrip("/")
@@ -59,6 +59,10 @@ cp -a {staging}/. %{{buildroot}}/
 %files
 %defattr(-,root,root,-)
 """
+        # RPM removes only owned directories. Own each release's leaf, never
+        # the shared releases parent or a sibling's tree.
+        + "\n".join("%dir " + path for path in sorted(owned_directories))
+        + "\n"
         + "\n".join(sorted(payload))
         + "\n"
     )
@@ -152,6 +156,7 @@ cat {base}/version > /run/wp0-probe/upgrade-observed
 fi
 python3 -B /usr/libexec/wp0/mechanisms.py guard {name}-{version}-1 release "$1"''',
                 "Requires: myproduct-tools\nRequires(preun): myproduct-tools",
+                owned_directories=(base,),
             )
     delivered = OUT / "myproduct-tools-2.0-1.noarch.rpm"
     unsigned = OUT / "unsigned.rpm"

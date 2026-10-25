@@ -1,5 +1,9 @@
 # WP0 runner: local implementation, not lab verification
 
+**Final result:** the [full matrix passed at `3222efb`](RPM-WP0-LAB-20261025-FULL.md)
+(24/24 case/profile runs, clean audits). This is investigation evidence, not a
+product implementation or WP1 approval. The history below is retained.
+
 This runner implements the investigation matrix in plan revision 3.2.
 The [second authorized run](RPM-WP0-LAB-20261025-RUN02.md) at `9b2cfb3` passed
 13 case/profile runs, then stopped in R4/P1 on a trust-dump assertion.
@@ -110,7 +114,10 @@ Each case/profile is an independent run, in this order:
    the input directory. The expected fingerprint travels in the SSH program.
 6. Provision the ordinary runtime account and a lab-only public SSH key, start
    an audit window, run the case and check every named predicate.
-7. Collect FANOTIFY/AVC records from that window. No case intentionally needs
+7. Collect FANOTIFY/AVC records from that window. Both the start timestamp and
+   ausearch use UTC and the C locale; displayed audit times are UTC. See the
+   [DST correction and local OL9 reproduction](RPM-WP0-AUDIT-UTC.md).
+   No case intentionally needs
    policy denials: guard/signature/lock refusals are expected CLI errors,
    recorded separately. Any FANOTIFY/AVC event fails. Missing audit is failure,
    never evidence of no events.

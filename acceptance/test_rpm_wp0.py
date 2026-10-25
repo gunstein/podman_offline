@@ -550,6 +550,74 @@ class ReportingTests(unittest.TestCase):
 
 
 class FlowTests(unittest.TestCase):
+    def test_identity_entry_points_use_accessible_cwd_and_keep_stop_rules(self):
+        for control_fails in (False, True):
+            with (
+                self.subTest(control_fails=control_fails),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                for name in ("wp0-release-base", "wp0-release-sibling"):
+                    (root / (name + ".json")).write_text("reference")
+                (root / "upgrade-observed").write_text("2.0")
+                calls = []
+
+                def entry(
+                    args, calls=calls, control_fails=control_fails, root=root, **kwargs
+                ):
+                    # Exercise subprocess cwd handling from an unrelated cwd,
+                    # without needing root, setpriv or RPM in the unit suite.
+                    self.assertEqual(kwargs.get("cwd"), "/")
+                    result = subprocess.run(
+                        [sys.executable, "-c", "import os; print(os.getcwd())"],
+                        cwd=kwargs["cwd"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    self.assertEqual(result.stdout.strip(), "/")
+                    calls.append(args)
+                    if len(calls) == 1:
+                        self.assertEqual(args[0], "setpriv")
+                        self.assertNotIn("allowed", kwargs)
+                        if control_fails:
+                            raise RuntimeError("Command failed: setpriv")
+                        (root / "executed").write_text("release-code-ran\n")
+                        return subprocess.CompletedProcess(args, 0, "", "")
+                    self.assertEqual(kwargs["allowed"], (3,))
+                    reason = (
+                        "mismatching" if args[-1] == "wp0-release-base" else "missing"
+                    )
+                    return subprocess.CompletedProcess(
+                        args, 3, "", reason + " identity"
+                    )
+
+                with (
+                    mock.patch.object(m, "STATE", root),
+                    mock.patch.object(m, "RUN", root),
+                    mock.patch.object(m, "IDENTITIES", root),
+                    mock.patch.object(
+                        m, "dropped", side_effect=lambda *args: ["setpriv", *args]
+                    ),
+                    mock.patch.object(guest, "setup_mechanisms"),
+                    mock.patch.object(guest, "PREDICATES", []),
+                    mock.patch.object(op, "command", side_effect=entry),
+                    mock.patch.object(op, "versions", return_value=["2.0"]),
+                    mock.patch.object(op, "install_verified") as install,
+                ):
+                    if control_fails:
+                        with self.assertRaisesRegex(RuntimeError, "setpriv"):
+                            guest.identities()
+                        install.assert_not_called()
+                        self.assertEqual(guest.PREDICATES, [])
+                    else:
+                        self.assertTrue(guest.identities())
+                        self.assertEqual(len(calls), 5)
+                        self.assertEqual(
+                            set(guest.PREDICATES), wp0.expected_predicates("H")
+                        )
+                        self.assertFalse((root / "executed").exists())
+
     def test_remote_program_has_independent_pin_and_no_import_side_effects(self):
         run = wp0.Investigation(mock.Mock())
         run.host = "placeholder"
@@ -776,6 +844,41 @@ class FlowTests(unittest.TestCase):
                 else:
                     self.assertFalse(any("--justdb" in call for call in calls))
 
+    def test_release_spec_owns_only_its_leaf_directory_and_payload(self):
+        fixtures = importlib.import_module("fixtures")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            top, output = root / "build", root / "out"
+            top.mkdir()
+            output.mkdir()
+            binary = top / "RPMS/noarch"
+            binary.mkdir(parents=True)
+
+            def rpmbuild(args):
+                self.assertEqual(args[0], "rpmbuild")
+                name = Path(args[-1]).stem.removesuffix("-1.0")
+                (binary / (name + "-1.0-1.noarch.rpm")).write_bytes(b"stub RPM")
+                return ""
+
+            with (
+                mock.patch.object(fixtures, "TOP", top),
+                mock.patch.object(fixtures, "OUT", output),
+                mock.patch.object(fixtures, "run", side_effect=rpmbuild),
+                mock.patch.object(fixtures, "sign"),
+            ):
+                for name in ("wp0-release-base", "wp0-release-sibling"):
+                    leaf = "/var/lib/wp0-probe/releases/" + name
+                    files = {leaf + "/version": (b"1.0\n", 0o644)}
+                    fixtures.build(name, "1.0", files, ":", owned_directories=(leaf,))
+                    spec = (top / (name + "-1.0.spec")).read_text()
+                    manifest = spec.split("%defattr(-,root,root,-)\n", 1)[1]
+                    self.assertEqual(
+                        set(manifest.splitlines()), {"%dir " + leaf, leaf + "/version"}
+                    )
+                    staged = top / (name + "-1.0") / leaf.lstrip("/")
+                    self.assertTrue(staged.is_dir())
+                    self.assertEqual((staged / "version").read_bytes(), b"1.0\n")
+
     def test_fixture_layout_versions_and_generated_shell_syntax(self):
         # Verify the fixture generator and its actual shell payloads without
         # rpm-build, GnuPG, network or access to the real signing home.
@@ -795,14 +898,19 @@ class FlowTests(unittest.TestCase):
                 + bytes(200)
             )
 
-            def build(name, version, payload, guard, *args):
+            def build(name, version, payload, guard, *args, owned_directories=()):
                 if name.startswith("wp0-release-"):
+                    self.assertEqual(
+                        owned_directories, ("/var/lib/wp0-probe/releases/" + name,)
+                    )
                     self.assertEqual(
                         args,
                         (
                             "Requires: myproduct-tools\nRequires(preun): myproduct-tools",
                         ),
                     )
+                else:
+                    self.assertEqual(owned_directories, ())
                 built.append((name, version, payload, guard))
                 (output / (name + "-" + version + "-1.noarch.rpm")).write_bytes(
                     fake_rpm
@@ -1320,6 +1428,65 @@ class IndependentReviewRegressions(unittest.TestCase):
             guest.audit("10/25/2026 12:00:00")
         command.assert_not_called()
 
+    def test_audit_capture_and_query_share_utc_across_dst_transitions(self):
+        from types import SimpleNamespace
+
+        # Freeze GNU date without replacing its locale/timezone conversion.
+        # Model ausearch-time.c's mktime(date), strptime(time), mktime sequence
+        # in a child process so TZ and tzset never change the test runner.
+        parser = """import sys, time
+time.tzset()
+day = time.strptime(sys.argv[1], '%m/%d/%y')
+midnight = time.localtime(time.mktime(day[:8] + (0,)))
+clock = time.strptime(sys.argv[2], '%H:%M:%S')
+print(int(time.mktime(midnight[:3] + clock[3:6] + midnight[6:])))
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            shim = Path(directory) / "date"
+            shim.write_text(
+                '#!/bin/sh\nexec /usr/bin/date --date="@$WP0_TEST_EPOCH" "$@"\n'
+            )
+            shim.chmod(0o755)
+            for instant in (
+                "2026-10-25T18:15:23+00:00",
+                "2026-03-29T18:15:23+00:00",
+                "2026-10-24T22:00:00+00:00",
+            ):
+                import datetime
+
+                epoch = int(datetime.datetime.fromisoformat(instant).timestamp())
+                for zone in ("Europe/Oslo", "America/New_York", "UTC"):
+                    with self.subTest(instant=instant, zone=zone):
+                        capture_env = dict(
+                            os.environ,
+                            TZ=zone,
+                            WP0_TEST_EPOCH=str(epoch),
+                            PATH=directory + ":" + os.environ["PATH"],
+                        )
+                        start = subprocess.check_output(
+                            ["bash", "-c", c.AUDIT_START_COMMAND],
+                            env=capture_env,
+                            text=True,
+                        ).strip()
+                        with mock.patch.object(
+                            op,
+                            "command",
+                            return_value=SimpleNamespace(
+                                returncode=1, stdout="", stderr="<no matches>\n"
+                            ),
+                        ) as command:
+                            self.assertTrue(guest.audit(start)["no_events"])
+                        args, kwargs = command.call_args
+                        actual = int(
+                            subprocess.check_output(
+                                [sys.executable, "-c", parser, *args[0][-2:]],
+                                env=kwargs["env"],
+                                text=True,
+                            ).strip()
+                        )
+                        self.assertEqual(actual, epoch)
+                        self.assertEqual(kwargs["env"]["LC_ALL"], "C")
+
     def test_paper_commands_use_real_shell_globs_and_stop_before_import(self):
         from contextlib import nullcontext
 
@@ -1655,6 +1822,7 @@ class LabFailureRegressions(unittest.TestCase):
             ],
             allowed=(0, 1),
             stdin=subprocess.DEVNULL,
+            env=dict(os.environ, LC_ALL="C", TZ="UTC"),
         )
         # Raw mode's empty status-1 result must still never turn into a PASS.
         with (

@@ -1,0 +1,1538 @@
+{
+  "run_id": "wp0-full-20261025-192009",
+  "verdict": "WP0 MATRIX PASS",
+  "revision": "3222efb08643e4655e1f05b7d69f2a398888e816",
+  "complete_matrix_selected": true,
+  "original_signing_home_unchanged": true,
+  "trust_timeout_seconds": 30,
+  "lock_timeout_seconds": 5,
+  "automation_adaptations": [
+    "dnf -y",
+    "SSH input directory replaces mounted medium",
+    "scripted paper output checks",
+    "journal cursor and daemon completion observations around DNF"
+  ],
+  "steps": [
+    {
+      "step": "controller-source",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:20:09.557565+00:00"
+    },
+    {
+      "step": "controller-config",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:20:09.566141+00:00"
+    },
+    {
+      "step": "snapshot-preflight",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:20:09.568323+00:00"
+    },
+    {
+      "step": "build-fixtures",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:20:09.667269+00:00"
+    },
+    {
+      "step": "A-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:24:09.263977+00:00"
+    },
+    {
+      "step": "A-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:24:30.951259+00:00"
+    },
+    {
+      "step": "A-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:24:32.101702+00:00"
+    },
+    {
+      "step": "A-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:24:32.718510+00:00"
+    },
+    {
+      "step": "A-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:24:33.730034+00:00"
+    },
+    {
+      "step": "A-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:24:38.777350+00:00"
+    },
+    {
+      "step": "A-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:25:50.839066+00:00"
+    },
+    {
+      "step": "A-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:25:51.144898+00:00"
+    },
+    {
+      "step": "A-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:26:11.835476+00:00"
+    },
+    {
+      "step": "A-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:26:12.847608+00:00"
+    },
+    {
+      "step": "A-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:26:13.847050+00:00"
+    },
+    {
+      "step": "A-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:26:15.129981+00:00"
+    },
+    {
+      "step": "A-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:26:20.274293+00:00"
+    },
+    {
+      "step": "A-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:27:34.264118+00:00"
+    },
+    {
+      "step": "B-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:27:34.673488+00:00"
+    },
+    {
+      "step": "B-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:27:55.726091+00:00"
+    },
+    {
+      "step": "B-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:27:56.895971+00:00"
+    },
+    {
+      "step": "B-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:00.200579+00:00"
+    },
+    {
+      "step": "B-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:01.653340+00:00"
+    },
+    {
+      "step": "B-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:06.679365+00:00"
+    },
+    {
+      "step": "B-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:23.918553+00:00"
+    },
+    {
+      "step": "C1-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:24.271186+00:00"
+    },
+    {
+      "step": "C1-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:45.971795+00:00"
+    },
+    {
+      "step": "C1-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:46.871958+00:00"
+    },
+    {
+      "step": "C1-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:47.189863+00:00"
+    },
+    {
+      "step": "C1-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:48.120475+00:00"
+    },
+    {
+      "step": "C1-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:53.127310+00:00"
+    },
+    {
+      "step": "C1-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:54.751520+00:00"
+    },
+    {
+      "step": "C1-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:28:55.038962+00:00"
+    },
+    {
+      "step": "C1-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:15.804772+00:00"
+    },
+    {
+      "step": "C1-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:16.870670+00:00"
+    },
+    {
+      "step": "C1-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:17.687934+00:00"
+    },
+    {
+      "step": "C1-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:18.988049+00:00"
+    },
+    {
+      "step": "C1-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:24.503360+00:00"
+    },
+    {
+      "step": "C1-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:26.193773+00:00"
+    },
+    {
+      "step": "C2-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:26.508662+00:00"
+    },
+    {
+      "step": "C2-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:47.575038+00:00"
+    },
+    {
+      "step": "C2-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:48.615935+00:00"
+    },
+    {
+      "step": "C2-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:48.914149+00:00"
+    },
+    {
+      "step": "C2-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:49.831590+00:00"
+    },
+    {
+      "step": "C2-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:54.767343+00:00"
+    },
+    {
+      "step": "C2-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:57.732291+00:00"
+    },
+    {
+      "step": "C2-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:29:58.076436+00:00"
+    },
+    {
+      "step": "C2-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:20.000433+00:00"
+    },
+    {
+      "step": "C2-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:20.974842+00:00"
+    },
+    {
+      "step": "C2-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:23.840857+00:00"
+    },
+    {
+      "step": "C2-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:25.148569+00:00"
+    },
+    {
+      "step": "C2-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:30.279287+00:00"
+    },
+    {
+      "step": "C2-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:33.468132+00:00"
+    },
+    {
+      "step": "R1-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:33.977086+00:00"
+    },
+    {
+      "step": "R1-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:54.828829+00:00"
+    },
+    {
+      "step": "R1-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:55.993652+00:00"
+    },
+    {
+      "step": "R1-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:56.293433+00:00"
+    },
+    {
+      "step": "R1-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:30:57.206064+00:00"
+    },
+    {
+      "step": "R1-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:02.087548+00:00"
+    },
+    {
+      "step": "R1-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:05.758488+00:00"
+    },
+    {
+      "step": "R1-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:06.076805+00:00"
+    },
+    {
+      "step": "R1-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:27.966814+00:00"
+    },
+    {
+      "step": "R1-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:28.885085+00:00"
+    },
+    {
+      "step": "R1-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:32.108529+00:00"
+    },
+    {
+      "step": "R1-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:33.471562+00:00"
+    },
+    {
+      "step": "R1-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:38.319832+00:00"
+    },
+    {
+      "step": "R1-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:42.487457+00:00"
+    },
+    {
+      "step": "R2-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:31:42.891104+00:00"
+    },
+    {
+      "step": "R2-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:03.649307+00:00"
+    },
+    {
+      "step": "R2-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:04.639756+00:00"
+    },
+    {
+      "step": "R2-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:04.922725+00:00"
+    },
+    {
+      "step": "R2-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:05.837890+00:00"
+    },
+    {
+      "step": "R2-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:10.880015+00:00"
+    },
+    {
+      "step": "R2-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:15.066066+00:00"
+    },
+    {
+      "step": "R2-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:15.375354+00:00"
+    },
+    {
+      "step": "R2-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:36.418325+00:00"
+    },
+    {
+      "step": "R2-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:37.578326+00:00"
+    },
+    {
+      "step": "R2-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:38.116531+00:00"
+    },
+    {
+      "step": "R2-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:39.475832+00:00"
+    },
+    {
+      "step": "R2-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:44.684191+00:00"
+    },
+    {
+      "step": "R2-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:49.130945+00:00"
+    },
+    {
+      "step": "R3-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:32:49.556014+00:00"
+    },
+    {
+      "step": "R3-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:10.334723+00:00"
+    },
+    {
+      "step": "R3-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:11.470638+00:00"
+    },
+    {
+      "step": "R3-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:11.771971+00:00"
+    },
+    {
+      "step": "R3-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:12.697837+00:00"
+    },
+    {
+      "step": "R3-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:18.169217+00:00"
+    },
+    {
+      "step": "R3-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:23.058772+00:00"
+    },
+    {
+      "step": "R3-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:23.370304+00:00"
+    },
+    {
+      "step": "R3-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:45.244476+00:00"
+    },
+    {
+      "step": "R3-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:46.160249+00:00"
+    },
+    {
+      "step": "R3-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:49.091161+00:00"
+    },
+    {
+      "step": "R3-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:50.381570+00:00"
+    },
+    {
+      "step": "R3-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:33:55.261194+00:00"
+    },
+    {
+      "step": "R3-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:00.738853+00:00"
+    },
+    {
+      "step": "R4-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:01.135664+00:00"
+    },
+    {
+      "step": "R4-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:21.853601+00:00"
+    },
+    {
+      "step": "R4-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:22.893637+00:00"
+    },
+    {
+      "step": "R4-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:23.198270+00:00"
+    },
+    {
+      "step": "R4-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:24.112776+00:00"
+    },
+    {
+      "step": "R4-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:29.092021+00:00"
+    },
+    {
+      "step": "R4-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:32.690133+00:00"
+    },
+    {
+      "step": "R4-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:33.002669+00:00"
+    },
+    {
+      "step": "R4-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:54.894702+00:00"
+    },
+    {
+      "step": "R4-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:55.789488+00:00"
+    },
+    {
+      "step": "R4-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:34:58.741994+00:00"
+    },
+    {
+      "step": "R4-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:00.098337+00:00"
+    },
+    {
+      "step": "R4-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:05.596111+00:00"
+    },
+    {
+      "step": "R4-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:09.614445+00:00"
+    },
+    {
+      "step": "R5-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:10.012527+00:00"
+    },
+    {
+      "step": "R5-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:31.045728+00:00"
+    },
+    {
+      "step": "R5-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:32.117278+00:00"
+    },
+    {
+      "step": "R5-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:32.410526+00:00"
+    },
+    {
+      "step": "R5-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:33.400342+00:00"
+    },
+    {
+      "step": "R5-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:38.267896+00:00"
+    },
+    {
+      "step": "R5-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:40.353409+00:00"
+    },
+    {
+      "step": "R5-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:35:40.677403+00:00"
+    },
+    {
+      "step": "R5-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:02.399912+00:00"
+    },
+    {
+      "step": "R5-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:03.298355+00:00"
+    },
+    {
+      "step": "R5-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:06.442366+00:00"
+    },
+    {
+      "step": "R5-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:07.803380+00:00"
+    },
+    {
+      "step": "R5-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:13.056869+00:00"
+    },
+    {
+      "step": "R5-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:15.221817+00:00"
+    },
+    {
+      "step": "D-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:15.687336+00:00"
+    },
+    {
+      "step": "D-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:36.493410+00:00"
+    },
+    {
+      "step": "D-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:37.534859+00:00"
+    },
+    {
+      "step": "D-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:37.833839+00:00"
+    },
+    {
+      "step": "D-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:38.756817+00:00"
+    },
+    {
+      "step": "D-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:43.782853+00:00"
+    },
+    {
+      "step": "D-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:47.492466+00:00"
+    },
+    {
+      "step": "E-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:36:47.806002+00:00"
+    },
+    {
+      "step": "E-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:09.468116+00:00"
+    },
+    {
+      "step": "E-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:10.378054+00:00"
+    },
+    {
+      "step": "E-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:10.681474+00:00"
+    },
+    {
+      "step": "E-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:11.702138+00:00"
+    },
+    {
+      "step": "E-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:16.789096+00:00"
+    },
+    {
+      "step": "E-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:19.552490+00:00"
+    },
+    {
+      "step": "E-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:19.853241+00:00"
+    },
+    {
+      "step": "E-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:41.699114+00:00"
+    },
+    {
+      "step": "E-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:42.588808+00:00"
+    },
+    {
+      "step": "E-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:45.974760+00:00"
+    },
+    {
+      "step": "E-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:47.337610+00:00"
+    },
+    {
+      "step": "E-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:52.500780+00:00"
+    },
+    {
+      "step": "E-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:55.638783+00:00"
+    },
+    {
+      "step": "F-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:37:55.985407+00:00"
+    },
+    {
+      "step": "F-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:17.797221+00:00"
+    },
+    {
+      "step": "F-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:18.680783+00:00"
+    },
+    {
+      "step": "F-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:18.985084+00:00"
+    },
+    {
+      "step": "F-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:20.003460+00:00"
+    },
+    {
+      "step": "F-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:25.219586+00:00"
+    },
+    {
+      "step": "F-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:37.841388+00:00"
+    },
+    {
+      "step": "F-P2-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:38.169695+00:00"
+    },
+    {
+      "step": "F-P2-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:38:59.099343+00:00"
+    },
+    {
+      "step": "F-P2-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:00.156199+00:00"
+    },
+    {
+      "step": "F-P2-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:00.953565+00:00"
+    },
+    {
+      "step": "F-P2-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:02.312192+00:00"
+    },
+    {
+      "step": "F-P2-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:07.478374+00:00"
+    },
+    {
+      "step": "F-P2-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:21.294726+00:00"
+    },
+    {
+      "step": "G-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:21.752338+00:00"
+    },
+    {
+      "step": "G-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:42.616874+00:00"
+    },
+    {
+      "step": "G-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:43.626728+00:00"
+    },
+    {
+      "step": "G-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:43.921403+00:00"
+    },
+    {
+      "step": "G-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:44.893505+00:00"
+    },
+    {
+      "step": "G-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:39:50.722823+00:00"
+    },
+    {
+      "step": "G-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:11.092060+00:00"
+    },
+    {
+      "step": "H-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:11.408334+00:00"
+    },
+    {
+      "step": "H-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:32.526170+00:00"
+    },
+    {
+      "step": "H-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:33.636982+00:00"
+    },
+    {
+      "step": "H-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:33.929558+00:00"
+    },
+    {
+      "step": "H-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:34.863857+00:00"
+    },
+    {
+      "step": "H-P1-probe",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:39.843551+00:00"
+    },
+    {
+      "step": "H-P1-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T18:40:45.031257+00:00"
+    }
+  ],
+  "cases": [
+    {
+      "case": "A",
+      "profile": "P1",
+      "predicates": [
+        "prototype-trust"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:24:39",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "A",
+      "profile": "P2",
+      "predicates": [
+        "prototype-trust"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:26:20",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "B",
+      "profile": "P2",
+      "predicates": [
+        "prototype-trust",
+        "root-stdin",
+        "account-python"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:28:07",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "C1",
+      "profile": "P1",
+      "predicates": [
+        "signature-product",
+        "signature-unsigned",
+        "signature-foreign",
+        "signature-tampered-header",
+        "signature-tampered-payload",
+        "signature-product-subkey",
+        "signature-foreign-subkey"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:28:53",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "C1",
+      "profile": "P2",
+      "predicates": [
+        "signature-product",
+        "signature-unsigned",
+        "signature-foreign",
+        "signature-tampered-header",
+        "signature-tampered-payload",
+        "signature-product-subkey",
+        "signature-foreign-subkey"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:29:25",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "C2",
+      "profile": "P1",
+      "predicates": [
+        "stop-two-primary.asc",
+        "stop-foreign.asc",
+        "leftover-setup",
+        "leftover-replaced"
+      ],
+      "observation_kinds": [
+        "two-primary-rpm-import-NOT-A-GATE"
+      ],
+      "audit": {
+        "start_utc": "10/25/26 18:29:54",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "C2",
+      "profile": "P2",
+      "predicates": [
+        "stop-two-primary.asc",
+        "stop-foreign.asc",
+        "leftover-setup",
+        "leftover-replaced"
+      ],
+      "observation_kinds": [
+        "two-primary-rpm-import-NOT-A-GATE"
+      ],
+      "audit": {
+        "start_utc": "10/25/26 18:30:31",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "R1",
+      "profile": "P1",
+      "predicates": [
+        "diagnosis",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:31:01",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "R1",
+      "profile": "P2",
+      "predicates": [
+        "diagnosis",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:31:39",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "R2",
+      "profile": "P1",
+      "predicates": [
+        "diagnosis",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:32:10",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "R2",
+      "profile": "P2",
+      "predicates": [
+        "diagnosis",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:32:44",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "R3",
+      "profile": "P1",
+      "predicates": [
+        "diagnosis",
+        "duplicate-cleanup",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution",
+        "release-retained"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:33:18",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "R3",
+      "profile": "P2",
+      "predicates": [
+        "diagnosis",
+        "duplicate-cleanup",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution",
+        "release-retained"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:33:56",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "R4",
+      "profile": "P1",
+      "predicates": [
+        "diagnosis",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:34:29",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "R4",
+      "profile": "P2",
+      "predicates": [
+        "diagnosis",
+        "repair-version",
+        "repair-integrity",
+        "repair-trust",
+        "repair-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:35:06",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "R5",
+      "profile": "P1",
+      "predicates": [
+        "diagnosis",
+        "newer-stop",
+        "unchanged"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:35:38",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "R5",
+      "profile": "P2",
+      "predicates": [
+        "diagnosis",
+        "newer-stop",
+        "unchanged"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:36:13",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "D",
+      "profile": "P1",
+      "predicates": [
+        "signature-product",
+        "signature-unsigned",
+        "signature-foreign",
+        "signature-tampered-header",
+        "signature-tampered-payload",
+        "signature-product-subkey",
+        "signature-foreign-subkey",
+        "repository-download"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:36:43",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "E",
+      "profile": "P1",
+      "predicates": [
+        "trust-visible",
+        "first-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:37:16",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "E",
+      "profile": "P2",
+      "predicates": [
+        "trust-visible",
+        "first-execution"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:37:52",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "F",
+      "profile": "P1",
+      "predicates": [
+        "manager-running",
+        "plain-dnf-release",
+        "plain-rpm-release",
+        "plain-dnf-tools",
+        "record-package",
+        "record-boot",
+        "record-dead",
+        "record-reused",
+        "not-ancestor",
+        "manager-independent",
+        "authorized-one"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:38:24",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "F",
+      "profile": "P2",
+      "predicates": [
+        "manager-running",
+        "plain-dnf-release",
+        "plain-rpm-release",
+        "plain-dnf-tools",
+        "record-package",
+        "record-boot",
+        "record-dead",
+        "record-reused",
+        "not-ancestor",
+        "manager-independent",
+        "authorized-one"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:39:07",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P2.json"
+    },
+    {
+      "case": "G",
+      "profile": "P1",
+      "predicates": [
+        "bounded-runtime",
+        "inherited-accepted",
+        "forged-refused",
+        "check-exit-lock-held",
+        "admin-exit-lock-held",
+        "preun-and-dnf-complete",
+        "lock-released"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:39:50",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    },
+    {
+      "case": "H",
+      "profile": "P1",
+      "predicates": [
+        "bypass-upgrade",
+        "mismatch-admin",
+        "mismatch-runtime",
+        "missing-admin",
+        "missing-runtime"
+      ],
+      "observation_kinds": [],
+      "audit": {
+        "start_utc": "10/25/26 18:40:40",
+        "exit": 1,
+        "output": "<no matches>\n",
+        "no_events": true,
+        "lines": []
+      },
+      "effective_policy_equals": "authorized-20261025-selected05-policy-P1.json"
+    }
+  ]
+}
