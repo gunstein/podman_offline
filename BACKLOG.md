@@ -524,11 +524,13 @@ scope and usability findings explicitly recorded.
 
 ## 69. Paper-first installation for closed networks
 
-Status: requirement and investigation (2026-10-25), lab questions answered the
-same day (see below), design not chosen; high priority, agreed with
-the product owner. No design is chosen yet. It applies to items 65 (implemented
-for pasted commands), 66 (planned) and 68 (human trial), and must be settled
-before 66's operator-facing commands are fixed.
+Status: requirement and investigation (2026-10-25), lab questions answered and
+an RPM prototype run the same day (see below); **direction chosen by the
+product owner on 2026-10-25: signed RPM delivery with one command per role**
+(see "Chosen direction"); detailed design not written yet; high priority. It
+applies to items 65 (implemented for pasted commands), 66 (planned) and 68
+(human trial), and must be settled before 66's operator-facing commands are
+fixed.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
@@ -634,7 +636,57 @@ tested. No product code changes; no automated regression coverage.
   (user manager, `XDG_RUNTIME_DIR`, `journalctl --user`) so one person can
   switch roles without logging out at the console?
 
-### Design options to evaluate afterwards
+### Chosen direction (product owner, 2026-10-25)
+
+Decided after the [RPM prototype run](acceptance/RPM-PROTOTYPE.md#results-2026-10-25),
+which showed that RPM delivery works with the default fapolicyd policy (trust
+from rpmdb only, no denials) and makes the administrator's part typeable from
+paper, but leaves the runtime user's part (about 3 700 characters of pasted
+shell) unchanged. The product owner also stated that long guided sessions on
+the closed lab are not feasible.
+
+- **Delivery:** every release and the administrator tool are signed RPMs.
+  The main scenario is a **standalone server on a very restricted network**
+  without a package repository. A delivery is a directory of files (RPMs,
+  public key, repository metadata) that may arrive on USB, DVD, a network
+  share or by `scp`; nothing is executed from it, so `noexec` mounts do not
+  matter, and an incomplete copy fails the signature/checksum checks before
+  changes. An organisation's internal package repository must keep working
+  with the same RPMs but is not a separate feature.
+- **Administrator:** on a new server, once, with OS tools only (supplier code
+  must not run before the key is checked): compare `gpg --show-keys` with the
+  fingerprint on paper, `rpm --import`, and install the administrator RPM with
+  the signature enforced (`localpkg_gpgcheck=1` or the delivery as a
+  repository with `gpgcheck=1`). After that, every installation, upgrade and
+  retirement is **one command**, `sudo <product>-admin [delivery directory]`:
+  it verifies and installs what is new, prepares the host (asking for the
+  account and port the first time), refuses to retire a release in use, and
+  says what the runtime user does next.
+- **Runtime user:** logs in directly (console or SSH), then **one command**,
+  `<product>`: it detects the state, asks only for missing values with
+  defaults (public address, port, credential folder), installs the delivered
+  releases in dependency order, runs the health checks and prints status. A
+  repeat continues after interruption; an upgrade asks nothing. No values
+  block and no shell blocks in the manual.
+- **Preflight stops** before changes for anything the host must already have
+  (OS packages from the OS media, by name; `subj_cache_size`; journald), and
+  says who acts.
+- **`release.py` flow:** phased out before the first customer installation;
+  one supported flow, one manual.
+- **Verification:** the acceptance harness runs exactly the paper commands
+  (review guide section 7), including the strict fapolicyd profile above,
+  first installation, upgrade, retirement and interruption/retry. Manual lab
+  sessions are limited to one short paper/human trial (item 68).
+
+Open points for the design: how answers are given non-interactively for the
+harness; dependency order and version selection when several releases are
+installed; the retirement guard; how credentials of the organisation's PKI or
+PFX fit the credential-folder prompt; package naming for side-by-side versions
+(no automatic `dnf upgrade`); disk space (images are stored uncompressed);
+supplier signing key management; console-only and one-person use; whether the
+strict profile holds.
+
+### Design options considered before the decision
 
 - Trusted tool delivery: a signed RPM installed once (`rpm --import` with a
   fingerprint compared against paper, `rpm -K`, `dnf install`), so the
