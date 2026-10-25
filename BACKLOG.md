@@ -524,7 +524,8 @@ scope and usability findings explicitly recorded.
 
 ## 69. Paper-first installation for closed networks
 
-Status: requirement and investigation (2026-10-25), high priority, agreed with
+Status: requirement and investigation (2026-10-25), lab questions answered the
+same day (see below), design not chosen; high priority, agreed with
 the product owner. No design is chosen yet. It applies to items 65 (implemented
 for pasted commands), 66 (planned) and 68 (human trial), and must be settled
 before 66's operator-facing commands are fixed.
@@ -574,7 +575,44 @@ None of this can be typed reliably from paper.
 
 ### Questions to answer in the lab before choosing a design
 
-Recipe: [PAPER-FIRST-LAB.md](acceptance/PAPER-FIRST-LAB.md) (not run yet).
+Recipe and results: [PAPER-FIRST-LAB.md](acceptance/PAPER-FIRST-LAB.md), run on
+2026-10-25 on OL9.8 with the default fapolicyd policy. Findings:
+
+- Untrusted shell scripts run for everyone (rule `allow perm=any all :
+  ftype=text/x-shellscript`), and root may run untrusted Python. Only non-root
+  opening of untrusted Python is denied. fapolicyd does not protect a delivered
+  `setup.sh`; authenticity must come from a signature check.
+- RPM-installed files are trusted through `trust = rpmdb` without extra rules.
+- `dnf install ./file.rpm` does not check signatures by default
+  (`localpkg_gpgcheck = 0`); `rpm -K` prints `digests OK` for an unsigned file,
+  so the manual must require the words `signatures OK` or the host must enable
+  `localpkg_gpgcheck`.
+- `sudo -iu` gives no user session; `machinectl` needs `systemd-container`
+  (not installed); `ssh <runtime>@localhost` and a console login both give a
+  real session with working `systemctl --user` and user journal.
+
+The questions below are answered there; they are kept for reference.
+
+**Policy variation (product owner, 2026-10-25).** The lab host has the default,
+permissive OL9 policy. Customers may have stricter fapolicyd settings, and the
+design must not depend on rules that a site can remove, nor ask a site to relax
+its policy. Variants to support or refuse clearly:
+
+| Setting | Lab default | Stricter variant | Affects |
+| --- | --- | --- | --- |
+| Rule 12 (shell scripts allowed for all) | present | removed | any delivered script run from media |
+| Rules 1/2 (root may open/run anything) | present | removed | root running untrusted Python/scripts |
+| `trust` | `rpmdb,file` | `rpmdb` only | today's release publication, which enrolls releases in the `file` trust database for the runtime user's Python |
+| `integrity` | `none` | `sha256` or `ima` | today's release helper refuses anything but `none` (item 54 open point) |
+| Mount options | default | `noexec` on `/var/tmp` or media | executing from upload/media |
+
+Design principles: build only on `trust = rpmdb` and on no other permissive
+rule; detect the actual policy in preflight and name what is missing and who
+must act, never change it; document one explicit supported policy range and
+refuse anything outside it before changes. Add a lab profile with
+`trust = rpmdb`, `integrity = sha256` and rules 1, 2 and 12 removed, and repeat
+the recipe there before choosing a design; RPM delivery is the only option
+expected to work under every variant.
 
 - Does the default OL9 fapolicyd policy deny `bash setup.sh` for an untrusted
   shell script on DVD/USB or in the upload directory? (For Python this was
