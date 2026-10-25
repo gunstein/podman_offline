@@ -550,6 +550,74 @@ class ReportingTests(unittest.TestCase):
 
 
 class FlowTests(unittest.TestCase):
+    def test_identity_entry_points_use_accessible_cwd_and_keep_stop_rules(self):
+        for control_fails in (False, True):
+            with (
+                self.subTest(control_fails=control_fails),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                for name in ("wp0-release-base", "wp0-release-sibling"):
+                    (root / (name + ".json")).write_text("reference")
+                (root / "upgrade-observed").write_text("2.0")
+                calls = []
+
+                def entry(
+                    args, calls=calls, control_fails=control_fails, root=root, **kwargs
+                ):
+                    # Exercise subprocess cwd handling from an unrelated cwd,
+                    # without needing root, setpriv or RPM in the unit suite.
+                    self.assertEqual(kwargs.get("cwd"), "/")
+                    result = subprocess.run(
+                        [sys.executable, "-c", "import os; print(os.getcwd())"],
+                        cwd=kwargs["cwd"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    self.assertEqual(result.stdout.strip(), "/")
+                    calls.append(args)
+                    if len(calls) == 1:
+                        self.assertEqual(args[0], "setpriv")
+                        self.assertNotIn("allowed", kwargs)
+                        if control_fails:
+                            raise RuntimeError("Command failed: setpriv")
+                        (root / "executed").write_text("release-code-ran\n")
+                        return subprocess.CompletedProcess(args, 0, "", "")
+                    self.assertEqual(kwargs["allowed"], (3,))
+                    reason = (
+                        "mismatching" if args[-1] == "wp0-release-base" else "missing"
+                    )
+                    return subprocess.CompletedProcess(
+                        args, 3, "", reason + " identity"
+                    )
+
+                with (
+                    mock.patch.object(m, "STATE", root),
+                    mock.patch.object(m, "RUN", root),
+                    mock.patch.object(m, "IDENTITIES", root),
+                    mock.patch.object(
+                        m, "dropped", side_effect=lambda *args: ["setpriv", *args]
+                    ),
+                    mock.patch.object(guest, "setup_mechanisms"),
+                    mock.patch.object(guest, "PREDICATES", []),
+                    mock.patch.object(op, "command", side_effect=entry),
+                    mock.patch.object(op, "versions", return_value=["2.0"]),
+                    mock.patch.object(op, "install_verified") as install,
+                ):
+                    if control_fails:
+                        with self.assertRaisesRegex(RuntimeError, "setpriv"):
+                            guest.identities()
+                        install.assert_not_called()
+                        self.assertEqual(guest.PREDICATES, [])
+                    else:
+                        self.assertTrue(guest.identities())
+                        self.assertEqual(len(calls), 5)
+                        self.assertEqual(
+                            set(guest.PREDICATES), wp0.expected_predicates("H")
+                        )
+                        self.assertFalse((root / "executed").exists())
+
     def test_remote_program_has_independent_pin_and_no_import_side_effects(self):
         run = wp0.Investigation(mock.Mock())
         run.host = "placeholder"
