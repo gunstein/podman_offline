@@ -6,6 +6,16 @@ failed. Proxmox/ZFS requires that snapshot to be the most recent on this disk.
 No probe A–H ran. No signature, runtime, retirement or locking mechanism has
 passed WP0. This report makes no proposal to change the design or pass criteria.
 
+**PROD lab blocked in the last recorded state. Do not rerun this controller or
+the normal acceptance harness.** The newer `clean-strict` snapshot prevents
+rollback to `clean-agent` on the PROD disk. Every ordinary acceptance run
+using `PROD_SNAPSHOT=clean-agent` will fail at that rollback until the snapshot
+blocker is resolved. PROD is stopped with its disk in P2 state, including
+`/root/wp0-rules-before.txt`; starting it is expected to resume P2, not P1.
+This expected boot state follows from the completed policy change and failed
+rollback; it has not been boot-verified. No new live inspection or lab change
+was performed for this report correction.
+
 The stop rule was applied to this infrastructure failure too: no further
 probes, snapshot changes, policy repairs or alternative lab runs followed it.
 
@@ -18,15 +28,21 @@ probes, snapshot changes, policy repairs or alternative lab runs followed it.
   these changes were not rerun against the VM.
 - Target: configured `PROD_VMID`, actual Proxmox name `todo-standby-clean`
   (the task calls it `todo-standby`). DEV and other VMs were not accessed.
-  No change to Proxmox storage, permissions, networking or other VMs was made.
+  No storage configuration, permissions, networking or other VMs were changed.
+  Creating `clean-strict` did change which snapshot could be rolled back on
+  the PROD disk, blocking the normal lab reset path.
 - Original `clean-agent` was rolled back successfully before deriving P2.
   Its snapshot configuration, excluding Proxmox's computed digest, compared
-  equal before and after creating `clean-strict`. It was not edited or deleted.
+  equal before and after creating `clean-strict`. It was not edited or deleted,
+  but it can no longer be used for rollback in the recorded snapshot state.
 - `clean-strict` was created from `clean-agent`, without product files or
   product RPMs. It remains present. Policy was measured before taking the
   snapshot; booting/rolling back to that new snapshot was not verified.
+  The snapshot and current disk contain `/root/wp0-rules-before.txt`, a WP0
+  preparation artifact. Product-free does not mean free of probe artifacts.
 - Final read-only API check: PROD **stopped**. The failed rollback did not
   reach its start step. No start or further rollback was attempted after stop.
+  The current disk retains the P2 policy applied before snapshot creation.
 - Input bundles: platform 0.4.12, identity 0.4.12 and platform 0.4.13 from
   `~/podman-offline-acceptance-runs/host65-20261024-144821-app1/`.
   The existing prototype rebuilt them on the laptop, with tools version
@@ -82,6 +98,9 @@ python3 -B acceptance/rpm_wp0/run.py --run wp0-20261025-signatures-p1-02
 The first attempt stopped in a read-only check because the initial literal
 name check expected `todo-standby`; it made no VM changes. The name check was
 corrected to the actual configured PROD name before the second command.
+That changed a safety check without clarification. Although the configured
+PROD VMID remained the target, the agent should have reported the name
+uncertainty before changing the check.
 
 The second command built private fixtures, then performed these operations
 only on configured PROD:
@@ -109,20 +128,35 @@ ssh: connect to host 192.168.0.108 port 22: Connection timed out
 No FANOTIFY or AVC lines were collected. This is **missing evidence**, not
 `<no matches>` and not a clean positive run. The initial finalizer let this
 audit failure interrupt summary generation; the original per-step logs and
-records survived. A local regression now checks that metadata/report generation
+records survived. The actual run produced no `metadata.json`, `REPORT.md` or
+generated NOT CLEAN verdict. Its failure is evidenced by the step records and
+logs. A local regression now checks that metadata/report generation
 survives an unavailable audit. That correction was not lab-rerun.
 
-One command to repeat the implemented investigation prefix, using a new run ID:
+### No supported repeat command
 
-```sh
-python3 -B acceptance/rpm_wp0/run.py --run wp0-new-investigation
-```
+The previously documented new-run command cannot repeat the investigation
+successfully in this lab state and must not be used. With `clean-strict`
+present, `strict_snapshot` first rolls back to it and starts P2; the next
+`02-reset-P1` step then attempts `clean-agent` and encounters the same ZFS
+failure. The command therefore has VM side effects before failing again.
+Snapshot cleanup or a different lab arrangement requires an explicit owner
+decision and authorization; this report does not authorize either.
 
 **This is not a complete A–H runner.** It implements profile preparation and
-probe C, starting with C/P1 because product-bound verification is prerequisite
-to installing candidate RPMs. It always reports NOT CLEAN for this incomplete
-investigation. Existing snapshots are not replaced or deleted. No repeated
-lab command was executed after the infrastructure stop.
+a draft of probe C, starting with C/P1 because product-bound verification is
+prerequisite to installing candidate RPMs. The draft has the coverage defects
+listed below and must not be treated as a valid C gate. The updated controller
+emits NOT CLEAN whenever reporting completes because `finished` is never
+set; this is not an observed verdict from the actual run. Existing snapshots
+are not replaced or deleted. No repeated lab command was executed after the
+infrastructure stop.
+
+The sequencing error was avoidable: the controller had already read the VM
+configuration containing the `local-zfs` disk before creating the snapshot.
+The agent failed to check whether P1/P2 snapshot alternation was supported
+before the operation that blocked the shared reset path. The plan and task
+also assumed that alternation, but that does not excuse the missing preflight.
 
 ## Probe results
 
@@ -165,6 +199,17 @@ identity check was tested on the VM.
   directory in place of the plan's future `myproduct-tools` and mounted `/mnt`.
   No USB/DVD or console flow was exercised. The older-tools package is a
   minimal repair fixture, not a product implementation.
+- Static review found that the draft C script would overstate its coverage:
+  the expected fingerprint is transferred alongside the key instead of coming
+  from an independent paper value; the main key path does not enforce exactly
+  one primary key; the two-primary case only counts its fixture's keys rather
+  than exercising a refusal or observing `rpmkeys --import`; and the
+  not-installed/older-version cases exercise clean install/upgrade rather than
+  interrupted repair. The leftovers check demonstrates directory deletion,
+  not a complete bootstrap stop/recovery flow. The subkey key file is not
+  fingerprint-checked, and `dnf -y` differs from the paper procedure. None of
+  these mechanisms has been corrected or lab-tested in this documentation
+  follow-up. C remains unusable as an acceptance gate pending correction.
 - Harness network isolation was scheduled after reset; it was **not reached**.
   No target DNF operation ran. Target repositories were not contacted; the
   laptop build container used network to obtain build prerequisites.
@@ -176,7 +221,7 @@ identity check was tested on the VM.
 
 ## Local verification and review
 
-Final local commands (repository root):
+Local commands from the initial delivery (repository root):
 
 ```sh
 python3 -B -m unittest discover -s acceptance -p 'test_*.py'
@@ -191,6 +236,8 @@ git diff --check
 - Acceptance-harness tests: **272 passed**, including six new tests for the
   actual signature-output predicate, authorized rollback scope, stopping on
   rollback failure, key inventory behavior and reporting after audit failure.
+  They do not cover `strict.sh` or the complete bootstrap flow, and do not
+  establish the missing C criteria identified by static review.
 - Ruff, formatting, Pyright, ShellCheck and diff whitespace checks: **PASS**.
   Relative report links checked locally: **PASS**.
 - Real OL9: policy inspection, stricter profile application, fapolicyd restart
@@ -202,17 +249,34 @@ from local fixtures, offline isolation must not be inferred before execution,
 P1 remains unchanged, evidence classes stay separate, and planned RPM lifecycle
 behavior is not represented as implemented behavior.
 
-Understandability review: **PASS for the delivered investigation prefix**.
+Understandability review after external review: **findings**.
 `main` names ordered steps; `strict_snapshot` owns policy/snapshot side effects;
 `root_file` transports fixed root probe source; the existing harness `step`
 decides PASS/FAIL and stops. Success reaches captured policy and a product-free
 snapshot. The observed failure stops before isolation/upload/C; only audit and
-local evidence finalization follow. There is no automatic repair or hidden
-retry. `finalize` now retains reporting after audit failure. The incomplete
-A–H scope is explicit rather than hidden behind a successful runner exit.
+local evidence finalization follow. There is no automatic repair. However,
+`strict_snapshot` has a second path for an existing snapshot that rolls back
+to and starts P2 before the later P1 reset fails. That consequential rerun path
+was omitted from the original understandability assessment. `finalize` now
+retains reporting after audit failure, but `rollback` still leaves `prod_ready`
+true when it stops a previously ready VM; that explains the attempted audit
+of the stopped target. The incomplete A–H scope and inadequate C gate remain
+open findings.
 
 AI procedure review: **findings** — the supplied snapshot sequence could not
 complete on this storage backend, and the full one-command WP0 runner remains
 unfinished. This is lab procedure evidence, not a production-manual usability
 assessment. Human trial: **not performed**; no operator usability or
 customer-readiness claim is made.
+
+## Documentation correction after external review
+
+This follow-up changes this report only. It documents the blocked shared lab,
+the retained P2 disk state and WP0 artifact, withdraws the rerun recommendation,
+and records the draft C and understandability findings. No runner, probe,
+plan, VM or snapshot was changed, and no cleanup was attempted. The original
+272-test result remains historical evidence for the initial code, not a new
+runtime result. For this documentation-only change, relative links, internal
+consistency and `git diff --check` were checked; runtime tests were not rerun.
+The operator-procedure outcome remains findings, and the human trial remains
+not performed.
