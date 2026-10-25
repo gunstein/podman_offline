@@ -1,7 +1,8 @@
 # Item 69 implementation plan: signed RPM delivery, one command per role
 
-Status: plan, revision 3 (2026-10-25), after AI reviews of revision 1
-(`7a9f9cf`) and revision 2 (`f05f63b`); not implemented. Work package 0 is an
+Status: plan, revision 3.1 (2026-10-25), after AI reviews of revision 1
+(`7a9f9cf`), revision 2 (`f05f63b`) and revision 3 (`05fb034`, which cleared
+WP0 to start as a bounded investigation); not implemented. Work package 0 is an
 investigation; statements marked "confirm in WP0" are hypotheses about rpm,
 dnf or fapolicyd behaviour, and WP1 starts only when every mandatory probe
 passes. Read
@@ -96,10 +97,11 @@ accept.
 
 ## Signature verification
 
-Verification always uses an **isolated keyring** that contains only the
-delivered `RPM-GPG-KEY-<product>`, whose primary fingerprint matched the paper
-(signatures by its signing subkeys are accepted because they are part of that
-key file), and it requires **both a valid signature and valid digests**
+Verification always uses an **isolated keyring** that contains exactly one
+primary key, the approved product key whose fingerprint matched the paper, and
+its valid signing subkeys; a key file with any additional primary key is
+refused before import, and a key database is never reused without being
+created fresh in an emptied work directory. It requires **both a valid signature and valid digests**
 regardless of host defaults (`_pkgverify_level all`). Unsigned packages,
 other keys, tampered headers or payloads fail. The bytes verified are the
 bytes installed: packages are first copied to a root-only directory.
@@ -110,20 +112,27 @@ Bootstrap, once per new server (OS tools only; exact commands confirm in WP0):
 sudo -i
 lsblk                                   find the medium, e.g. sdb1
 mount /dev/sdb1 /mnt
+rm -rf /root/pkg                        start from an empty work directory
 mkdir -m 0700 /root/pkg
 cd /root/pkg
 cp /mnt/RPM-GPG-KEY-myproduct /mnt/myproduct-tools-*.rpm .
-gpg --show-keys RPM-GPG-KEY-myproduct   fingerprint = this page
+gpg --show-keys RPM-GPG-KEY-myproduct   exactly one "pub" line; fingerprint = this page
 rpmkeys --dbpath /root/pkg/db --import RPM-GPG-KEY-myproduct
 rpmkeys --dbpath /root/pkg/db --define '_pkgverify_level all' -K myproduct-tools-*.rpm
-                                        must end with: digests signatures OK
+                                        exactly one line, ending: digests signatures OK
 rpm --import RPM-GPG-KEY-myproduct
 dnf --disablerepo='*' --setopt=localpkg_gpgcheck=1 install ./myproduct-tools-*.rpm
 exit
 ```
 
-The delivery contains exactly one tools package. Any mismatch: stop and contact
-the supplier. The global `rpm --import` is needed so that later dnf
+OS prerequisite before the first line: `gnupg2` (for `gpg`), with `rpm` and
+`dnf`, from the OS installation. The delivery contains exactly one tools
+package. Any mismatch (more than one `pub` line, another fingerprint, more than
+one package line, anything but `digests signatures OK`): stop and contact the
+supplier. `/root/pkg` is the procedure's own scratch directory; emptying it on
+every run makes the procedure repeatable without mixing old packages or key
+databases. The tools apply the same rules (one primary key, fresh private key
+database, one package per verified file). The global `rpm --import` is needed so that later dnf
 transactions accept product packages; it does not authorize anything by itself
 because every product package is checked against the isolated keyring first.
 
@@ -139,10 +148,11 @@ Internal repository: `<product>-admin --repo <repo-id>` runs
 `dnf download --disablerepo='*' --enablerepo=<repo-id>` for the selected
 release packages **and** a newer tools package if the releases require it,
 into the private directory, then applies the same verification and local
-installation. Bootstrap from a repository replaces the `cp` line with
+installation. Bootstrap from a repository replaces the `cp` line with two lines: copy the
+key file (from the supplier medium or the organisation's kept copy) into the
+work directory, and
 `dnf download --disablerepo='*' --enablerepo=<repo-id> myproduct-tools`
-(needs `dnf-plugins-core`; confirm in WP0); the key file comes from the
-supplier medium or a copy the organisation keeps.
+(needs `dnf-plugins-core`; confirm in WP0).
 
 If isolated product-key verification cannot be established in WP0, WP0 stops.
 A signer Key ID comparison is not an automatic replacement.
@@ -164,12 +174,21 @@ A signer Key ID comparison is not an automatic replacement.
   whose name is installed with another identity, and any `Release` other
   than 1. An identical candidate is skipped, or reinstalled when `rpm -V`
   reports the installed tree damaged.
+- **Reference identities:** after the isolated verification and a successful
+  install, `<product>-admin` writes the package identity to a root-owned
+  record `/var/lib/<product>/identities/<package>.json` (0644, directory 0755,
+  written atomically, only by the admin command). A package installed any
+  other way has no matching record. Separately, the runtime records the
+  release content hash in its installed metadata when it installs a release;
+  that links installed state to content, while the root-owned record is the
+  reference for the package itself.
 - **Detection on a bypass:** a plain `dnf` upgrade of a release package cannot
   be blocked by the installed package (its `%preun` runs after the new files
   are in place; confirm in WP0). `<product>-admin` and `<product>` compare
-  each installed release package's identity and the release tree with the
-  identity recorded at install and stop before any lifecycle step on a
-  mismatch, naming the release; the manual never shows `dnf` for product
+  each relevant installed package (rpmdb header identity, `rpm -V`, release
+  tree against `checksums.sha256`) with its root-owned record **before any
+  code of that release runs**, including `init-layout`, and stop on a missing
+  record or a mismatch, naming the release; the manual never shows `dnf` for product
   packages after the bootstrap. This is detection after the fact, not the same
   guarantee as refusal before publication; with the ledger it covers only a
   deliberately bypassed process.
@@ -204,20 +223,30 @@ Service activity is ignored: a stopped service still protects its release.
 
 1. `<product>-admin` takes `/run/<product>-admin.lock`, then starts the check
    child as the runtime account. The child opens (creating it if missing, as
-   the account) `state/.operation.lock`,
-   takes an exclusive `flock` (bounded wait), runs the check, prints the JSON
-   and keeps the lock until its standard input closes.
+   the account) `state/.operation.lock`, takes an exclusive `flock` (bounded
+   wait), runs the check, sends the JSON **and the open lock descriptor**
+   (`SCM_RIGHTS` over a socket pair) to the admin command, then exits. Root
+   never resolves the account's path; it only holds the received descriptor.
+   The admin command passes that descriptor, inheritable, to the dnf child, so
+   the lock lives as long as either the admin command or dnf is alive: a dead
+   check child, or an admin command killed after `%preun` approved, does not
+   release it while dnf is still erasing.
 2. The admin command confirms with the operator, then writes a root-only
    authorization record `/run/<product>/erase-authorization` naming exactly
-   one package (name-version-release), its own PID and the boot ID.
-3. It runs `dnf --disablerepo='*' remove <that package>`. The package's
-   `%preun` (erase only) allows the erase only if the record names exactly
-   this package and the named PID is alive and is `<product>-admin`;
-   otherwise it fails with "use: sudo <product>-admin". `%preun` takes no lock.
+   one package (name-version-release), the boot ID, its own PID and that
+   process's start time (from `/proc/<pid>/stat`), and a random nonce.
+3. It runs `dnf --disablerepo='*' remove <that package>` as its own child. The
+   package's `%preun` (erase only) allows the erase only if the record names
+   exactly this package, the boot ID matches, the recorded PID with the
+   recorded start time is alive, is `<product>-admin`, **and is an ancestor of
+   the scriptlet's own process**, so a separate `dnf remove` started from
+   another terminal while the record exists is refused. Otherwise it fails
+   with "use: sudo <product>-admin". `%preun` takes no lock. The record is
+   single-use: the admin command deletes it right after dnf returns.
 4. The admin command deletes the record, checks the postcondition (package
    absent from rpmdb, its tree absent, every other release package present and
-   `rpm -V` clean), and only then closes the child's input so the lock is
-   released.
+   `rpm -V` clean, its identity record removed), and only then closes the
+   lock descriptor.
 
 Runtime operations (`<product>` and each `deploy.sh` it starts) take the same
 operation lock: `<product>` takes it and passes the open descriptor to its
@@ -243,8 +272,12 @@ the delivery, then remove again), package present but `rpm -V` failing
 
 ## Runtime command (`<product>`)
 
-1. `init-layout` (today's idempotent, atomic bootstrap; root never reads it).
-2. Take the operation lock; verify installed release identities and trees.
+1. Tools code (no release code yet) verifies the installed releases it may
+   use against their root-owned identity records and trees, and selects the
+   newest valid release per component; nothing of a failing release runs.
+2. `init-layout` from the selected owner release (today's idempotent, atomic
+   bootstrap; root never reads it), then take the operation lock and verify
+   again under the lock.
 3. Item 66 planning over installed releases: order, ranges, pending first,
    skip completed, refuse downgrade.
 4. Only for a component that declares public settings, at its first
@@ -279,7 +312,9 @@ gateway, certificate or public origin gets no prompts.
   namespace. Layout `<component>/<file>`; a flat layout is accepted only when
   every file name is declared by exactly one component, otherwise `<product>`
   stops before copying and names the ambiguous file.
-- **SSH:** `scp` into `incoming/<component>/` as the runtime user.
+- **SSH:** as the runtime user, `scp -r <component> <runtime user>@<server>:/var/lib/<product>/incoming/`
+  from a local folder named after the component; `-r` creates
+  `incoming/<component>/`.
 - **Console or one person:** `sudo <product>-admin --credentials /mnt` opens
   the source files as root with safe opens (no links, regular files, size
   bound) and passes their bytes to a `setpriv` child running as the runtime
@@ -370,7 +405,7 @@ prerequisite.
 | --- | --- | --- |
 | Bootstrap fingerprint or signature check | nothing installed | stop; contact the supplier |
 | Missing bootstrap prerequisite | key imported, nothing else | install the named OS package from the OS media; repeat the dnf line |
-| Tools damaged (interrupted tools install/upgrade; wrapper or module missing) | rpm may list a partly installed tools package | **tools repair**: the bootstrap lines with `dnf reinstall` of the delivered tools package (same isolated check); then the same admin command |
+| Tools damaged (interrupted tools install/upgrade; wrapper or module missing) | rpm may or may not list a tools package, possibly another version | **tools repair**: the bootstrap lines up to the isolated check, then `rpm -q myproduct-tools` decides the last line: not installed → the bootstrap `dnf ... install`; same version as delivered → `dnf ... reinstall`; older than delivered → `dnf ... install` (completes the upgrade); newer than delivered → stop, ask the supplier for the current tools package. All with `--disablerepo='*' --setopt=localpkg_gpgcheck=1`; then the same admin command |
 | Product preflight | nothing changed after tools | named party fixes it; same command |
 | Candidate refused (signature, identity, older version, interface) | nothing installed by this run | supplier delivers a correct package; same command |
 | Release install interrupted | some packages installed, one possibly partly | same command: identity and `rpm -V` checks, reinstall a damaged identical package, install the rest |
@@ -398,15 +433,17 @@ any weakening needs a new product-owner decision before the plan changes.
 | --- | --- | --- |
 | A. Prototype RPMs installed locally, today's runtime flow over real SSH, non-interactive | P1, P2 | services healthy; release files trusted from rpmdb only; no FANOTIFY/AVC in this positive run |
 | B. Root Python from stdin and Python as the account (`prepare-host.sh`) | P2 | both run |
-| C. Full paper bootstrap as written above, on a root-only copy | P1, P2 | product-signed tools accepted; unsigned, other imported key, tampered header, tampered payload and subkey-signed (product subkey: accepted; other key's subkey: refused) behave as stated; output readable from paper |
+| C. Full paper bootstrap as written above, on a root-only copy | P1, P2 | product-signed tools accepted; unsigned, other imported key, tampered header, tampered payload and subkey-signed (product subkey: accepted; other key's subkey: refused) behave as stated; a key file with a second primary key and a leftover `/root/pkg` with old packages and key database are handled by the stop rules; each tools repair state (not installed, same version, older) works; output readable from paper |
 | D. The same isolated check run by tools code on candidates, including repository download | P1 | same results as C; `dnf download` available or an equivalent recorded |
 | E. Immediate execution after install | P1, P2 | trust visible in `--dump-db` within the poll bound; first execution not denied |
-| F. Guard: probe release and tools packages with the `%preun` described above | P1, P2 | plain `dnf remove` and `rpm -e` of a release refused; plain `dnf remove` of tools refused and every release still installed and intact; admin-authorized erase of exactly one package succeeds; a record naming another package or a dead PID refuses; user manager stopped does not change the result |
-| G. Lock protocol | P1 | admin-held check lock blocks a concurrent runtime run (bounded wait, clear message) and does not block its own `%preun`; inherited descriptor accepted, forged descriptor refused |
-| H. Plain `dnf` upgrade of a release package with changed content | P1 | the next `<product>-admin` and `<product>` stop on the identity mismatch before any lifecycle step |
+| F. Guard: probe release and tools packages with the `%preun` described above | P1, P2 | plain `dnf remove` and `rpm -e` of a release refused; plain `dnf remove` of tools refused and every release still installed and intact; admin-authorized erase of exactly one package succeeds; a record naming another package, another boot, a dead or reused PID refuses; a separate plain `dnf remove` of the authorized package started while the record exists is refused (not an ancestor); user manager stopped does not change the result |
+| G. Lock protocol | P1 | the lock blocks a concurrent runtime run (bounded wait, clear message) and does not block the authorized `%preun`; it stays held when the check child exits before `%preun` and when the admin command is killed after `%preun` approved, until dnf ends; inherited descriptor accepted, forged descriptor refused |
+| H. Plain `dnf` upgrade of a release package with changed content, and a release installed without the admin command | P1 | the next `<product>-admin` and `<product>` stop on the missing or mismatching identity record before any code of that release runs, including `init-layout` |
 
 Negative probes (C, F, G, H) may produce errors or denials on purpose; they
-are recorded separately from the positive run A.
+are recorded separately from the positive run A. Probes D, F, G and H use
+small, clearly marked probe implementations; a pass shows that the mechanism
+works on OL9, not that the later product implementation does.
 
 ## Required tests
 
@@ -444,7 +481,7 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
 | --- | --- |
 | Production release authentication | RPM signature and digests against an isolated product-only keyring on a root-only copy, also at bootstrap; other imported keys never authorize |
 | Host preparation | entry `<product>-admin`; keep the UID/capability boundary, safe file operations, actual postcondition checks and bounded diagnostics; creates `incoming/` |
-| Production layout | RPM-owned `releases/`; `/etc/<product>/host.conf`; `incoming/`; `state/answers.conf`; operation lock; only RPM-owned release trees with valid identity are valid |
+| Production layout | RPM-owned `releases/`; root-owned `identities/`; `/etc/<product>/host.conf`; `incoming/`; `state/answers.conf`; operation lock; only RPM-owned release trees with a matching identity record are valid |
 | Compatibility | release interface 2; immutable versions (prevention and detection as above); offline dnf transactions; tools/interface compatibility; verified fapolicyd profiles only |
 | Operator usability | unchanged requirement: one complete manual, separate AI and human verification |
 
