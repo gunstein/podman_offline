@@ -211,6 +211,10 @@ failure, never proof of a clean window.
 `TRUST_TIMEOUT = 30` and `LOCK_TIMEOUT = 5` are controller constants approved
 by the product owner. Local fake-clock tests cover timeout and late success.
 Other SSH/transaction timeouts bound infrastructure hangs, not these criteria.
+Trust dumps hold a registered LMDB read transaction while the unchanged CLI
+runs, to prevent concurrent page recycling in the baseline CLI. Guard and CLI
+share the remaining trust-poll deadline; errors stop without retry. See the
+[reader correction and local prerequisites](RPM-WP0-TRUST-READER.md).
 Automation adaptations are recorded separately: `dnf -y`, SCP input instead
 of mounted media, and scripted reading of paper output. No paper usability,
 console/media handling or human trial is established by automation.

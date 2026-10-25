@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -26,6 +27,77 @@ PKG = Path("/root/pkg")
 TOOLS = "myproduct-tools"
 DELIVERED = "myproduct-tools-2.0-1.noarch.rpm"
 TRANSCRIPT = []
+
+# fapolicyd 1.4.5's CLI uses MDB_NOLOCK. Register an older read transaction
+# while the CLI runs, so the writer cannot recycle pages used by its snapshot.
+# The child process/group lets the controller bound even LMDB mutex waits.
+TRUST_DB = Path("/var/lib/fapolicyd")
+TRUST_DUMP_READER = r"""
+import ctypes as c
+import os
+import subprocess
+import sys
+lib = c.CDLL("liblmdb.so.0")
+lib.mdb_env_create.argtypes = [c.POINTER(c.c_void_p)]
+lib.mdb_env_create.restype = c.c_int
+lib.mdb_env_open.argtypes = [c.c_void_p, c.c_char_p, c.c_uint, c.c_uint]
+lib.mdb_env_open.restype = c.c_int
+lib.mdb_txn_begin.argtypes = [c.c_void_p, c.c_void_p, c.c_uint, c.POINTER(c.c_void_p)]
+lib.mdb_txn_begin.restype = c.c_int
+lib.mdb_txn_abort.argtypes = [c.c_void_p]
+lib.mdb_txn_abort.restype = None
+lib.mdb_env_close.argtypes = [c.c_void_p]
+lib.mdb_env_close.restype = None
+def checked(code):
+    if code:
+        raise RuntimeError("LMDB reader guard failed: " + str(code))
+env, txn = c.c_void_p(), c.c_void_p()
+checked(lib.mdb_env_create(c.byref(env)))
+try:
+    checked(lib.mdb_env_open(env, os.fsencode(sys.argv[1]), 0x20000, 0))
+    checked(lib.mdb_txn_begin(env, None, 0x20000, c.byref(txn)))
+    try:
+        code = subprocess.call(["fapolicyd-cli", "--dump-db"], stdin=subprocess.DEVNULL)
+    finally:
+        lib.mdb_txn_abort(txn)
+finally:
+    lib.mdb_env_close(env)
+if code:
+    print("WP0 trust dump child exit=" + str(code), file=sys.stderr)
+sys.exit(code if code >= 0 else 128 - code)
+"""
+
+
+def guarded_trust_dump(timeout):
+    record = {
+        "argv": ["fapolicyd-cli", "--dump-db"],
+        "reader_guard": "MDB_RDONLY transaction held by supervising process",
+    }
+    process = subprocess.Popen(
+        ["python3", "-I", "-B", "-c", TRUST_DUMP_READER, str(TRUST_DB)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Terminate both the guard and CLI: releasing the reader while an
+        # orphaned CLI continues would reintroduce the unsafe read.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        record.update(
+            exit=process.returncode, stdout=stdout, stderr=stderr, timed_out=True
+        )
+        TRANSCRIPT.append(record)
+        raise RuntimeError("Trust dump exceeded the poll deadline") from None
+    record.update(exit=process.returncode, stdout=stdout, stderr=stderr)
+    TRANSCRIPT.append(record)
+    require(process.returncode == 0, "Command failed: guarded fapolicyd-cli")
+    return stdout
 
 
 def command(args, allowed=(0,), timeout=120, **kwargs):
@@ -289,8 +361,7 @@ def wait_trust(packages, code_only=False):
     inventory = trust_inventory(packages, code_only)
 
     def poll(remaining):
-        result = command(["fapolicyd-cli", "--dump-db"], timeout=remaining)
-        return trust_matches(result.stdout, inventory)
+        return trust_matches(guarded_trust_dump(remaining), inventory)
 
     return bounded_poll(poll, TRUST_TIMEOUT)
 
