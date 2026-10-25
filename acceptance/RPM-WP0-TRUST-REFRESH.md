@@ -85,3 +85,9 @@ The runbook declares the additional observations. No human usability trial or
 independent review occurred. Relevant real cases are E/P1+P2 first, then A/P1+P2
 and R4/P1+P2 only if preceding cases pass; each retains the runner's isolation
 and first-failure stop rule. Their results must be recorded separately.
+
+## Actual selected lab verification
+
+[E, A and R4 on P1/P2](RPM-WP0-LAB-20261025-SELECTED05.md) all passed at
+`47b14ca`, including clean per-case audits. These six selected results verify
+the new observation flow on install and upgrade; they are not full WP0 PASS.
