@@ -1,5 +1,9 @@
 # WP0 runner: local implementation, not lab verification
 
+**Final result:** the [full matrix passed at `3222efb`](RPM-WP0-LAB-20261025-FULL.md)
+(24/24 case/profile runs, clean audits). This is investigation evidence, not a
+product implementation or WP1 approval. The history below is retained.
+
 This runner implements the investigation matrix in plan revision 3.2.
 The [second authorized run](RPM-WP0-LAB-20261025-RUN02.md) at `9b2cfb3` passed
 13 case/profile runs, then stopped in R4/P1 on a trust-dump assertion.
