@@ -8,11 +8,11 @@ the [review guide](REVIEW_GUIDE.md) (including section 7), the
 [production manual](PRODUCTION-INSTALL.md) before implementing.
 
 Backlog 69 (paper-first installation) chose signed RPM delivery on
-2026-10-25; its [plan](RPM-DELIVERY-PLAN.md) supersedes the administrator side
-below (`release.py setup --all-in-input-dir`, published releases) and runs
-`install-set` from the tools RPM as the runtime command `<product>`, with
-prompts in front of `--settings` and `--credentials`. The runtime algorithm,
-decisions on order, skipping, stops and retry, and the tests below still apply.
+2026-10-25. Its [plan](RPM-DELIVERY-PLAN.md#relationship-to-item-66-authoritative)
+lists which decisions below are kept, superseded or replaced, and wins where
+they differ: the administrator side, published records and the `--credentials`
+layout are replaced; the runtime algorithm (order, skipping, stops, pending
+first) and its tests are kept and run as the runtime command `<product>`.
 
 ## Outcome and scope
 

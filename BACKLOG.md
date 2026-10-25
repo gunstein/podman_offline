@@ -605,7 +605,7 @@ its policy. Variants to support or refuse clearly:
 | Rule 12 (shell scripts allowed for all) | present | removed | any delivered script run from media |
 | Rules 1/2 (root may open/run anything) | present | removed | root running untrusted Python/scripts |
 | `trust` | `rpmdb,file` | `rpmdb` only | today's release publication, which enrolls releases in the `file` trust database for the runtime user's Python |
-| `integrity` | `none` | `sha256` or `ima` | today's release helper refuses anything but `none` (item 54 open point) |
+| `integrity` | `none` | `sha256` or `ima` | today's release helper accepts `none`, `size` and `sha256` (`scripts/release.py`); runtime verification of the others is outstanding |
 | Mount options | default | `noexec` on `/var/tmp` or media | executing from upload/media |
 
 Design principles: build only on `trust = rpmdb` and on no other permissive
@@ -655,9 +655,10 @@ the closed lab are not feasible.
   with the same RPMs but is not a separate feature.
 - **Administrator:** on a new server, once, with OS tools only (supplier code
   must not run before the key is checked): compare `gpg --show-keys` with the
-  fingerprint on paper, `rpm --import`, and install the administrator RPM with
-  the signature enforced (`localpkg_gpgcheck=1` or the delivery as a
-  repository with `gpgcheck=1`). After that, every installation, upgrade and
+  fingerprint on paper and the tools package's signer Key ID with the paper,
+  `rpm --import`, and install the tools RPM with the signature enforced.
+  Trust stays bound to the product's own key (product owner, 2026-10-25): a
+  signature from another imported RPM key never authorizes this product. After that, every installation, upgrade and
   retirement is **one command**, `sudo <product>-admin [delivery directory]`:
   it verifies and installs what is new, prepares the host (asking for the
   account and port the first time), refuses to retire a release in use, and
@@ -678,8 +679,11 @@ the closed lab are not feasible.
   first installation, upgrade, retirement and interruption/retry. Manual lab
   sessions are limited to one short paper/human trial (item 68).
 
-Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md)
-(not implemented).
+Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
+revision 2 after an AI review of revision 1 (not implemented). Product-owner
+decisions recorded there: trust bound to the product key, immutable versions,
+and a conservative guard also for plain `dnf remove`. Work package 0 is an
+investigation with explicit go/no-go criteria.
 
 Open points for the design: how answers are given non-interactively for the
 harness; dependency order and version selection when several releases are
