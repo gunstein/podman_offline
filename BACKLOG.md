@@ -574,6 +574,8 @@ None of this can be typed reliably from paper.
 
 ### Questions to answer in the lab before choosing a design
 
+Recipe: [PAPER-FIRST-LAB.md](acceptance/PAPER-FIRST-LAB.md) (not run yet).
+
 - Does the default OL9 fapolicyd policy deny `bash setup.sh` for an untrusted
   shell script on DVD/USB or in the upload directory? (For Python this was
   observed in the item 54 lab runs; for shell it is not verified.)
