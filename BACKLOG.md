@@ -185,7 +185,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 66 and 67 (high priority, in that order), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -502,7 +502,7 @@ declared OS/account baseline, without oral help or internal architecture
 knowledge. Supply only the documented delivery, substitution worksheet and
 manual. An observer records events without coaching or silently repairing state.
 
-Cover transfer and trusted tool bootstrap, prerequisite diagnosis/remedy, first
+Use a printed manual without copy/paste (backlog 69), with a console-only variant and one person holding both accounts. Cover transfer and trusted tool bootstrap, prerequisite diagnosis/remedy, first
 setup, repeated setup and continuation after an interruption, then real SSH login
 as the runtime user without sudo, configuration/credential delivery, installation,
 status and safe journal access. Include install sets and reboot/upgrade/retire
@@ -521,6 +521,136 @@ Keep AI walkthrough, automated acceptance and human outcomes separate. The
 assisted 2026-10-23 trial and green automated lab runs do not satisfy this item.
 Completion requires an unassisted pass for each claimed task, with remaining
 scope and usability findings explicitly recorded.
+
+## 69. Paper-first installation for closed networks
+
+Status: requirement and investigation (2026-10-25), lab questions answered the
+same day (see below), design not chosen; high priority, agreed with
+the product owner. No design is chosen yet. It applies to items 65 (implemented
+for pasted commands), 66 (planned) and 68 (human trial), and must be settled
+before 66's operator-facing commands are fixed.
+
+Many customers install in a closed server lab, often from a **printed manual**,
+sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
+administrator and the runtime user are often **the same person** using two
+accounts. Whatever the scenario, installation must be easy. The current manual
+assumes copy and paste: a ~60-line Python block for the tool bootstrap, a long
+multi-line `setup` command, a variable "values block" and 64-character digests.
+None of this can be typed reliably from paper.
+
+### Scenarios to support
+
+| Dimension | Variants |
+| --- | --- |
+| Bundle delivery | one DVD per bundle, possibly at different times; many bundles on a USB stick; a lab network share; `scp` from a laptop |
+| Server access | console only; SSH from a laptop in the closed network |
+| Manual | printed; PDF on another machine without copy/paste; copy/paste (not the default assumption) |
+| Tool provisioning | organisation has an internal package repository; it does not; only supplier media |
+| Security baseline | SELinux Enforcing and fapolicyd as today; possibly stricter local rules |
+| Task | first installation; adding a component later; updating one app; a new server |
+| People | separate administrator and runtime user; one person with both accounts |
+| Credentials | files from the supplier; the organisation's PKI; PEM or PFX |
+
+### Requirements for the manual and the tools
+
+1. Every command can be typed from paper without error: short, few options, no
+   pipes, line continuations, quoting or long paths in the ordinary flow.
+2. Tools ask for missing values with a suggested default (runtime account, port,
+   public address, which found bundles to publish) and accept the same values
+   as options for automation and tests.
+3. Sensible defaults: product from the bundles, bundles from the current or
+   mounted directory, port 8443.
+4. The operator compares, never types, digests and key fingerprints: tools print
+   them in groups of four characters and ask for confirmation.
+5. The same flow for every delivery medium: mount or copy, then one command.
+6. One command per role, repeated after a stop or interruption until it reports
+   success.
+7. Errors in one or two lines: what is wrong and what to do now; no tracebacks,
+   no reference to another document for ordinary remedies.
+8. Account switches that work at a console: log out and log in as the runtime
+   user (a real login session). `su -` and `sudo -iu` do not start the user's
+   systemd session and must not appear in the manual.
+9. A measurable limit on commands and typed characters per task, checked in the
+   AI walkthrough and the human trial (item 68).
+
+### Questions to answer in the lab before choosing a design
+
+Recipe and results: [PAPER-FIRST-LAB.md](acceptance/PAPER-FIRST-LAB.md), run on
+2026-10-25 on OL9.8 with the default fapolicyd policy. Findings:
+
+- Untrusted shell scripts run for everyone (rule `allow perm=any all :
+  ftype=text/x-shellscript`), and root may run untrusted Python. Only non-root
+  opening of untrusted Python is denied. fapolicyd does not protect a delivered
+  `setup.sh`; authenticity must come from a signature check.
+- RPM-installed files are trusted through `trust = rpmdb` without extra rules.
+- `dnf install ./file.rpm` does not check signatures by default
+  (`localpkg_gpgcheck = 0`); `rpm -K` prints `digests OK` for an unsigned file,
+  so the manual must require the words `signatures OK` or the host must enable
+  `localpkg_gpgcheck`.
+- `sudo -iu` gives no user session; `machinectl` needs `systemd-container`
+  (not installed); `ssh <runtime>@localhost` and a console login both give a
+  real session with working `systemctl --user` and user journal.
+
+The questions below are answered there; they are kept for reference.
+
+**Policy variation (product owner, 2026-10-25).** The lab host has the default,
+permissive OL9 policy. Customers may have stricter fapolicyd settings, and the
+design must not depend on rules that a site can remove, nor ask a site to relax
+its policy. Variants to support or refuse clearly:
+
+| Setting | Lab default | Stricter variant | Affects |
+| --- | --- | --- | --- |
+| Rule 12 (shell scripts allowed for all) | present | removed | any delivered script run from media |
+| Rules 1/2 (root may open/run anything) | present | removed | root running untrusted Python/scripts |
+| `trust` | `rpmdb,file` | `rpmdb` only | today's release publication, which enrolls releases in the `file` trust database for the runtime user's Python |
+| `integrity` | `none` | `sha256` or `ima` | today's release helper refuses anything but `none` (item 54 open point) |
+| Mount options | default | `noexec` on `/var/tmp` or media | executing from upload/media |
+
+Design principles: build only on `trust = rpmdb` and on no other permissive
+rule; detect the actual policy in preflight and name what is missing and who
+must act, never change it; document one explicit supported policy range and
+refuse anything outside it before changes. Add a lab profile with
+`trust = rpmdb`, `integrity = sha256` and rules 1, 2 and 12 removed, and repeat
+the recipe there before choosing a design; RPM delivery is the only option
+expected to work under every variant.
+
+**RPM prototype (2026-10-25).** At the product owner's request a lab prototype
+wraps built bundles as signed, side-by-side-versioned RPMs plus a
+`<product>-host-setup` command: [RPM-PROTOTYPE.md](acceptance/RPM-PROTOTYPE.md)
+(`rpm-prototype/`). Run once on the lab on 2026-10-25 (network on, default
+policy): install, upgrade and `dnf remove` worked with trust from rpmdb only
+and no FANOTIFY/AVC denials; the administrator's part was typeable from
+paper, the runtime user's part was not (see the results). Strict profile not
+tested. No product code changes; no automated regression coverage.
+
+- Does the default OL9 fapolicyd policy deny `bash setup.sh` for an untrusted
+  shell script on DVD/USB or in the upload directory? (For Python this was
+  observed in the item 54 lab runs; for shell it is not verified.)
+- Is a tool installed from an RPM trusted and runnable under the default policy
+  and the `integrity = none` baseline, without extra rules?
+- How does OL9 verify the signature of a local RPM file (`rpm -K`, `dnf install
+  ./file.rpm` with `localpkg_gpgcheck`), and what does the operator see?
+- Does `sudo machinectl shell <runtime>@` give the runtime user a real session
+  (user manager, `XDG_RUNTIME_DIR`, `journalctl --user`) so one person can
+  switch roles without logging out at the console?
+
+### Design options to evaluate afterwards
+
+- Trusted tool delivery: a signed RPM installed once (`rpm --import` with a
+  fingerprint compared against paper, `rpm -K`, `dnf install`), so the
+  per-delivery command is `sudo <product>-setup`; or a short verified copy into
+  a protected path; the current stdin bootstrap stays only for automation.
+- An interactive `setup` front end over the existing authenticated `release.py`
+  operations, with the same trust boundaries.
+- Runtime `install-set` (item 66) with prompts or default locations for settings
+  and credentials instead of options.
+- Larger and not decided: shipping the bundles themselves as RPMs so `rpm` and
+  fapolicyd's RPM trust replace parts of the custom publication; assess image
+  size, upgrade and retention before considering it.
+
+Deliverables: lab findings for the questions above, a chosen design recorded in
+a plan document, then changes to 65/66 and a printed-manual human trial under
+item 68 (console-only and SSH variants, one person with both accounts).
 
 ## 66. Install sets: several signed bundles through one entry point
 
