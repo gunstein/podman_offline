@@ -38,11 +38,14 @@ probes, snapshot changes, policy repairs or alternative lab runs followed it.
 - `clean-strict` was created from `clean-agent`, without product files or
   product RPMs. It remains present. Policy was measured before taking the
   snapshot; booting/rolling back to that new snapshot was not verified.
-  The snapshot and current disk contain `/root/wp0-rules-before.txt`, a WP0
-  preparation artifact. Product-free does not mean free of probe artifacts.
+  The snapshot and disk are expected to contain `/root/wp0-rules-before.txt`,
+  a WP0 preparation artifact, based on `strict.sh` completing. Their contents
+  were not inspected after the failed rollback. Product-free does not mean
+  free of probe artifacts.
 - Final read-only API check: PROD **stopped**. The failed rollback did not
   reach its start step. No start or further rollback was attempted after stop.
-  The current disk retains the P2 policy applied before snapshot creation.
+  The disk is expected to retain the P2 policy applied before snapshot
+  creation; that inference was not verified after the failed rollback.
 - Input bundles: platform 0.4.12, identity 0.4.12 and platform 0.4.13 from
   `~/podman-offline-acceptance-runs/host65-20261024-144821-app1/`.
   The existing prototype rebuilt them on the laptop, with tools version
@@ -246,8 +249,10 @@ git diff --check
 
 Review-guide contracts checked: protected authentication must not be claimed
 from local fixtures, offline isolation must not be inferred before execution,
-P1 remains unchanged, evidence classes stay separate, and planned RPM lifecycle
-behavior is not represented as implemented behavior.
+P1 policy and `clean-agent` metadata were not modified, evidence classes stay
+separate, and planned RPM lifecycle behavior is not represented as implemented
+behavior. This does not establish that P1 can be restored in the recorded
+snapshot state.
 
 Understandability review after external review: **findings**.
 `main` names ordered steps; `strict_snapshot` owns policy/snapshot side effects;
