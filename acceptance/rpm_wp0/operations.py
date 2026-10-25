@@ -2,14 +2,15 @@
 
 import contextlib
 import hashlib
+import json
 import os
 import re
 import shlex
 import shutil
-import signal
 import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from contracts import (
@@ -28,80 +29,75 @@ TOOLS = "myproduct-tools"
 DELIVERED = "myproduct-tools-2.0-1.noarch.rpm"
 TRANSCRIPT = []
 
-# fapolicyd 1.4.5's CLI uses MDB_NOLOCK. Register an older read transaction
-# while the CLI runs, so the writer cannot recycle pages used by its snapshot.
-# The child process/group lets the controller bound even LMDB mutex waits.
-TRUST_DB = Path("/var/lib/fapolicyd")
-TRUST_DUMP_READER = r"""
-import ctypes as c
-import ctypes.util
-import os
-import subprocess
-import sys
-library = ctypes.util.find_library("lmdb")
-if not library:
-    raise RuntimeError("LMDB shared library was not found")
-lib = c.CDLL(library)
-lib.mdb_env_create.argtypes = [c.POINTER(c.c_void_p)]
-lib.mdb_env_create.restype = c.c_int
-lib.mdb_env_open.argtypes = [c.c_void_p, c.c_char_p, c.c_uint, c.c_uint]
-lib.mdb_env_open.restype = c.c_int
-lib.mdb_txn_begin.argtypes = [c.c_void_p, c.c_void_p, c.c_uint, c.POINTER(c.c_void_p)]
-lib.mdb_txn_begin.restype = c.c_int
-lib.mdb_txn_abort.argtypes = [c.c_void_p]
-lib.mdb_txn_abort.restype = None
-lib.mdb_env_close.argtypes = [c.c_void_p]
-lib.mdb_env_close.restype = None
-def checked(code):
-    if code:
-        raise RuntimeError("LMDB reader guard failed: " + str(code))
-env, txn = c.c_void_p(), c.c_void_p()
-checked(lib.mdb_env_create(c.byref(env)))
-try:
-    checked(lib.mdb_env_open(env, os.fsencode(sys.argv[1]), 0x20000, 0))
-    checked(lib.mdb_txn_begin(env, None, 0x20000, c.byref(txn)))
-    try:
-        code = subprocess.call(["fapolicyd-cli", "--dump-db"], stdin=subprocess.DEVNULL)
-    finally:
-        lib.mdb_txn_abort(txn)
-finally:
-    lib.mdb_env_close(env)
-if code:
-    print("WP0 trust dump child exit=" + str(code), file=sys.stderr)
-sys.exit(code if code >= 0 else 128 - code)
-"""
-
-
-def guarded_trust_dump(timeout):
-    record = {
-        "argv": ["fapolicyd-cli", "--dump-db"],
-        "reader_guard": "MDB_RDONLY transaction held by supervising process",
-    }
-    process = subprocess.Popen(
-        ["python3", "-I", "-B", "-c", TRUST_DUMP_READER, str(TRUST_DB)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
+# Observe daemon completion without opening its LMDB lock file. A normal LMDB
+# reader is unsafe in the baseline's fanotify context; see RPM-WP0-TRUST-REFRESH.md.
+TRUST_CURSOR = None
+TRUST_SERVICE = None
+JOURNAL = [
+    "journalctl",
+    "-u",
+    "fapolicyd",
+    "--no-pager",
+    "-o",
+    "json",
+    "--output-fields=__CURSOR,MESSAGE",
+]
+REFRESH_MESSAGES = frozenset(
+    (
+        "It looks like there was an update of the system... Syncing DB.",
+        "Updating trust database",
+        "Updated",
     )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        # Terminate both the guard and CLI: releasing the reader while an
-        # orphaned CLI continues would reintroduce the unsafe read.
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-        stdout, stderr = process.communicate()
-        record.update(
-            exit=process.returncode, stdout=stdout, stderr=stderr, timed_out=True
-        )
-        TRANSCRIPT.append(record)
-        raise RuntimeError("Trust dump exceeded the poll deadline") from None
-    record.update(exit=process.returncode, stdout=stdout, stderr=stderr)
-    TRANSCRIPT.append(record)
-    require(process.returncode == 0, "Command failed: guarded fapolicyd-cli")
-    return stdout
+)
+
+
+def service_identity(timeout=10):
+    result = command(
+        ["systemctl", "show", "fapolicyd", "-p", "ActiveState", "-p", "MainPID"],
+        timeout=timeout,
+    )
+    fields = dict(line.split("=", 1) for line in result.stdout.splitlines())
+    require(fields.get("ActiveState") == "active", "fapolicyd is not active")
+    pid = fields.get("MainPID", "")
+    require(pid.isdigit() and int(pid) > 0, "fapolicyd has no main process")
+    return pid
+
+
+def journal_records(args, timeout=10):
+    result = command(JOURNAL + args, timeout=timeout)
+    require(not result.stderr.strip(), "Ambiguous fapolicyd journal result")
+    records = [json.loads(line) for line in result.stdout.splitlines()]
+    require(
+        all(
+            isinstance(r, dict)
+            and isinstance(r.get("__CURSOR"), str)
+            and bool(r["__CURSOR"])
+            and isinstance(r.get("MESSAGE"), str)
+            for r in records
+        ),
+        "Malformed fapolicyd journal record",
+    )
+    return records
+
+
+def capture_trust_cursor():
+    global TRUST_CURSOR, TRUST_SERVICE
+    TRUST_CURSOR = None
+    TRUST_SERVICE = service_identity()
+    records = journal_records(["-n", "1"])
+    require(len(records) == 1, "Missing pre-transaction journal cursor")
+    TRUST_CURSOR = records[0]["__CURSOR"]
+
+
+def completed_refresh(timeout):
+    cursor = TRUST_CURSOR
+    if not isinstance(cursor, str) or not cursor:
+        raise RuntimeError("Missing pre-transaction trust observation")
+    records = journal_records(["--after-cursor=" + cursor], timeout)
+    updates = [r for r in records if r["MESSAGE"] in REFRESH_MESSAGES]
+    if not updates or updates[-1]["MESSAGE"] != "Updated":
+        return None
+    return updates[-1]["__CURSOR"]
 
 
 def command(args, allowed=(0,), timeout=120, **kwargs):
@@ -126,6 +122,8 @@ def command(args, allowed=(0,), timeout=120, **kwargs):
 
 
 def dnf(*args, **kwargs):
+    if args and args[0] in ("install", "reinstall"):
+        capture_trust_cursor()
     return command(
         ["dnf", "--disablerepo=*", "--setopt=localpkg_gpgcheck=1", "-y", *args],
         **kwargs,
@@ -268,6 +266,7 @@ def verify_paper_delivery(key_name="RPM-GPG-KEY-myproduct", package=DELIVERED):
 def paper_install(action):
     require(action in ("install", "reinstall"), "Unknown paper repair action")
     command(["rpm", "--import", "RPM-GPG-KEY-myproduct"], cwd=PKG)
+    capture_trust_cursor()
     paper_command(
         "dnf --disablerepo='*' --setopt=localpkg_gpgcheck=1 -y "
         + action
@@ -365,7 +364,28 @@ def wait_trust(packages, code_only=False):
     inventory = trust_inventory(packages, code_only)
 
     def poll(remaining):
-        return trust_matches(guarded_trust_dump(remaining), inventory)
+        deadline = time.monotonic() + remaining
+
+        def budget():
+            seconds = deadline - time.monotonic()
+            require(seconds > 0, "Trust observation exceeded the poll deadline")
+            return seconds
+
+        require(
+            service_identity(budget()) == TRUST_SERVICE,
+            "fapolicyd restarted during trust observation",
+        )
+        generation = completed_refresh(budget())
+        if generation is None:
+            return False
+        output = command(["fapolicyd-cli", "--dump-db"], timeout=budget()).stdout
+        after = completed_refresh(budget())
+        require(
+            service_identity(budget()) == TRUST_SERVICE,
+            "fapolicyd restarted during trust observation",
+        )
+        # Never accept a dump overlapping another refresh, even if its bytes match.
+        return after == generation and trust_matches(output, inventory)
 
     return bounded_poll(poll, TRUST_TIMEOUT)
 

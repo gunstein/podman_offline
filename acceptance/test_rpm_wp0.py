@@ -1375,6 +1375,8 @@ done
 """,
                     "rpm": "exit 0\n",
                     "dnf": "exit 0\n",
+                    "systemctl": "printf 'ActiveState=active\\nMainPID=42\\n'\n",
+                    "journalctl": 'echo \'{"__CURSOR":"before","MESSAGE":"ready"}\'\n',
                 }
                 for name, body in bodies.items():
                     path = executables / name

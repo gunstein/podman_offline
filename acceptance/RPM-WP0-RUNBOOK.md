@@ -211,12 +211,14 @@ failure, never proof of a clean window.
 `TRUST_TIMEOUT = 30` and `LOCK_TIMEOUT = 5` are controller constants approved
 by the product owner. Local fake-clock tests cover timeout and late success.
 Other SSH/transaction timeouts bound infrastructure hangs, not these criteria.
-Trust dumps hold a registered LMDB read transaction while the unchanged CLI
-runs, to prevent concurrent page recycling in the baseline CLI. Guard and CLI
-share the remaining trust-poll deadline; errors stop without retry. See the
-[reader correction and local prerequisites](RPM-WP0-TRUST-READER.md).
+Trust observation captures a journal cursor before each installing DNF command,
+then waits for a completed daemon refresh before dumping. The daemon must stay
+active with the same PID; the refresh must remain unchanged across the dump.
+All observations share the 30-second budget. No LMDB reader is registered by
+the runner. See the [refresh correction](RPM-WP0-TRUST-REFRESH.md).
 Automation adaptations are recorded separately: `dnf -y`, SCP input instead
-of mounted media, and scripted reading of paper output. No paper usability,
+of mounted media, scripted reading of paper output, and journal/daemon
+observations surrounding DNF (the paper command lines remain unchanged). No paper usability,
 console/media handling or human trial is established by automation.
 
 ## Evidence, stop and local verification

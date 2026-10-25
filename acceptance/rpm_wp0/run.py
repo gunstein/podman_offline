@@ -162,6 +162,7 @@ class Evidence:
                 "dnf -y",
                 "SSH input directory replaces mounted medium",
                 "scripted paper output checks",
+                "journal cursor and daemon completion observations around DNF",
             ],
             "evidence_class": "real lab only when --execute is explicitly authorized",
         }
