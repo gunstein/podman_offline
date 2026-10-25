@@ -47,8 +47,8 @@ class Investigation(harness.Run):
         self.pve = Proxmox(self.cfg["PVE_ENV"])
         self.endpoint = "/nodes/{node}/qemu/" + self.cfg["PROD_VMID"]
         vm = self.pve.request("GET", self.endpoint + "/config")
-        if vm.get("name") != "todo-standby":
-            raise RuntimeError("Only todo-standby is authorized")
+        if vm.get("name") != "todo-standby-clean":
+            raise RuntimeError("Configured PROD must be todo-standby-clean")
         if any(
             row.get("sid") == "vm:" + self.cfg["PROD_VMID"]
             for row in self.pve.request("GET", "/cluster/ha/resources")
