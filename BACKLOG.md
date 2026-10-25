@@ -617,8 +617,11 @@ expected to work under every variant.
 **RPM prototype (2026-10-25).** At the product owner's request a lab prototype
 wraps built bundles as signed, side-by-side-versioned RPMs plus a
 `<product>-host-setup` command: [RPM-PROTOTYPE.md](acceptance/RPM-PROTOTYPE.md)
-(`rpm-prototype/`). Not built or run yet; to be tested on the offline lab
-network. No product code changes; no automated regression coverage.
+(`rpm-prototype/`). Run once on the lab on 2026-10-25 (network on, default
+policy): install, upgrade and `dnf remove` worked with trust from rpmdb only
+and no FANOTIFY/AVC denials; the administrator's part was typeable from
+paper, the runtime user's part was not (see the results). Strict profile not
+tested. No product code changes; no automated regression coverage.
 
 - Does the default OL9 fapolicyd policy deny `bash setup.sh` for an untrusted
   shell script on DVD/USB or in the upload directory? (For Python this was
