@@ -1,8 +1,10 @@
 # WP0 runner: local implementation, not lab verification
 
 This runner implements the investigation matrix in plan revision 3.2.
-**It has not been run against the lab. A separate code review and explicit
-product-owner authorization are required before using `--execute`.**
+The implementation-stage review and a later explicit product-owner authorization
+were followed by an [authorized lab run](RPM-WP0-LAB-20261025.md) at `0060a24`.
+It stopped in A/P1; WP0 remains incomplete. A separate code review and explicit
+product-owner authorization remain required before another `--execute` run.
 The [previous attempt](RPM-WP0.md) is historical evidence, not a result for
 this implementation. No WP1/product implementation is delivered here.
 
@@ -301,6 +303,7 @@ date parsing, with mocked host/API/RPM/GnuPG/DNF boundaries. Regression cases
 cover a contaminated three-package medium, pre-import key stops, and B's
 account-created descendants rather than root-created parent directories.
 These checks do not establish OL9 ausearch, RPM or DNF behavior. Product tests were not
-rerun because product code is unchanged. Neither the RPM build container nor
-the runner was executed against OL9, Proxmox or any VM. All 24 real case/profile
-results remain unverified; no WP0 go/no-go result is claimed.
+rerun because product code is unchanged. These statements describe the local
+implementation phase. The subsequent authorized run built the RPMs and reached
+A/P1 on PROD before stopping; see the linked lab report for actual runtime scope.
+No WP0 go/no-go approval is claimed.
