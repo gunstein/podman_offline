@@ -67,4 +67,6 @@ Checks executed before the new lab run:
 - `git diff --check`: passed.
 
 The product/unit suite was not rerun: only probe infrastructure changed.
-Actual OL9 results are recorded separately in the subsequent lab report.
+The [third lab run](RPM-WP0-LAB-20261025-RUN03.md) failed in A/P1 because
+OL9 could not resolve `liblmdb.so.0`. The correction is therefore not verified
+on the required baseline; the original R4 failure was not reached.

@@ -1,0 +1,192 @@
+{
+  "source_revision": "14bda3daa00d5e27947b992a91b85514280df9f1",
+  "run_id": "wp0-matrix-20261025-authorized-03",
+  "overall": "NOT CLEAN",
+  "original_signing_home_unchanged": true,
+  "selected_cases": [
+    [
+      "A",
+      "P1"
+    ],
+    [
+      "A",
+      "P2"
+    ],
+    [
+      "B",
+      "P2"
+    ],
+    [
+      "C1",
+      "P1"
+    ],
+    [
+      "C1",
+      "P2"
+    ],
+    [
+      "C2",
+      "P1"
+    ],
+    [
+      "C2",
+      "P2"
+    ],
+    [
+      "R1",
+      "P1"
+    ],
+    [
+      "R1",
+      "P2"
+    ],
+    [
+      "R2",
+      "P1"
+    ],
+    [
+      "R2",
+      "P2"
+    ],
+    [
+      "R3",
+      "P1"
+    ],
+    [
+      "R3",
+      "P2"
+    ],
+    [
+      "R4",
+      "P1"
+    ],
+    [
+      "R4",
+      "P2"
+    ],
+    [
+      "R5",
+      "P1"
+    ],
+    [
+      "R5",
+      "P2"
+    ],
+    [
+      "D",
+      "P1"
+    ],
+    [
+      "E",
+      "P1"
+    ],
+    [
+      "E",
+      "P2"
+    ],
+    [
+      "F",
+      "P1"
+    ],
+    [
+      "F",
+      "P2"
+    ],
+    [
+      "G",
+      "P1"
+    ],
+    [
+      "H",
+      "P1"
+    ]
+  ],
+  "steps": [
+    {
+      "step": "controller-source",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:57:37.381567+00:00"
+    },
+    {
+      "step": "controller-config",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:57:37.391846+00:00"
+    },
+    {
+      "step": "snapshot-preflight",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:57:37.394730+00:00"
+    },
+    {
+      "step": "build-fixtures",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:57:37.488378+00:00"
+    },
+    {
+      "step": "A-P1-rollback",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:59:32.511074+00:00"
+    },
+    {
+      "step": "A-P1-baseline",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:59:54.278265+00:00"
+    },
+    {
+      "step": "A-P1-profile",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:59:55.215220+00:00"
+    },
+    {
+      "step": "A-P1-isolation",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:59:55.511971+00:00"
+    },
+    {
+      "step": "A-P1-transfer",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T13:59:56.436924+00:00"
+    },
+    {
+      "step": "A-P1-probe",
+      "result": "FAIL",
+      "reason": "RuntimeError: RuntimeError: Command failed: guarded fapolicyd-cli",
+      "started": "2026-10-25T14:00:01.429700+00:00"
+    },
+    {
+      "step": "A-P1-failure-audit",
+      "result": "PASS",
+      "reason": "",
+      "started": "2026-10-25T14:00:14.711832+00:00"
+    }
+  ],
+  "failure": {
+    "case": "A-P1",
+    "error": "RuntimeError: Command failed: guarded fapolicyd-cli",
+    "predicates": [],
+    "trust_dump": {
+      "argv": [
+        "fapolicyd-cli",
+        "--dump-db"
+      ],
+      "reader_guard": "MDB_RDONLY transaction held by supervising process",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 6, in <module>\n  File \"/usr/lib64/python3.9/ctypes/__init__.py\", line 374, in __init__\n    self._handle = _dlopen(self._name, mode)\nOSError: liblmdb.so.0: cannot open shared object file: No such file or directory\n"
+    }
+  },
+  "audit": {
+    "lines": [],
+    "no_events": true,
+    "output": "<no matches>\n"
+  }
+}
