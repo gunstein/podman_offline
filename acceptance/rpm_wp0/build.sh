@@ -21,5 +21,6 @@ RPM_KEY_HOME="$work/key" TOOLS_VERSION=0.202610250832 \
 mkdir "$work/fixtures"
 cp "$work/source/dist/rpm/"* "$work/fixtures/"
 podman run --rm -v "$work/key":/key:Z -v "$work/fixtures":/out:Z \
+    -v "$here":/support:ro,Z \
     -v "$here/signatures.sh":/fixtures.sh:ro,Z \
     docker.io/library/oraclelinux:9 bash /fixtures.sh

@@ -1,5 +1,7 @@
 # RPM delivery WP0: stopped before the probes
 
+Current implementation instructions: [WP0 runner runbook](RPM-WP0-RUNBOOK.md).
+
 **NO GO / investigation incomplete.** On 2026-10-25, creating the authorized
 `clean-strict` snapshot succeeded, but the subsequent rollback to `clean-agent`
 failed. Proxmox/ZFS requires that snapshot to be the most recent on this disk.
