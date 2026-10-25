@@ -776,6 +776,41 @@ class FlowTests(unittest.TestCase):
                 else:
                     self.assertFalse(any("--justdb" in call for call in calls))
 
+    def test_release_spec_owns_only_its_leaf_directory_and_payload(self):
+        fixtures = importlib.import_module("fixtures")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            top, output = root / "build", root / "out"
+            top.mkdir()
+            output.mkdir()
+            binary = top / "RPMS/noarch"
+            binary.mkdir(parents=True)
+
+            def rpmbuild(args):
+                self.assertEqual(args[0], "rpmbuild")
+                name = Path(args[-1]).stem.removesuffix("-1.0")
+                (binary / (name + "-1.0-1.noarch.rpm")).write_bytes(b"stub RPM")
+                return ""
+
+            with (
+                mock.patch.object(fixtures, "TOP", top),
+                mock.patch.object(fixtures, "OUT", output),
+                mock.patch.object(fixtures, "run", side_effect=rpmbuild),
+                mock.patch.object(fixtures, "sign"),
+            ):
+                for name in ("wp0-release-base", "wp0-release-sibling"):
+                    leaf = "/var/lib/wp0-probe/releases/" + name
+                    files = {leaf + "/version": (b"1.0\n", 0o644)}
+                    fixtures.build(name, "1.0", files, ":", owned_directories=(leaf,))
+                    spec = (top / (name + "-1.0.spec")).read_text()
+                    manifest = spec.split("%defattr(-,root,root,-)\n", 1)[1]
+                    self.assertEqual(
+                        set(manifest.splitlines()), {"%dir " + leaf, leaf + "/version"}
+                    )
+                    staged = top / (name + "-1.0") / leaf.lstrip("/")
+                    self.assertTrue(staged.is_dir())
+                    self.assertEqual((staged / "version").read_bytes(), b"1.0\n")
+
     def test_fixture_layout_versions_and_generated_shell_syntax(self):
         # Verify the fixture generator and its actual shell payloads without
         # rpm-build, GnuPG, network or access to the real signing home.
@@ -795,14 +830,19 @@ class FlowTests(unittest.TestCase):
                 + bytes(200)
             )
 
-            def build(name, version, payload, guard, *args):
+            def build(name, version, payload, guard, *args, owned_directories=()):
                 if name.startswith("wp0-release-"):
+                    self.assertEqual(
+                        owned_directories, ("/var/lib/wp0-probe/releases/" + name,)
+                    )
                     self.assertEqual(
                         args,
                         (
                             "Requires: myproduct-tools\nRequires(preun): myproduct-tools",
                         ),
                     )
+                else:
+                    self.assertEqual(owned_directories, ())
                 built.append((name, version, payload, guard))
                 (output / (name + "-" + version + "-1.noarch.rpm")).write_bytes(
                     fake_rpm
