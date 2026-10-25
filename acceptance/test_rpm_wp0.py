@@ -1491,5 +1491,204 @@ done
         self.assertIn('-v "$work/support":/support:ro,Z', source)
 
 
+class LabFailureRegressions(unittest.TestCase):
+    def test_health_program_selects_installed_layout_and_records_failure_inventory(
+        self,
+    ):
+        import contextlib
+        import io
+        import types
+
+        for fault in (None, "unhealthy", "empty"):
+            with self.subTest(fault=fault):
+                run = wp0.Investigation(mock.Mock())
+                run.cfg = {
+                    "HTTPS_PORT": "8443",
+                    "PROD_HOST": "fixture.invalid",
+                    "PROD_IP": "192.0.2.10",
+                }
+                run.operator = ["ssh", "-i", "/unused/key", "operator@placeholder"]
+                run.remote = lambda *_: {"ok": True, "predicates": ["prototype-trust"]}
+                run.execute_command = mock.Mock(return_value="")
+                status = {
+                    "product": "myproduct",
+                    "pending": None,
+                    "components": [
+                        {
+                            "name": name,
+                            "version": "0.4.12",
+                            "complete": True,
+                            "state": "active",
+                        }
+                        for name in ("platform", "identity")
+                    ],
+                    "not_public": "PRIVATE_SENTINEL",
+                }
+                containers = [
+                    {
+                        "Name": name,
+                        "IsInfra": False,
+                        "IsService": False,
+                        "State": {
+                            "Running": True,
+                            "Status": "running",
+                            "Health": {"Status": "healthy"},
+                        },
+                        "Config": {"Env": ["PRIVATE_SENTINEL"]},
+                    }
+                    for name in (
+                        "platform-proxy-nginx",
+                        "identity-postgres-db",
+                        "identity-server-app",
+                    )
+                ]
+                if fault == "unhealthy":
+                    containers[0]["State"]["Health"]["Status"] = "unhealthy"
+                if fault == "empty":
+                    containers = []
+                order = []
+                observed = io.StringIO()
+                deployment = types.ModuleType("deployment")
+
+                def select(product, order=order):
+                    self.assertEqual(product, "myproduct")
+                    order.append("select")
+                    os.environ.update(
+                        XDG_CONFIG_HOME="/var/lib/myproduct/config",
+                        XDG_DATA_HOME="/var/lib/myproduct/storage",
+                    )
+                    return Path("/var/lib/myproduct")
+
+                def manager(root, order=order):
+                    self.assertEqual(root, Path("/var/lib/myproduct"))
+                    order.append("manager")
+
+                deployment.__dict__["layout"] = types.SimpleNamespace(
+                    select=select, check_user_manager=manager
+                )
+
+                def command(
+                    args, order=order, status=status, containers=containers, **kwargs
+                ):
+                    if args[0] == "bash":
+                        self.assertNotIn("XDG_DATA_HOME", os.environ)
+                        return types.SimpleNamespace(stdout=json.dumps(status))
+                    if args[0] == "systemctl":
+                        return types.SimpleNamespace(stdout="active")
+                    self.assertEqual(
+                        os.environ["XDG_CONFIG_HOME"], "/var/lib/myproduct/config"
+                    )
+                    self.assertEqual(
+                        os.environ["XDG_DATA_HOME"], "/var/lib/myproduct/storage"
+                    )
+                    if args[1] == "ps":
+                        order.append("podman")
+                        return types.SimpleNamespace(
+                            stdout=json.dumps(
+                                [{"Id": str(i)} for i in range(len(containers))]
+                            )
+                        )
+                    self.assertEqual(args[1], "inspect")
+                    return types.SimpleNamespace(
+                        stdout=json.dumps([containers[int(args[2])]])
+                    )
+
+                def runtime(source, observed=observed):
+                    if source in ("gateway-check", "identity-check"):
+                        return "204" if source == "gateway-check" else "200"
+                    if not source.startswith("python3 -B - <<'HEALTH'"):
+                        return ""
+                    program = source.split("\n", 1)[1].rsplit("HEALTH", 1)[0]
+                    with contextlib.redirect_stdout(observed):
+                        exec(compile(program, "actual-WP0-health-program", "exec"), {})  # noqa: S102 - execute the actual trusted payload with mocked host boundaries
+                    return observed.getvalue()
+
+                run.runtime = runtime
+                with (
+                    mock.patch.object(
+                        wp0.host_setup, "script", side_effect=lambda step, _: step
+                    ),
+                    mock.patch.dict(sys.modules, {"deployment": deployment}),
+                    mock.patch.object(sys, "path", list(sys.path)),
+                    mock.patch.dict(
+                        os.environ, {"PATH": os.environ["PATH"]}, clear=True
+                    ),
+                    mock.patch.object(subprocess, "run", side_effect=command),
+                ):
+                    if fault is None:
+                        self.assertTrue(run.prototype(Path("/unused/credentials")))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            run.prototype(Path("/unused/credentials"))
+                self.assertEqual(order, ["select", "manager", "podman"])
+                output = observed.getvalue()
+                projection = json.loads(output.splitlines()[0])
+                self.assertEqual(projection["application_count"], len(containers))
+                self.assertNotIn("PRIVATE_SENTINEL", output)
+                self.assertNotIn("Config", output)
+                self.assertEqual(
+                    "WP0 three containers healthy" in output, fault is None
+                )
+
+    def test_audit_explicitly_reads_logs_and_keeps_no_match_diagnostic(self):
+        from types import SimpleNamespace
+
+        with mock.patch.object(
+            op,
+            "command",
+            return_value=SimpleNamespace(
+                returncode=1, stdout="", stderr="<no matches>\n"
+            ),
+        ) as command:
+            self.assertTrue(guest.audit("10/25/26 13:46:48")["no_events"])
+        command.assert_called_once_with(
+            [
+                "ausearch",
+                "--input-logs",
+                "-m",
+                "FANOTIFY,AVC",
+                "-ts",
+                "10/25/26",
+                "13:46:48",
+            ],
+            allowed=(0, 1),
+            stdin=subprocess.DEVNULL,
+        )
+        # Raw mode's empty status-1 result must still never turn into a PASS.
+        with (
+            mock.patch.object(
+                op,
+                "command",
+                return_value=SimpleNamespace(returncode=1, stdout="", stderr=""),
+            ),
+            self.assertRaisesRegex(RuntimeError, "ambiguous"),
+        ):
+            guest.audit("10/25/26 13:46:48")
+
+    def test_runtime_projection_excludes_pending_contents_and_infrastructure_health(
+        self,
+    ):
+        projection = c.runtime_projection(
+            {
+                "product": "myproduct",
+                "pending": {"private": "PRIVATE_SENTINEL"},
+                "components": [],
+            },
+            [
+                {
+                    "Name": "infra",
+                    "IsInfra": True,
+                    "IsService": False,
+                    "State": {"Running": True, "Status": "running"},
+                    "Config": {"Env": ["PRIVATE_SENTINEL"]},
+                }
+            ],
+        )
+        self.assertTrue(projection["status"]["pending_present"])
+        self.assertEqual(projection["application_count"], 0)
+        self.assertIsNone(projection["containers"][0]["health"])
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(projection))
+
+
 if __name__ == "__main__":
     unittest.main()

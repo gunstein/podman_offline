@@ -647,17 +647,23 @@ class Investigation:
             "python3 -B - <<'HEALTH'\n"
             + (HERE / "contracts.py").read_text()
             + """
-import json, subprocess
+import json, subprocess, sys
+sys.path.insert(0, '/var/lib/myproduct/releases/myproduct-platform-0.4.12')
+from deployment import layout
 status = subprocess.run(['bash','/var/lib/myproduct/releases/myproduct-platform-0.4.12/deploy.sh','status','--json'], capture_output=True, text=True, check=True)
 data = json.loads(status.stdout)
 for unit in ('myproduct-platform','myproduct-identity'):
     subprocess.run(['systemctl','--user','is-active',unit], check=True, stdout=subprocess.DEVNULL)
+# status selected production paths only in its child process. Select and validate
+# the installed layout here too, before this process starts Podman children.
+root = layout.select('myproduct')
+layout.check_user_manager(root)
 result = subprocess.run(['podman','ps','--all','--format','json'], capture_output=True, text=True, check=True)
 details = []
 for container in json.loads(result.stdout):
     details.append(json.loads(subprocess.run(['podman','inspect',container['Id']], capture_output=True,text=True,check=True).stdout)[0])
+print(json.dumps(runtime_projection(data, details)), flush=True)
 runtime_health(data, details)
-print(json.dumps({'status': data, 'containers': [{'name': row['Name'], 'state': row['State']['Status'], 'health': row['State']['Health']['Status']} for row in details if not row['IsInfra'] and not row['IsService']]}))
 print('WP0 three containers healthy and installed status complete')
 HEALTH
 """

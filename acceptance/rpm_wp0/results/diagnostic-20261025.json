@@ -1,0 +1,132 @@
+{
+  "diagnostic_only": true,
+  "source_run": "wp0-matrix-20261025-authorized-01",
+  "inventory": {
+    "diagnostic_only": true,
+    "inventories": {
+      "login-default": {
+        "exit": 0,
+        "containers": [],
+        "stderr": ""
+      },
+      "production-store": {
+        "exit": 0,
+        "containers": [
+          {
+            "Name": "92aa0a11d733-service",
+            "IsInfra": false,
+            "IsService": true,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": null
+              }
+            }
+          },
+          {
+            "Name": "16604fa2b801-infra",
+            "IsInfra": true,
+            "IsService": false,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": null
+              }
+            }
+          },
+          {
+            "Name": "identity-postgres-db",
+            "IsInfra": false,
+            "IsService": false,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": "healthy"
+              }
+            }
+          },
+          {
+            "Name": "8c322c7cc3fb-infra",
+            "IsInfra": true,
+            "IsService": false,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": null
+              }
+            }
+          },
+          {
+            "Name": "identity-server-app",
+            "IsInfra": false,
+            "IsService": false,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": "healthy"
+              }
+            }
+          },
+          {
+            "Name": "c084b7bbe985-service",
+            "IsInfra": false,
+            "IsService": true,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": null
+              }
+            }
+          },
+          {
+            "Name": "c808e73d2a05-infra",
+            "IsInfra": true,
+            "IsService": false,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": null
+              }
+            }
+          },
+          {
+            "Name": "platform-proxy-nginx",
+            "IsInfra": false,
+            "IsService": false,
+            "State": {
+              "Running": true,
+              "Status": "running",
+              "Health": {
+                "Status": "healthy"
+              }
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    },
+    "recorded_at": "2026-10-25T12:55:32.730600+00:00"
+  },
+  "bounded_audit": {
+    "diagnostic_only": true,
+    "original_window": true,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "<no matches>\n",
+    "recorded_at": "2026-10-25T12:59:11.395814+00:00"
+  },
+  "audit_end_vm_local": "10/25/26 13:48:00",
+  "notes": [
+    "Later diagnostic; does not replace the stopped run verdict.",
+    "First two inventory attempts failed because the account could not access the inherited administrator working directory; their inventories are not evidence.",
+    "Inventory succeeded after selecting the account home as the working directory.",
+    "No rollback, restart, snapshot operation or full matrix rerun."
+  ]
+}

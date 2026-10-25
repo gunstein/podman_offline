@@ -245,6 +245,38 @@ def check_baseline(facts):
     return True
 
 
+def runtime_projection(status, containers):
+    """Retain public observations before checking them; never dump inspect/env."""
+    return {
+        "status": {
+            "product": status.get("product"),
+            "pending_present": status.get("pending") is not None,
+            "components": [
+                {
+                    name: row.get(name)
+                    for name in ("name", "version", "complete", "state")
+                }
+                for row in status.get("components", [])
+            ],
+        },
+        "application_count": sum(
+            row.get("IsInfra") is False and row.get("IsService") is False
+            for row in containers
+        ),
+        "containers": [
+            {
+                "name": row.get("Name"),
+                "infra": row.get("IsInfra"),
+                "service": row.get("IsService"),
+                "running": (row.get("State") or {}).get("Running"),
+                "state": (row.get("State") or {}).get("Status"),
+                "health": ((row.get("State") or {}).get("Health") or {}).get("Status"),
+            }
+            for row in containers
+        ],
+    }
+
+
 def runtime_health(status, containers):
     require(
         status.get("product") == "myproduct" and status.get("pending") is None,

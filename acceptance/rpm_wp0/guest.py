@@ -674,13 +674,14 @@ def audit(start):
     result = op.command(
         [
             "ausearch",
+            "--input-logs",
             "-m",
             "FANOTIFY,AVC",
             "-ts",
             *contracts.audit_start_fields(start),
-            "--raw",
         ],
         allowed=(0, 1),
+        stdin=subprocess.DEVNULL,
     )
     output = result.stdout + result.stderr
     lines = [line for line in output.splitlines() if line.startswith("type=")]

@@ -5,6 +5,8 @@ The implementation-stage review and a later explicit product-owner authorization
 were followed by an [authorized lab run](RPM-WP0-LAB-20261025.md) at `0060a24`.
 It stopped in A/P1; WP0 remains incomplete. A separate code review and explicit
 product-owner authorization remain required before another `--execute` run.
+The [follow-up diagnosis and runner fixes](RPM-WP0-FIXES-20261025.md) do not
+replace that stopped run's verdict.
 The [previous attempt](RPM-WP0.md) is historical evidence, not a result for
 this implementation. No WP1/product implementation is delivered here.
 
@@ -119,6 +121,9 @@ rejects any `file` trust record in the release trees. Non-code documentation
 excluded by the OS RPM filter is not claimed as executable trust.
 B executes the real packaged host preparation and root Python stdin.
 E polls before the first `wp0-selfcheck`, then executes it over runtime SSH.
+The final A health program selects the installed product layout and validates
+the user manager before querying Podman. It records public container names,
+flags and states before its predicate, including on a health/count failure.
 
 ## Signature, repair and mechanism cases
 
@@ -195,6 +200,10 @@ scriptlet records that new content was present when old `%preun` ran.
 Audit production and parsing both use `LC_ALL=C`: the controller captures
 `date '+%x %X'`, matching ausearch's locale date format (two-digit year).
 The guest rejects malformed or four-digit-year input before invoking ausearch.
+Audit explicitly uses `--input-logs` with stdin disconnected. It keeps the
+default output format so no matches must include the `<no matches>` diagnostic;
+raw mode suppresses that diagnostic and is not used. Empty status 1 is still
+failure, never proof of a clean window.
 
 `TRUST_TIMEOUT = 30` and `LOCK_TIMEOUT = 5` are controller constants approved
 by the product owner. Local fake-clock tests cover timeout and late success.
@@ -215,7 +224,7 @@ Evidence is private, outside Git:
 - `command-NNNN.json`: sanitized controller argv, exit and separate streams.
 - `<case>-baseline.json`, `<case>-policy.json`: full observed starting/profile
   evidence; action JSON files also retain guest commands and probe predicates.
-- `<case>-audit.json`: raw bounded-window audit output and parsed event lines.
+- `<case>-audit.json`: bounded-window audit output and parsed event lines.
 - `REPORT.md`: overall result and steps; unreached cases remain NOT TESTED.
 
 An overall pass additionally requires every selected case's seven steps, the
@@ -295,8 +304,8 @@ blindly. The first execution blocker is intentional: separate code review and
 product-owner authorization are still required. This is an investigator's
 procedure, not a paper installation or human-usability result.
 
-Local verification of this implementation: **324 acceptance-harness tests
-passed**, including 58 focused WP0 tests. Ruff, Ruff formatting, Pyright,
+Local verification of this implementation: **327 acceptance-harness tests
+passed**, including 61 focused WP0 tests. Ruff, Ruff formatting, Pyright,
 ShellCheck and `git diff --check` passed. The tests use disposable local files,
 real local locks/sockets, actual shell copying/glob expansion and local glibc
 date parsing, with mocked host/API/RPM/GnuPG/DNF boundaries. Regression cases
