@@ -1,6 +1,7 @@
 """WP0 harness gates without root, SSH, Proxmox, signing keys or RPM tools."""
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -102,6 +103,19 @@ class ControllerBoundaryTests(unittest.TestCase):
             self.assertEqual(set(inventory), {"key-file"})
             (root / "key-file").write_text("changed")
             self.assertNotEqual(wp0.key_inventory(root), inventory)
+
+    def test_audit_failure_still_writes_metadata_and_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            subject = mock.Mock()
+            subject.folder = Path(directory)
+            subject.meta = {"original_failure": "rollback refused"}
+            subject.step.side_effect = RuntimeError("audit unavailable")
+            with mock.patch.object(wp0, "key_inventory", return_value={}):
+                wp0.finalize(subject, Path(directory), {})
+            subject.report.assert_called_once_with()
+            metadata = json.loads((subject.folder / "metadata.json").read_text())
+            self.assertEqual(metadata["original_failure"], "rollback refused")
+            self.assertTrue(metadata["original_signing_home_unchanged"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+{"step": "00-build", "start": "2026-10-25T10:27:29.083837+00:00", "seconds": 114.905, "result": "PASS", "exit": 0, "log": "logs/00-build.log"}
+{"step": "01-strict-snapshot", "start": "2026-10-25T10:29:23.989293+00:00", "seconds": 29.455, "result": "PASS", "exit": 0, "log": "logs/01-strict-snapshot.log"}
+{"step": "02-reset-P1", "start": "2026-10-25T10:29:53.444378+00:00", "seconds": 2.078, "result": "FAIL", "exit": 1, "log": "logs/02-reset-P1.log"}
+{"step": "99-audit", "start": "2026-10-25T10:29:55.589912+00:00", "seconds": 8.018, "result": "FAIL", "exit": 1, "log": "logs/99-audit.log"}

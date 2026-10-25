@@ -1,0 +1,139 @@
+active
+active
+Oracle Linux Server release 9.8
+rpm-4.16.1.3-40.el9.x86_64
+dnf-4.14.0-34.0.1.el9_8.noarch
+gnupg2-2.3.3-5.el9_7.x86_64
+fapolicyd-1.4.5-1.1.el9_8.x86_64
+rpm-plugin-fapolicyd-4.16.1.3-40.el9.x86_64
+dnf-plugins-core-4.3.0-26.0.1.el9.noarch
+=== Effective rules ===
+-> %languages=application/x-bytecode.ocaml,application/x-bytecode.python,application/java-archive,text/x-java,application/x-java-applet,application/javascript,text/javascript,text/x-awk,text/x-gawk,text/x-lisp,application/x-elc,text/x-lua,text/x-m4,text/x-nftables,text/x-perl,text/x-php,text/x-script.python,text/x-python,text/x-R,text/x-ruby,text/x-script.guile,text/x-tcl,text/x-luatex,text/x-systemtap
+1. allow perm=any uid=0 : dir=/var/tmp/
+2. allow perm=any uid=0 trust=1 : all
+3. allow perm=open exe=/usr/bin/rpm : all
+4. allow perm=open exe=/usr/bin/python3.9 comm=dnf : all
+5. deny_audit perm=any pattern=ld_so : all
+6. deny_audit perm=any all : ftype=application/x-bad-elf
+7. allow perm=open all : ftype=application/x-sharedlib trust=1
+8. deny_audit perm=open all : ftype=application/x-sharedlib
+9. allow perm=execute all : trust=1
+10. allow perm=open all : ftype=%languages trust=1
+11. deny_audit perm=any all : ftype=%languages
+12. allow perm=any all : ftype=text/x-shellscript
+13. deny_audit perm=execute all : all
+14. allow perm=open all : all
+=== fapolicyd.conf ===
+#
+# This file controls the configuration of the file access policy daemon.
+# See the fapolicyd.conf man page for explanation.
+#
+
+permissive = 0
+nice_val = 14
+q_size = 800
+uid = fapolicyd
+gid = fapolicyd
+do_stat_report = 1
+detailed_report = 1
+db_max_size = 100
+subj_cache_size = 4099
+obj_cache_size = 8191
+watch_fs = ext2,ext3,ext4,tmpfs,xfs,vfat,iso9660,btrfs
+#ignore_mounts = /path/to/mount1,/path/to/mount2
+trust = rpmdb,file
+integrity = none
+syslog_format = rule,dec,perm,auid,pid,exe,:,path,ftype,trust
+rpm_sha256_only = 0
+allow_filesystem_mark = 0
+report_interval = 0
+=== RPM filters ===
+# ---------------------------------------------------------------------------
+# Overview of the default fapolicyd-filter.conf
+#
+# Decision flow
+#   1.  Rules are read top-to-bottom.  Leading “+” means the path is
+#       considered essential and will be added to the trust database;
+#       leading “-” means the path is skipped.
+#   2.  Indentation creates a parent-child relationship.  A child rule
+#       refines the decision of its parent.  Think “allow everything
+#       under /usr/, then deny one sub-tree, then allow one file type
+#       back in”, etc.
+#   3.  If no rule matches at the end of the scan, the parent’s decision
+#       stands; the very last top-level rule is therefore the catch-all.
+#
+# What the shipped rules do
+#   • Start with “+ /”             → everything allowed by default.
+#   • Deny /usr/include/ entirely.                      (- usr/include/)
+#   • Deny /usr/share/ but re-allow developer artefacts:
+#         *.py  *.pl  etc
+#   • Deny /usr/src/kernel*/       except:
+#         */scripts/*   and   */tools/objtool/*
+#   • Deny html, md, conf, and other non-executable files
+#
+# For full syntax see:  man 5 fapolicyd-filter.conf
+# ---------------------------------------------------------------------------
+
++ /
+ - usr/include/
+ - usr/share/
+  # Python byte code
+  + *.py?
+  # Python text files
+  + *.py
+  # Some apps have a private bin
+  + */bin/*
+  # Some apps have a private libexec
+  + */libexec/*
+  # Ruby
+  + *.rb
+  # Perl
+  + *.pl
+  # System tap
+  + *.stp
+  # Javascript
+  + *.js
+  # Java archive
+  + *.jar
+  # M4
+  + *.m4
+  # PHP
+  + *.php
+  # Perl Modules
+  + *.pm
+  # Lua
+  + *.lua
+  # Java
+  + *.class
+  # Typescript
+  + *.ts
+  # Typescript JSX
+  + *.tsx
+  # Lisp
+  + *.el
+  # Compiled Lisp
+  + *.elc
+  # Allow Lmod to run in bash profiles.d/modules.sh
+  + lmod/*/bash
+ # Drop all source (kernel/nvidia)
+ - usr/src/*/
+  # Allow scripts and tools
+  + */scripts/*
+   # Drop any source code
+   - *.c
+   - *.h
+  + */tools/objtool/*
+ # Drop any xz
+ - *.xz
+ # Drop any html
+ - *.html
+ # Drop any json
+ - *.json
+ # Drop any markdown
+ - *.md
+ # Drop any configuration
+ - *.conf
+ # drop png files scattered all over
+ - *.png
+=== RPM plugin configuration ===
+/usr/lib64/rpm-plugins/fapolicyd.so

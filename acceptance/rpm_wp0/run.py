@@ -150,6 +150,22 @@ def stamp():
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
+def finalize(run, key_home, before):
+    """Keep the original failure report even if the stopped VM cannot be audited."""
+    if run.prod_ready:
+        try:
+            run.step("99-audit", run.audit)
+        except (RuntimeError, OSError) as error:
+            print(str(error), file=sys.stderr)
+    if before != key_inventory(key_home):
+        run.meta["original_signing_home_unchanged"] = False
+        print("FAIL: original signing home changed", file=sys.stderr)
+    else:
+        run.meta["original_signing_home_unchanged"] = True
+    (run.folder / "metadata.json").write_text(json.dumps(run.meta, indent=2) + "\n")
+    run.report()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True)
@@ -187,12 +203,7 @@ def main():
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - stop and preserve evidence
         print(str(error), file=sys.stderr)
     finally:
-        if run.prod_ready:
-            run.step("99-audit", run.audit)
-        if before != key_inventory(key_home):
-            raise RuntimeError("Original signing home changed")
-        (run.folder / "metadata.json").write_text(json.dumps(run.meta, indent=2) + "\n")
-        run.report()
+        finalize(run, key_home, before)
     return 1
 
 
