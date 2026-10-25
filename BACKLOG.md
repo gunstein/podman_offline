@@ -648,7 +648,7 @@ the closed lab are not feasible.
 - **Delivery:** every release and the administrator tool are signed RPMs.
   The main scenario is a **standalone server on a very restricted network**
   without a package repository. A delivery is a directory of files (RPMs,
-  public key, repository metadata) that may arrive on USB, DVD, a network
+  public key) that may arrive on USB, DVD, a network
   share or by `scp`; nothing is executed from it, so `noexec` mounts do not
   matter, and an incomplete copy fails the signature/checksum checks before
   changes. An organisation's internal package repository must keep working
@@ -677,6 +677,9 @@ the closed lab are not feasible.
   (review guide section 7), including the strict fapolicyd profile above,
   first installation, upgrade, retirement and interruption/retry. Manual lab
   sessions are limited to one short paper/human trial (item 68).
+
+Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md)
+(not implemented).
 
 Open points for the design: how answers are given non-interactively for the
 harness; dependency order and version selection when several releases are

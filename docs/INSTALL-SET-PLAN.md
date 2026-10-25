@@ -7,9 +7,12 @@ the [review guide](REVIEW_GUIDE.md) (including section 7), the
 [item 65 plan](HOST-SETUP-PLAN.md) and the current
 [production manual](PRODUCTION-INSTALL.md) before implementing.
 
-Backlog 69 (paper-first installation) applies: before fixing the operator
-commands below, settle its lab questions and requirements. Options such as
-`--settings` and `--credentials` may become prompts or default locations.
+Backlog 69 (paper-first installation) chose signed RPM delivery on
+2026-10-25; its [plan](RPM-DELIVERY-PLAN.md) supersedes the administrator side
+below (`release.py setup --all-in-input-dir`, published releases) and runs
+`install-set` from the tools RPM as the runtime command `<product>`, with
+prompts in front of `--settings` and `--credentials`. The runtime algorithm,
+decisions on order, skipping, stops and retry, and the tests below still apply.
 
 ## Outcome and scope
 
