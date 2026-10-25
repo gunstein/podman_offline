@@ -93,3 +93,8 @@ is explicit before reader acquisition, with the existing error/evidence path.
 Static operator review: pass for this bounded correction; commands and recovery
 are unchanged. Human usability remains untested. These diagnostics verify
 library loading on OL9, not the full trust-poll mechanism or a WP0 PASS.
+
+[Run 04](RPM-WP0-LAB-20261025-RUN04.md) verified the corrected library loading
+on OL9 and completed 198 guarded dumps without CLI errors. A/P1 nevertheless
+failed because product trust remained `src_unknown` until the 30-second
+boundary. No subsequent cases ran; WP0 remains incomplete.
