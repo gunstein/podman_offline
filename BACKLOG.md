@@ -655,19 +655,22 @@ the closed lab are not feasible.
   with the same RPMs but is not a separate feature.
 - **Administrator:** on a new server, once, with OS tools only (supplier code
   must not run before the key is checked): compare `gpg --show-keys` with the
-  fingerprint on paper and the tools package's signer Key ID with the paper,
-  `rpm --import`, and install the tools RPM with the signature enforced.
+  fingerprint on paper, verify the tools package against that key alone, and
+  install it.
   Trust stays bound to the product's own key (product owner, 2026-10-25): a
   signature from another imported RPM key never authorizes this product. After that, every installation, upgrade and
   retirement is **one command**, `sudo <product>-admin [delivery directory]`:
   it verifies and installs what is new, prepares the host (asking for the
-  account and port the first time), refuses to retire a release in use, and
-  says what the runtime user does next.
+  account and port the first time), retires old releases only when they are
+  not needed (plain `dnf remove` of product packages is refused), and says
+  what the runtime user does next.
 - **Runtime user:** logs in directly (console or SSH), then **one command**,
   `<product>`: it detects the state, asks only for missing values with
-  defaults (public address, port, credential folder), installs the delivered
+  defaults (public address; the port comes from the administrator), takes
+  credentials from a private incoming directory, installs the delivered
   releases in dependency order, runs the health checks and prints status. A
-  repeat continues after interruption; an upgrade asks nothing. No values
+  repeat continues after interruption; an upgrade asks nothing unless a new
+  release needs a new setting or credential. No values
   block and no shell blocks in the manual.
 - **Preflight stops** before changes for anything the host must already have
   (OS packages from the OS media, by name; `subj_cache_size`; journald), and
@@ -680,7 +683,7 @@ the closed lab are not feasible.
   sessions are limited to one short paper/human trial (item 68).
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
-revision 2 after an AI review of revision 1 (not implemented). Product-owner
+revision 3 after AI reviews of revisions 1 and 2 (not implemented). Product-owner
 decisions recorded there: trust bound to the product key, immutable versions,
 and a conservative guard also for plain `dnf remove`. Work package 0 is an
 investigation with explicit go/no-go criteria.
