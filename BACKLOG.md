@@ -533,7 +533,11 @@ scope and usability findings explicitly recorded.
 
 ## 70. Provision a component's CA trust chain from the environment's PKI
 
-Status: planned, **high priority** (2026-10-26), requested by the product owner.
+Status: **implemented locally** (2026-10-26): documented pattern in
+[COMPONENTS.md](docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend)
+and regression `tests/platform_tests/test_trust_chain.py`; the Podman `subPath`
+check and end-to-end sign-in are pending ([verification](acceptance/TRUST-CHAIN.md)).
+High priority, requested by the product owner.
 Blocks converting the organisation's backend that signs in through Duende and
 calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
 steps, documentation and a `subPath` check, no new script mode. Independent of

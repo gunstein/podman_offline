@@ -328,6 +328,78 @@ environments and child processes. File mounts avoid the extra environment copy
 but still require suitable container ownership/modes. No new credential files,
 network services, SELinux exceptions or fapolicyd trust rules are needed.
 
+## Trusting the environment's CA in a backend
+
+A backend that signs in through Duende is an OIDC client: it calls Duende
+server to server (discovery, keys, token exchange) through the public HTTPS
+origin and must trust the CA that issued the proxy certificate. As in the
+original Kubernetes installation, mount the public chain from one Secret as two
+single files in the system certificate directory; .NET on Linux reads every
+file there, and `subPath` adds the files without hiding the image's own CAs.
+The chain holds public certificates only and signs nothing. Whether a backend
+could call Duende internally instead is tested in backlog 71.
+
+Component config (the Secret name must start with the component ID; the
+original `<product>-ingress-trust-chain` is refused):
+
+```yaml
+SECRET_FILES:
+  billing-ingress-trust-chain:
+  - path: cert            # <state>/billing/cert/root.crt and ca.crt
+```
+
+Backend container and volume:
+
+```yaml
+    volumeMounts:
+    - name: trust-chain
+      mountPath: /etc/ssl/certs/myproduct-root.pem
+      subPath: root.crt
+      readOnly: true
+    - name: trust-chain
+      mountPath: /etc/ssl/certs/myproduct-ca.pem
+      subPath: ca.crt
+      readOnly: true
+  volumes:
+  - name: trust-chain
+    secret:
+      secretName: billing-ingress-trust-chain
+      items:
+      - key: root.crt
+        path: root.crt
+      - key: ca.crt
+        path: ca.crt
+```
+
+`trust-chain` is local to the Pod: one volume, mounted twice. The mount file
+names are free text; only the Secret name has a prefix rule.
+
+Provide the files from the **environment's own CA**, never from the source
+checkout. `dev/generate-certificates.sh` creates one CA per root, and the demo
+PKI has one level, so its CA is both the root and the only issuing CA. In dev,
+after `dev/demo-credentials.sh` (or your own dev provisioning, outside generic
+`dev/dev.sh`):
+
+```sh
+install -d -m 0700 build/dev/billing/cert
+install -m 0644 build/dev/PKI/private/ca.crt build/dev/billing/cert/root.crt
+install -m 0644 build/dev/PKI/private/ca.crt build/dev/billing/cert/ca.crt
+```
+
+In the lab, as the runtime user after `init-config billing`:
+
+```sh
+install -d -m 0700 /var/lib/myproduct/state/billing/cert
+install -m 0644 /var/lib/myproduct/state/PKI/private/ca.crt /var/lib/myproduct/state/billing/cert/root.crt
+install -m 0644 /var/lib/myproduct/state/PKI/private/ca.crt /var/lib/myproduct/state/billing/cert/ca.crt
+```
+
+`validate` and `install` name a missing file before anything is written. The
+backend must call Duende with the host name in `web.crt` (the one in
+`PUBLIC_ORIGIN`). `subPath` with a Secret volume under `podman kube play` is
+verified separately on the lab host; see
+[trust chain verification](../acceptance/TRUST-CHAIN.md).
+
 ## ConfigMap inline values
 
 A ConfigMap's `data` values can combine ordinary configuration values, including
