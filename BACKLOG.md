@@ -743,6 +743,45 @@ terminal; otherwise fail as today. `scripts/release.py` is not converted, since
 WP6 removes that flow. Add parser tests per command (valid forms, unknown and
 misplaced options, abbreviations refused, `--help`).
 
+### Operator messages and logging (product owner, 2026-10-26)
+
+Operator output today is `print` in Python (about 25 calls in `deployment/`,
+14 in `scripts/release.py`, 5 in `bundle.py`) and `printf`/`echo` in shell, with
+no documented convention and no Python `logging`. Prefixes vary (`[OK]`,
+`PASS:`, `INFO:`, `START:`, `ERROR:`, `WARNING:`, `HOST-PHASE:`, `+ command`),
+stdout and stderr are mixed without a rule, `release.py` parses
+`HOST-PHASE:` from `prepare-host.sh`, about 100 assertions in 33 test files and
+the acceptance harness match these strings, and nothing records afterwards what
+the administrator or runtime user did, which matters on closed networks.
+
+Do this together with the command-line parsing above, in WP2 (`<product>-admin`)
+and WP3 (`<product>` and `deploy.sh`), not as a separate cleanup:
+
+- One convention, written into the review guide: completed steps `OK:` (or the
+  existing `[OK]`, chosen once), `WARNING:`/`ERROR:` on stderr with the next
+  action in the same message, a final `PASS:` line, no secret values. Results
+  and data (the `status` table, `--json`, rendered output) stay plain `print`
+  on stdout.
+- Python: standard-library `logging` (Python 3.6, no extra packages) configured
+  once in each command's entry point, format `%(message)s` so visible text is
+  unchanged; `INFO` to stdout, `WARNING`/`ERROR` to stderr (two handlers, since
+  the default handler writes everything to stderr). `--verbose` enables `DEBUG`,
+  which carries today's `+ command` lines.
+- Audit trail: one line per operator action and result to the journal via
+  `logging.handlers.SysLogHandler` (`/dev/log`), identifier `<product>`, so
+  support can ask for `journalctl -t <product>`. Shell scripts use
+  `logger -t <product>` for the same; their terminal output stays `printf`.
+- Markers that other code parses (`HOST-PHASE:`, `PASS:`) become a documented,
+  tested interface or are replaced by exit codes or `--json`.
+- Tests: format and stream per message class, `--verbose`, the syslog handler
+  (with a fake socket), and logging reset between tests (configuration is
+  global). Keep existing messages and streams that tests, the harness and the
+  manual rely on, or change them together with those consumers.
+
+Not in scope: `scripts/release.py` (removed in WP6) and application/container
+logs (already in journald through systemd and Podman). Estimate: 2–3 days
+within WP2/WP3.
+
 ## 66. Install sets: several signed bundles through one entry point
 
 Status: planned, high priority (2026-10-23), after item 65. Implementation
