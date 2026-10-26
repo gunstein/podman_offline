@@ -1860,6 +1860,18 @@ if __name__ == "__main__":
 DATABASE_JOURNAL
     ;;
 health) healthy;;
+persistent-journal)
+    # The production host setup (release.py setup) makes the journal persistent
+    # before prepare-host; the fixed matrix's prepare-host does not. Containers
+    # log to the journal, so app3's log checks need it (backlog 71 lab finding).
+    # Same controller-supplied helper as release_tool, loaded without its main().
+    release_source | sudo -n python3 -I -B -c '
+import sys
+namespace = {"__name__": "release_helper"}
+exec(compile(sys.stdin.read(), "release.py", "exec"), namespace)
+namespace["prepare_persistent_journal"]()
+'
+    ;;
 whoami-chain-mounts)
     # Backlog 70's lab check in the running backend: both single-file subPath
     # mounts hold the environment's CA and the image's own CA files remain.

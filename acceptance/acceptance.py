@@ -1134,6 +1134,9 @@ class Run:
             "06-prepare-host",
             lambda: self.guest("PROD", "prepare-host", bundle="platform"),
         )
+        self.step(
+            "06-persistent-journal", lambda: self.guest("PROD", "persistent-journal")
+        )
         for name in order:
             self.step(
                 "06-install-" + name,

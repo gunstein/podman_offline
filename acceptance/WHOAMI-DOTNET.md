@@ -9,7 +9,9 @@ to `deployment/` or the fixed matrix's component counts/install orders/upgrades.
 
 The opt-in `--whoami` scenario added in `f82d107` has not been run in this
 lab verification. Testing stopped at the user's request before that update was
-pulled; results below do not verify the newer harness.
+pulled; results below do not verify the newer harness. The code-review fixes
+after `f82d107` also change the backend (issuer pin, no protocol error text in
+the log), so the lab result covers the backend as of `45fdb17` only.
 
 ## What was added
 
@@ -170,7 +172,9 @@ scenario, `--status-retry` or `--host-setup`. The fixed matrix is unchanged.
 | --- | --- | --- |
 | `03-build-images` … `03-dev-down` | DEV | Demo images including app3, dev validate/up, `dev/whoami-smoke-test.py` with a pod restart |
 | `04-bundle`, `05-transfer-*` | DEV → PROD | Signed bundles; only platform, identity and app3 are transferred and published |
-| `06-prepare-host`, `06-install-*` | PROD | Host preparation, then platform, identity and app3 installed as the runtime account, each checked healthy. app3's demo client pair comes from `generate-certificates.sh`, its chain is copied from `state/PKI/private/ca.crt` (`whoami_trust_chain` in `remote.sh`) |
+| `06-prepare-host` | PROD | Host preparation as in the fixed scenarios |
+| `06-persistent-journal` | PROD | The production setup's guarded persistent-journal helper (`release.py` `prepare_persistent_journal`), which the fixed matrix's host preparation skips; container logs go to the journal |
+| `06-install-*` | PROD | Platform, identity and app3 installed as the runtime account, each checked healthy. app3's demo client pair comes from `generate-certificates.sh`, its chain is copied from `state/PKI/private/ca.crt` (`whoami_trust_chain` in `remote.sh`) |
 | `07-check` | PROD | The existing installation checks (units, graphroot, permissions, no rootful containers) |
 | `07-whoami-chain-mounts` | PROD | Backlog 70's lab check in the running backend: Podman version and SELinux mode recorded, both `subPath` files equal the environment's CA, more than two entries remain in `/etc/ssl/certs` |
 | `08-whoami-e2e` | DEV → PROD | Smoke test through the public origin (variant a), ending with an OIDC error response carrying a marker |
@@ -360,11 +364,14 @@ phase, and the session helper's deadline, retry and private file.
   dev-only forwarded-header/key-deletion negative controls were not lab-tested.
 - The renamed matrix was stopped at user request during transfer; its PROD
   lifecycle and final audit remain unverified.
-- The newer `f82d107` `--whoami` harness and its added tests were not run here.
-  Test counts above apply only to `45fdb17`.
+- A `--whoami` lab run of the current branch: the scenario and the code-review
+  fixes (issuer pin, log safety, failed log reads, persistent journal) are not
+  lab-verified. Test counts above apply only to `45fdb17`.
 - Only the single-level demo CA is exercised; a root plus issuing CA is not.
 - Post-logout redirect through Duende (open, point 1 findings).
 - App3 remains outside the fixed PROD matrix; adding its counts, install orders
   and upgrade coverage is a separate follow-up. No human operator trial occurred.
 - The unmodified matrix baseline lacks persistent user-journal access; this run
   repaired it with the existing host-setup helper for the app3 negative control.
+  `--whoami` now runs the same helper as step `06-persistent-journal`, as the
+  production host setup does, because its log checks read the journal.

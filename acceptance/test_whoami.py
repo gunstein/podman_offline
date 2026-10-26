@@ -88,6 +88,9 @@ class WhoamiScenarioTests(ScenarioFixture):
         ]
         ordered = [
             "03-dev-whoami-e2e",
+            "06-prepare-host",
+            "06-persistent-journal",
+            "06-install-platform",
             "06-install-app3",
             "07-whoami-chain-mounts",
             "08-credentials",
@@ -260,6 +263,32 @@ class WhoamiRemoteTests(unittest.TestCase):
                 result, _ = self.run_shell(body, log=log, podman_status=status)
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertNotIn("PASS:", result.stdout)
+
+    def test_persistent_journal_runs_the_helper_function_without_main(self):
+        body = shell_code(REMOTE, action="persistent-journal")
+        helper = (
+            "def prepare_persistent_journal():\n"
+            "    print('PASS: persistent journal verified')\n"
+            "if __name__ == '__main__':\n"
+            "    raise SystemExit('FAIL: main ran')\n"
+        )
+        script = (
+            "set -euo pipefail\n"
+            'sudo() { shift; "$@"; }\n'
+            "release_source() { printf '%s' \"$HELPER\"; }\n" + body
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": os.environ["PATH"], "HELPER": helper},
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), "PASS: persistent journal verified")
+        source = (runner.ROOT / "scripts/release.py").read_text()
+        self.assertIn("def prepare_persistent_journal():", source)
+        self.assertIn('if __name__ == "__main__":', source)
 
     def test_marker_matches_the_smoke_test(self):
         source = (runner.ROOT / "dev/whoami-smoke-test.py").read_text()

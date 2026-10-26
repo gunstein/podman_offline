@@ -18,8 +18,7 @@ are implemented and lab verified at `45fdb17` (2026-10-26): rootless Secret
 bundle installation, both OIDC variants, unrelated-CA control and user-service
 restart/session persistence passed. The normal matrix is CLEAN PASS. The renamed
 matrix was stopped at user request during transfer after 18 passing steps;
-its PROD lifecycle/final audit remain unverified. The newer `f82d107`
-`--whoami` scenario and added tests were pulled afterward and not run.
+its PROD lifecycle/final audit remain unverified. The later backend and harness changes are not lab-run: the `--whoami` scenario (`f82d107`) and the code-review fixes after it (issuer pin, no protocol error text in logs, log-read failures, persistent journal for `--whoami`).
 [Trust-chain evidence](acceptance/TRUST-CHAIN.md) and
 [all six conversion points](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26).
 The real backend, two-level CA, app3 reboot and fixed-matrix integration remain
@@ -201,10 +200,10 @@ both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-l
 
 Item 70 is removed from the open list: its pattern and app3 lab check passed
 at `45fdb17`. Item 71's manual lab scope passed at that commit, but the
-interrupted renamed regression and newly added `--whoami` scenario remain
-open. See [the lab report](acceptance/WHOAMI-DOTNET.md#gaps).
+interrupted renamed regression and a `--whoami` run of the later changes
+remain open. See [the lab report](acceptance/WHOAMI-DOTNET.md#gaps).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 71 (manual app3 lab verified at 45fdb17; renamed stopped by user; new --whoami scenario unverified), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 71 (manual app3 lab verified at 45fdb17; renamed stopped by user; --whoami run of the review fixes pending), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -636,8 +635,8 @@ with unrelated CA (`500`, `PartialChain`), internal HTTP still passed, and the
 correct CA/empty internal URL were restored and retested. Recommendation remains
 variant (a). Normal matrix CLEAN PASS; renamed stopped at user request during
 transfer with 18 passing steps, leaving PROD lifecycle/final audit open. The
-opt-in `--whoami` scenario added at `f82d107` and its new tests were pulled
-after testing stopped and have not been run here.
+later backend and harness changes are not lab-run: the `--whoami` scenario (`f82d107`) and the code-review fixes after it (issuer pin, no protocol error text in logs, log-read failures, persistent journal for `--whoami`); the backend changed since `45fdb17`, so its lab result covers the
+earlier backend only.
 [Results, prerequisite findings and limits](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26).
 App3 reboot, the real backend, two-level CA and Duende post-logout redirect are
 not covered; fixed-matrix integration remains a separate follow-up.
