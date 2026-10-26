@@ -70,6 +70,15 @@ renamed-inventory regressions protect the separation. Current inventory after it
 platform tests and 66 demo tests (551 unique tests), plus 266 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
 
+# .NET/TypeScript demo (backlog 71)
+
+`demo_tests/test_whoami_demo.py` checks app3's demo client pair (issued once by
+the environment's CA, clientAuth), that `client.yaml`, `SECRET_FILES`, demo
+provisioning, the Pod mounts and `Program.cs` name the same files, the
+callback/forwarded-header/client-assertion setup and ports, and the two-stage
+frontend build with pinned TypeScript. These are source assertions; real
+sign-in is `dev/whoami-smoke-test.py` ([results](../acceptance/WHOAMI-DOTNET.md)).
+
 # Host preparation boundary (backlog 46)
 
 `test_prepare_host.py` covers argument/product behavior, SELinux-rule ordering,

@@ -951,7 +951,8 @@ dev-up)
     # Every catalog component validates with its dev config before dev up (backlog 23).
     output=$(./deploy.sh validate)
     printf '%s\n' "$output"
-    [[ $output == *"[OK] validated platform, identity, app1, app2, help;"* ]]
+    # app3 (backlog 71) starts in dev but is not in the fixed install matrix.
+    [[ $output == *"[OK] validated platform, identity, app1, app2, app3, help;"* ]]
     ./dev/dev.sh up
     config_layers dev
     seed_content dev

@@ -1,7 +1,9 @@
 # CA trust chain for a backend (backlog 70)
 
 Status: implemented as a documented pattern with local regression coverage
-(2026-10-26). **Real Podman check of `subPath` pending.** No change to
+(2026-10-26). `subPath` and sign-in through the chain work in dev with Podman
+4.9.3 through backlog 71's `app3`; **the lab check on Podman 5.8.2 (OL9,
+SELinux Enforcing, rootless) is pending.** No change to
 `deployment/`; the pattern is in
 [COMPONENTS.md](../docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend).
 
@@ -65,8 +67,18 @@ own certificates are still present). Record the Podman version and the output
 here. If `subPath` fails, stop and decide an alternative with the product owner
 (backlog 70, task 4).
 
+## Dev evidence through app3 (2026-10-26)
+
+Podman 4.9.3, rootful, in an Ubuntu 24.04 container without SELinux or
+systemd; real `podman kube play` of the whole demo. In `app3-whoami-backend`
+both files appear at `/etc/ssl/certs/myproduct-{root,ca}.pem` with the dev CA's
+bytes, beside the image's own 297 files (299 entries). The .NET backend fetched
+discovery, keys, token and userinfo through the public origin and signed in;
+with an unrelated CA in both files it failed with `PartialChain`. Details and
+commands: [backlog 71 verification](WHOAMI-DOTNET.md). This does not replace
+the lab check above (Podman version, SELinux labels on single-file mounts).
+
 ## End to end
 
-Pending: sign-in through Duende from a backend using the chain, in dev and the
-lab, through backlog 71's app and later the real backend. Only the single-level
-demo CA is exercised.
+Dev: passed through backlog 71's app (above). Pending: the lab, and later the
+real backend. Only the single-level demo CA is exercised.

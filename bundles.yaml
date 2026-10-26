@@ -44,6 +44,12 @@ components:
     public_from: platform
     routes: platform
     clients: identity
+  # .NET/TypeScript demo (backlog 71); not in the fixed acceptance matrix.
+  app3:
+    requires: [platform, identity]
+    public_from: platform
+    routes: platform
+    clients: identity
   help:
     requires: [platform]
     public_from: platform

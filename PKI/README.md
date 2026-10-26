@@ -1,6 +1,6 @@
 # Demo PKI
 
-`dev/generate-certificates.sh [--root DIR] platform|identity|app1|app2|help [DNS hostname]`
+`dev/generate-certificates.sh [--root DIR] platform|identity|app1|app2|app3|help [DNS hostname]`
 creates missing component material once. `PKI/generate.sh` forwards arguments to
 that script. Dev uses build/dev; prod passes --root /var/lib/myproduct explicitly.
 Component passwords, private keys and certificates live under
@@ -17,6 +17,9 @@ are created privately. Repeating generation preserves existing nonempty files;
 partial certificate/CA pairs and empty demo-user password files fail. Database
 password validation happens in deploy’s lifecycle preflight. Adding app2 retains
 platform/identity/app1 material, except the CA serial advances when a new certificate is issued.
+app3 (backlog 71) gets only a client pair in `credentials/client/`; its public
+trust chain `<state>/app3/cert/{root,ca}.crt` is a copy of the CA made by
+`dev/demo-credentials.sh` in dev or by the operator on a target, not by this script.
 
 No keys, passwords or certificates are committed. Explicit signing provisioning
 can use the environment's existing CA or externally supplied credentials; new

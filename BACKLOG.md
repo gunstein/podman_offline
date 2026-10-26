@@ -16,9 +16,9 @@ is high priority and kept small: copy the environment's CA to a converted
 backend that calls Duende over HTTPS (dev and lab), document the pattern and
 check `subPath`, before further conversion work.
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
-follows it: a minimal .NET backend and TypeScript frontend signing in through
-Duende, to test the conversion risks before the real backend, including
-whether the backend can call Duende internally instead of through the chain.
+is implemented as demo component `app3` and verified in dev (both variants,
+[results](acceptance/WHOAMI-DOTNET.md)); its lab installation and item 70's
+lab `subPath` check remain.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -194,7 +194,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend), 71 (high: .NET/TypeScript demo app through Duende, with or after 70), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend; dev verified, lab `subPath` check pending), 71 (high: .NET/TypeScript demo app through Duende; implemented, dev verified, lab pending), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -535,8 +535,9 @@ scope and usability findings explicitly recorded.
 
 Status: **implemented locally** (2026-10-26): documented pattern in
 [COMPONENTS.md](docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend)
-and regression `tests/platform_tests/test_trust_chain.py`; the Podman `subPath`
-check and end-to-end sign-in are pending ([verification](acceptance/TRUST-CHAIN.md)).
+and regression `tests/platform_tests/test_trust_chain.py`; `subPath` and
+sign-in through the chain passed in dev with Podman 4.9.3 through item 71's
+app; the lab check on Podman 5.8.2 is pending ([verification](acceptance/TRUST-CHAIN.md)).
 High priority, requested by the product owner.
 Blocks converting the organisation's backend that signs in through Duende and
 calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
@@ -612,10 +613,14 @@ demo PKI (root plus issuing CA) and customer CA delivery (backlog 45a/45b).
 
 ## 71. Add a .NET and TypeScript demo app that signs in through Duende
 
-Status: planned, high priority (2026-10-26), requested by the product owner to
-de-risk converting the organisation's .NET backend. Do it together with or
-right after item 70, which this app exercises. No change to `deployment/` is
-expected; if one is needed, record why.
+Status: **implemented, verified in dev** (2026-10-26) as demo component `app3`
+(`apps/whoami-backend`, `apps/whoami-frontend`); no change to `deployment/`.
+All six points below confirmed in dev, with two recorded details (ASP.NET's
+default `form_post` callback; no post-logout URI in the client protocol), and
+both variants pass; recommendation: variant (a). Lab installation from bundles
+is pending. [Results and lab steps](acceptance/WHOAMI-DOTNET.md).
+High priority, requested by the product owner to de-risk converting the
+organisation's .NET backend. Exercises item 70.
 
 ### Why
 
@@ -656,6 +661,9 @@ no seed data, no init containers.
   Data Protection volume; nothing generic added for this app.
 - Dev provisioning of its certificates through `generate-certificates.sh`
   (client pair and item 70's trust-chain mode), outside generic `dev/dev.sh`.
+  As implemented: the client pair by a demo recipe in
+  `generate-certificates.sh`, the chain by item 70's copy commands in
+  `dev/demo-credentials.sh` (item 70 deferred a trust-chain mode).
 
 ### Verification
 

@@ -1,0 +1,11 @@
+id: app3
+base_path: /app3
+scopes:
+- openid
+- profile
+- app3
+certificate: credentials/client/client.crt
+# The app's own variables for id and base_path; validate compares them.
+environment:
+  id: APP_ID
+  base_path: BASE_PATH

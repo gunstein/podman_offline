@@ -1659,7 +1659,7 @@ class HealthTests(unittest.TestCase):
             path = Path(directory) / "installed.yaml"
             path.write_text(text)
             names, init = self.namespace["expected_containers"](path)
-        self.assertEqual(len(names), 11)
+        self.assertEqual(len(names), 13)
         self.assertIn("extra-app", names)
         self.assertEqual(
             init, {"app1-todo-prepare-database", "app1-todo-seed-database"}

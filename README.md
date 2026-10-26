@@ -27,6 +27,7 @@ metadata and complete add/remove examples. The shipped demo product is:
 | `myproduct-identity-<v>-offline.tar.gz` | identity | platform | `/identity/` |
 | `myproduct-app1-<v>-offline.tar.gz` | app1 | platform + identity | `/app1/` |
 | `myproduct-app2-<v>-offline.tar.gz` | app2 | platform + identity | `/app2/` |
+| `myproduct-app3-<v>-offline.tar.gz` | app3 (.NET/TypeScript whoami, backlog 71; not in the fixed acceptance matrix) | platform + identity | `/app3/` |
 | `myproduct-help-<v>-offline.tar.gz` | help | platform | `/help/` |
 
 ### Product name
@@ -274,6 +275,7 @@ python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
 APP_BASE_PATH=/app1 .venv-app/bin/python dev/smoke-test.py
 APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
+SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-app/bin/python dev/whoami-smoke-test.py
 ./dev/dev.sh down
 ```
 
@@ -570,7 +572,7 @@ There is no migration, fallback or automatic rewrite of persistent config.
 ├── storage/                                service user, 0700; XDG_DATA_HOME
 │   └── containers/storage/                 images, DB data and secret volumes
 └── state/                                  service user, 0700
-    ├── platform/, identity/, app1/, app2/, help/
+    ├── platform/, identity/, app1/, app2/, app3/, help/
     │   ├── config.yaml                    0600, retained across releases
     │   ├── credentials/                   0700, passwords/keys/certificates retained
     │   └── files/                         0700; import archives 0600

@@ -1,3 +1,10 @@
+# .NET/TypeScript demo app3 (backlog 71)
+
+`app3` is in the catalog but not in the fixed matrix: DEV builds, validates and
+starts it with the other dev pods; no scenario installs it, and the renamed
+product leaves it out. Dev results, the six conversion points, the public versus
+internal comparison and the pending lab steps are in [WHOAMI-DOTNET.md](WHOAMI-DOTNET.md).
+
 # Manual host setup (backlog 65)
 
 `--host-setup` selects the focused manual-block bootstrap/setup, repeat,
