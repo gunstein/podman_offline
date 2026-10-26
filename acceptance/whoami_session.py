@@ -6,7 +6,9 @@
 the session cookies to FILE, a new 0600 file in the run's private runtime
 directory. `check` requires the same cookies to still be signed in, which needs
 app3's persisted Data Protection keys. `logout` checks once more, then signs
-out with the CSRF token and requires the cookies to be rejected afterwards.
+out with the CSRF token and requires that this cookie jar is then rejected.
+Logout does not revoke a copy of the cookie taken before it (an ASP.NET cookie
+is self-contained), so the saved file itself still works until it expires.
 """
 
 import importlib.util
@@ -50,25 +52,27 @@ def load(path):
     return session
 
 
-def signed_in(session):
+def signed_in(session, seconds=60):
     """Require alice's session and claims; return the current CSRF token.
 
     Just after a restart the proxy may briefly answer through a stale route, so
-    this waits up to 60 seconds; a lost session never recovers, so waiting
-    cannot hide one.
+    this retries until a wall-clock deadline, each request limited to the time
+    left. It never signs in again, so a lost session cannot recover by waiting.
     """
-    state = {}
-    for _ in range(60):
+    deadline = time.monotonic() + seconds
+    url = smoke.ORIGIN + smoke.BASE_PATH + "/auth/me"
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AssertionError(f"Session not signed in within {seconds} seconds")
         try:
-            response = smoke.get(session, "/auth/me")
+            response = session.get(url, timeout=min(15, remaining))
             state = response.json() if response.status_code == 200 else {}
         except (requests.RequestException, ValueError):
             state = {}
         if (state.get("user") or {}).get("sub") == "alice":
             break
-        time.sleep(1)
-    else:
-        raise AssertionError("Session not signed in within 60 seconds")
+        time.sleep(max(0, min(1, deadline - time.monotonic())))
     assert smoke.claims(session)["sub"] == ["alice"], "Unexpected claims"
     return state["csrf"]
 

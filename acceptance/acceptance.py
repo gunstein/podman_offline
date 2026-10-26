@@ -26,6 +26,12 @@ RUNS = Path.home() / "podman-offline-acceptance-runs"
 IDENTITY_CONFIG_CHANGE = ("identity/config.yaml",)
 # product: in bundles.yaml; acceptance/renamed_product.py declares RENAMED_PRODUCT.
 DEMO_PRODUCT = "myproduct"
+# What app3 on PROD may hold after each --whoami fault-injection phase.
+WHOAMI_INJECTED = {
+    "chain": "an unrelated CA in app3's trust chain (public variant)",
+    "internal": "an unrelated CA in app3's trust chain and IDENTITY_INTERNAL_URL set",
+    "restored": "none: public variant and the environment's CA restored",
+}
 RENAMED_PRODUCT = "shop"
 
 
@@ -1142,6 +1148,10 @@ class Run:
         self.step("08-credentials", self.credentials)
         self.step("08-whoami-e2e", lambda: self.guest("DEV", "whoami-e2e"))
         self.step(
+            "08-whoami-log-safety",
+            lambda: self.guest("PROD", "whoami-log-safety", bundle="app3"),
+        )
+        self.step(
             "08-whoami-session-create",
             lambda: self.guest("DEV", "whoami-session-create"),
         )
@@ -1162,10 +1172,15 @@ class Run:
             "09-whoami-session-reboot",
             lambda: self.guest("DEV", "whoami-session-logout"),
         )
+        # Fault injection. As in every scenario, nothing changes PROD after a
+        # failed step: app3 keeps the injected state as evidence until the next
+        # run resets the VM, and the report names that state (WHOAMI_INJECTED).
+        self.meta["whoami_injected"] = WHOAMI_INJECTED["chain"]
         self.step(
             "10-whoami-chain-break",
             lambda: self.guest("PROD", "whoami-chain-break", bundle="app3"),
         )
+        self.meta["whoami_injected"] = WHOAMI_INJECTED["internal"]
         self.step(
             "10-whoami-internal",
             lambda: self.guest("PROD", "whoami-internal", bundle="app3"),
@@ -1175,6 +1190,7 @@ class Run:
             "10-whoami-restore",
             lambda: self.guest("PROD", "whoami-restore", bundle="app3"),
         )
+        self.meta["whoami_injected"] = WHOAMI_INJECTED["restored"]
         self.step("10-whoami-restored-e2e", lambda: self.guest("DEV", "whoami-e2e"))
         self.step("10-check-restored", lambda: self.guest("PROD", "check"))
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
@@ -1231,8 +1247,15 @@ class Run:
             "A failed step stops execution. Later steps were NOT TESTED.",
             "Only read-only prod launch diagnostics, audit collection and secret cleanup may run after a failed step. No automatic step retries or repairs.",
             "The opt-in status-retry probe performs its controlled retry and config restoration inside that step.",
-            "",
         ]
+        injected = self.meta.get("whoami_injected")
+        if injected and injected != WHOAMI_INJECTED["restored"]:
+            lines.append(
+                "--whoami stopped during fault injection: app3 on PROD may still hold "
+                + injected
+                + ". It is not restored after a failure; the next run resets the VM."
+            )
+        lines.append("")
         report = "\n".join(lines)
         (self.folder / "REPORT.md").write_text(report)
         evidence = [report, "\n# Evidence excerpts (full output in linked logs)\n"]

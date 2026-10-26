@@ -291,9 +291,32 @@ WHOAMI_CONFIG
     install_checked
     healthy
 }
-# Only fixed log lines are printed, never the whole backend log.
+# Read the current backend's log (since whoami_since when set) into whoami_output,
+# bounded and never printed; a failed read stops the step.
+whoami_backend_log() {
+    local -a since=()
+    if [[ -n ${whoami_since:-} ]]; then since=(--since "$whoami_since"); fi
+    if ! whoami_output=$(as_product podman logs "${since[@]}" --tail 5000 app3-whoami-backend 2>&1); then
+        echo 'FAIL: could not read the app3 backend log' >&2
+        exit 1
+    fi
+}
+# Print the first match of a fixed pattern in the backend log; no match prints nothing.
 whoami_log() {
-    as_product podman logs --since "$whoami_since" app3-whoami-backend 2>&1 | grep -o -m1 -E "$1" || true
+    whoami_backend_log
+    grep -o -m1 -E "$1" <<< "$whoami_output" || true
+}
+# The smoke test's last request is an OIDC error response with whoami_marker in
+# error_description and error_uri (dev/whoami-smoke-test.py LOG_MARKER). The
+# backend must log it only as its fixed failure line.
+whoami_marker=whoami-log-marker-7f3c
+whoami_log_safety() {
+    grep -q 'OIDC sign-in failed: OpenIdConnectProtocolException' <<< "$1" \
+        || { echo 'FAIL: the OIDC error response was not logged as a fixed line'; exit 1; }
+    if grep -q -F "$whoami_marker" <<< "$1"; then
+        echo 'FAIL: protocol error text reached the app3 backend log'; exit 1
+    fi
+    echo 'PASS: the OIDC error response is logged without its error_description or error_uri'
 }
 # Collect audit with separate streams and accept only the documented empty result.
 audit_events() {
@@ -1015,6 +1038,8 @@ dev-down) cd "$src"; ./dev/dev.sh down;;
 dev-whoami-e2e)
     cd "$src"
     SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
+    output=$(podman logs --tail 5000 app3-whoami-backend 2>&1)
+    whoami_log_safety "$output"
     ;;
 renamed-generate)
     (cd "$src" && python3 acceptance/secret_templates_test.py && python3 acceptance/init_secret_test.py)
@@ -1852,6 +1877,10 @@ whoami-chain-mounts)
         [[ $count -gt 2 ]] || { echo "FAIL: the image CA files are hidden ($count entries)"; exit 1; }
         echo "PASS: subPath files hold the environment CA; $count entries in /etc/ssl/certs"
     ' bash "$product_name" "$state"
+    ;;
+whoami-log-safety)
+    whoami_backend_log
+    whoami_log_safety "$whoami_output"
     ;;
 whoami-restart)
     user_service restart "$product_name-app3.service"

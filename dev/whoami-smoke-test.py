@@ -2,7 +2,8 @@
 
 Checks HTTPS, the OIDC handler's https redirect URI on the client protocol's
 callback path, sign-in through Duende (code, PKCE, private_key_jwt), the claims
-API, CSRF and local logout. With SMOKE_RESTART_COMMAND (for example
+API, CSRF and local logout, and last sends an OIDC error response whose text the
+backend must not log (the harness checks the log). With SMOKE_RESTART_COMMAND (for example
 `podman pod restart app3-whoami`, or `systemctl --user restart myproduct-app3`
 on a target) it restarts the app after sign-in and requires the same session
 cookie to still work, which needs the persisted Data Protection keys.
@@ -27,6 +28,9 @@ HOSTNAME = urlparse(ORIGIN).hostname
 CONNECT_IP = os.getenv("CONNECT_IP", "127.0.0.1")
 BASE_PATH = os.getenv("APP_BASE_PATH", "/app3").rstrip("/")
 RESTART = os.getenv("SMOKE_RESTART_COMMAND", "")
+# Sent as an Identity error's description and URI; the harness requires that it
+# never appears in the backend log (acceptance/remote.sh whoami_marker).
+LOG_MARKER = "whoami-log-marker-7f3c"
 original_getaddrinfo = socket.getaddrinfo
 
 
@@ -103,6 +107,28 @@ def check_redirect(session):
     assert query["redirect_uri"] == [ORIGIN + BASE_PATH + "/auth/callback"]
     assert query["code_challenge_method"] == ["S256"]
     assert set(query["scope"][0].split()) >= {"openid", "profile"}
+
+
+def check_error_response(session):
+    """Answer a real sign-in start with an OIDC error carrying LOG_MARKER.
+
+    The handler must refuse it with the fixed message; the caller checks the
+    backend log.
+    """
+    response = get(session, "/auth/login", allow_redirects=False)
+    state = parse_qs(urlparse(response.headers["Location"]).query)["state"][0]
+    response = session.post(
+        ORIGIN + BASE_PATH + "/auth/callback",
+        data={
+            "state": state,
+            "error": "access_denied",
+            "error_description": "Synthetic " + LOG_MARKER,
+            "error_uri": "https://example.invalid/" + LOG_MARKER,
+        },
+        timeout=15,
+    )
+    assert response.status_code == 400, "OIDC error response not refused"
+    assert LOG_MARKER not in response.text, "Error text echoed to the browser"
 
 
 def login(username):
@@ -193,6 +219,8 @@ def main():
     assert alice.post(logout, headers=good, timeout=15).status_code == 204
     assert get(alice, "/api/claims").status_code == 401
     print("PASS: CSRF and origin checks; local logout")
+    check_error_response(client())
+    print("PASS: an OIDC error response is refused without echoing its text")
 
 
 if __name__ == "__main__":

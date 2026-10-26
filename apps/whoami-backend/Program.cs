@@ -22,6 +22,9 @@ var internalIdentity = builder.Configuration["IDENTITY_INTERNAL_URL"]?.TrimEnd('
 if (string.IsNullOrEmpty(internalIdentity)) internalIdentity = null;
 var clientCertificate = X509Certificate2.CreateFromPemFile(
     "/run/secrets/client/client.crt", "/run/secrets/client/client.key");
+// The handler logs Identity's error_description and error_uri verbatim; those
+// are supplied by the protocol peer, so OnRemoteFailure logs a fixed line instead.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication.OpenIdConnect", LogLevel.None);
 
 // Keys protect sign-in cookies and antiforgery tokens; a volume keeps them across restarts.
 builder.Services.AddDataProtection()
@@ -73,7 +76,9 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.GetClaimsFromUserInfoEndpoint = true;
         options.SaveTokens = false;
         options.TokenValidationParameters.NameClaimType = "name";
-        options.TokenValidationParameters.ValidIssuer = issuer;
+        // ASP.NET also accepts the issuer named by discovery; pin the public one.
+        options.TokenValidationParameters.IssuerValidator =
+            (actual, _, _) => Oidc.PublicIssuer(issuer, actual);
         if (internalIdentity is not null) {
             options.MetadataAddress = internalIdentity + "/.well-known/openid-configuration";
             options.RequireHttpsMetadata = false;
@@ -95,11 +100,11 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                 ClientAssertion(appId, configuration.TokenEndpoint, clientCertificate);
         };
         options.Events.OnRemoteFailure = async context => {
-            // Name the failure without logging the callback URL, code or tokens.
-            var failure = context.Failure;
+            // Only the exception type and the request's trace ID: messages can carry
+            // the peer's error_description, error_uri or token details.
             context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>().LogWarning(
-                "OIDC sign-in failed: {Type}: {Message}", failure?.GetType().Name,
-                failure?.GetBaseException().Message);
+                "OIDC sign-in failed: {Type} (trace {TraceId})",
+                context.Failure?.GetType().Name, context.HttpContext.TraceIdentifier);
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             await context.Response.WriteAsync("Sign-in failed. Go back and try again.");
             context.HandleResponse();

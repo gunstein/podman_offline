@@ -11,6 +11,7 @@ Enforcing, rootless, Quadlet/systemd).** No change to `deployment/`.
 | Path | Content |
 | --- | --- |
 | `apps/whoami-backend/` | ASP.NET Core 8 BFF (`Program.cs`): cookie session, OpenID Connect handler, `GET /auth/login`, `GET /auth/me`, `POST /auth/logout`, `GET /api/claims`, `GET /livez` |
+| `apps/whoami-backend/Oidc.cs`, `Checks/` | Issuer pin, and its build-time check run by the Containerfile |
 | `apps/whoami-frontend/` | TypeScript page (`src/app.ts`), built with `tsc` in a Node stage, served by nginx |
 | `components/app3/` | `VERSION` 0.1.0, defaults, ConfigMap, Data Protection PVC, Pod `app3-whoami`, `route.conf` (`/app3/`), `client.yaml` (client ID `app3`) |
 | `bundles.yaml` | `app3: requires [platform, identity], public_from/routes: platform, clients: identity` |
@@ -31,6 +32,25 @@ other demo images. No database, seed data or init containers.
 | 3 | Data Protection keys | **Confirmed.** Keys in PVC `app3-protection` at `/data/protection` (`PersistKeysToFileSystem`, `SetApplicationName`). The signed-in session survived `podman pod restart app3-whoami` and `dev/dev.sh down` + `up`. Negative control: deleting the key files and restarting turned the same cookie into `401`. Keys are stored unencrypted, as Identity's (backlog 37). | A PVC for the key ring; it is kept on uninstall without `--delete-data`. |
 | 4 | CA trust chain | **Confirmed in dev.** Backlog 70's pattern: Secret `app3-ingress-trust-chain` from `cert/`, two `subPath` mounts to `/etc/ssl/certs/myproduct-{root,ca}.pem`. The image's own 297 CA files stayed (299 entries). .NET trusted the proxy for discovery, JWKS, token and userinfo. Negative control: an unrelated CA in both files made `/app3/auth/login` return `500` with `IDX20803 ... The SSL connection could not be established` and `AuthenticationException: ... errors in the certificate chain: PartialChain` in the backend log; restoring the CA fixed it. | Backlog 70's declaration and mounts, CA copied from the environment. |
 | 5 | `private_key_jwt` | **Confirmed.** `OnAuthorizationCodeReceived` adds an RS256 client assertion (`iss = sub = client ID`, `aud` = the token endpoint from discovery, `jti`, 1 minute lifetime) signed with `X509SigningCredentials` from the client pair; Duende accepted it in both variants. | The same event handler; the client certificate is registered through `client.yaml`. |
+
+Two backend rules came from the code review (2026-10-26), not from the six
+points, and apply to the real backend as well:
+
+- **Issuer pin.** ASP.NET adds the discovery document's issuer to the valid
+  issuers, so `ValidIssuer` alone does not pin the public issuer; with an
+  internal discovery address a token naming another issuer would pass.
+  `Oidc.PublicIssuer` is set as `IssuerValidator`. `Checks/` runs with the
+  pinned IdentityModel 7.7.3 in the image build: unpinned parameters accept a
+  correctly signed token with the discovery issuer, pinned ones reject it and
+  accept the public issuer; a broken pin fails the build (verified).
+- **No protocol text in logs.** The OpenID Connect handler logs Identity's
+  `error_description` and `error_uri` verbatim, twice, and the first
+  `OnRemoteFailure` added a third copy. Reproduced in dev with a synthetic
+  marker. The handler's log category is now off, and `OnRemoteFailure` logs
+  only the exception type and the request's trace ID. The smoke test sends such
+  an error response last; the harness (`whoami_log_safety`) requires the fixed
+  line and no marker in the backend log. The certificate error of point 4 is
+  logged by Kestrel and stays visible.
 | 6 | TypeScript build | **Confirmed.** Two stages: `node:22-alpine` runs `npm ci` (TypeScript 5.9.3 pinned in `package-lock.json`) and `tsc`; the runtime is `nginx:1.28-alpine` with `index.html` and the compiled `app.js` only. The build needs `registry.npmjs.org` on the build machine; `./build-bundle.sh app3` saved both images in one 114 MB archive, so installation is offline. | A lockfile; network only at build time. |
 
 Other findings:
@@ -116,12 +136,17 @@ lab. All nine dev pods started; `dev/whoami-smoke-test.py` passed in (a) and
 (b) with the restart check; app2's `dev/smoke-test.py` still passed; the
 negative controls for points 2, 3 and 4 behaved as described above. The
 backend compiles without warnings, and `dotnet list package --vulnerable
---include-transitive` reports none.
+--include-transitive` reports none. After the review fixes the image was
+rebuilt (`Checks/` passed), the smoke test passed with restart and the log
+check passed (no marker, fixed failure line with trace ID).
 
 Automated tests: `tests/demo_tests/test_whoami_demo.py` (client pair issued
-once by the environment's CA with clientAuth; paths shared by `client.yaml`,
-`SECRET_FILES`, demo provisioning, mounts and `Program.cs`; callback, forwarded
-headers, assertion type and ports; two-stage frontend with pinned TypeScript)
+once by the environment's CA with clientAuth; `dev/demo-credentials.sh` run
+with the real certificate script, copying the CA as `cert/{root,ca}.crt` and
+keeping everything on repeat, which fails if the copy lines are removed; paths
+shared by `client.yaml`, `SECRET_FILES`, mounts and `Program.cs`; source and
+Containerfile wiring of callback, forwarded headers, assertion, issuer check
+and log filter; two-stage frontend with pinned TypeScript)
 and the existing demo tests updated for six components. The acceptance harness
 tolerates `app3` (see below).
 
@@ -143,7 +168,8 @@ scenario, `--status-retry` or `--host-setup`. The fixed matrix is unchanged.
 | `06-prepare-host`, `06-install-*` | PROD | Host preparation, then platform, identity and app3 installed as the runtime account, each checked healthy. app3's demo client pair comes from `generate-certificates.sh`, its chain is copied from `state/PKI/private/ca.crt` (`whoami_trust_chain` in `remote.sh`) |
 | `07-check` | PROD | The existing installation checks (units, graphroot, permissions, no rootful containers) |
 | `07-whoami-chain-mounts` | PROD | Backlog 70's lab check in the running backend: Podman version and SELinux mode recorded, both `subPath` files equal the environment's CA, more than two entries remain in `/etc/ssl/certs` |
-| `08-whoami-e2e` | DEV → PROD | Smoke test through the public origin (variant a) |
+| `08-whoami-e2e` | DEV → PROD | Smoke test through the public origin (variant a), ending with an OIDC error response carrying a marker |
+| `08-whoami-log-safety` | PROD | The backend log has the fixed failure line and no marker (`whoami_log_safety`); the log read itself must succeed |
 | `08-whoami-session-create` … `09-whoami-session-reboot` | DEV and PROD | One saved session (`acceptance/whoami_session.py`) still signed in after `systemctl --user restart myproduct-app3.service` and after a PROD reboot; then local logout |
 | `10-whoami-chain-break` | PROD | An unrelated CA in both chain files and a reinstall: sign-in start answers `500` and the backend log names `PartialChain` or `UntrustedRoot` |
 | `10-whoami-internal`, `10-whoami-internal-e2e` | PROD, DEV → PROD | Variant b (`IDENTITY_INTERNAL_URL`) with the unrelated CA still mounted: the log names the internal address, the browser is sent to the public authorize endpoint, the smoke test passes |
@@ -154,11 +180,22 @@ Record the run's verdict, Podman version and SELinux mode here, and anything
 that differed from dev. The scenario does not cover upgrade, uninstall or the
 other demo apps beside app3.
 
+After a failure the runner changes nothing more on PROD, as in every scenario:
+if a `10-whoami-*` step fails, app3 keeps the unrelated CA (and, from
+`10-whoami-internal` on, the internal variant) as evidence, and REPORT.md names
+that state (`WHOAMI_INJECTED` in `acceptance.py`). The next run resets the VM
+from its snapshot. Restore by hand only on a VM you keep: the `whoami-restore`
+step's commands, or edit `IDENTITY_INTERNAL_URL` back to empty, copy the CA
+again and install. The session check (`whoami_session.py`) retries until a
+60-second wall-clock deadline, each request limited to the time left, and never
+signs in again, so it cannot hide a lost session.
+
 Before a real run, the PROD steps' shell code was run against the real dev
 pods in this container, with `as_product` running commands directly and
 `dev/dev.sh up` standing in for the install. `whoami-chain-mounts`,
 `whoami-chain-break`, `whoami-internal` and `whoami-restore` passed, and so did
-the smoke test in variant b and after the restore. The session script passed
+the smoke test in variant b and after the restore, and after the review fixes
+`whoami-log-safety` passed after the smoke test. The session script passed
 create, check after a pod restart, and logout after `dev/dev.sh down` + `up`.
 This exercised the log patterns and the curl output format; it does not
 replace the lab run.
@@ -190,8 +227,10 @@ lists six bundles while those scenarios transfer their fixed sets. The renamed
 product (`acceptance/renamed_product.py`) leaves `app3` out, so its
 five-component expectations are unchanged. Only the opt-in `--whoami`
 scenario above installs `app3`. `acceptance/test_whoami.py` covers its step
-order, flag rules, the chain copy and the PROD steps' pass and fail paths with
-stubbed commands.
+order, flag rules, the chain copy, the PROD steps' pass and fail paths with
+stubbed commands (including a failed log read with matching text and a log
+carrying the marker), the reported state after a failure in each injection
+phase, and the session helper's deadline, retry and private file.
 
 ## Gaps
 
