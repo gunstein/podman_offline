@@ -851,11 +851,25 @@ becomes phase 2.
   RPMs with no scriptlets that change the host. The exception ends with phase 2.
 - **`release.py`:** stays until phase 1 replaces it; its signed flow is not
   carried into phase 1 and returns as phase 2 design, not as code to keep.
+- **Installing RPMs requires root (2026-10-26).** `dnf install`, `dnf upgrade`,
+  `dnf remove` and `rpm -i/-e` write the RPM database and system directories and
+  refuse to run without superuser privileges; an ordinary account can only
+  query (`rpm -q`, `rpm -qi`, `rpm -ql`, `dnf list installed`, `dnf info`).
+  Installing, upgrading and removing product RPMs is therefore always an
+  **administrator** task with sudo; the runtime user never installs packages and
+  keeps no sudo. Workarounds that would let the runtime user install (a sudoers
+  rule for `dnf`, polkit/PackageKit `pkcon install-local`) conflict with the
+  no-sudo requirement and are not used. The manual's prerequisites must say
+  that someone with root access is needed for every delivery; if the person on
+  site has no sudo, nothing can be installed. To confirm on a lab host as an
+  ordinary user: `dnf install -y /tmp/missing.rpm` must report the superuser
+  error, and `sudo -l` must show `not allowed` for the runtime account.
 - **Open decisions for phase 1:** (1) the fixed location: a local repository
   (`repodata/` plus a `.repo` file, `dnf install <name>`) or a plain directory
-  (`dnf install /path/*.rpm`); (2) who installs: plain `dnf` or the
-  administrator command. (2) decides whether WP0 probes F (removal guard) and H
-  (stop on a release installed outside the administrator command) remain
+  (`dnf install /path/*.rpm`); (2) whether the administrator installs with
+  plain `sudo dnf` or through the administrator command (either way it is the
+  administrator, see above). (2) decides whether WP0 probes F (removal guard)
+  and H (stop on a release installed outside the administrator command) remain
   phase 1 requirements.
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
