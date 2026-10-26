@@ -12,11 +12,13 @@ items retain their individual scopes below; agree the next priority separately.
 ## Current priority (updated 2026-10-26)
 
 [Item 70](#70-provision-a-components-ca-trust-chain-from-the-environments-pki)
-is high priority: deliver the environment's CA to a converted backend that
-calls Duende over HTTPS (dev and lab), before further conversion work.
+is high priority and kept small: copy the environment's CA to a converted
+backend that calls Duende over HTTPS (dev and lab), document the pattern and
+check `subPath`, before further conversion work.
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 follows it: a minimal .NET backend and TypeScript frontend signing in through
-Duende, to test the conversion risks before the real backend.
+Duende, to test the conversion risks before the real backend, including
+whether the backend can call Duende internally instead of through the chain.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -533,8 +535,9 @@ scope and usability findings explicitly recorded.
 
 Status: planned, **high priority** (2026-10-26), requested by the product owner.
 Blocks converting the organisation's backend that signs in through Duende and
-calls it over HTTPS through the platform proxy. Small and independent of items
-66/69.
+calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
+steps, documentation and a `subPath` check, no new script mode. Independent of
+items 66/69; item 71 uses it.
 
 ### Background
 
@@ -557,48 +560,51 @@ dev and the lab it is both the root and the only issuing CA. The script has no
 way to deliver this CA to a new component's own files. `dev/demo-credentials.sh`
 calls the script for the shipped demo only, in dev only.
 
-### Task
+### Task (kept small, product owner 2026-10-26)
 
-1. Add a generic mode to `dev/generate-certificates.sh`:
-   `--root DIR --component ID --purpose trust-chain`. It copies
-   `<root>/PKI/private/ca.crt` to `<root>/<ID>/cert/root.crt` and
-   `<root>/<ID>/cert/ca.crt` (0644, directory 0700). Same rules as the existing
-   modes: identical existing files are retained, different existing files stop
-   with a message, links and special files are refused, a missing CA stops with
-   the command that creates it, nothing private is printed. Validate `ID` with
-   the existing component ID rule. The CA always comes from the same root, never
-   from the source checkout, so dev and the lab each use their own CA.
-2. Dev: call the mode for the component from the dev provisioning (a separate
-   script for the organisation's components, or `dev/demo-credentials.sh` if
-   the component is part of the shipped demo). Keep demo provisioning out of
-   generic `dev/dev.sh`.
-3. Lab and manual: the same command as the runtime user on stdin, as the other
-   certificate steps, after `init-config`; add it to the acceptance harness if
-   the component is in a scenario.
-4. Component declaration (document as the pattern in `docs/COMPONENTS.md`):
+Follow the original Kubernetes setup (public HTTPS plus the chain); whether the
+backend could call Duende internally instead is tested in item 71, not decided
+here. No new code in `dev/generate-certificates.sh` for now.
+
+1. Dev: in the dev provisioning for the organisation's components (outside
+   generic `dev/dev.sh`), after the environment's CA exists, copy it into the
+   component's files:
+   `install -d -m 0700 build/dev/<id>/cert`, then
+   `install -m 0644 build/dev/PKI/private/ca.crt build/dev/<id>/cert/root.crt`
+   and the same to `ca.crt`. The demo PKI has one level, so the root is also
+   the only issuing CA.
+2. Lab and manual: the same two copies as the runtime user after `init-config`,
+   from `/var/lib/<product>/state/PKI/private/ca.crt` to
+   `/var/lib/<product>/state/<id>/cert/`; add them to the harness if the
+   component is in a scenario. Always the environment's own CA, never the
+   source checkout's.
+3. Component pattern, documented in `docs/COMPONENTS.md`:
    `SECRET_FILES: <component>-ingress-trust-chain: [{path: cert}]` (the Secret
    name must start with the component ID; `<product>-...` is refused), and in
    the backend container two `volumeMounts` of one `secret` volume with
    `subPath: root.crt` / `subPath: ca.crt` to
    `/etc/ssl/certs/<product>-root.pem` and `/etc/ssl/certs/<product>-ca.pem`,
    `readOnly: true`, with matching `items`.
-5. Verify before relying on it: `podman kube play` (5.8.2 on OL9) supports
+4. Verify before relying on it: `podman kube play` (5.8.2 on OL9) supports
    `subPath` for a Secret volume and keeps the image's other files in
    `/etc/ssl/certs`; manifest validation accepts `subPath`. If `subPath` does
    not work, stop and decide an alternative with the product owner.
 
 ### Tests and verification
 
-- Script tests in the existing certificate fixture style: copy, rerun retains,
-  conflict stops, missing CA, links, invalid ID, dev and an arbitrary root.
 - A product test that a component with this declaration and these mounts
   validates and renders the Secret with both keys.
-- Real check in dev and the lab: the backend signs in through Duende end to end
-  with the chain; record that only the root/single-level demo CA is exercised.
+- The `subPath` check above on a lab host, recorded with the Podman version.
+- End to end in dev and the lab through item 71's app (and later the real
+  backend): sign-in through Duende with the chain; record that only the
+  single-level demo CA is exercised.
 
-Out of scope: a two-level demo PKI (root plus issuing CA) and customer CA
-delivery (backlog 45a/45b); trusting the chain for components other than the
-one that needs it.
+### Later, only if needed
+
+A `--component ID --purpose trust-chain` mode in `dev/generate-certificates.sh`
+(copy with the script's retain/conflict/link rules and script tests), if the
+manual copies turn out to drift or to be error-prone. Out of scope: a two-level
+demo PKI (root plus issuing CA) and customer CA delivery (backlog 45a/45b).
 
 ## 71. Add a .NET and TypeScript demo app that signs in through Duende
 
@@ -658,6 +664,19 @@ no seed data, no init containers.
   counts, install orders, e2e, upgrade) in a follow-up if it proves useful.
 - Record each of the six points above as confirmed, changed or open, so the
   conversion of the real backend can reuse the answers.
+- **Public HTTPS versus internal calls (product owner, 2026-10-26).** Run the
+  app in two variants and record the configuration each needs:
+  (a) as the original Kubernetes setup: discovery, JWKS and token endpoint
+  through the public HTTPS origin, trusting the proxy certificate through
+  item 70's chain;
+  (b) internal: discovery/JWKS/token from Duende on the Podman network over
+  HTTP (`MetadataAddress`, `RequireHttpsMetadata = false`), while the issuer
+  stays the public origin (`ValidIssuer`) and the browser is still sent to the
+  public authorize and end-session endpoints, without the chain.
+  For (b) record whether Duende publishes split endpoints or the app must
+  override them, and any security review concern about unencrypted traffic
+  between containers. The result decides which variant the real backend uses;
+  until then the conversion follows (a).
 
 ## 69. Paper-first installation for closed networks
 
