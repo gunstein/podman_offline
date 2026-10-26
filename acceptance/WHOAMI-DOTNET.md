@@ -1,10 +1,15 @@
 # .NET and TypeScript demo app through Duende (backlog 71)
 
-Status (2026-10-26): implemented as demo component `app3`. Verified end to end
-with real `podman kube play` in dev, in both the public HTTPS variant (a) and
-the internal variant (b). The opt-in acceptance scenario `--whoami` installs
-it from bundles in the lab; **it has not yet run (OL9, Podman 5.8.2, SELinux
-Enforcing, rootless, Quadlet/systemd).** No change to `deployment/`.
+Status (2026-10-26): implemented as demo component `app3` and lab verified at
+`45fdb17e8d7e6a4df745ee846d925851557d8794`: signed offline bundle installation,
+both OIDC variants, trust-chain negative control and session persistence across
+user-systemd restarts passed on OL9.8, Podman 5.8.2, rootless, SELinux Enforcing.
+Earlier real `kube play` dev evidence is retained separately below. No change
+to `deployment/` or the fixed matrix's component counts/install orders/upgrades.
+
+The opt-in `--whoami` scenario added in `f82d107` has not been run in this
+lab verification. Testing stopped at the user's request before that update was
+pulled; results below do not verify the newer harness.
 
 ## What was added
 
@@ -22,7 +27,7 @@ Images: `localhost/demo-whoami-backend:0.1.0` and
 `localhost/demo-whoami-frontend:0.1.0`, built by `dev/build-images.sh` like the
 other demo images. No database, seed data or init containers.
 
-## The six conversion points
+## The six conversion points (earlier dev evidence)
 
 | # | Point | Result | What the real backend needs |
 | --- | --- | --- | --- |
@@ -108,7 +113,7 @@ Trust-chain negative control: copy an unrelated CA certificate over
 `podman logs app3-whoami-backend`), then rerun `./dev/demo-credentials.sh` and
 `./dev/dev.sh up`.
 
-## Results of this change
+## Earlier dev results
 
 Real Podman run (2026-10-26): Podman 4.9.3, rootful, inside an Ubuntu 24.04
 container without SELinux, systemd or Quadlet. This is dev evidence, not the
@@ -180,6 +185,122 @@ bash "$release/deploy.sh" validate && bash "$release/deploy.sh" install
 proxy certificate came from a supplier, copy the supplier's issuing chain
 instead of the demo CA.
 
+## Completed lab verification (2026-10-26)
+
+Every result in this section tested commit
+`45fdb17e8d7e6a4df745ee846d925851557d8794` on branch
+`claude/sweet-fermat-08ibq2`. DEV VM 107 and PROD VM 108 are the configured,
+authorized disposable lab VMs. Both ran Oracle Linux Server 9.8, Podman 5.8.2,
+SELinux Enforcing. App3 ran rootless on PROD as `myproduct-ops` (UID 1001),
+through `myproduct-app3.service` and Quadlet. These are new lab results, not
+reuse of the earlier rootful Podman 4.9.3 dev evidence.
+
+### Six conversion points: lab outcome
+
+| # | Point | Lab status at `45fdb17` | Evidence and limits |
+| --- | --- | --- | --- |
+| 1 | Callback path | **Confirmed** | Both variants passed the public HTTPS `/app3/auth/callback` redirect and actual `form_post` callback through nginx/Duende. No protocol change. Duende post-logout redirect remains open; only local logout is tested. |
+| 2 | Forwarded headers | **Confirmed** | Smoke asserted the HTTPS redirect URI and completed sign-in behind the real proxy. The dev-only middleware-removal negative control was not repeated in the lab. |
+| 3 | Data Protection keys | **Confirmed** | The same authenticated cookie and claims API worked after `systemctl --user restart myproduct-app3.service` in both variants, including (b) with unrelated CA. App3 reboot and same-cookie survival across install were not tested. |
+| 4 | CA trust chain | **Confirmed** | Rootless Secret `subPath` probe passed first; both actual app3 mounts matched the environment CA, retained 299 CA-store entries and had SELinux `container_file_t:s0` labels. Unrelated CA in both files caused HTTP 500 plus user-journal `PartialChain`; restoration recovered sign-in. Only a single-level demo CA was tested. |
+| 5 | `private_key_jwt` | **Confirmed** | Real Duende sign-in and claims API passed using the bundled .NET handler and runtime client certificate in both variants; no assertions, tokens or private keys were printed. |
+| 6 | TypeScript build | **Confirmed** | DEV built both app3 images, including successful NuGet restore, `npm ci` and `tsc`; the signed app3 bundle carried both images. PROD remained network-isolated for installation and served the compiled frontend checked by smoke. |
+
+### Installation steps 1–6 and controls from the `45fdb17` recipe
+
+1. **Confirmed:** the normal matrix's DEV image build/pull and bundle build
+   produced `myproduct-app3-0.1.0-offline.tar.gz`, its checksum and signature.
+   The app3 archive was transferred separately and published with the existing
+   protected-release helper and the run's pinned signing key. Signature,
+   immutable publication and fapolicyd trust checks passed.
+2. **Confirmed:** with platform and Identity already installed by the normal
+   matrix, the runtime user ran `init-config app3`, the supplied demo certificate
+   recipe on stdin, both CA copies, `validate` and `install`. App3's two
+   containers, Identity and platform were healthy. No files under `deployment/`
+   were changed. This used the harness's runtime-user invocation with its
+   configured XDG paths; it was not an unassisted human/real-SSH operator trial.
+3. **Confirmed:** the smoke test ran as the runtime user on PROD with
+   `PUBLIC_ORIGIN=https://myproduct-proxy:8443`, `CONNECT_IP=192.168.0.108`,
+   the PROD CA and Identity password directory, and exactly
+   `SMOKE_RESTART_COMMAND='systemctl --user restart myproduct-app3.service'`.
+   It produced the four lines below. **Changed lab prerequisite:** PROD lacked
+   `requests`; public Python dependencies were transferred from DEV in a zip,
+   and the unchanged smoke source was supplied on stdin (compatible with
+   fapolicyd). No PROD package download was used. An initial invocation with
+   loopback failed readiness because the proxy binds the PROD IP; correcting
+   `CONNECT_IP` resolved this test-invocation error.
+4. **Confirmed, with a journal prerequisite repair:** unrelated CA in both
+   `cert/` files plus install gave HTTP 500 at `/app3/auth/login`. Initially
+   `journalctl --user` could not open a journal: the matrix baseline had no
+   persistent user journal. Running the existing guarded
+   `scripts/release.py` `prepare_persistent_journal()` helper as root, then
+   reinstalling, made the runtime journal readable and confirmed `PartialChain`.
+   [Bounded excerpt and SELinux details](TRUST-CHAIN.md#completed-lab-verification-2026-10-26).
+   Restoring the correct CA and installing again restored all four smoke PASS
+   lines. This repair does not retrospectively verify the baseline journal.
+5. **Confirmed:** setting `IDENTITY_INTERNAL_URL` to
+   `http://identity-server:8080/identity`, installing and running smoke produced
+   four PASS lines; replacing both CA files with the unrelated CA, reinstalling
+   and repeating smoke also produced four PASS lines. Both mounted files were
+   checked against the unrelated CA. Actual internal discovery advertised
+   internal authorize/token/JWKS/userinfo URLs and the public issuer, confirming
+   the browser authorize override is still needed. Finally the correct CA and
+   empty config value were restored, install was repeated, and public HTTPS
+   smoke again produced four PASS lines. The temporary unrelated CA was removed.
+6. **Confirmed:** runtime/version/SELinux facts and differences are recorded
+   here and in the trust-chain report. Session survival across a user-service
+   restart passed in every successful smoke run. **Open:** app3 reboot persistence; the
+   normal matrix's successful reboot did not include app3 and is not evidence
+   for it.
+
+Each successful smoke invocation produced:
+
+```text
+PASS: HTTPS, routes, compiled frontend, anonymous 401, https callback URI
+PASS: alice signed in through Duende (PKCE, private_key_jwt); claims API
+PASS: the session cookie still works after restarting the app
+PASS: CSRF and origin checks; local logout
+```
+
+### Separate test and matrix evidence
+
+- **Product/unit:** DEV `python3 -B tests/run.py all`: 559 tests passed in
+  108.107 seconds. Source/assertion coverage is separate from the runtime checks.
+- **Acceptance harness:** controller
+  `python3 -B -m unittest discover -s acceptance -p 'test_*.py'`:
+  341 tests passed in 9.434 seconds.
+- **Real matrix:** normal `app3-45fdb17-normal`: **CLEAN PASS**, including
+  offline installation, sign-in, restart/recovery, reboot, upgrades, scoped
+  uninstall and final PROD audit. `dev-up` accepted app3, and all six bundles
+  built; app3 remained outside the fixed PROD matrix.
+- **Real renamed matrix:** `app3-45fdb17-renamed`: **STOPPED at user request; incomplete, not CLEAN.**
+  Eighteen completed steps passed with no recorded failure, through
+  `05-transfer-login-service`; the controller was stopped during the next
+  bundle transfer. Renamed PROD installation/lifecycle and final audit were
+  not reached. No complete runner verdict was generated. The generated catalog/component tree and five-bundle list were checked:
+  app3 is absent; only gateway, login-service, orders, inventory and manual
+  appear in the retained bundle list.
+- Controller evidence is retained under
+  `~/podman-offline-acceptance-runs/app3-45fdb17-normal/{REPORT,EVIDENCE}.md`.
+  The interrupted renamed run retains `record.jsonl` and step logs under
+  `~/podman-offline-acceptance-runs/app3-45fdb17-renamed/`; it has no final report.
+  These are local lab artifacts, not repository-relative links. The normal run
+  completed before the separate app3 test; app3 was restored before the renamed
+  scenario reset the same authorized VMs. No unrelated environment was reset.
+
+### Understandability and operator review
+
+Documentation review traced declared CA files through Secret mounts, runtime
+trust failure, reinstall/restoration, and the persistent Data Protection volume
+through a service restart. The report distinguishes source tests, harness tests,
+real matrix evidence and app3 evidence, and records the two lab prerequisite
+issues rather than hiding them. No implementation/control-flow change required
+a code understandability redesign. The lab result identifies the correct
+`CONNECT_IP` choice. AI procedure assessment: **findings** (offline smoke
+prerequisite and baseline user-journal availability, remedied for this run as
+above). Human operator assessment: **not performed**; this developer acceptance
+exercise does not establish unassisted operator usability.
+
 ## Acceptance harness and matrix
 
 `app3` is in the catalog but not in the fixed acceptance matrix, as the backlog
@@ -195,9 +316,16 @@ stubbed commands.
 
 ## Gaps
 
-- A real `--whoami` run in the lab, which includes Podman 5.8.2 `subPath`
-  under SELinux ([trust chain](TRUST-CHAIN.md)).
+- The organisation's real backend is not covered by the app3 lab result.
+- App3 reboot persistence, same-cookie persistence across install, and the
+  dev-only forwarded-header/key-deletion negative controls were not lab-tested.
+- The renamed matrix was stopped at user request during transfer; its PROD
+  lifecycle and final audit remain unverified.
+- The newer `f82d107` `--whoami` harness and its added tests were not run here.
+  Test counts above apply only to `45fdb17`.
 - Only the single-level demo CA is exercised; a root plus issuing CA is not.
 - Post-logout redirect through Duende (open, point 1 findings).
-- Operator impact: none for the shipped procedure; `app3` is a developer demo
-  and not part of the production manual, so no AI or human operator review applies.
+- App3 remains outside the fixed PROD matrix; adding its counts, install orders
+  and upgrade coverage is a separate follow-up. No human operator trial occurred.
+- The unmodified matrix baseline lacks persistent user-journal access; this run
+  repaired it with the existing host-setup helper for the app3 negative control.
