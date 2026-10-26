@@ -19,6 +19,26 @@ passes. Read
 [item 66 plan](INSTALL-SET-PLAN.md), the [review guide](REVIEW_GUIDE.md)
 (sections 1, 6 and 7) and the current [production manual](PRODUCTION-INSTALL.md).
 
+## Phasing (product owner, 2026-10-26)
+
+Signing is **deferred, not dropped**. Phase 1 delivers unsigned RPMs installed
+with `dnf` from a fixed location; phase 2 adds signing. All signature design
+in this plan stays as written and applies to phase 2; see
+[item 69, "Phasing decision"](../BACKLOG.md#phasing-decision-product-owner-2026-10-26)
+for the rules phase 1 must follow so that phase 2 is not made harder.
+
+| Part of this plan | Phase |
+| --- | --- |
+| Product-owner decision "Signature trust"; section "Signature verification"; the key/fingerprint bootstrap and signature checks in "Preflight and bootstrap prerequisites" and "Manual target (paper)" | 2 (unchanged) |
+| WP0 probes C1, C2 and the signature part of D | 2 (passed 2026-10-25; rerun when phase 2 starts) |
+| WP0 probes A, B, E | 1 (passed; not affected by signing) |
+| WP0 probes C3, F, G, H | 1 or 2, depending on the open decision who installs (plain `dnf` or the administrator command) |
+| Immutable versions, retirement, runtime command, credentials, failure and retry | 1, adjusted where they assume a verified signature |
+
+WP0 status: the complete A–H matrix passed on 2026-10-25
+([report](../acceptance/RPM-WP0-LAB-20261025-FULL.md)); the status section
+further down predates that run.
+
 ## Outcome and scope
 
 Today the administrator pastes a 61-line tool bootstrap and a setup block, and

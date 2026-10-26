@@ -509,7 +509,7 @@ declared OS/account baseline, without oral help or internal architecture
 knowledge. Supply only the documented delivery, substitution worksheet and
 manual. An observer records events without coaching or silently repairing state.
 
-Use a printed manual without copy/paste (backlog 69), with a console-only variant and one person holding both accounts. Cover transfer and trusted tool bootstrap, prerequisite diagnosis/remedy, first
+Use a printed manual without copy/paste (backlog 69), with a console-only variant and one person holding both accounts. In item 69's phase 1 (unsigned RPMs) the trial has no key or fingerprint steps; repeat the affected tasks when phase 2 adds signing. Cover transfer and trusted tool bootstrap, prerequisite diagnosis/remedy, first
 setup, repeated setup and continuation after an interruption, then real SSH login
 as the runtime user without sudo, configuration/credential delivery, installation,
 status and safe journal access. Include install sets and reboot/upgrade/retire
@@ -664,7 +664,8 @@ no seed data, no init containers.
 Status: requirement and investigation (2026-10-25), lab questions answered and
 an RPM prototype run the same day (see below); **direction chosen by the
 product owner on 2026-10-25: signed RPM delivery with one command per role**
-(see "Chosen direction"); detailed design not written yet; high priority. It
+(see "Chosen direction"); **phased on 2026-10-26: unsigned RPMs first, signing
+deferred, not dropped** (see "Phasing decision"); high priority. It
 applies to items 65 (implemented for pasted commands), 66 (planned) and 68
 (human trial), and must be settled before 66's operator-facing commands are
 fixed.
@@ -818,6 +819,44 @@ the closed lab are not feasible.
   (review guide section 7), including the strict fapolicyd profile above,
   first installation, upgrade, retirement and interruption/retry. Manual lab
   sessions are limited to one short paper/human trial (item 68).
+
+### Phasing decision (product owner, 2026-10-26)
+
+For now the bundles are delivered as RPMs **without signatures**: the RPMs are
+placed in a fixed location on the server and installed with `dnf`. Signing must
+be supported later, possibly in about two years. **Signing and every challenge
+that comes with it are deferred, not removed.** Nothing in "Chosen direction",
+the plan or the WP0 evidence about signatures is deleted or weakened in text; it
+becomes phase 2.
+
+- **Phase 1 (now):** unsigned release and tools RPMs, installed with `dnf` from
+  the fixed location; trust in fapolicyd from the RPM database (WP0 probes A,
+  B, E: unaffected by signing); host preparation, runtime command, retirement,
+  lock and repair as planned where they do not depend on signatures.
+- **Phase 2 (deferred, unchanged scope):** product-key-bound signature
+  verification, the paper fingerprint and key bootstrap, isolated keyring
+  checks, signature predicates in the manual, and the WP0 signature evidence
+  (probes C1, C2 and the signature part of D). Rerun those probes when phase 2
+  starts; the 2026-10-25 evidence is historical by then.
+- **Phase 1 must not make phase 2 harder:** keep package names, file layout and
+  versions as planned; keep the build able to sign (`rpm --addsign` stays in the
+  pipeline, just not required); keep a clear place in the administrator flow
+  where the signature check will go; do not bake "no signature" assumptions into
+  code or file formats; anything that turns signature checking off (for example
+  `gpgcheck=0` in a repository file) is one explicit, documented setting.
+- **Temporary security exception, documented in the review guide:** without
+  signatures, whoever can place an RPM in the fixed location and get the
+  administrator to install it gets code run as root and trusted by fapolicyd.
+  Interim protection: a root-owned location, delivery on trusted media, release
+  RPMs with no scriptlets that change the host. The exception ends with phase 2.
+- **`release.py`:** stays until phase 1 replaces it; its signed flow is not
+  carried into phase 1 and returns as phase 2 design, not as code to keep.
+- **Open decisions for phase 1:** (1) the fixed location: a local repository
+  (`repodata/` plus a `.repo` file, `dnf install <name>`) or a plain directory
+  (`dnf install /path/*.rpm`); (2) who installs: plain `dnf` or the
+  administrator command. (2) decides whether WP0 probes F (removal guard) and H
+  (stop on a release installed outside the administrator command) remain
+  phase 1 requirements.
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
 revision 3.2 after AI reviews and a first WP0 attempt that stopped before
