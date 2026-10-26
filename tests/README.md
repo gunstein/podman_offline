@@ -78,6 +78,8 @@ provisioning, the Pod mounts and `Program.cs` name the same files, the
 callback/forwarded-header/client-assertion setup and ports, and the two-stage
 frontend build with pinned TypeScript. These are source assertions; real
 sign-in is `dev/whoami-smoke-test.py` ([results](../acceptance/WHOAMI-DOTNET.md)).
+The acceptance-harness test `acceptance/test_whoami.py` covers the opt-in
+`--whoami` scenario's step order, flag rules and PROD shell steps with stubs.
 
 # Host preparation boundary (backlog 46)
 

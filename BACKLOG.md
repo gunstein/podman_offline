@@ -17,8 +17,8 @@ backend that calls Duende over HTTPS (dev and lab), document the pattern and
 check `subPath`, before further conversion work.
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 is implemented as demo component `app3` and verified in dev (both variants,
-[results](acceptance/WHOAMI-DOTNET.md)); its lab installation and item 70's
-lab `subPath` check remain.
+[results](acceptance/WHOAMI-DOTNET.md)); a lab run of the opt-in acceptance
+scenario `--whoami` remains, and it includes item 70's lab `subPath` check.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -194,7 +194,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend; dev verified, lab `subPath` check pending), 71 (high: .NET/TypeScript demo app through Duende; implemented, dev verified, lab pending), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend; dev verified, lab `subPath` check pending), 71 (high: .NET/TypeScript demo app through Duende; implemented, dev verified, `--whoami` lab run pending), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -617,8 +617,9 @@ Status: **implemented, verified in dev** (2026-10-26) as demo component `app3`
 (`apps/whoami-backend`, `apps/whoami-frontend`); no change to `deployment/`.
 All six points below confirmed in dev, with two recorded details (ASP.NET's
 default `form_post` callback; no post-logout URI in the client protocol), and
-both variants pass; recommendation: variant (a). Lab installation from bundles
-is pending. [Results and lab steps](acceptance/WHOAMI-DOTNET.md).
+both variants pass; recommendation: variant (a). The opt-in acceptance scenario
+`--whoami` installs it from bundles in the lab and covers the verification
+below; it has not run yet. [Results and scenario](acceptance/WHOAMI-DOTNET.md).
 High priority, requested by the product owner to de-risk converting the
 organisation's .NET backend. Exercises item 70.
 

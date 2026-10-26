@@ -24,6 +24,11 @@ unchanged; whether Podman honours it is the lab check below.
 
 ## Lab check: `subPath` with a Secret volume (pending)
 
+The acceptance scenario `--whoami` (step `07-whoami-chain-mounts`) runs this
+check in the installed app3 backend under the real layout, SELinux and
+fapolicyd, and its final audit step rejects any AVC denial. The standalone
+recipe below isolates the Podman behaviour if that step fails.
+
 On a lab VM as an ordinary user, with a local image that has `/etc/ssl/certs`
 (for example the proxy's `docker.io/library/nginx:1.28-alpine`):
 

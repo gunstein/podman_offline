@@ -242,6 +242,7 @@ demo_credentials() {
     esac
     if [[ $demo == "$component" ]]; then
         as_product bash -s -- --root "$state" "$component" "$prod_host" < "$base/generate-certificates.sh"
+        if [[ $component == app3 ]]; then whoami_trust_chain "$state/PKI/private/ca.crt"; fi
         return
     fi
     if sudo -n test -e "$state/$demo/credentials"; then
@@ -256,6 +257,43 @@ demo_credentials() {
     as_product mkdir -m 700 -p "$state/$component"
     as_product mv "$state/$demo/credentials" "$state/$component/credentials"
     as_product rmdir "$state/$demo"
+}
+# Backlog 70/71: app3's backend trusts the proxy through these two public files,
+# copied from the environment's CA as dev/demo-credentials.sh does in dev.
+whoami_trust_chain() {
+    local name
+    as_product install -d -m 0700 "$state/app3/cert"
+    for name in root.crt ca.crt; do as_product install -m 0644 "$1" "$state/app3/cert/$name"; done
+}
+# app3's answer to a sign-in start from PROD itself: HTTP status and redirect target.
+whoami_login() {
+    as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 30 \
+        --output /dev/null --write-out '%{http_code} %{redirect_url}' "https://$prod_host:$port/app3/auth/login"
+}
+# Set app3's IDENTITY_INTERNAL_URL and trust-chain source, then reinstall its release.
+# whoami_since marks where the new backend's log starts.
+whoami_configure() {
+    as_product python3 - "$state/app3/config.yaml" "$1" <<'WHOAMI_CONFIG'
+import sys
+import yaml
+
+path, value = sys.argv[1:]
+with open(path) as stream:
+    config = yaml.safe_load(stream)
+config["IDENTITY_INTERNAL_URL"] = value
+with open(path, "w") as stream:
+    yaml.safe_dump(config, stream)
+print("PASS: app3 IDENTITY_INTERNAL_URL set to " + (value or "empty (public origin)"))
+WHOAMI_CONFIG
+    whoami_trust_chain "$2"
+    whoami_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    install_checked
+    healthy
+}
+# Only fixed log lines are printed, never the whole backend log.
+whoami_log() {
+    as_product podman logs --since "$whoami_since" app3-whoami-backend 2>&1 | grep -o -m1 -E "$1" || true
 }
 # Collect audit with separate streams and accept only the documented empty result.
 audit_events() {
@@ -974,6 +1012,10 @@ examples-setup)
     ;;
 example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
+dev-whoami-e2e)
+    cd "$src"
+    SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
+    ;;
 renamed-generate)
     (cd "$src" && python3 acceptance/secret_templates_test.py && python3 acceptance/init_secret_test.py)
     # Only YAML, descriptors and runtime settings change; deploy code stays as checked out.
@@ -1793,6 +1835,61 @@ if __name__ == "__main__":
 DATABASE_JOURNAL
     ;;
 health) healthy;;
+whoami-chain-mounts)
+    # Backlog 70's lab check in the running backend: both single-file subPath
+    # mounts hold the environment's CA and the image's own CA files remain.
+    podman --version
+    printf 'SELinux: %s\n' "$(getenforce)"
+    # The runtime account's shell expands the script's own variables.
+    # shellcheck disable=SC2016
+    as_product bash -c '
+        set -euo pipefail
+        for name in root ca; do
+            podman exec app3-whoami-backend cat "/etc/ssl/certs/$1-$name.pem" | cmp -s - "$2/PKI/private/ca.crt" \
+                || { echo "FAIL: /etc/ssl/certs/$1-$name.pem is not the environment CA"; exit 1; }
+        done
+        count=$(podman exec app3-whoami-backend sh -c "ls /etc/ssl/certs | wc -l")
+        [[ $count -gt 2 ]] || { echo "FAIL: the image CA files are hidden ($count entries)"; exit 1; }
+        echo "PASS: subPath files hold the environment CA; $count entries in /etc/ssl/certs"
+    ' bash "$product_name" "$state"
+    ;;
+whoami-restart)
+    user_service restart "$product_name-app3.service"
+    healthy
+    ;;
+whoami-chain-break)
+    # An unrelated CA in both trust-chain files: the backend must refuse the proxy.
+    as_product openssl req -x509 -newkey rsa:2048 -nodes -keyout /dev/null \
+        -out "$state/app3/unrelated-ca.crt" -subj /CN=Unrelated-acceptance-CA -days 2
+    whoami_configure '' "$state/app3/unrelated-ca.crt"
+    answer=$(whoami_login)
+    printf 'Sign-in start answered HTTP %s\n' "${answer%% *}"
+    [[ $answer == "500 "* ]] || { echo 'FAIL: sign-in did not fail without the environment CA'; exit 1; }
+    reason=$(whoami_log 'errors in the certificate chain: [A-Za-z]+')
+    [[ $reason == *PartialChain* || $reason == *UntrustedRoot* ]] \
+        || { echo 'FAIL: no certificate chain error in the backend log'; exit 1; }
+    echo "PASS: without the environment CA the backend refuses the proxy ($reason)"
+    ;;
+whoami-internal)
+    # Variant b with the unrelated CA still mounted: success shows the chain is unused.
+    whoami_configure http://identity-server:8080/identity "$state/app3/unrelated-ca.crt"
+    [[ -n $(whoami_log 'Identity metadata through the internal address [^;]+') ]] \
+        || { echo 'FAIL: the backend did not select the internal address'; exit 1; }
+    answer=$(whoami_login)
+    [[ $answer == "302 https://$prod_host:$port/identity/connect/authorize?"* ]] \
+        || { echo 'FAIL: the browser is not sent to the public authorize endpoint'; exit 1; }
+    echo 'PASS: internal variant selected; the browser still goes to the public authorize endpoint'
+    ;;
+whoami-restore)
+    whoami_configure '' "$state/PKI/private/ca.crt"
+    as_product rm -f -- "$state/app3/unrelated-ca.crt"
+    [[ -n $(whoami_log 'Identity metadata through the public origin') ]] \
+        || { echo 'FAIL: the backend did not return to the public origin'; exit 1; }
+    answer=$(whoami_login)
+    [[ $answer == "302 https://$prod_host:$port/identity/connect/authorize?"* ]] \
+        || { echo 'FAIL: sign-in does not start after restoring the environment CA'; exit 1; }
+    echo 'PASS: public variant with the environment CA restored'
+    ;;
 check)
     profile
     healthy
@@ -2120,6 +2217,17 @@ CREDENTIAL_FILES
         echo 'FAIL: install attempted a pull'; exit 1
     fi
     echo 'PASS: journal contains no pull attempts'
+    ;;
+whoami-e2e|whoami-session-create|whoami-session-check|whoami-session-logout)
+    # DEV against PROD with the transferred CA and demo passwords (08-credentials).
+    cd "$src"
+    export PUBLIC_ORIGIN="https://$prod_host:$port" CONNECT_IP="$prod_ip"
+    export SMOKE_CA_FILE="$private/ca.crt" SMOKE_PASSWORD_DIR="$private"
+    if [[ $action == whoami-e2e ]]; then
+        .venv-smoke/bin/python dev/whoami-smoke-test.py
+    else
+        .venv-smoke/bin/python acceptance/whoami_session.py "${action#whoami-session-}" "$private/whoami-session.json"
+    fi
     ;;
 prod-e2e|markers-create|markers-check|shared-login|survivor-e2e|survivor-markers|app1-e2e|app1-markers-create|app1-markers-check)
     cd "$src"

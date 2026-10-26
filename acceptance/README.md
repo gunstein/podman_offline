@@ -1,9 +1,18 @@
 # .NET/TypeScript demo app3 (backlog 71)
 
 `app3` is in the catalog but not in the fixed matrix: DEV builds, validates and
-starts it with the other dev pods; no scenario installs it, and the renamed
-product leaves it out. Dev results, the six conversion points, the public versus
-internal comparison and the pending lab steps are in [WHOAMI-DOTNET.md](WHOAMI-DOTNET.md).
+starts it with the other dev pods; no fixed scenario installs it, and the
+renamed product leaves it out. The opt-in focused scenario installs platform,
+identity and app3 on PROD and checks the trust chain's `subPath` files, sign-in,
+a session across restart and reboot, the certificate error without the
+environment's CA, the internal variant and the restore:
+
+```sh
+python3 acceptance/acceptance.py --run whoami-1 --whoami run
+```
+
+It has not run in the lab yet. Steps, dev results, the six conversion points
+and the public versus internal comparison are in [WHOAMI-DOTNET.md](WHOAMI-DOTNET.md).
 
 # Manual host setup (backlog 65)
 

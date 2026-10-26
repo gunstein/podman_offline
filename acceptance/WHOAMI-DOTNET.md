@@ -2,9 +2,9 @@
 
 Status (2026-10-26): implemented as demo component `app3`. Verified end to end
 with real `podman kube play` in dev, in both the public HTTPS variant (a) and
-the internal variant (b). **Lab installation from bundles (OL9, Podman 5.8.2,
-SELinux Enforcing, rootless, Quadlet/systemd) is pending.** No change to
-`deployment/`.
+the internal variant (b). The opt-in acceptance scenario `--whoami` installs
+it from bundles in the lab; **it has not yet run (OL9, Podman 5.8.2, SELinux
+Enforcing, rootless, Quadlet/systemd).** No change to `deployment/`.
 
 ## What was added
 
@@ -43,6 +43,12 @@ Other findings:
   (`POST /auth/logout` with antiforgery token and `Origin` check). If the real
   backend signs out at Duende, `client.yaml` and Identity need a post-logout URI:
   **open**.
+- Local logout does not revoke the session: ASP.NET's cookie is
+  self-contained, so a copy of it taken before logout stays valid until it
+  expires (1 hour here). The session script showed this in dev. app1/app2's
+  signed Flask cookie behaves the same way. If the real backend must revoke
+  sessions at logout, it needs a server-side ticket store
+  (`CookieAuthenticationOptions.SessionStore`) or short lifetimes: **open**.
 - `podman kube play` pods do not inherit the host's proxy variables; a plain
   `podman run` does (`--http-proxy`), which matters only for manual tests.
 
@@ -119,58 +125,78 @@ headers, assertion type and ports; two-stage frontend with pinned TypeScript)
 and the existing demo tests updated for six components. The acceptance harness
 tolerates `app3` (see below).
 
-## Lab: installation from bundles (pending)
+## Lab: the `--whoami` acceptance scenario (not yet run)
 
-Starting state: a lab host with platform and identity installed as the runtime
-user by the current procedure, the demo CA in
-`/var/lib/myproduct/state/PKI/private/ca.crt` (as the harness provisions it)
-and the `app3` release published like the others.
+```sh
+python3 acceptance/acceptance.py --run whoami-1 --whoami run
+```
 
-1. DEV: `./dev/build-images.sh && ./dev/pull-images.sh && ./build-bundle.sh app3`;
-   transfer `dist/myproduct-app3-0.1.0-offline.tar.gz` with its `.sha256`
-   (and `.asc` when signed) and publish it as for the other components.
-2. PROD, runtime user, with `release=/var/lib/myproduct/releases/myproduct-app3-0.1.0`
-   and `state=/var/lib/myproduct/state`:
+A focused scenario like `--identity-only`: it resets both VMs from their
+snapshots, isolates PROD from the internet and runs the steps below in order,
+stopping at the first failure. It cannot be combined with another focused
+scenario, `--status-retry` or `--host-setup`. The fixed matrix is unchanged.
 
-   ```sh
-   bash "$release/deploy.sh" init-config app3
-   bash -s -- --root "$state" app3 myproduct-proxy < generate-certificates.sh
-   install -d -m 0700 "$state/app3/cert"
-   install -m 0644 "$state/PKI/private/ca.crt" "$state/app3/cert/root.crt"
-   install -m 0644 "$state/PKI/private/ca.crt" "$state/app3/cert/ca.crt"
-   bash "$release/deploy.sh" validate && bash "$release/deploy.sh" install
-   ```
+| Steps | Machine | What is checked |
+| --- | --- | --- |
+| `03-build-images` … `03-dev-down` | DEV | Demo images including app3, dev validate/up, `dev/whoami-smoke-test.py` with a pod restart |
+| `04-bundle`, `05-transfer-*` | DEV → PROD | Signed bundles; only platform, identity and app3 are transferred and published |
+| `06-prepare-host`, `06-install-*` | PROD | Host preparation, then platform, identity and app3 installed as the runtime account, each checked healthy. app3's demo client pair comes from `generate-certificates.sh`, its chain is copied from `state/PKI/private/ca.crt` (`whoami_trust_chain` in `remote.sh`) |
+| `07-check` | PROD | The existing installation checks (units, graphroot, permissions, no rootful containers) |
+| `07-whoami-chain-mounts` | PROD | Backlog 70's lab check in the running backend: Podman version and SELinux mode recorded, both `subPath` files equal the environment's CA, more than two entries remain in `/etc/ssl/certs` |
+| `08-whoami-e2e` | DEV → PROD | Smoke test through the public origin (variant a) |
+| `08-whoami-session-create` … `09-whoami-session-reboot` | DEV and PROD | One saved session (`acceptance/whoami_session.py`) still signed in after `systemctl --user restart myproduct-app3.service` and after a PROD reboot; then local logout |
+| `10-whoami-chain-break` | PROD | An unrelated CA in both chain files and a reinstall: sign-in start answers `500` and the backend log names `PartialChain` or `UntrustedRoot` |
+| `10-whoami-internal`, `10-whoami-internal-e2e` | PROD, DEV → PROD | Variant b (`IDENTITY_INTERNAL_URL`) with the unrelated CA still mounted: the log names the internal address, the browser is sent to the public authorize endpoint, the smoke test passes |
+| `10-whoami-restore`, `10-whoami-restored-e2e`, `10-check-restored` | PROD, DEV → PROD | Empty `IDENTITY_INTERNAL_URL` and the environment's CA restored, public variant logged, smoke test and installation checks pass |
+| `10-home-unchanged`, `11-prod-audit` | PROD | No product writes in the login home; no AVC or fapolicyd denials since the run started |
 
-   `generate-certificates.sh` is copied from DEV as the harness does; it is not
-   in the bundles. If the proxy certificate came from a supplier, copy the
-   supplier's issuing chain instead of the demo CA.
-3. Run `dev/whoami-smoke-test.py` as for app1/app2, with `PUBLIC_ORIGIN`,
-   `CONNECT_IP`, `SMOKE_CA_FILE`,
-   `SMOKE_PASSWORD_DIR=/var/lib/myproduct/state/identity/credentials/users` and
-   `SMOKE_RESTART_COMMAND='systemctl --user restart myproduct-app3.service'`.
-4. Trust chain: replace both `cert/` files with an unrelated CA, `install`
-   again, expect `500` at `/app3/auth/login` and `PartialChain`/`UntrustedRoot`
-   in `journalctl --user -u myproduct-app3.service`; restore and `install`.
-5. Variant (b): set `IDENTITY_INTERNAL_URL` in `$state/app3/config.yaml`,
-   `install`, repeat 3; restore the empty value and `install`.
-6. Record here the Podman version, SELinux mode, results and anything that
-   differed from dev, including whether `subPath` works with SELinux labels.
+Record the run's verdict, Podman version and SELinux mode here, and anything
+that differed from dev. The scenario does not cover upgrade, uninstall or the
+other demo apps beside app3.
+
+Before a real run, the PROD steps' shell code was run against the real dev
+pods in this container, with `as_product` running commands directly and
+`dev/dev.sh up` standing in for the install. `whoami-chain-mounts`,
+`whoami-chain-break`, `whoami-internal` and `whoami-restore` passed, and so did
+the smoke test in variant b and after the restore. The session script passed
+create, check after a pod restart, and logout after `dev/dev.sh down` + `up`.
+This exercised the log patterns and the curl output format; it does not
+replace the lab run.
+
+Manual equivalent for a host outside the harness, as the runtime account after
+the release is published, with `release=/var/lib/myproduct/releases/myproduct-app3-0.1.0`
+and `state=/var/lib/myproduct/state`:
+
+```sh
+bash "$release/deploy.sh" init-config app3
+bash -s -- --root "$state" app3 myproduct-proxy < generate-certificates.sh
+install -d -m 0700 "$state/app3/cert"
+install -m 0644 "$state/PKI/private/ca.crt" "$state/app3/cert/root.crt"
+install -m 0644 "$state/PKI/private/ca.crt" "$state/app3/cert/ca.crt"
+bash "$release/deploy.sh" validate && bash "$release/deploy.sh" install
+```
+
+`generate-certificates.sh` is copied from DEV; it is not in the bundles. If the
+proxy certificate came from a supplier, copy the supplier's issuing chain
+instead of the demo CA.
 
 ## Acceptance harness and matrix
 
 `app3` is in the catalog but not in the fixed acceptance matrix, as the backlog
-item states. On DEV the harness builds its images, validates it (`dev-up`
-expects `app3` in the validated list) and starts it with the other dev pods;
-no scenario installs it on PROD, and `current-bundles.txt` lists six bundles
-while the scenarios transfer their fixed sets. The renamed product
-(`acceptance/renamed_product.py`) leaves `app3` out, so its five-component
-expectations are unchanged. Adding `app3` to the matrix (container counts,
-install orders, e2e, upgrade) is a follow-up if it proves useful.
+item states. In the fixed scenarios DEV builds its images, validates it
+(`dev-up` expects `app3` in the validated list) and starts it with the other
+dev pods; no fixed scenario installs it on PROD, and `current-bundles.txt`
+lists six bundles while those scenarios transfer their fixed sets. The renamed
+product (`acceptance/renamed_product.py`) leaves `app3` out, so its
+five-component expectations are unchanged. Only the opt-in `--whoami`
+scenario above installs `app3`. `acceptance/test_whoami.py` covers its step
+order, flag rules, the chain copy and the PROD steps' pass and fail paths with
+stubbed commands.
 
 ## Gaps
 
-- Lab verification above, including Podman 5.8.2 `subPath` under SELinux
-  ([trust chain](TRUST-CHAIN.md)).
+- A real `--whoami` run in the lab, which includes Podman 5.8.2 `subPath`
+  under SELinux ([trust chain](TRUST-CHAIN.md)).
 - Only the single-level demo CA is exercised; a root plus issuing CA is not.
 - Post-logout redirect through Duende (open, point 1 findings).
 - Operator impact: none for the shipped procedure; `app3` is a developer demo
