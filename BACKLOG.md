@@ -12,13 +12,18 @@ items retain their individual scopes below; agree the next priority separately.
 ## Current priority (updated 2026-10-26)
 
 [Item 70](#70-provision-a-components-ca-trust-chain-from-the-environments-pki)
-is high priority and kept small: copy the environment's CA to a converted
-backend that calls Duende over HTTPS (dev and lab), document the pattern and
-check `subPath`, before further conversion work.
-[Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
-is implemented as demo component `app3` and verified in dev (both variants,
-[results](acceptance/WHOAMI-DOTNET.md)); a lab run of the opt-in acceptance
-scenario `--whoami` remains, and it includes item 70's lab `subPath` check.
+and [item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
+are implemented and lab verified at `45fdb17` (2026-10-26): rootless Secret
+`subPath` on OL9.8/Podman 5.8.2 with SELinux Enforcing, app3 signed offline
+bundle installation, both OIDC variants, unrelated-CA control and user-service
+restart/session persistence passed. The normal matrix is CLEAN PASS. The renamed
+matrix was stopped at user request during transfer after 18 passing steps;
+its PROD lifecycle/final audit remain unverified. The newer `f82d107`
+`--whoami` scenario and added tests were pulled afterward and not run.
+[Trust-chain evidence](acceptance/TRUST-CHAIN.md) and
+[all six conversion points](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26).
+The real backend, two-level CA, app3 reboot and fixed-matrix integration remain
+separate verification/follow-up work; dev evidence is not reused as lab evidence.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -194,7 +199,12 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend; dev verified, lab `subPath` check pending), 71 (high: .NET/TypeScript demo app through Duende; implemented, dev verified, `--whoami` lab run pending), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Item 70 is removed from the open list: its pattern and app3 lab check passed
+at `45fdb17`. Item 71's manual lab scope passed at that commit, but the
+interrupted renamed regression and newly added `--whoami` scenario remain
+open. See [the lab report](acceptance/WHOAMI-DOTNET.md#gaps).
+
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 71 (manual app3 lab verified at 45fdb17; renamed stopped by user; new --whoami scenario unverified), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -533,14 +543,18 @@ scope and usability findings explicitly recorded.
 
 ## 70. Provision a component's CA trust chain from the environment's PKI
 
-Status: **implemented locally** (2026-10-26): documented pattern in
-[COMPONENTS.md](docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend)
-and regression `tests/platform_tests/test_trust_chain.py`; `subPath` and
-sign-in through the chain passed in dev with Podman 4.9.3 through item 71's
-app; the lab check on Podman 5.8.2 is pending ([verification](acceptance/TRUST-CHAIN.md)).
+Status: **implemented and lab verified** (2026-10-26) at `45fdb17`:
+[documented pattern](docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend),
+regression coverage and real rootless Podman 5.8.2/OL9.8 `subPath` with SELinux
+Enforcing passed. App3 signed-bundle sign-in, unrelated-CA HTTP 500 plus
+user-journal `PartialChain`, and restoration passed. Actual single-file SELinux
+labels were recorded; persistent user journaling needed the existing host-setup
+helper on the matrix baseline. [Lab evidence](acceptance/TRUST-CHAIN.md#completed-lab-verification-2026-10-26).
+Only the single-level demo CA/app3 is covered; the organisation's backend and a
+root plus issuing CA remain unverified.
 High priority, requested by the product owner.
-Blocks converting the organisation's backend that signs in through Duende and
-calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
+This work unblocks converting the organisation's backend that signs in through
+Duende and calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
 steps, documentation and a `subPath` check, no new script mode. Independent of
 items 66/69; item 71 uses it.
 
@@ -613,13 +627,20 @@ demo PKI (root plus issuing CA) and customer CA delivery (backlog 45a/45b).
 
 ## 71. Add a .NET and TypeScript demo app that signs in through Duende
 
-Status: **implemented, verified in dev** (2026-10-26) as demo component `app3`
-(`apps/whoami-backend`, `apps/whoami-frontend`); no change to `deployment/`.
-All six points below confirmed in dev, with two recorded details (ASP.NET's
-default `form_post` callback; no post-logout URI in the client protocol), and
-both variants pass; recommendation: variant (a). The opt-in acceptance scenario
-`--whoami` installs it from bundles in the lab and covers the verification
-below; it has not run yet. [Results and scenario](acceptance/WHOAMI-DOTNET.md).
+Status: **implemented and lab verified** (2026-10-26) at `45fdb17` as demo
+component `app3`; no change to `deployment/`. All six conversion points passed
+on rootless OL9.8/Podman 5.8.2, SELinux Enforcing, Quadlet/user systemd, from a
+signed offline bundle. Public HTTPS and internal HTTP variants passed four-line
+smoke tests with session-preserving user-service restart; public HTTPS failed
+with unrelated CA (`500`, `PartialChain`), internal HTTP still passed, and the
+correct CA/empty internal URL were restored and retested. Recommendation remains
+variant (a). Normal matrix CLEAN PASS; renamed stopped at user request during
+transfer with 18 passing steps, leaving PROD lifecycle/final audit open. The
+opt-in `--whoami` scenario added at `f82d107` and its new tests were pulled
+after testing stopped and have not been run here.
+[Results, prerequisite findings and limits](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26).
+App3 reboot, the real backend, two-level CA and Duende post-logout redirect are
+not covered; fixed-matrix integration remains a separate follow-up.
 High priority, requested by the product owner to de-risk converting the
 organisation's .NET backend. Exercises item 70.
 
