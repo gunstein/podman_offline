@@ -14,6 +14,9 @@ items retain their individual scopes below; agree the next priority separately.
 [Item 70](#70-provision-a-components-ca-trust-chain-from-the-environments-pki)
 is high priority: deliver the environment's CA to a converted backend that
 calls Duende over HTTPS (dev and lab), before further conversion work.
+[Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
+follows it: a minimal .NET backend and TypeScript frontend signing in through
+Duende, to test the conversion risks before the real backend.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -189,7 +192,7 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend), 71 (high: .NET/TypeScript demo app through Duende, with or after 70), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -596,6 +599,65 @@ calls the script for the shipped demo only, in dev only.
 Out of scope: a two-level demo PKI (root plus issuing CA) and customer CA
 delivery (backlog 45a/45b); trusting the chain for components other than the
 one that needs it.
+
+## 71. Add a .NET and TypeScript demo app that signs in through Duende
+
+Status: planned, high priority (2026-10-26), requested by the product owner to
+de-risk converting the organisation's .NET backend. Do it together with or
+right after item 70, which this app exercises. No change to `deployment/` is
+expected; if one is needed, record why.
+
+### Why
+
+The demo apps cover Duende only from the server side: Identity is C# with
+Duende, but app1/app2 use a Python (Flask/Authlib) BFF and a plain JavaScript
+frontend without a build step. The organisation's solution has a C# backend
+and a TypeScript frontend. The risky parts of converting it are untested here:
+
+1. ASP.NET's OpenID Connect handler behind the platform proxy: its default
+   callback `/signin-oidc` versus the client protocol's `/auth/callback`
+   (configure the app, or record that the protocol must change).
+2. Forwarded headers: without `X-Forwarded-Proto` handling the app builds
+   `http` redirect URIs behind nginx.
+3. ASP.NET Data Protection keys: kept in a persistent volume, so sign-in
+   cookies survive restarts and reinstalls.
+4. The CA trust chain from item 70: the backend calls Duende over the public
+   HTTPS origin and trusts the proxy certificate only through
+   `/etc/ssl/certs/<product>-root.pem` and `-ca.pem` mounted with `subPath`.
+5. `private_key_jwt` client authentication from .NET with the component's
+   client certificate, as the existing apps use.
+6. A TypeScript frontend built in a multi-stage image (Node at build time,
+   static files served by nginx at run time), fully offline at install.
+
+### Scope
+
+A minimal "whoami" app, for example component `app3`: the user signs in through
+the existing Identity; the TypeScript page shows the user's name and calls one
+protected backend API that returns the signed-in user's claims. No database,
+no seed data, no init containers.
+
+- `apps/<name>-backend` (ASP.NET Core, .NET 8 like Identity) and
+  `apps/<name>-frontend` (TypeScript), each with a Containerfile; images built
+  and pulled by the existing dev scripts and bundled offline like the others.
+- Component `components/<id>/`: `VERSION`, `config.defaults.yaml`, manifests,
+  `route.conf` and `client.yaml`; catalog entry with `requires: [platform,
+  identity]`, `public_from`, `routes` and `clients` like app2.
+- Secrets/volumes: the trust chain (item 70), the client key pair, a session or
+  Data Protection volume; nothing generic added for this app.
+- Dev provisioning of its certificates through `generate-certificates.sh`
+  (client pair and item 70's trust-chain mode), outside generic `dev/dev.sh`.
+
+### Verification
+
+- Dev: `deploy.sh validate`, `dev.sh up`, sign-in end to end, claims API,
+  restart keeps the session (Data Protection), redirect URIs use https.
+- Lab: manual installation from bundles as the runtime user; same checks; the
+  backend reaches Duende only through the trust chain (remove it once to see the
+  expected certificate error, then restore).
+- Not part of the fixed acceptance matrix at first; add it there (container
+  counts, install orders, e2e, upgrade) in a follow-up if it proves useful.
+- Record each of the six points above as confirmed, changed or open, so the
+  conversion of the real backend can reuse the answers.
 
 ## 69. Paper-first installation for closed networks
 
