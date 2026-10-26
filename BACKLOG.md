@@ -715,6 +715,34 @@ Deliverables: lab findings for the questions above, a chosen design recorded in
 a plan document, then changes to 65/66 and a printed-manual human trial under
 item 68 (console-only and SSH variants, one person with both accounts).
 
+### Command-line parsing (product owner, 2026-10-26)
+
+Today `deploy.sh` (`deployment/cli.py`) parses `sys.argv` by hand with a
+compound validity expression, and `scripts/release.py` uses one flat `argparse`
+parser whose options are shared by every operation and checked afterwards
+("setup arguments are only accepted for setup"). Both work for today's few
+options but are hard to extend, give no per-command help, and the flat option
+list is part of why the administrator command is long.
+
+Use standard-library `argparse` with subcommands (`add_subparsers`, one parser
+per command declaring only its own arguments, `allow_abbrev=False`) for:
+
+- the new `<product>-admin` and `<product>` commands of the
+  [RPM delivery plan](docs/RPM-DELIVERY-PLAN.md), from their first version;
+- `deploy.sh` when WP3 adds `init-config --settings` and the other release
+  interface 2 options, instead of growing the hand-written condition.
+
+No third-party CLI library (offline hosts, fapolicyd, Python 3.6). Keep the
+existing exit codes (2 usage, 1 failure, 3 needs input where defined), the
+messages and output streams that tests, the harness and the manual rely on,
+or change them together with those consumers. Newer tools call older
+releases' `deploy.sh`, so its accepted command forms are a release interface:
+keep accepting them. Prompts with defaults for paper operation are a separate
+layer on top of parsing: ask only when an option is missing and stdin is a
+terminal; otherwise fail as today. `scripts/release.py` is not converted, since
+WP6 removes that flow. Add parser tests per command (valid forms, unknown and
+misplaced options, abbreviations refused, `--help`).
+
 ## 66. Install sets: several signed bundles through one entry point
 
 Status: planned, high priority (2026-10-23), after item 65. Implementation
@@ -741,7 +769,9 @@ to be present); keep independent component versions; keep existing config and
 credentials; offline only; a rerun after interruption continues without
 restarting finished components needlessly; the runtime account needs no sudo.
 Coordinate with item 60 (CLI name) and the per-component lifecycle; do not add a
-second deployment engine. Tests: dependency order, partial failure and retry,
+second deployment engine. New command-line options follow item 69's
+"Command-line parsing" (argparse subcommands, no hand-written `sys.argv`
+conditions). Tests: dependency order, partial failure and retry,
 manifest/bundle mismatch, and a real OL9 run.
 
 Apply the [mandatory operator review](docs/REVIEW_GUIDE.md#7-mandatory-operator-and-procedure-understanding-review)
