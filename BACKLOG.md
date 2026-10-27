@@ -729,6 +729,12 @@ applies to items 65 (implemented for pasted commands), 66 (planned) and 68
 (human trial), and must be settled before 66's operator-facing commands are
 fixed.
 
+Status 2026-10-27: the WP0 investigation matrix passed (all 24 case/profile
+runs at `3222efb`, 2026-10-25,
+[report](acceptance/RPM-WP0-LAB-20261025-FULL.md)). Nothing is implemented.
+WP1 waits for the product owner's go/no-go and the two open phase 1 decisions
+under "Phasing decision"; both are still open.
+
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
 administrator and the runtime user are often **the same person** using two
@@ -929,11 +935,26 @@ becomes phase 2.
   plain `sudo dnf` or through the administrator command (either way it is the
   administrator, see above). (2) decides whether WP0 probes F (removal guard)
   and H (stop on a release installed outside the administrator command) remain
-  phase 1 requirements.
+  phase 1 requirements. Consequences, to inform the decisions (not decided):
+  - (1) Local repository: shorter commands from paper (`dnf install <name>`)
+    and one explicit, documented signature-check setting in the `.repo` file,
+    as the phase rules ask; but the build must produce `repodata/` and the
+    administrator must place a `.repo` file once. Plain directory: no
+    repository metadata and nothing to place, but longer commands with a path
+    and glob, and the signature-check setting goes on each command line
+    (`--setopt`) or into `dnf.conf`.
+  - (2) Administrator command: one command per role (requirement 6), and the
+    retirement guard, selection checks and trust poll stay in one place, so F
+    and H remain phase 1 requirements. Plain `sudo dnf`: fewer tools to build
+    in phase 1, but the administrator types dnf options and file names, and
+    the 2026-10-25 decision "a conservative guard also for plain `dnf remove`"
+    must then hold through package scriptlets alone (F); H would not apply.
+  - Both choices keep phase 2 possible; neither changes package names, file
+    layout or versions.
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
-revision 3.2 after AI reviews and a first WP0 attempt that stopped before
-any probe ([report](acceptance/RPM-WP0.md)); not implemented. Product-owner
+revision 3.3; the WP0 matrix passed at `3222efb` after an earlier attempt that
+stopped before any probe ([report](acceptance/RPM-WP0.md)); not implemented. Product-owner
 decisions recorded there: trust bound to the product key, immutable versions,
 and a conservative guard also for plain `dnf remove`. Work package 0 is an
 investigation with explicit go/no-go criteria.

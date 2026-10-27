@@ -7,10 +7,12 @@ stopped before any probe; WP0 now runs every probe from `clean-agent` without
 new snapshots (revision 3.2, `a404e91`). Revision 3.3 declares the WP0
 journal/daemon trust observations as an automation adaptation and records
 WP0 verification status after the bounded-investigation merge (`3dc304e`).
-Not implemented; WP0 is not complete. Work package 0 is an
-investigation; statements marked "confirm in WP0" are hypotheses about rpm,
-dnf or fapolicyd behaviour, and WP1 starts only when every mandatory probe
-passes. Read
+Not implemented. **WP0 matrix passed** (all 24 case/profile runs at
+`3222efb`, 2026-10-25, [report](../acceptance/RPM-WP0-LAB-20261025-FULL.md));
+statements marked "confirm in WP0" below were hypotheses before that run. WP1
+starts only after the product owner's go/no-go and the two open phase 1
+decisions in [item 69](../BACKLOG.md#phasing-decision-product-owner-2026-10-26)
+(status 2026-10-27: both open). Read
 [item 69](../BACKLOG.md#69-paper-first-installation-for-closed-networks)
 ("Chosen direction"), the
 [RPM prototype results](../acceptance/RPM-PROTOTYPE.md#results-2026-10-25)
@@ -647,6 +649,10 @@ for the trust poll of `<product>-admin` (WP2).
   the lab run.
 
 ### WP0 verification status (2026-10-25)
+
+Superseded by the full matrix pass at `3222efb` the same day
+([report](../acceptance/RPM-WP0-LAB-20261025-FULL.md)); the list below is the
+status before that run and is kept as history.
 
 - The runner is merged (`3dc304e`) as a bounded WP0 investigation. This is
   neither a completed WP0 nor clearance for WP1.
