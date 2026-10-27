@@ -1722,6 +1722,32 @@ class LauncherDiagnosticsTests(unittest.TestCase):
             ):
                 self.namespace["journal_events"](output)
 
+    def test_large_journal_message_is_read_without_printing_private_content(self):
+        """Persistent journals retain long messages that JSON otherwise makes null."""
+        private = "private-secret-value" * 500
+        message = private + " Failed at step EXEC spawning /usr/bin/podman: Permission denied"
+
+        def command(arguments):
+            if arguments[0] == "journalctl":
+                if "--list-boots" in arguments:
+                    return "0 boot-id\n"
+                # Match journalctl's default omission of oversized fields.
+                return json.dumps({"MESSAGE": message if "--all" in arguments else None})
+            return ""
+
+        self.namespace["command"] = command
+        output = io.StringIO()
+        with (
+            mock.patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=1001)),
+            mock.patch("sys.argv", ["diagnostics", "123"]),
+            mock.patch.object(Path, "read_text", return_value="boot-id"),
+            contextlib.redirect_stdout(output),
+        ):
+            self.namespace["main"]()
+        self.assertIn("Permission denied", output.getvalue())
+        self.assertIn("PASS: read-only launcher diagnostics collected", output.getvalue())
+        self.assertNotIn("private-secret-value", output.getvalue())
+
     def test_unit_properties_log_only_the_expected_healthcheck_arguments(self):
         """Show the canonical healthcheck command and withhold unexpected arguments."""
         expected = "/usr/bin/podman healthcheck run " + "a" * 64

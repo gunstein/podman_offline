@@ -447,8 +447,10 @@ def main():
         return
     print("LAUNCH_DIAGNOSTICS boot_id=" + pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip())
     print(command(["journalctl", "--list-boots", "--no-pager"]), end="")
+    # Without --all, journalctl replaces fields over 4096 bytes with JSON null.
+    # Keep complete input private; journal_events prints only safe projections.
     output = command(["journalctl", "--since", "@" + sys.argv[1],
-                      "_UID=" + str(user.pw_uid), "--output=json", "--no-pager"])
+                      "_UID=" + str(user.pw_uid), "--output=json", "--all", "--no-pager"])
     events, units = journal_events(output)
     print("LAUNCH_JOURNAL records=" + str(len(output.splitlines())))
     for event in events:
