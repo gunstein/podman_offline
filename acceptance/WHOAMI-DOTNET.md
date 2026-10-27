@@ -1,18 +1,14 @@
 # .NET and TypeScript demo app through Duende (backlog 71)
 
-Status (2026-10-27): the current backend's six conversion points, explicit
-issuer pin, protocol-error log safety and app3 restart/reboot session
-persistence passed in run `whoami-43dd0dd`. The complete run was **NOT CLEAN**
-because final launcher diagnostics rejected journalctl's omitted oversized
-fields. A small audit-reader fix is committed as `5f30331` with regression
-coverage; a fresh full verification was interrupted after a slow image build.
-The required renamed regression at `43dd0dd` finished **CLEAN PASS**. The
-optional normal scenario was skipped. No change to `deployment/` or the fixed
-matrix's component counts/install orders/upgrades.
+Status (2026-10-27): **backlog 71's lab scope is complete**. Run
+`whoami-7b32621` at `7b326213ea40466319eff3dd9a54fd23f95fedcb` finished
+**CLEAN PASS**, including the shared audit-reader fix and final PROD audit.
+All six conversion points, the issuer/log review rules and saved-session
+persistence across service restart and PROD reboot passed. The optional normal
+scenario was skipped. No change to `deployment/` or the fixed matrix.
 
-The [2026-10-26 lab section](#completed-lab-verification-2026-10-26) remains
-unchanged evidence for `45fdb17`, before the backend review fixes. The new
-results do not retrospectively change that earlier backend's evidence.
+The earlier `45fdb17` and `43dd0dd` sections remain unchanged historical evidence;
+the complete result below closes the outstanding audit-fix lab verification.
 
 ## What was added
 
@@ -226,6 +222,46 @@ bash "$release/deploy.sh" validate && bash "$release/deploy.sh" install
 `generate-certificates.sh` is copied from DEV; it is not in the bundles. If the
 proxy certificate came from a supplier, copy the supplier's issuing chain
 instead of the demo CA.
+
+## Complete audit-fix lab run (2026-10-27)
+
+| Field | Result |
+| --- | --- |
+| Commit | `7b326213ea40466319eff3dd9a54fd23f95fedcb` |
+| Run ID | `whoami-7b32621` |
+| Verdict | **CLEAN PASS — 46 of 46 steps passed** |
+| Runtime | OL9.8, rootless Podman 5.8.2, SELinux Enforcing, Quadlet/user systemd; configured disposable VMs 107/108 only |
+| Final audit | **Passed** (`11-prod-audit`); 3,397 journal records parsed, safe launcher projections collected, no FANOTIFY/AVC events since run start |
+
+Unlike `whoami-43dd0dd`, the final audit completed with the shared `--all`
+journal-reader fix from `5f30331`. The parser was not loosened, and no journal
+message content was printed. No step was retried or interrupted; image build
+completed in 97.1 seconds. The full recorded step duration was 766.7 seconds.
+
+Signed offline installation, the guarded persistent-journal setup, subPath/CA
+checks, public HTTPS sign-in, protocol-error log safety and issuer-pin image
+checks passed. The same saved session survived both a user-service restart and
+PROD reboot. The wrong-CA negative control, internal variant with that CA still
+mounted, restoration to the environment CA/empty internal URL, restored public
+smoke, normal installation checks, home inventory and cleanup all passed.
+App3 was restored before the final audit, and private runtime test files were
+removed by cleanup. No manual prerequisite repair was needed.
+
+Separate checks at the tested commit: product/unit **560 passed** in 80.071
+seconds; acceptance-harness **358 passed** in 9.467 seconds. These are distinct
+from the real runtime result above. The optional normal scenario was not run,
+so this does not claim a fixed-matrix run of the shared audit fix at this commit.
+Evidence is retained in
+`~/podman-offline-acceptance-runs/whoami-7b32621/{REPORT,EVIDENCE}.md` and step logs.
+
+Evidence/understandability review: passed. The report distinguishes fresh
+runtime evidence from automated tests and historical runs, and the successful
+negative-control/restore flow retains the established state ownership. This
+turn changes documentation only; no implementation or operator procedure was
+changed, and no human operator trial is claimed. Remaining work outside item
+71's completed lab scope: the organisation's backend, a two-level CA, Duende
+post-logout redirect and session revocation at logout. App3 integration into the
+fixed matrix remains a separate follow-up.
 
 ## Lab verification of `43dd0dd` and review fixes (2026-10-27)
 
@@ -473,21 +509,20 @@ phase, and the session helper's deadline, retry and private file.
 
 ## Gaps
 
+The following remain outside item 71's completed lab scope.
+
 - The organisation's real backend is not covered by the app3 lab result.
-- The complete `--whoami` audit-reader fix has no full lab pass: the original
-  `43dd0dd` run failed only at audit, and its fresh fix run was interrupted
-  during the following image-pull step after an unusually slow build.
-- The complete renamed regression passed at `43dd0dd`; it does not validate
-  app3 installation or the later audit-reader fix.
-- Same-cookie persistence across reinstall and the dev-only forwarded-header/
-  key-deletion negative controls were not lab-tested. App3 restart and reboot
-  persistence are confirmed at `43dd0dd`.
 - Only the single-level demo CA is exercised; a root plus issuing CA is not.
 - Post-logout redirect through Duende remains open.
 - Local logout does not revoke a previously copied session cookie. Server-side
   session revocation remains open.
+- The optional normal scenario was not run at `7b32621`; the shared audit fix
+  has a complete focused lab pass, not a fixed-matrix pass at this commit.
+- Same-cookie persistence across reinstall and the dev-only forwarded-header/
+  key-deletion negative controls were not lab-tested. App3 restart and reboot
+  persistence are confirmed.
 - App3 remains outside the fixed PROD matrix; adding counts, install orders
   and upgrade coverage is a separate follow-up. No human operator trial occurred.
 - The fixed matrix baseline still lacks persistent user-journal setup.
-  `--whoami` now runs the guarded production helper in `06-persistent-journal`;
+  `--whoami` runs the guarded production helper in `06-persistent-journal`;
   that step passed without manual repair.
