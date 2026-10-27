@@ -94,8 +94,9 @@ The order for an offline production deployment of an organisation's own apps:
    keep root checksum, fapolicyd trust and config edits off release/data paths
    the service user can replace; after item 46.
 7. [Item 63](#63-parameterise-image-versions-with-build-time-variables): high priority
-   (operator request); `{{NAME}}` image tokens from `config/images.yaml` and
-   `{{COMPONENT_VERSION}}`, resolved at build; literal tags in releases;
+   (operator request); `@@NAME@@` in image references (versions and the
+   registry, e.g. Artifactory) from `config/images.yaml` and
+   `@@COMPONENT_VERSION@@`, resolved at build; literal tags in releases;
    refuse equal-version releases with different images. After item 54.
 8. [Item 62](#62-reject-misplaced-container-fields-in-manifest-validation): implemented;
    reject valid YAML with container fields at the wrong structural level,
@@ -7516,12 +7517,25 @@ validation; it does not establish the cause of the remaining private Grate failu
 
 ## 63. Parameterise image versions with build-time variables
 
-Status: planned, high priority (2026-10-22). Requested by the operator: image
-versions must be controlled by parameters, not edited inside each manifest.
-Decision (operator, 2026-10-22): one shared variables file `config/images.yaml`,
-`{{NAME}}` tokens only in container image references, resolved at bundle build
-and in dev; plus a built-in `{{COMPONENT_VERSION}}` for images that follow their
-component's release. Production keeps receiving fixed literal tags.
+Status: planned, high priority (2026-10-22, extended 2026-10-27). Requested by
+the operator: image versions must be controlled by parameters, not edited
+inside each manifest. Decision (operator, 2026-10-22): one shared variables file
+`config/images.yaml`, placeholders only in container image references, resolved
+at bundle build and in dev; plus a built-in `COMPONENT_VERSION` for images that
+follow their component's release. Production keeps receiving fixed literal
+tags.
+
+Product owner, 2026-10-27:
+- **Registry too, not only versions.** The organisation pulls images through
+  Artifactory; when its address changes, it must change in one place. A
+  variable can therefore hold the registry host and path, not only a tag, and
+  the demo uses one (see "Demo adoption").
+- **`@@NAME@@`, not `{{NAME}}`.** Use the repository's existing placeholder
+  spelling. `@@` already depends on where it stands (whole config values,
+  inline ConfigMap and Secret-template text, `@@secret:…@@`, Quadlet
+  `@@UNIT_NAME@@`); an `image` field becomes one more such place, read from
+  `config/images.yaml` at build time. The rules under "Target behaviour" keep
+  the two sources of `@@` values apart.
 
 ### Why image versions must not live in component config
 
@@ -7538,10 +7552,12 @@ Analysis on `a37f4e4`:
   exactly those images in `images/images.tar` and `images/images.txt`.
   `render.find_images` deliberately rejects `@@` placeholders in `image:`
   ("placeholders are not supported").
-- `@@NAME@@` (`common.PH`, whole-value only, resolved by `render.replace` from
-  config at render time) means "comes from installation config". Build-time
-  image values need a different, visibly distinct syntax so a reviewer can tell
-  that they are fixed in the release.
+- `@@NAME@@` elsewhere in a manifest (`common.PH`, resolved by
+  `render.replace` from config at render time) means "comes from installation
+  config". Inside an `image` field it is rejected today, so no existing
+  manifest uses it there; giving it the build-time meaning in that one field
+  breaks nothing. A reviewer must still be able to tell the two apart, hence
+  the name rules below (target behaviour 2).
 
 ### Current image flow (all places that read source manifests for images)
 
@@ -7577,21 +7593,41 @@ Analysis on `a37f4e4`:
 
 1. `config/images.yaml` (optional; absent means no variables) is a flat mapping:
    ```yaml
+   REGISTRY: artifactory.example.com/docker-remote
    POSTGRES_VER: '17.11'
    NGINX_VER: 1.28-alpine
    TODO_BACKEND_VER: 0.2.2
    TODO_FRONTEND_VER: 0.2.0
    ```
-   Keys match `^[A-Z][A-Z0-9_]*$`. Values must be YAML strings. Reject numbers
-   (`17.11` parses as a float) with a message telling the author to quote them.
-   `COMPONENT_VERSION` is reserved. The file is build input. It never enters
-   component or production config and is not merged by `merge_config`.
-2. Manifests may use `{{NAME}}` only inside a container or initContainer
-   `image` string, in any part of it (registry, name or tag). Example:
-   `image: localhost/demo-postgres:{{POSTGRES_VER}}`. No nesting, defaults or
-   expressions. `{{` anywhere else in a manifest is an error that names the file
-   and field.
-3. `{{COMPONENT_VERSION}}` resolves to the owning component's
+   Keys match `^[A-Z][A-Z0-9_]*$`. Values must be nonempty YAML strings. Reject
+   numbers (`17.11` parses as a float) with a message telling the author to
+   quote them. `COMPONENT_VERSION` is reserved. The file is build input. It
+   never enters component or production config and is not merged by
+   `merge_config`.
+2. Manifests may use `@@NAME@@` inside a container or initContainer `image`
+   string, in any part of it and more than once: registry host and path, name
+   or tag. Examples:
+   `image: localhost/demo-postgres:@@POSTGRES_VER@@`,
+   `image: '@@REGISTRY@@/library/nginx:@@NGINX_VER@@'` (quoted: YAML would
+   otherwise read a leading `@` as reserved). No nesting, defaults or
+   expressions. Rules that keep the two `@@` sources apart, checked before any
+   write:
+   - In an `image` field, `@@NAME@@` comes only from `config/images.yaml` (or
+     `COMPONENT_VERSION`); a name not defined there is an error, never a
+     fallback to installation config.
+   - Outside `image` fields, `@@NAME@@` keeps today's meaning (installation
+     config). A name defined in `config/images.yaml` used outside an `image`
+     field is an error naming file and field, so a build-time value cannot be
+     mistaken for an installation setting.
+   - A name may not be both an image variable and a key in common or component
+     config defaults (or a reserved configuration name); refuse the build and
+     name both files.
+   - The resolved reference must be a valid image reference: no URL scheme
+     (`https://` is refused with a hint to give only host and path), no
+     whitespace or `@@` left, registry host with an optional port. Variable
+     values are public (they end up in the release); never treat them as
+     credentials.
+3. `@@COMPONENT_VERSION@@` resolves to the owning component's
    `components/<id>/VERSION`. It requires component context; the standalone
    `manifests/` fixture has no component and must reject it clearly.
 4. Resolution happens in one shared function used by every source-manifest
@@ -7603,7 +7639,8 @@ Analysis on `a37f4e4`:
    the resolved text instead of copying verbatim, before checksums are computed.
    `images.txt` must equal the images found in the shipped manifests. Production
    install, validate, upgrade and health then need no knowledge of the variables,
-   and `render.find_images` keeps rejecting any unresolved `{{`/`@@` in a release.
+   and `render.find_images` keeps rejecting any unresolved `@@` in a release's
+   `image` fields.
    Do not ship `config/images.yaml` in bundles.
 6. Equal version, different images: record the resolved, sorted image list in
    the compiled descriptor (`bundle.yaml`), which installed metadata already
@@ -7620,12 +7657,17 @@ Analysis on `a37f4e4`:
 ### Demo adoption
 
 Convert the demo so both forms are exercised:
-- help and identity: `{{COMPONENT_VERSION}}`. Their images are built per
+- help and identity: `@@COMPONENT_VERSION@@`. Their images are built per
   component.
 - todo-backend and todo-frontend: `TODO_BACKEND_VER` and `TODO_FRONTEND_VER`.
   app1 and app2 share these images and may have different component versions.
 - postgres in app1, app2 and identity: `POSTGRES_VER`.
-- platform nginx: `NGINX_VER`.
+- platform nginx: `REGISTRY` and `NGINX_VER`
+  (`@@REGISTRY@@/library/nginx:@@NGINX_VER@@`, demo value `docker.io`), so the
+  registry form is exercised; changing `REGISTRY` alone must change the pulled,
+  bundled and installed image name. `dev/pull-images.sh` and
+  `dev/build-images.sh` work on resolved names; check that the
+  `localhost/demo-postgres` source mapping still holds.
 
 This changes the demo's help and identity tags to the component version (for
 example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
@@ -7674,8 +7716,13 @@ example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
 ### Tests
 
 - Platform/product (generic, runnable with `platform --isolate`, no demo):
-  - resolution in image fields;
+  - resolution in image fields, including a registry variable with a path
+    and several variables in one reference;
   - `COMPONENT_VERSION`;
+  - an image variable name used outside an image field; a config name used
+    in an image field; a name defined both as image variable and in config
+    defaults;
+  - a registry value with a URL scheme or whitespace;
   - unknown variable;
   - token outside image (env value, name, command, annotation);
   - non-string value;
@@ -7701,7 +7748,8 @@ example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
 
 - Changing a value in `config/images.yaml` (or a component `VERSION` for
   `COMPONENT_VERSION` images) changes the built, bundled, installed and running
-  image tags, with no manifest edits.
+  image tags, with no manifest edits. Changing the registry variable changes
+  every image that uses it, in one place.
 - Production config never contains image versions. Releases contain only
   literal, fully qualified images.
 - An equal-version release with different images is refused with guidance and
@@ -7712,3 +7760,10 @@ example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
 
 Out of scope: operator overrides of image versions in production config,
 registry credentials, automatic `VERSION` bumps and image pruning.
+
+Open question (product owner, not decided): the Artifactory address may also be
+needed outside manifests, for example in the `FROM` lines of the demo
+Containerfiles (`docker.io/…`, `mcr.microsoft.com/…`) and in package sources
+used while building images (NuGet, npm, pip). `config/images.yaml` covers only
+manifest image references; the build side would need build arguments or
+registry mirrors and is a separate decision.
