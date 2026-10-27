@@ -15,3 +15,6 @@ __pycache__/
 
 /acceptance/lab.env
 /acceptance/pve.env
+
+**/node_modules/
+/apps/whoami-frontend/dist/

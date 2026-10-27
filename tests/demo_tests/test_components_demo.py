@@ -82,8 +82,11 @@ class DemoComponentTests(ComponentFixture):
                 self.root / "build/dev" / component, config, component
             )
             if component.startswith("app"):
+                certificate = yaml.safe_load(
+                    (repo / "components" / component / "client.yaml").read_text()
+                )["certificate"]
                 self.write(
-                    "build/dev/" + component + "/credentials/todo/todo-client.crt",
+                    "build/dev/" + component + "/" + certificate,
                     "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
                 )
         for component, relative in (
@@ -100,7 +103,7 @@ class DemoComponentTests(ComponentFixture):
         self.assertEqual((common.STATE / "app1/config.yaml").read_bytes(), before)
         self.assertTrue((common.BUILD / "dev/clients/app2/client.json").exists())
         docs = list(yaml.safe_load_all((common.BUILD / "install.yaml").read_text()))
-        self.assertEqual(sum(doc["kind"] == "Pod" for doc in docs), 8)
+        self.assertEqual(sum(doc["kind"] == "Pod" for doc in docs), 9)
         proxy = next(
             doc
             for doc in docs

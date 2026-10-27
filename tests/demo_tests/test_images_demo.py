@@ -45,6 +45,8 @@ class DemoImageHelperTests(ImageHelperFixture):
             ("identity", "localhost/demo-identity:0.2.2"),
             ("todo-backend", "localhost/demo-todo-backend:0.2.2"),
             ("todo-frontend", "localhost/demo-todo-frontend:0.2.0"),
+            ("whoami-backend", "localhost/demo-whoami-backend:0.1.0"),
+            ("whoami-frontend", "localhost/demo-whoami-frontend:0.1.0"),
         )
         for name, _ in recipes:
             target = self.root / "apps" / name

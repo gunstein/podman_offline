@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app3-whoami
+spec:
+  restartPolicy: Always
+  containers:
+  - name: backend
+    image: localhost/demo-whoami-backend:0.1.0
+    imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 10
+      exec:
+        command:
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/8000; printf "GET /livez HTTP/1.0\r\nHost:
+          localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r -t 2 status <&3;
+          [[ $status == "HTTP/1.1 204 "* || $status == "HTTP/1.0 204 "* ]]'
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    envFrom:
+    - configMapRef:
+        name: app3-settings
+    env:
+    - name: APP_ID
+      value: app3
+    - name: BASE_PATH
+      value: /app3
+    volumeMounts:
+    - name: client
+      mountPath: /run/secrets/client
+      readOnly: true
+    - name: protection
+      mountPath: /data/protection
+    # Backlog 70: the environment's CA as two single files beside the image's own CAs.
+    - name: trust-chain
+      mountPath: /etc/ssl/certs/myproduct-root.pem
+      subPath: root.crt
+      readOnly: true
+    - name: trust-chain
+      mountPath: /etc/ssl/certs/myproduct-ca.pem
+      subPath: ca.crt
+      readOnly: true
+  - name: frontend
+    image: localhost/demo-whoami-frontend:0.1.0
+    imagePullPolicy: Never
+    livenessProbe:
+      initialDelaySeconds: 10
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8080/
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+  volumes:
+  - name: client
+    secret:
+      secretName: app3-client
+      defaultMode: 256
+      items:
+      - key: client.crt
+        path: client.crt
+      - key: client.key
+        path: client.key
+  - name: protection
+    persistentVolumeClaim:
+      claimName: app3-protection
+  - name: trust-chain
+    secret:
+      secretName: app3-ingress-trust-chain
+      items:
+      - key: root.crt
+        path: root.crt
+      - key: ca.crt
+        path: ca.crt

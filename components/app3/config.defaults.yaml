@@ -1,0 +1,9 @@
+# Empty: discovery, keys and token through the public HTTPS origin and the
+# trust chain (backlog 71, variant a). Internal variant b:
+# http://identity-server:8080/identity (issuer and browser endpoints stay public).
+IDENTITY_INTERNAL_URL: ''
+SECRET_FILES:
+  app3-client:
+  - path: credentials/client
+  app3-ingress-trust-chain:
+  - path: cert

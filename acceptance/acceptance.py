@@ -26,6 +26,12 @@ RUNS = Path.home() / "podman-offline-acceptance-runs"
 IDENTITY_CONFIG_CHANGE = ("identity/config.yaml",)
 # product: in bundles.yaml; acceptance/renamed_product.py declares RENAMED_PRODUCT.
 DEMO_PRODUCT = "myproduct"
+# What app3 on PROD may hold after each --whoami fault-injection phase.
+WHOAMI_INJECTED = {
+    "chain": "an unrelated CA in app3's trust chain (public variant)",
+    "internal": "an unrelated CA in app3's trust chain and IDENTITY_INTERNAL_URL set",
+    "restored": "none: public variant and the environment's CA restored",
+}
 RENAMED_PRODUCT = "shop"
 
 
@@ -114,6 +120,7 @@ class Run:
         self.renamed_product = False
         self.status_retry = False
         self.host_setup = False
+        self.whoami = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -294,6 +301,7 @@ class Run:
             first_app=self.first_app,
             status_retry=self.status_retry,
             host_setup=self.host_setup,
+            whoami=self.whoami,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -851,6 +859,9 @@ class Run:
         if self.renamed_product:
             self.execute_renamed()
             return
+        if self.whoami:
+            self.execute_whoami()
+            return
         if self.identity_only:
             self.step("03-unit", lambda: self.guest("DEV", "unit"))
             self.step(
@@ -1095,6 +1106,99 @@ class Run:
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True
 
+    def execute_whoami(self):
+        """Install the .NET/TypeScript demo app3 offline and check its conversion risks.
+
+        Backlog 71: a focused scenario outside the fixed matrix. PROD gets only
+        platform, identity and app3. The checks cover sign-in through Duende,
+        the trust chain's subPath files in the running backend, a session kept
+        across a restart and a reboot (Data Protection keys), the certificate
+        error without the environment's CA, the internal variant without the
+        chain, and the restored public variant.
+        """
+        for action in (
+            "build-images",
+            "pull-images",
+            "dev-up",
+            "venv",
+            "dev-whoami-e2e",
+            "dev-down",
+        ):
+            self.step("03-" + action, lambda a=action: self.guest("DEV", a))
+        self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
+        self.step("04-bundle-list", lambda: self.record_bundles("bundle-list"))
+        order = ["platform", "identity", "app3"]
+        for name in order:
+            self.step("05-transfer-" + name, lambda n=name: self.transfer(bundle=n))
+        self.step(
+            "06-prepare-host",
+            lambda: self.guest("PROD", "prepare-host", bundle="platform"),
+        )
+        self.step(
+            "06-persistent-journal", lambda: self.guest("PROD", "persistent-journal")
+        )
+        for name in order:
+            self.step(
+                "06-install-" + name,
+                lambda n=name: self.guest("PROD", "install", bundle=n),
+            )
+            self.step("06-healthy-" + name, lambda: self.guest("PROD", "health"))
+        self.step("07-check", lambda: self.guest("PROD", "check"))
+        self.step(
+            "07-whoami-chain-mounts",
+            lambda: self.guest("PROD", "whoami-chain-mounts", bundle="app3"),
+        )
+        self.step("08-credentials", self.credentials)
+        self.step("08-whoami-e2e", lambda: self.guest("DEV", "whoami-e2e"))
+        self.step(
+            "08-whoami-log-safety",
+            lambda: self.guest("PROD", "whoami-log-safety", bundle="app3"),
+        )
+        self.step(
+            "08-whoami-session-create",
+            lambda: self.guest("DEV", "whoami-session-create"),
+        )
+        self.step(
+            "09-whoami-restart",
+            lambda: self.guest("PROD", "whoami-restart", bundle="app3"),
+        )
+        self.step(
+            "09-whoami-session-restart",
+            lambda: self.guest("DEV", "whoami-session-check"),
+        )
+        self.step("09-reboot", self.reboot)
+        self.step(
+            "09-wait-boot-service", lambda: self.guest("PROD", "wait-boot-service")
+        )
+        self.step("09-check-after-reboot", lambda: self.guest("PROD", "check"))
+        self.step(
+            "09-whoami-session-reboot",
+            lambda: self.guest("DEV", "whoami-session-logout"),
+        )
+        # Fault injection. As in every scenario, nothing changes PROD after a
+        # failed step: app3 keeps the injected state as evidence until the next
+        # run resets the VM, and the report names that state (WHOAMI_INJECTED).
+        self.meta["whoami_injected"] = WHOAMI_INJECTED["chain"]
+        self.step(
+            "10-whoami-chain-break",
+            lambda: self.guest("PROD", "whoami-chain-break", bundle="app3"),
+        )
+        self.meta["whoami_injected"] = WHOAMI_INJECTED["internal"]
+        self.step(
+            "10-whoami-internal",
+            lambda: self.guest("PROD", "whoami-internal", bundle="app3"),
+        )
+        self.step("10-whoami-internal-e2e", lambda: self.guest("DEV", "whoami-e2e"))
+        self.step(
+            "10-whoami-restore",
+            lambda: self.guest("PROD", "whoami-restore", bundle="app3"),
+        )
+        self.meta["whoami_injected"] = WHOAMI_INJECTED["restored"]
+        self.step("10-whoami-restored-e2e", lambda: self.guest("DEV", "whoami-e2e"))
+        self.step("10-check-restored", lambda: self.guest("PROD", "check"))
+        self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
+        self.finished = True
+
     def inventory_without_registrations(self):
         """Build a newer inventory without route and client on DEV; record its version."""
         versions = bundle_versions(
@@ -1146,8 +1250,15 @@ class Run:
             "A failed step stops execution. Later steps were NOT TESTED.",
             "Only read-only prod launch diagnostics, audit collection and secret cleanup may run after a failed step. No automatic step retries or repairs.",
             "The opt-in status-retry probe performs its controlled retry and config restoration inside that step.",
-            "",
         ]
+        injected = self.meta.get("whoami_injected")
+        if injected and injected != WHOAMI_INJECTED["restored"]:
+            lines.append(
+                "--whoami stopped during fault injection: app3 on PROD may still hold "
+                + injected
+                + ". It is not restored after a failure; the next run resets the VM."
+            )
+        lines.append("")
         report = "\n".join(lines)
         (self.folder / "REPORT.md").write_text(report)
         evidence = [report, "\n# Evidence excerpts (full output in linked logs)\n"]
@@ -1208,7 +1319,14 @@ def main():
         action="store_true",
         help="Run the focused manual-matched item 65 setup/SSH scenario",
     )
+    parser.add_argument(
+        "--whoami",
+        action="store_true",
+        help="Install platform, identity and the .NET/TypeScript app3 and check backlog 71",
+    )
     args = parser.parse_args()
+    if args.whoami and (args.status_retry or args.host_setup):
+        parser.error("--whoami is a separate focused scenario")
     if args.host_setup and (args.status_retry or args.identity_only or args.help_only):
         parser.error(
             "--host-setup is a separate focused scenario; choose normal, renamed or platform-only"
@@ -1222,6 +1340,7 @@ def main():
                 args.identity_only,
                 args.platform_help_only,
                 args.renamed_product,
+                args.whoami,
             )
         )
         > 1
@@ -1237,6 +1356,7 @@ def main():
     run.renamed_product = args.renamed_product
     run.status_retry = args.status_retry
     run.host_setup = args.host_setup
+    run.whoami = args.whoami
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

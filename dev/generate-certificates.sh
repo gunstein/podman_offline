@@ -10,7 +10,7 @@ cert_days=365
 ca_subject_explicit=no
 ca_days_explicit=no
 usage() {
-    echo 'Usage: generate-certificates.sh [--root DIR] [--ca-subject /CN=Name] [--ca-days N] [--cert-days N] platform|identity|app1|app2|help [host]' >&2
+    echo 'Usage: generate-certificates.sh [--root DIR] [--ca-subject /CN=Name] [--ca-days N] [--cert-days N] platform|identity|app1|app2|app3|help [host]' >&2
     echo '   or: generate-certificates.sh [options] --component ID --purpose signing --pfx' >&2
     exit 2
 }
@@ -445,12 +445,12 @@ if [[ ${1:-} == --component ]]; then
     certificate_tool signing "$2"
     exit 0
 fi
-if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == help ]]; then
+if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == app2 || ${1:-} == app3 || ${1:-} == help ]]; then
     component=$1
     shift
     hostname=${1:-myproduct-proxy}
     [[ $# -le 1 && $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || {
-        echo 'Usage: generate-certificates.sh [--root DIR] platform|identity|app1|app2|help [DNS hostname]' >&2; exit 2;
+        echo 'Usage: generate-certificates.sh [--root DIR] platform|identity|app1|app2|app3|help [DNS hostname]' >&2; exit 2;
     }
     mkdir -p "$root/PKI/private" "$root/$component/credentials"
     chmod 700 "$root/PKI" "$root/PKI/private" "$root/$component" "$root/$component/credentials"
@@ -499,6 +499,9 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
             if [[ ! -e $component/credentials/todo/ca.crt ]]; then
                 cp PKI/private/ca.crt "$component/credentials/todo/ca.crt"
             fi
+            ;;
+        app3)
+            issue_component client app3/credentials/client 'extendedKeyUsage=clientAuth'
             ;;
         help) ;;
     esac

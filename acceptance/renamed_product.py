@@ -8,7 +8,9 @@ owner would edit, including the product name `shop` in bundles.yaml:
     python3 acceptance/renamed_product.py credentials ROOT HOSTNAME [COMPONENT...]
 
 `generate` copies the files Git tracks in SOURCE (so no local dev config,
-credentials or build output) and replaces components/ and bundles.yaml. `credentials` runs the demo provisioning script for the matching
+credentials or build output) and replaces components/ and bundles.yaml. The
+renamed product models the fixed acceptance matrix, so demo components outside
+NAMES (app3, backlog 71) are left out. `credentials` runs the demo provisioning script for the matching
 demo component and moves the result to the renamed component's directory.
 
 Public URL paths are application settings, not component IDs: orders serves
@@ -187,6 +189,9 @@ def generate(source, target):
     shutil.rmtree(str(target / "components"))
     with (source / "bundles.yaml").open(encoding="utf-8") as stream:
         catalog = yaml.safe_load(stream)
+    catalog["components"] = {
+        name: entry for name, entry in catalog["components"].items() if name in NAMES
+    }
     dump(target / "bundles.yaml", rename_catalog(catalog))
     for old in catalog["components"]:
         new = rename(old)

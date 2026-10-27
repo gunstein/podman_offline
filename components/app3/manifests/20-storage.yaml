@@ -1,0 +1,11 @@
+# ASP.NET Data Protection keys: sign-in and antiforgery cookies survive restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app3-protection
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

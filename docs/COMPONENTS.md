@@ -3,8 +3,10 @@
 A product is a set of components. Each component is one directory under
 `components/` and one entry in `bundles.yaml`, and it becomes one offline
 bundle. The deploy tools read these declarations; they contain no list of
-component names. The five shipped components (`platform`, `identity`, `app1`,
-`app2`, `help`) are one demo product, not a built-in model.
+component names. The six shipped components (`platform`, `identity`, `app1`,
+`app2`, `app3`, `help`) are one demo product, not a built-in model. `app3` is
+the .NET/TypeScript demo of backlog 71; the fixed acceptance matrix installs
+the other five.
 
 ## Three representations of one model
 
@@ -336,8 +338,10 @@ origin and must trust the CA that issued the proxy certificate. As in the
 original Kubernetes installation, mount the public chain from one Secret as two
 single files in the system certificate directory; .NET on Linux reads every
 file there, and `subPath` adds the files without hiding the image's own CAs.
-The chain holds public certificates only and signs nothing. Whether a backend
-could call Duende internally instead is tested in backlog 71.
+The chain holds public certificates only and signs nothing. Demo `app3`
+(backlog 71) uses this pattern; its
+[verification](../acceptance/WHOAMI-DOTNET.md#public-https-versus-internal-calls)
+also records the internal alternative and what it needs.
 
 Component config (the Secret name must start with the component ID; the
 original `<product>-ingress-trust-chain` is refused):
@@ -506,8 +510,8 @@ After adding or changing a component, run `./deploy.sh validate` first: it
 reports the first finding of every component (file, document or container and
 the declaration it expected) without writing anything or calling Podman.
 
-`dev/demo-credentials.sh` runs `dev/generate-certificates.sh` for the five
-demo components. Another product prepares its own credentials in
+`dev/demo-credentials.sh` runs `dev/generate-certificates.sh` for the six
+demo components and copies the demo CA to app3's trust chain. Another product prepares its own credentials in
 `build/dev/<id>/` (dev) or `/var/lib/<product>/state/<id>/` (production) before
 prepare or install.
 

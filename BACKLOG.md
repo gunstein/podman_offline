@@ -9,16 +9,22 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-26)
+## Current priority (updated 2026-10-27)
 
-[Item 70](#70-provision-a-components-ca-trust-chain-from-the-environments-pki)
-is high priority and kept small: copy the environment's CA to a converted
-backend that calls Duende over HTTPS (dev and lab), document the pattern and
-check `subPath`, before further conversion work.
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
-follows it: a minimal .NET backend and TypeScript frontend signing in through
-Duende, to test the conversion risks before the real backend, including
-whether the backend can call Duende internally instead of through the chain.
+**has completed its lab scope**: run `whoami-7b32621` at
+`7b326213ea40466319eff3dd9a54fd23f95fedcb` finished **CLEAN PASS**, all 46 steps,
+including `11-prod-audit` with the shared journal-reader fix. The six conversion
+points, issuer/log review rules and one saved session across service restart
+and PROD reboot passed. [Complete lab evidence](acceptance/WHOAMI-DOTNET.md#complete-audit-fix-lab-run-2026-10-27).
+[Item 70](#70-provision-a-components-ca-trust-chain-from-the-environments-pki)
+remains verified; the focused run repeated its subPath and trust-chain controls.
+The renamed regression at `43dd0dd` remains **CLEAN PASS**. The optional normal
+scenario was skipped at `7b32621`; no fixed-matrix verification of the shared
+audit fix is claimed for that commit. Historical `45fdb17` and `43dd0dd` reports
+remain unchanged. Work outside item 71's completed lab scope includes the real
+backend, two-level CA, Duende post-logout redirect, session revocation, and app3
+integration into the fixed matrix.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -194,7 +200,11 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 70 (high: CA trust chain for a converted backend), 71 (high: .NET/TypeScript demo app through Duende, with or after 70), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Items 70 and 71 are removed from the open list for their documented lab scope.
+Item 71's complete `whoami-7b32621` run passed all 46 steps, including the shared
+audit fix and final audit. [Evidence and remaining work outside that scope](acceptance/WHOAMI-DOTNET.md#complete-audit-fix-lab-run-2026-10-27).
+
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -533,13 +543,21 @@ scope and usability findings explicitly recorded.
 
 ## 70. Provision a component's CA trust chain from the environment's PKI
 
-Status: **implemented locally** (2026-10-26): documented pattern in
-[COMPONENTS.md](docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend)
-and regression `tests/platform_tests/test_trust_chain.py`; the Podman `subPath`
-check and end-to-end sign-in are pending ([verification](acceptance/TRUST-CHAIN.md)).
+Status: **implemented and lab verified** (2026-10-26) at `45fdb17`:
+[documented pattern](docs/COMPONENTS.md#trusting-the-environments-ca-in-a-backend),
+regression coverage and real rootless Podman 5.8.2/OL9.8 `subPath` with SELinux
+Enforcing passed. App3 signed-bundle sign-in, unrelated-CA HTTP 500 plus
+user-journal `PartialChain`, and restoration passed. Actual single-file SELinux
+labels were recorded; persistent user journaling needed the existing host-setup
+helper on the matrix baseline. [Lab evidence](acceptance/TRUST-CHAIN.md#completed-lab-verification-2026-10-26).
+Only the single-level demo CA/app3 is covered; the organisation's backend and a
+root plus issuing CA remain unverified.
+The `43dd0dd` focused lab run repeated subPath, public HTTPS, wrong-CA failure
+and restoration successfully (2026-10-27); its later audit-format failure does
+not invalidate those checks. [Current lab evidence](acceptance/TRUST-CHAIN.md#lab-verification-at-43dd0dd-2026-10-27).
 High priority, requested by the product owner.
-Blocks converting the organisation's backend that signs in through Duende and
-calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
+This work unblocks converting the organisation's backend that signs in through
+Duende and calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
 steps, documentation and a `subPath` check, no new script mode. Independent of
 items 66/69; item 71 uses it.
 
@@ -612,10 +630,25 @@ demo PKI (root plus issuing CA) and customer CA delivery (backlog 45a/45b).
 
 ## 71. Add a .NET and TypeScript demo app that signs in through Duende
 
-Status: planned, high priority (2026-10-26), requested by the product owner to
-de-risk converting the organisation's .NET backend. Do it together with or
-right after item 70, which this app exercises. No change to `deployment/` is
-expected; if one is needed, record why.
+Status: **complete for the documented lab scope** (2026-10-27). Run
+`whoami-7b32621` tested `7b326213ea40466319eff3dd9a54fd23f95fedcb` and finished
+**CLEAN PASS, 46/46 steps**, including the final PROD audit with `5f30331`'s
+shared journal-reader fix. No parser relaxation, step retry, interruption or
+manual prerequisite repair was needed. The six conversion points, explicit
+issuer pin's image-build checks, protocol-error log rule, both OIDC variants,
+wrong-CA negative control and restoration passed on rootless OL9.8/Podman 5.8.2,
+SELinux Enforcing and Quadlet/user systemd. One saved session survived service
+restart and PROD reboot. [Complete lab evidence](acceptance/WHOAMI-DOTNET.md#complete-audit-fix-lab-run-2026-10-27).
+
+The earlier NOT CLEAN `43dd0dd` run and interrupted fix run remain unchanged
+historical evidence. Renamed regression at `43dd0dd` was CLEAN PASS. The optional
+normal scenario was skipped at `7b32621`, so the shared audit fix is not claimed
+verified through a fixed-matrix run at that commit. No change to `deployment/`
+or fixed-matrix component sets. Recommendation remains variant (a). The real
+backend, two-level CA, post-logout redirect and session revocation remain outside
+this completed lab scope; app3 fixed-matrix integration is a separate follow-up.
+High priority, requested by the product owner to de-risk converting the
+organisation's .NET backend. Exercises item 70.
 
 ### Why
 
@@ -656,6 +689,9 @@ no seed data, no init containers.
   Data Protection volume; nothing generic added for this app.
 - Dev provisioning of its certificates through `generate-certificates.sh`
   (client pair and item 70's trust-chain mode), outside generic `dev/dev.sh`.
+  As implemented: the client pair by a demo recipe in
+  `generate-certificates.sh`, the chain by item 70's copy commands in
+  `dev/demo-credentials.sh` (item 70 deferred a trust-chain mode).
 
 ### Verification
 

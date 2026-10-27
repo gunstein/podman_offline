@@ -6,7 +6,7 @@ from pathlib import Path
 from deployment import common, deploy
 from deployment import render as rendering
 
-from demo_tests.demo_fixture import DEMO_COMPONENTS
+from demo_tests.demo_fixture import DEMO_COMPONENTS, write_descriptor
 from helpers.config_fixture import ConfigFixture
 
 
@@ -34,7 +34,9 @@ class DemoConfigTests(ConfigFixture):
                     "components/" + component + "/config.dev.yaml",
                     dev_source.read_bytes(),
                 )
-            self.select(component)
+            if not (self.root / "components" / component / "VERSION").exists():
+                self.write("components/" + component + "/VERSION", "1.2.3\n")
+            write_descriptor(self.root, component)
             target = common.STATE / component / "config.yaml"
             if target.exists():
                 target.unlink()
@@ -55,5 +57,12 @@ class DemoConfigTests(ConfigFixture):
                             for source in entries
                             if "path" in source and not source["path"].startswith("../")
                         )
-                self.assertTrue(all(path.startswith("credentials/") for path in paths))
+                # Private files live under credentials/; app3's public CA chain
+                # uses backlog 70's documented cert/ directory.
+                self.assertTrue(
+                    all(
+                        path.startswith("credentials/") or path == "cert"
+                        for path in paths
+                    )
+                )
             self.assertEqual(production.get("SECRET_FILES"), dev.get("SECRET_FILES"))

@@ -51,14 +51,17 @@ def resource_names(value, found):
     return found
 
 
-def images(directory):
+def images(directory, components="*"):
     return sorted(
         set(
             re.findall(
                 r"image: (\S+)",
                 "".join(
                     path.read_text()
-                    for path in sorted(directory.glob("components/*/manifests/*.yaml"))
+                    for component in components
+                    for path in sorted(
+                        directory.glob("components/" + component + "/manifests/*.yaml")
+                    )
                 ),
             )
         )
@@ -103,7 +106,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertFalse([name for name in names if OLD_PREFIX.match(str(name))])
 
     def test_images_and_generic_files_are_unchanged(self):
-        self.assertEqual(images(self.target), images(ROOT))
+        self.assertEqual(images(self.target), images(ROOT, renamed_product.NAMES))
         for name in ("deployment", "dev", "scripts", "quadlet", "apps"):
             comparison = filecmp.dircmp(
                 str(ROOT / name), str(self.target / name), ignore=["__pycache__"]
