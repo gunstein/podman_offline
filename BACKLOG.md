@@ -7530,6 +7530,8 @@ Product owner, 2026-10-27:
   Artifactory; when its address changes, it must change in one place. A
   variable can therefore hold the registry host and path, not only a tag, and
   the demo uses one (see "Demo adoption").
+- **Optional per image.** Not every image uses the registry or any variable;
+  some are written as plain literal references and must keep working.
 - **`@@NAME@@`, not `{{NAME}}`.** Use the repository's existing placeholder
   spelling. `@@` already depends on where it stands (whole config values,
   inline ConfigMap and Secret-template text, `@@secret:…@@`, Quadlet
@@ -7604,9 +7606,13 @@ Analysis on `a37f4e4`:
    quote them. `COMPONENT_VERSION` is reserved. The file is build input. It
    never enters component or production config and is not merged by
    `merge_config`.
-2. Manifests may use `@@NAME@@` inside a container or initContainer `image`
-   string, in any part of it and more than once: registry host and path, name
-   or tag. Examples:
+2. Placeholders are optional, per image reference. A literal reference
+   (`image: docker.io/library/nginx:1.28-alpine`) stays valid, needs no
+   variable and is copied unchanged; one manifest and one Pod may mix literal
+   and templated references, and a manifest without `@@` in its `image` fields
+   needs no change. Where wanted, manifests may use `@@NAME@@` inside a
+   container or initContainer `image` string, in any part of it and more than
+   once: registry host and path, name or tag. Examples:
    `image: localhost/demo-postgres:@@POSTGRES_VER@@`,
    `image: '@@REGISTRY@@/library/nginx:@@NGINX_VER@@'` (quoted: YAML would
    otherwise read a leading `@` as reserved). No nesting, defaults or
@@ -7656,7 +7662,8 @@ Analysis on `a37f4e4`:
 
 ### Demo adoption
 
-Convert the demo so both forms are exercised:
+Convert the demo so the templated forms and literal references are all
+exercised; not every image is converted:
 - help and identity: `@@COMPONENT_VERSION@@`. Their images are built per
   component.
 - todo-backend and todo-frontend: `TODO_BACKEND_VER` and `TODO_FRONTEND_VER`.
@@ -7668,6 +7675,10 @@ Convert the demo so both forms are exercised:
   bundled and installed image name. `dev/pull-images.sh` and
   `dev/build-images.sh` work on resolved names; check that the
   `localhost/demo-postgres` source mapping still holds.
+- app3's whoami images stay literal (`localhost/demo-whoami-backend:0.1.0` and
+  `localhost/demo-whoami-frontend:0.1.0`): a release must ship them unchanged,
+  and the bundle's image list, `images.txt` and descriptor images must include
+  them exactly as written.
 
 This changes the demo's help and identity tags to the component version (for
 example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
@@ -7718,6 +7729,9 @@ example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
 - Platform/product (generic, runnable with `platform --isolate`, no demo):
   - resolution in image fields, including a registry variable with a path
     and several variables in one reference;
+  - literal references unchanged, alone and mixed with templated ones in the
+    same Pod, and a product without `config/images.yaml` whose manifests
+    have no image placeholders;
   - `COMPONENT_VERSION`;
   - an image variable name used outside an image field; a config name used
     in an image field; a name defined both as image variable and in config
@@ -7749,7 +7763,9 @@ example `localhost/demo-identity:0.4.12`). Update the harness accordingly:
 - Changing a value in `config/images.yaml` (or a component `VERSION` for
   `COMPONENT_VERSION` images) changes the built, bundled, installed and running
   image tags, with no manifest edits. Changing the registry variable changes
-  every image that uses it, in one place.
+  every image that uses it, in one place, and no literal image.
+- Literal image references keep working unchanged; using placeholders is a
+  choice per image, never a requirement.
 - Production config never contains image versions. Releases contain only
   literal, fully qualified images.
 - An equal-version release with different images is refused with guidance and
