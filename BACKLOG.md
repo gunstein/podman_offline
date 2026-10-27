@@ -9,20 +9,24 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-26)
+## Current priority (updated 2026-10-27)
 
 [Item 70](#70-provision-a-components-ca-trust-chain-from-the-environments-pki)
-and [item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
-are implemented and lab verified at `45fdb17` (2026-10-26): rootless Secret
-`subPath` on OL9.8/Podman 5.8.2 with SELinux Enforcing, app3 signed offline
-bundle installation, both OIDC variants, unrelated-CA control and user-service
-restart/session persistence passed. The normal matrix is CLEAN PASS. The renamed
-matrix was stopped at user request during transfer after 18 passing steps;
-its PROD lifecycle/final audit remain unverified. The later backend and harness changes are not lab-run: the `--whoami` scenario (`f82d107`) and the code-review fixes after it (issuer pin, no protocol error text in logs, log-read failures, persistent journal for `--whoami`).
-[Trust-chain evidence](acceptance/TRUST-CHAIN.md) and
-[all six conversion points](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26).
-The real backend, two-level CA, app3 reboot and fixed-matrix integration remain
-separate verification/follow-up work; dev evidence is not reused as lab evidence.
+remains lab verified; its rootless `subPath` check and app3 trust-chain controls
+also passed at `43dd0dd` (2026-10-27). [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
+passed every `--whoami` functional group at that revision, including the public
+issuer build check, protocol-error log safety and one saved session across both
+service restart and PROD reboot. The complete run was **NOT CLEAN**: final
+audit rejected journal fields omitted by journalctl. A small harness fix
+(`5f30331`, `--all` on the private journal read) has regression coverage; its
+fresh full verification was interrupted after a slow DEV image download and
+is not a complete lab pass. The required renamed regression at `43dd0dd`
+finished **CLEAN PASS**, including the final audit. The optional normal scenario
+was skipped.
+[Fresh results and limits](acceptance/WHOAMI-DOTNET.md#lab-verification-of-43dd0dd-and-review-fixes-2026-10-27).
+Historical `45fdb17` results remain unchanged and cover the earlier backend.
+Remaining gaps include the real backend, two-level CA, Duende post-logout
+redirect, session revocation, and app3 integration into the fixed matrix.
 
 Item 64 is the highest-priority next operator deliverable: unblock a fresh
 rootless production installation as an existing login user with almost no home
@@ -198,12 +202,12 @@ fixes ([verification](acceptance/PREPARE-HOST.md)).
 Update for item 61 (2026-10-22): done; normal and renamed lab runs at `52f28e4`
 both CLEAN PASS ([evidence and scope](acceptance/INIT-SECRET.md#completed-real-lab-verification-2026-10-22)).
 
-Item 70 is removed from the open list: its pattern and app3 lab check passed
-at `45fdb17`. Item 71's manual lab scope passed at that commit, but the
-interrupted renamed regression and a `--whoami` run of the later changes
-remain open. See [the lab report](acceptance/WHOAMI-DOTNET.md#gaps).
+Item 70 remains removed from the open list: its pattern and trust-chain checks
+passed again at `43dd0dd`. Item 71's functional lab scope, review rules and
+app3 reboot persistence are confirmed there, but the complete `--whoami` audit
+fix has no full lab pass. See [current results](acceptance/WHOAMI-DOTNET.md#lab-verification-of-43dd0dd-and-review-fixes-2026-10-27).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 71 (manual app3 lab verified at 45fdb17; renamed stopped by user; --whoami run of the review fixes pending), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 71 (functional --whoami and reboot verified at 43dd0dd; renamed CLEAN PASS; final-audit fix lacks full lab pass), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -551,6 +555,9 @@ labels were recorded; persistent user journaling needed the existing host-setup
 helper on the matrix baseline. [Lab evidence](acceptance/TRUST-CHAIN.md#completed-lab-verification-2026-10-26).
 Only the single-level demo CA/app3 is covered; the organisation's backend and a
 root plus issuing CA remain unverified.
+The `43dd0dd` focused lab run repeated subPath, public HTTPS, wrong-CA failure
+and restoration successfully (2026-10-27); its later audit-format failure does
+not invalidate those checks. [Current lab evidence](acceptance/TRUST-CHAIN.md#lab-verification-at-43dd0dd-2026-10-27).
 High priority, requested by the product owner.
 This work unblocks converting the organisation's backend that signs in through
 Duende and calls it over HTTPS through the platform proxy. Kept small on 2026-10-26: copy
@@ -626,20 +633,25 @@ demo PKI (root plus issuing CA) and customer CA delivery (backlog 45a/45b).
 
 ## 71. Add a .NET and TypeScript demo app that signs in through Duende
 
-Status: **implemented and lab verified** (2026-10-26) at `45fdb17` as demo
-component `app3`; no change to `deployment/`. All six conversion points passed
-on rootless OL9.8/Podman 5.8.2, SELinux Enforcing, Quadlet/user systemd, from a
-signed offline bundle. Public HTTPS and internal HTTP variants passed four-line
-smoke tests with session-preserving user-service restart; public HTTPS failed
-with unrelated CA (`500`, `PartialChain`), internal HTTP still passed, and the
-correct CA/empty internal URL were restored and retested. Recommendation remains
-variant (a). Normal matrix CLEAN PASS; renamed stopped at user request during
-transfer with 18 passing steps, leaving PROD lifecycle/final audit open. The
-later backend and harness changes are not lab-run: the `--whoami` scenario (`f82d107`) and the code-review fixes after it (issuer pin, no protocol error text in logs, log-read failures, persistent journal for `--whoami`); the backend changed since `45fdb17`, so its lab result covers the
-earlier backend only.
-[Results, prerequisite findings and limits](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26).
-App3 reboot, the real backend, two-level CA and Duende post-logout redirect are
-not covered; fixed-matrix integration remains a separate follow-up.
+Status: **implemented; functional lab checks confirmed, whole-run verification
+open** (2026-10-27). At `43dd0dd`, all six conversion points, the explicit
+public issuer pin's image-build checks, and the protocol-error log rule passed
+in the lab. App3 reboot persistence is now confirmed with the same saved
+session used across a user-service restart. Both OIDC variants, unrelated-CA
+negative control and restoration passed on rootless OL9.8/Podman 5.8.2 with
+SELinux Enforcing. No change to `deployment/` or fixed-matrix component sets.
+
+Run `whoami-43dd0dd` was **NOT CLEAN** only at the final audit: journalctl
+omitted two oversized Identity MESSAGE fields as null. Commit `5f30331` keeps
+complete journal input private (`--all`), retaining strict validation and safe
+output projection, with a meaningful harness regression. The fresh fix run was
+interrupted after a slow image build; no full lab pass is claimed for that fix.
+The required renamed regression at `43dd0dd` finished **CLEAN PASS**, including
+final audit and cleanup. The optional normal scenario was skipped. [New evidence and remaining gaps](acceptance/WHOAMI-DOTNET.md#lab-verification-of-43dd0dd-and-review-fixes-2026-10-27).
+The [2026-10-26 section](acceptance/WHOAMI-DOTNET.md#completed-lab-verification-2026-10-26)
+remains historical evidence for the earlier backend. Recommendation remains
+variant (a). Real backend, two-level CA, post-logout redirect and session
+revocation remain open; app3 fixed-matrix integration is a separate follow-up.
 High priority, requested by the product owner to de-risk converting the
 organisation's .NET backend. Exercises item 70.
 

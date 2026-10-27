@@ -24,9 +24,8 @@ unchanged; whether Podman honours it is the lab check below.
 
 ## Lab check: `subPath` with a Secret volume
 
-The newer acceptance scenario `--whoami` (not run in this verification;
-step `07-whoami-chain-mounts`) implements this
-check in the installed app3 backend under the real layout, SELinux and
+The acceptance scenario `--whoami` (step `07-whoami-chain-mounts`) implements
+this check in the installed app3 backend under the real layout, SELinux and
 fapolicyd, and its final audit step rejects any AVC denial. The standalone
 recipe below isolates the Podman behaviour if that step fails.
 
@@ -72,6 +71,49 @@ Pass: the log shows `test-root`, `test-ca` and a file count above 2 (the image's
 own certificates are still present). Record the Podman version and the output
 here. If `subPath` fails, stop and decide an alternative with the product owner
 (backlog 70, task 4).
+
+## Lab verification at `43dd0dd` (2026-10-27)
+
+Run `whoami-43dd0dd` tested
+`43dd0dde7254839597153897081396f560c62c05` on configured disposable OL9.8
+DEV/PROD VMs 107/108. Rootless PROD used `myproduct-ops`, Podman 5.8.2,
+SELinux Enforcing, Quadlet/user systemd and active fapolicyd.
+
+**Confirmed:** `07-whoami-chain-mounts` passed in the installed backend:
+
+```text
+podman version 5.8.2
+SELinux: Enforcing
+PASS: subPath files hold the environment CA; 299 entries in /etc/ssl/certs
+```
+
+The restored mounted files had
+`unconfined_u:object_r:container_file_t:s0` labels. No manual relabel or
+alternative mount scheme was needed. Both files were delivered from this
+PROD environment's CA through the harness, not from checkout certificate data.
+
+Public HTTPS sign-in passed. An unrelated CA in both files plus install gave
+HTTP 500 and the bounded backend-log match
+`errors in the certificate chain: PartialChain`. Internal variant (b) and its
+smoke passed with that unrelated CA still mounted. Restore removed the test CA,
+returned to empty `IDENTITY_INTERNAL_URL` and passed public HTTPS smoke and
+installation checks. The same saved app3 session survived a service restart
+and a PROD reboot.
+
+**Changed lab setup:** `06-persistent-journal` ran the production setup's guarded
+helper before installation; it passed without the earlier manual repair. Smoke
+ran on DEV against PROD with the transferred PROD CA/passwords, so no Python
+smoke dependencies were installed on PROD.
+
+**Whole-run verdict: NOT CLEAN.** All trust-chain and app3 functional checks
+passed, but the final audit rejected two oversized Identity journal messages
+that journalctl represented as JSON null. No FANOTIFY/AVC events were found.
+The failure and the small audit-reader fix (`5f30331`, regression tested) are
+recorded in [the new app3 lab report](WHOAMI-DOTNET.md#lab-verification-of-43dd0dd-and-review-fixes-2026-10-27).
+Its fresh verification run was interrupted after a slow image download and is
+not a complete lab pass for the fix. These results do not replace the original
+`45fdb17` evidence below. Only the single-level demo CA is covered; the real
+backend and a root plus issuing CA remain open.
 
 ## Completed lab verification (2026-10-26)
 
@@ -146,4 +188,5 @@ the lab check above (Podman version, SELinux labels on single-file mounts).
 
 Dev and lab: passed through backlog 71's app (separate evidence above).
 Open: the organisation's real backend and a root plus issuing-CA chain. Only
-the single-level demo CA is exercised; no app3 reboot was tested.
+the single-level demo CA is exercised. App3 reboot persistence was confirmed
+at `43dd0dd` in the separate 2026-10-27 run above.

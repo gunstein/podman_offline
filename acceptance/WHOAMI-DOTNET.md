@@ -1,17 +1,18 @@
 # .NET and TypeScript demo app through Duende (backlog 71)
 
-Status (2026-10-26): implemented as demo component `app3` and lab verified at
-`45fdb17e8d7e6a4df745ee846d925851557d8794`: signed offline bundle installation,
-both OIDC variants, trust-chain negative control and session persistence across
-user-systemd restarts passed on OL9.8, Podman 5.8.2, rootless, SELinux Enforcing.
-Earlier real `kube play` dev evidence is retained separately below. No change
-to `deployment/` or the fixed matrix's component counts/install orders/upgrades.
+Status (2026-10-27): the current backend's six conversion points, explicit
+issuer pin, protocol-error log safety and app3 restart/reboot session
+persistence passed in run `whoami-43dd0dd`. The complete run was **NOT CLEAN**
+because final launcher diagnostics rejected journalctl's omitted oversized
+fields. A small audit-reader fix is committed as `5f30331` with regression
+coverage; a fresh full verification was interrupted after a slow image build.
+The required renamed regression at `43dd0dd` finished **CLEAN PASS**. The
+optional normal scenario was skipped. No change to `deployment/` or the fixed
+matrix's component counts/install orders/upgrades.
 
-The opt-in `--whoami` scenario added in `f82d107` has not been run in this
-lab verification. Testing stopped at the user's request before that update was
-pulled; results below do not verify the newer harness. The code-review fixes
-after `f82d107` also change the backend (issuer pin, no protocol error text in
-the log), so the lab result covers the backend as of `45fdb17` only.
+The [2026-10-26 lab section](#completed-lab-verification-2026-10-26) remains
+unchanged evidence for `45fdb17`, before the backend review fixes. The new
+results do not retrospectively change that earlier backend's evidence.
 
 ## What was added
 
@@ -157,7 +158,7 @@ and log filter; two-stage frontend with pinned TypeScript)
 and the existing demo tests updated for six components. The acceptance harness
 tolerates `app3` (see below).
 
-## Lab: the `--whoami` acceptance scenario (not yet run)
+## Lab: the `--whoami` acceptance scenario
 
 ```sh
 python3 acceptance/acceptance.py --run whoami-1 --whoami run
@@ -225,6 +226,119 @@ bash "$release/deploy.sh" validate && bash "$release/deploy.sh" install
 `generate-certificates.sh` is copied from DEV; it is not in the bundles. If the
 proxy certificate came from a supplier, copy the supplier's issuing chain
 instead of the demo CA.
+
+## Lab verification of `43dd0dd` and review fixes (2026-10-27)
+
+Base revision: `43dd0dde7254839597153897081396f560c62c05`. Runs use only the
+configured disposable DEV VM 107 and PROD VM 108. Both are OL9.8 with Podman
+5.8.2 and SELinux Enforcing; PROD runs rootless as `myproduct-ops` through
+Quadlet/user systemd with fapolicyd active. The backend, issuer pin and log
+filter in this revision differ from the historical `45fdb17` backend below.
+
+### Runs and verdicts
+
+| Run ID | Tested revision | Verdict | Scope |
+| --- | --- | --- | --- |
+| `whoami-43dd0dd` | `43dd0dd` | **NOT CLEAN** | All functional groups passed; final audit rejected journal fields omitted by journalctl. Cleanup passed. |
+| `whoami-43dd0dd-auditfix` | `5f30331` (`43dd0dd` plus audit-reader fix) | **NOT CLEAN, interrupted** | Fresh verification run; image build passed after 1,044.6 seconds, but a controller stop intended for the slow download reached the following `03-pull-images` step. PROD app3 was not installed in this run. |
+| `renamed-43dd0dd` | `43dd0dd` | **CLEAN PASS** | All 57 steps passed, including final audit and cleanup, from an isolated checkout at the requested base revision. |
+
+The optional normal scenario was not run at this revision. Earlier normal
+results are not verification of these changes.
+
+### Initial `--whoami` step groups at `43dd0dd`
+
+| Group | Result | Evidence |
+| --- | --- | --- |
+| Readiness, reset, isolation, source and host-path safety | **Confirmed** | Both configured VMs reset from their declared snapshots; source revision checked. |
+| DEV build/pull, dev-up, smoke and dev-down | **Confirmed** | Both app3 images built; all three issuer-pin build checks passed. Real dev sign-in/restart and protocol-error log check passed. |
+| Signed bundle build and transfer | **Confirmed** | Only platform, Identity and app3 transferred/published for this scenario. |
+| Host setup and `06-persistent-journal` | **Confirmed** | Guarded production journal helper succeeded before installation. No manual repair. |
+| Platform, Identity and app3 install/health | **Confirmed** | Installed from protected signed releases as the runtime account, with PROD isolated. |
+| `07-check`, `07-whoami-chain-mounts` | **Confirmed** | Both mounted files matched the PROD environment CA; 299 CA-store entries; Podman 5.8.2, SELinux Enforcing. |
+| Credentials, public smoke and `08-whoami-log-safety` | **Confirmed** | DEV used transferred PROD CA/passwords and the PROD IP; fixed OIDC failure line present, marker absent. PROD needed no `requests` installation. |
+| Saved session, service restart, reboot and post-boot checks | **Confirmed** | The same saved session remained signed in after restart and reboot, then local logout succeeded. No new login during persistence checks. |
+| `10-whoami-chain-break` | **Confirmed** | Unrelated CA in both files plus install produced HTTP 500 and `PartialChain`. |
+| Internal configuration and smoke | **Confirmed** | Variant (b) passed while the unrelated CA remained mounted; browser authorization stayed public. |
+| Restore, restored smoke, installation checks and home inventory | **Confirmed** | Environment CA and empty internal URL restored; public HTTPS smoke and normal checks passed. Temporary unrelated CA removed. |
+| Final PROD audit | **Changed: failed** | No FANOTIFY/AVC events; launcher diagnostics rejected two `MESSAGE: null` journal records. |
+| Cleanup | **Confirmed** | Private transferred credentials and saved session removed through normal cleanup. |
+
+### Six conversion points and two review rules
+
+These confirmations are scoped to the actual steps above, independently of the
+initial run's failed final audit.
+
+| Point/rule | Status at `43dd0dd` | Lab evidence and limits |
+| --- | --- | --- |
+| 1. Callback path | **Confirmed** | Public HTTPS callback and actual `form_post` sign-in passed in public and internal variants. |
+| 2. Forwarded headers | **Confirmed** | Smoke required an HTTPS callback behind the real proxy. Middleware-removal negative control was not repeated. |
+| 3. Data Protection | **Confirmed** | **App3 reboot persistence is now confirmed**, as well as service-restart persistence, using one saved session. Same-cookie persistence across reinstall was not tested. |
+| 4. CA trust chain | **Confirmed** | Two single-file mounts retained 299 CA-store entries under SELinux Enforcing; wrong CA failed with 500/`PartialChain`, restoration recovered public sign-in. |
+| 5. `private_key_jwt` | **Confirmed** | Duende accepted sign-in and the protected claims API in both variants. |
+| 6. TypeScript/offline images | **Confirmed** | DEV built the Node/TypeScript frontend and .NET backend; signed bundles installed offline; smoke checked compiled frontend content. |
+| Public issuer pin | **Confirmed** | The build executed `Checks/`: unpinned control accepted discovery issuer; pinned validator rejected it and accepted public issuer. Real sign-in then passed. Wrong-issuer tokens were tested inside the image build, not injected into live Duende. |
+| No protocol error text in logs | **Confirmed** | Smoke submitted the fixed marker in OIDC error fields; the real PROD log contained the fixed exception-type failure line and no marker. A failed log read is a failing harness condition, covered separately by harness tests. |
+
+Both restored app3 certificate files had
+`unconfined_u:object_r:container_file_t:s0` labels, with no manual relabel.
+No passwords, keys, assertions, session cookies or complete connection strings
+are included in this report. The accepted negative-control excerpt is only
+`errors in the certificate chain: PartialChain`.
+
+### Final-audit failure and scoped fix
+
+The initial run stopped at `11-prod-audit`; no acceptance step was retried.
+Read-only diagnosis established that two Identity container journal messages
+were each 8,193 bytes. Without `--all`, `journalctl --output=json` replaced
+those fields with `null`; with `--all`, the same records were strings. Their
+contents were not printed. Strict launcher parsing correctly refused null
+messages, so this was a harness input-format failure, not an AVC/fapolicyd
+failure or an app3 authentication failure.
+
+Commit `5f30331` adds `--all` to the existing private journal read in
+`health_launch_diagnostics()`. `journal_events()` still validates input and
+prints only recognized safe projections. A regression exercises an oversized
+private message with a launcher failure and requires the failure projection
+without its private contents. This changes no deployment code, installed
+component set, count, order or upgrade coverage. A fresh focused run was started to verify
+the complete flow with that fix, but was interrupted after the unusually slow
+DEV image build. The build eventually passed; the stop reached the following
+image-pull SSH command. This interruption is not reported as an application
+regression, and there is no complete lab pass for the audit fix. Both NOT CLEAN
+verdicts are retained. No failed acceptance step was rerun in place.
+
+### Renamed regression at `43dd0dd`
+
+`renamed-43dd0dd` completed **CLEAN PASS**. The existing five-component product
+(gateway, login-service, orders, inventory, manual) passed dev generation/start,
+sign-in, shutdown, signed bundle creation, source removal of manual, retained
+bundle transfers, offline installation/health, host/release safety, init checks,
+PROD sign-in and persistence markers, service restart, orders redeploy,
+inventory route/client removal and survivor checks, scoped inventory/manual
+uninstalls, unchanged login-home inventory, final audit and cleanup. App3 was
+not added to that catalog or its PROD component set. This closes the interrupted
+renamed regression gap; the earlier stopped run remains historical evidence.
+The optional normal scenario was skipped at this revision.
+
+### Separate checks and review outcome
+
+- Product/unit at `43dd0dd`: `python3 -B tests/run.py all`, **560 passed** in
+  78.466 seconds. Issuer-pin checks also ran during real DEV image builds.
+- Acceptance harness at `43dd0dd`: **357 passed** in 9.244 seconds; after the
+  audit fix: **358 passed** in 9.530 seconds. These do not substitute for lab
+  execution.
+- ShellCheck of the changed `acceptance/remote.sh` and `git diff --check` passed.
+- Runtime verdicts and remaining run results are listed above. Evidence is
+  retained under `~/podman-offline-acceptance-runs/<run-id>/`, with `REPORT.md`,
+  `EVIDENCE.md` and per-step logs. Reports contain safe summaries; raw backend
+  logs and session contents are not reproduced here.
+- Understandability review: the only implementation change is the journal-read
+  option. Complete fields remain private until `journal_events()` projects safe
+  identifiers and recognized failure text. The regression covers both retained
+  diagnostics and withheld private data; no new helper layer is needed.
+  The app3 state/config, mount, session and restore ownership remains as in the
+  scenario. No customer operator procedure changed and no human trial occurred.
 
 ## Completed lab verification (2026-10-26)
 
@@ -360,18 +474,20 @@ phase, and the session helper's deadline, retry and private file.
 ## Gaps
 
 - The organisation's real backend is not covered by the app3 lab result.
-- App3 reboot persistence, same-cookie persistence across install, and the
-  dev-only forwarded-header/key-deletion negative controls were not lab-tested.
-- The renamed matrix was stopped at user request during transfer; its PROD
-  lifecycle and final audit remain unverified.
-- A `--whoami` lab run of the current branch: the scenario and the code-review
-  fixes (issuer pin, log safety, failed log reads, persistent journal) are not
-  lab-verified. Test counts above apply only to `45fdb17`.
+- The complete `--whoami` audit-reader fix has no full lab pass: the original
+  `43dd0dd` run failed only at audit, and its fresh fix run was interrupted
+  during the following image-pull step after an unusually slow build.
+- The complete renamed regression passed at `43dd0dd`; it does not validate
+  app3 installation or the later audit-reader fix.
+- Same-cookie persistence across reinstall and the dev-only forwarded-header/
+  key-deletion negative controls were not lab-tested. App3 restart and reboot
+  persistence are confirmed at `43dd0dd`.
 - Only the single-level demo CA is exercised; a root plus issuing CA is not.
-- Post-logout redirect through Duende (open, point 1 findings).
-- App3 remains outside the fixed PROD matrix; adding its counts, install orders
+- Post-logout redirect through Duende remains open.
+- Local logout does not revoke a previously copied session cookie. Server-side
+  session revocation remains open.
+- App3 remains outside the fixed PROD matrix; adding counts, install orders
   and upgrade coverage is a separate follow-up. No human operator trial occurred.
-- The unmodified matrix baseline lacks persistent user-journal access; this run
-  repaired it with the existing host-setup helper for the app3 negative control.
-  `--whoami` now runs the same helper as step `06-persistent-journal`, as the
-  production host setup does, because its log checks read the journal.
+- The fixed matrix baseline still lacks persistent user-journal setup.
+  `--whoami` now runs the guarded production helper in `06-persistent-journal`;
+  that step passed without manual repair.
