@@ -9,7 +9,12 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-27)
+## Current priority (updated 2026-10-28)
+
+[Item 72](#72-register-api-resource-secrets-with-identity) is the top priority,
+requested by the product owner on 2026-10-28 while converting the organisation's
+.NET backend: an API backend and Identity must hold the same API resource
+secret, and today the operator copies it into two components by hand.
 
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 **has completed its lab scope**: run `whoami-7b32621` at
@@ -205,7 +210,7 @@ Items 70 and 71 are removed from the open list for their documented lab scope.
 Item 71's complete `whoami-7b32621` run passed all 46 steps, including the shared
 audit fix and final audit. [Evidence and remaining work outside that scope](acceptance/WHOAMI-DOTNET.md#complete-audit-fix-lab-run-2026-10-27).
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 72 (top priority, 2026-10-28), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -232,6 +237,97 @@ baseline before implementation; these tasks are not claims of completed work.
 The refactor must preserve the behavior and naming established by items 8 and 9;
 its original core terminology below is historical scope, not an instruction to
 restore core or merge Identity back into platform.
+
+## 72. Register API resource secrets with Identity
+
+Status: planned, top priority (2026-10-28), requested by the product owner.
+Found while converting the organisation's .NET backend in dev.
+
+### Problem
+
+The organisation's Duende Identity defines one API resource per API backend and
+reads each secret from its environment, for example
+`ApiResources__0__ApiSecrets__0__Value` and
+`ApiResources__1__ApiSecrets__0__Value` (a second application). Each API
+backend receives the same value as `Authentication__ApiSecret`. In the original
+Kubernetes installation one Secret (`appSecrets`) feeds both sides, so the two
+values cannot drift.
+
+Here a secret belongs to one component:
+
+- Secret IDs must start with the component ID, so one declaration cannot serve
+  Identity and an API component.
+- `SECRET_FILES`/`SECRET_TEMPLATES` cannot be shared, and the config layers
+  replace whole top-level values, so `config/common.defaults.yaml` is no place
+  for a shared declaration either. Secret values never live in config anyway,
+  only the files they are read from.
+
+The only way today is for the operator to put the same value into a file under
+each component and keep them equal by hand. Nothing checks that they match; a
+mismatch shows only as an authentication failure at runtime. A missing secret
+went unnoticed in the dev conversion because neither side reported it as a
+configuration error. (That conversion also met `IDX10204`, a missing expected
+issuer; whether the missing API secret caused it is not established.)
+
+### Goal
+
+One source of truth per API secret: the API component delivers or generates its
+secret, Identity receives every registered API secret, and a mismatch or a
+missing secret is refused before anything is written, in dev and production.
+
+### Direction to decide before implementation
+
+A third registration role next to `routes` and `clients`
+([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-and-oidc-clients)),
+for example `apis: <identity-id>` with an `api.yaml` in the API component:
+
+- `api.yaml` names the API resource (name, scopes) and the component's own
+  secret source (`SECRET_FILES` ID/key, optionally generated).
+- The owner (`accepts: apis`) mounts a registration volume that receives the
+  registered resources and their secrets, rebuilt from current registrations on
+  every change like `clients`, so a removed API does not stay active.
+- The tools do not know application variable names. As with `client.yaml`
+  `environment:`, the product names how Identity consumes the registrations
+  (an `installed.json`, a file per API, or rendered `ApiResources__N__...`
+  values with a deterministic order) and which variable the API backend reads.
+- Restarts follow the change: an API secret change restarts the API component
+  and then Identity, as for clients.
+
+Decide with the product owner whether the API component or Identity owns
+generation, how the organisation's Identity consumes the values (index order,
+plain or hashed `Value`) and whether the demo Identity protocol gains API
+resources or a fixture covers the role.
+
+### Constraints
+
+- Secrets stay in private files/Secrets: never in ConfigMaps, logs, command
+  output or bundles; `validate` reads no secret contents.
+- Works for production `init-config`/install and for dev, through the same
+  validation flow; dev layers never initialize production config.
+- Rotation and uninstall: replacing or removing an API's secret updates the
+  owner's registrations; uninstalling the API removes its resource.
+- Keep the existing per-component secret rules; no product-wide shared secret
+  mechanism.
+
+### Verification
+
+- Unit/fixture tests: registration rendered for the owner, matching values on
+  both sides, missing source or missing owner refused before output, removed
+  registration not kept, restart order, no secret contents in output.
+- Acceptance: an API component signs in through Identity with a registered
+  secret in a real Podman run; a changed secret takes effect on both sides
+  after one install.
+- Update COMPONENTS.md and the review guide's contracts.
+
+### Until then
+
+Use one file per component with the same value and compare checksums, never
+the values:
+
+```bash
+podman exec <identity-container> printenv ApiResources__0__ApiSecrets__0__Value | sha256sum
+podman exec <api-container> printenv Authentication__ApiSecret | sha256sum
+```
 
 ## 64. Support new rootless installations outside the login home
 
