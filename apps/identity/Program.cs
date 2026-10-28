@@ -62,6 +62,17 @@ var registrations = JsonSerializer.Deserialize<string[]>(File.ReadAllText("/clie
 var clients = registrations.Select(path => LoadClient(Path.Combine("/clients", path))).ToArray();
 if (clients.Select(client => client.ClientId).Distinct().Count() != clients.Length)
     throw new InvalidOperationException("Duplicate OIDC client IDs");
+// API resources (backlog 72): names and scopes from identity-settings, each
+// secret from the platform-rendered identity-apis Secret at the same index.
+// api.yaml's hash: sha256 renders Base64(SHA-256), the form Duende compares.
+// A named API without a secret is not installed yet and stays inactive.
+var configuredApis = builder.Configuration.GetSection("ApiResources").Get<ApiResource[]>()
+    ?? Array.Empty<ApiResource>();
+if (configuredApis.Any(api => string.IsNullOrEmpty(api.Name) || api.ApiSecrets.Count > 1))
+    throw new InvalidOperationException("Each API resource needs a name and at most one secret");
+var apiResources = configuredApis.Where(api => api.ApiSecrets.Count == 1).ToArray();
+foreach (var api in configuredApis.Except(apiResources))
+    Console.WriteLine($"API resource {api.Name} has no registered secret; inactive");
 builder.Services.AddIdentityServer(options => {
     options.IssuerUri = origin + "/identity";
     options.KeyManagement.Enabled = false;
@@ -74,6 +85,7 @@ builder.Services.AddIdentityServer(options => {
     .AddInMemoryApiScopes(clients.SelectMany(client => client.AllowedScopes)
         .Where(scope => scope != "openid" && scope != "profile").Distinct()
         .Select(scope => new ApiScope(scope)))
+    .AddInMemoryApiResources(apiResources)
     .AddInMemoryClients(clients)
     .AddJwtBearerClientAuthentication();
 

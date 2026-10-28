@@ -991,13 +991,17 @@ def configmap_data(original, rendered, config):
     return result
 
 
-def effective_documents(config, path, manifests, component=None, imported=()):
+def effective_documents(
+    config, path, manifests, component=None, imported=(), imported_secrets=()
+):
     """Return the manifests as they will be installed, fully validated, without writes.
 
     Everything that can be decided from declarations is checked here, before
     any secret is generated: kinds, placeholders, resource names (after
     substitution), pull policies, mounts, duplicates and the links between
-    manifests, config and imported registration volumes (by name).
+    manifests, config, imported registration volumes and registration Secrets
+    (by name). A registration Secret (accepts.apis) is rendered by the platform,
+    so config must not declare the same name.
     """
     # Standalone prepare/install/validate load_config directly, without going
     # through effective_config; do not rely on prior component config validation.
@@ -1027,12 +1031,26 @@ def effective_documents(config, path, manifests, component=None, imported=()):
 
     imported = set(imported)
     secrets, volumes = declared_volume_names(config, path, imported)
-    declared = [{"kind": "Secret", "metadata": {"name": i}} for i in secrets] + [
-        {"kind": "PersistentVolumeClaim", "metadata": {"name": i}} for i in volumes
-    ]
+    for name in sorted(imported_secrets):
+        if name in secrets or name in volumes:
+            raise common.DeployError(
+                f"{path}: {name} is the registration Secret this component accepts "
+                "(accepts in bundles.yaml); the platform renders it, so do not "
+                "declare it in config"
+            )
+    declared = [
+        {"kind": "Secret", "metadata": {"name": i}}
+        for i in secrets + sorted(imported_secrets)
+    ] + [{"kind": "PersistentVolumeClaim", "metadata": {"name": i}} for i in volumes]
     from_config = {
         ("Secret", i): f"{common.SECRET_FILES}.{i} in config.yaml" for i in secrets
     }
+    from_config.update(
+        {
+            ("Secret", i): f"Registration Secret {i} (accepts in bundles.yaml)"
+            for i in imported_secrets
+        }
+    )
     from_config.update(
         {
             ("PersistentVolumeClaim", i): (
@@ -1055,13 +1073,22 @@ def effective_documents(config, path, manifests, component=None, imported=()):
     return documents
 
 
-def materialize(config, path, documents, files_dir, extra_volumes=None, component=None):
+def materialize(
+    config,
+    path,
+    documents,
+    files_dir,
+    extra_volumes=None,
+    component=None,
+    extra_secrets=(),
+):
     """Create allowed missing secrets and return the install YAML and import volumes.
 
     Call only with effective_documents() output and after the database preflight.
     Checks that need the files themselves (missing, empty or oversized sources)
     necessarily run here, after generation. Secret keys the pods select are
-    checked first, from file names and generate declarations.
+    checked first, from file names and generate declarations. extra_secrets
+    are the registration Secret documents the component accepts.
     """
     check_component_file_sources(config, component)
     check_secret_keys(config, path, documents, component)
@@ -1082,6 +1109,7 @@ def materialize(config, path, documents, files_dir, extra_volumes=None, componen
     docs = (
         file_secrets
         + templates.documents(config, file_secrets)
+        + list(extra_secrets)
         + volume_claims(volumes, files_dir)
         + documents
     )

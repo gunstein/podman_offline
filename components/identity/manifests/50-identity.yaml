@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: app
-    image: localhost/demo-identity:0.2.2
+    image: localhost/demo-identity:0.2.3
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 10
@@ -23,6 +23,9 @@ spec:
     envFrom:
     - configMapRef:
         name: identity-settings
+    # API secrets the platform renders from api.yaml registrations (backlog 72).
+    - secretRef:
+        name: identity-apis
     env:
     - name: ConnectionStrings__Default
       valueFrom:

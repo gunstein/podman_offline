@@ -1,10 +1,13 @@
+using System.Net.Http.Headers;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -20,6 +23,10 @@ var issuer = origin + "/identity";
 // Podman network; the issuer and the browser's endpoints stay public.
 var internalIdentity = builder.Configuration["IDENTITY_INTERNAL_URL"]?.TrimEnd('/');
 if (string.IsNullOrEmpty(internalIdentity)) internalIdentity = null;
+// This backend is also an API resource (backlog 72): Identity holds its secret
+// from the platform's API registration; the name matches identity-settings.
+var apiName = Required("Authentication:ApiName");
+var apiSecret = Required("Authentication:ApiSecret");
 var clientCertificate = X509Certificate2.CreateFromPemFile(
     "/run/secrets/client/client.crt", "/run/secrets/client/client.key");
 // The handler logs Identity's error_description and error_uri verbatim; those
@@ -153,6 +160,21 @@ app.MapPost("/auth/logout", async (HttpContext context, IAntiforgery antiforgery
 app.MapGet("/api/claims", (HttpContext context) => Results.Ok(
     context.User.Claims.Select(claim => new { type = claim.Type, value = claim.Value })))
     .RequireAuthorization();
+// Identity's introspection endpoint authenticates the API with its secret:
+// 200 when the registered secret matches, 401 otherwise. Only the result is shown.
+app.MapGet("/api/secret-check", async (HttpContext context,
+    IOptionsMonitor<OpenIdConnectOptions> monitor) => {
+    var options = monitor.Get(OpenIdConnectDefaults.AuthenticationScheme);
+    var configuration = await options.ConfigurationManager!
+        .GetConfigurationAsync(context.RequestAborted);
+    using var request = new HttpRequestMessage(HttpMethod.Post, configuration.IntrospectionEndpoint) {
+        Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["token"] = "none" }),
+    };
+    request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(
+        Encoding.UTF8.GetBytes(Uri.EscapeDataString(apiName) + ":" + Uri.EscapeDataString(apiSecret))));
+    using var response = await options.Backchannel.SendAsync(request, context.RequestAborted);
+    return Results.Ok(new { registered = response.IsSuccessStatusCode });
+}).RequireAuthorization();
 app.Run();
 
 // RFC 7523 client assertion for the token endpoint the request is sent to.

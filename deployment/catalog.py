@@ -21,11 +21,14 @@ from . import render as rendering
 
 # Directories and files the target state directory uses for shared state. A component with
 # one of these IDs would share a path with that state, so the IDs are reserved.
-RESERVED_IDS = ("installed", "metadata", "routes", "clients", "files")
+RESERVED_IDS = ("installed", "metadata", "routes", "clients", "apis", "files")
 
 # Registration roles. A component that declares a role registers the matching
-# file with the component that accepts that role.
-ROLE_FILES = {"routes": "route.conf", "clients": "client.yaml"}
+# file with the component that accepts that role. routes and clients arrive in
+# an imported volume; apis in a Secret the owner names in accepts.
+ROLE_FILES = {"routes": "route.conf", "clients": "client.yaml", "apis": "api.yaml"}
+# The role whose accepts value names a Secret instead of a volume.
+SECRET_ROLES = ("apis",)
 
 UPGRADES = ("always", "newer-only")
 # Config names a component may share with its public_from dependents, beside
@@ -41,6 +44,7 @@ CATALOG_KEYS = (
     "shares",
     "routes",
     "clients",
+    "apis",
     "accepts",
 )
 DESCRIPTOR_KEYS = (
@@ -53,8 +57,12 @@ DESCRIPTOR_KEYS = (
     "shares",
     "routes",
     "clients",
+    "apis",
     "accepts",
 )
+# Descriptor fields added after the first product-named releases, with the
+# value an older descriptor without them means.
+LATER_KEYS = {"shares": [], "apis": None}
 
 
 def check_id(value, where):
@@ -159,6 +167,7 @@ def load_catalog(root):
             "shares": entry.get("shares", []),
             "routes": entry.get("routes"),
             "clients": entry.get("clients"),
+            "apis": entry.get("apis"),
             "accepts": entry.get("accepts", {}),
         }
         requires = catalog[name]["requires"]
@@ -191,7 +200,7 @@ def check_entry(name, entry, where):
             f"{where}.upgrade must be one of {', '.join(UPGRADES)}"
         )
     requires = entry["requires"]
-    for key in ("public_from", "routes", "clients"):
+    for key in ("public_from",) + tuple(ROLE_FILES):
         value = entry[key]
         if value is None:
             continue
@@ -219,7 +228,8 @@ def check_entry(name, entry, where):
     accepts = entry["accepts"]
     if not isinstance(accepts, dict) or set(accepts) - set(ROLE_FILES):
         raise common.DeployError(
-            f"{where}.accepts must map routes and/or clients to a volume ID"
+            f"{where}.accepts must map routes, clients and/or apis to a resource "
+            "name (a volume ID; a Secret name for apis)"
         )
     for role, volume in accepts.items():
         if (
@@ -227,11 +237,12 @@ def check_entry(name, entry, where):
             or not common.ID.fullmatch(volume)
             or not volume.startswith(name + "-")
         ):
+            kind = "Secret name" if role in SECRET_ROLES else "volume ID"
             raise common.DeployError(
-                f"{where}.accepts.{role} must be a volume ID starting with {name}-"
+                f"{where}.accepts.{role} must be a {kind} starting with {name}-"
             )
     if len(set(accepts.values())) != len(accepts):
-        raise common.DeployError(f"{where}.accepts needs a separate volume per role")
+        raise common.DeployError(f"{where}.accepts needs a separate resource per role")
 
 
 def check_id_prefixes(names, where):
@@ -265,6 +276,20 @@ def check_owners(descriptors, where):
                     f"{where}: {name} registers {role} with {owner}, "
                     f"but {owner} does not accept {role}"
                 )
+
+
+def imported_volumes(descriptor):
+    """The registration volumes a component accepts (routes, clients)."""
+    return [
+        name for role, name in descriptor["accepts"].items() if role not in SECRET_ROLES
+    ]
+
+
+def imported_secrets(descriptor):
+    """The registration Secrets a component accepts (apis)."""
+    return [
+        name for role, name in descriptor["accepts"].items() if role in SECRET_ROLES
+    ]
 
 
 def role_owners(descriptors, where):
@@ -383,6 +408,7 @@ def source_descriptors(root):
             "shares": list(entry["shares"]),
             "routes": entry["routes"],
             "clients": entry["clients"],
+            "apis": entry["apis"],
             "accepts": dict(entry["accepts"]),
         }
     return descriptors
@@ -391,12 +417,14 @@ def source_descriptors(root):
 def check_descriptor(data, where):
     """Validate one compiled descriptor read from bundle.yaml or installed metadata.
 
-    shares came after the first product-named releases; a descriptor without it
-    shares nothing, so it is read as []. Every other field is required.
+    shares and apis came after the first product-named releases; a descriptor
+    without them shares nothing and registers no API (LATER_KEYS). Every other
+    field is required.
     """
-    if isinstance(data, dict) and "shares" not in data:
+    if isinstance(data, dict) and set(LATER_KEYS) - set(data):
         data = dict(data)
-        data["shares"] = []
+        for key, value in LATER_KEYS.items():
+            data.setdefault(key, value)
     if not isinstance(data, dict) or set(data) != set(DESCRIPTOR_KEYS):
         raise common.DeployError(
             f"{where}: expected exactly the fields {', '.join(DESCRIPTOR_KEYS)}"
@@ -502,9 +530,8 @@ def load_installed_metadata(state):
             check_id(name, str(path))
             data = json.loads(path.read_text())
             if isinstance(data, dict) and set(data) == set(DESCRIPTOR_KEYS) - {
-                "product",
-                "shares",
-            }:
+                "product"
+            } - set(LATER_KEYS):
                 raise PreProductMetadata()
             descriptor = check_descriptor(data, str(path))
             if descriptor["name"] != name:

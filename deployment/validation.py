@@ -58,7 +58,7 @@ def validate_catalog():
     findings = []
     for component, component_settings in settings.items():
         path = state / component / "config.yaml"
-        imported = known[component]["accepts"].values()
+        imported = catalog.imported_volumes(known[component])
         try:
             config = rendering.effective_config(component_settings, path, component)
             documents = deploy.validate_component(
@@ -67,6 +67,7 @@ def validate_catalog():
                 common.ROOT / "components" / component / "manifests",
                 component,
                 imported,
+                catalog.imported_secrets(known[component]),
             )
             check_images(documents)
             check_sources(config, path, documents, imported, component)
@@ -102,7 +103,7 @@ def validate_bundle():
             registrations.registration_stage([name], Path(directory), known)
     except ERRORS as error:
         findings.append(("registrations", str(error)))
-    imported = descriptor["accepts"].values()
+    imported = catalog.imported_volumes(descriptor)
     try:
         checked = {}
         if render:
@@ -113,6 +114,7 @@ def validate_bundle():
                 common.ROOT / "components" / name / "manifests",
                 name,
                 imported,
+                catalog.imported_secrets(descriptor),
             )
             checked[name] = (effective, documents)
         deploy.install_preconditions(name, checked)

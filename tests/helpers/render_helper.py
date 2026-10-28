@@ -22,6 +22,7 @@ def materialize_and_render(
     manifests=None,
     component=None,
     extra_volumes=None,
+    extra_secrets=(),
 ):
     """Validate, create allowed missing secrets, render YAML and optionally write imports."""
     config_path = config_path or common.CONFIG
@@ -37,9 +38,16 @@ def materialize_and_render(
         manifests or common.MANIFESTS,
         component,
         extra_volumes or {},
+        [doc["metadata"]["name"] for doc in extra_secrets],
     )
     text, volumes = materialize(
-        config, config_path, documents, files_dir, extra_volumes, component
+        config,
+        config_path,
+        documents,
+        files_dir,
+        extra_volumes,
+        component,
+        extra_secrets,
     )
     if write_archives:
         write_file_archives(volumes, files_dir)

@@ -12,8 +12,10 @@
 #                 (see docs/COMPONENTS.md, "Reserved configuration names")
 #   routes:       dependency that serves this component's route.conf
 #   clients:      dependency that registers this component's client.yaml
+#   apis:         dependency that receives this component's API secret (api.yaml)
 #   accepts:      roles this component serves, mapped to the volume ID that
-#                 receives the registrations: {routes: <id>, clients: <id>}
+#                 receives the registrations: {routes: <id>, clients: <id>};
+#                 for apis the Secret the platform renders: {apis: <id>}
 #
 # product names the whole installation: the installation root
 # /var/lib/<product> and bootstrap file ~/.<product>/<product>.env of the
@@ -34,6 +36,7 @@ components:
     routes: platform
     accepts:
       clients: identity-clients
+      apis: identity-apis
   app1:
     requires: [platform, identity]
     public_from: platform
@@ -50,6 +53,7 @@ components:
     public_from: platform
     routes: platform
     clients: identity
+    apis: identity
   help:
     requires: [platform]
     public_from: platform

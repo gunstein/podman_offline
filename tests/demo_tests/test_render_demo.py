@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 import yaml
+from deployment import catalog
 from deployment import render as rendering
 
 from demo_tests.demo_fixture import DEMO, DEMO_COMPONENTS, write_secret_fixtures
@@ -42,8 +43,18 @@ class DemoRenderTests(DeployFixture):
             # Registration owners always receive their declared import volume.
             imports = {
                 volume: [self.write("state/imports/" + volume, "dummy")]
-                for volume in DEMO[component]["accepts"].values()
+                for volume in catalog.imported_volumes(DEMO[component])
             }
+            # The owner's API Secret, as registrations.owner_secrets renders it.
+            secrets = [
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {"name": name},
+                    "data": {"ApiResources__0__ApiSecrets__0__Value": "ZHVtbXk="},
+                }
+                for name in catalog.imported_secrets(DEMO[component])
+            ]
             text = materialize_and_render(
                 base / "files",
                 write_archives=False,
@@ -51,11 +62,13 @@ class DemoRenderTests(DeployFixture):
                 manifests=repo / "components" / component / "manifests",
                 component=component,
                 extra_volumes=imports or None,
+                extra_secrets=secrets,
             )
             docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]
         self.assertEqual(kinds.count("Pod"), 9)
-        self.assertEqual(kinds.count("Secret"), 11)
+        # app3's API secret and recipe, and Identity's registration Secret (72).
+        self.assertEqual(kinds.count("Secret"), 14)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 8)
         self.assertEqual(kinds.count("ConfigMap"), 6)
         self.assertEqual(len(rendering.find_images(docs)), 8)

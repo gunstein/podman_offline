@@ -5,3 +5,7 @@ metadata:
 data:
   PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
   HTTPS_PORT: '@@HTTPS_PORT@@'
+  # API resources by index; each secret comes from identity-apis at the same
+  # index (app3's api.yaml), as in the organisation's appsettings.json.
+  ApiResources__0__Name: app3-api
+  ApiResources__0__Scopes__0: app3

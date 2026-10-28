@@ -161,6 +161,56 @@ class WhoamiSourceTests(unittest.TestCase):
         self.assertEqual(set(re.findall(r"app3-whoami:(\d+)", route)), {"8000", "8080"})
         self.assertIn("proxy_set_header X-Forwarded-Proto https;", route)
 
+    def test_api_registration_matches_identity_and_the_backend(self):
+        """Backlog 72: app3 registers its own secret at the index Identity names."""
+        api = yaml.safe_load((COMPONENT / "api.yaml").read_text())
+        self.assertEqual(
+            api, {"index": 0, "secret": "app3-api-secret/value", "hash": "sha256"}
+        )
+        config = yaml.safe_load((COMPONENT / "config.defaults.yaml").read_text())
+        self.assertEqual(
+            config["SECRET_FILES"]["app3-api-secret"],
+            [{"path": "credentials/api", "generate": ["value"]}],
+        )
+        self.assertEqual(
+            config["SECRET_TEMPLATES"]["app3-authentication"],
+            {"Authentication__ApiSecret": "@@secret:app3-api-secret/value@@"},
+        )
+        catalog = yaml.safe_load((ROOT / "bundles.yaml").read_text())["components"]
+        self.assertEqual(catalog["app3"]["apis"], "identity")
+        self.assertEqual(catalog["identity"]["accepts"]["apis"], "identity-apis")
+        identity = yaml.safe_load(
+            (ROOT / "components/identity/manifests/10-configmap.yaml").read_text()
+        )["data"]
+        settings = yaml.safe_load(
+            (COMPONENT / "manifests/10-configmap.yaml").read_text()
+        )
+        index = str(api["index"])
+        self.assertEqual(
+            identity["ApiResources__" + index + "__Name"],
+            settings["data"]["Authentication__ApiName"],
+        )
+        self.assertEqual(identity["ApiResources__" + index + "__Scopes__0"], "app3")
+        _, backend = backend_container()
+        self.assertIn(
+            {
+                "name": "Authentication__ApiSecret",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "app3-authentication",
+                        "key": "Authentication__ApiSecret",
+                    }
+                },
+            },
+            backend["env"],
+        )
+        program = (BACKEND / "Program.cs").read_text()
+        self.assertIn('Required("Authentication:ApiName")', program)
+        self.assertIn('Required("Authentication:ApiSecret")', program)
+        self.assertIn("configuration.IntrospectionEndpoint", program)
+        # Only the result leaves the endpoint; the secret is never logged.
+        self.assertNotIn("Log", program[program.index('"/api/secret-check"') :])
+
     def test_frontend_compiles_typescript_only_at_build_time(self):
         """Node builds; the runtime stage is nginx with only static files."""
         stages = re.findall(

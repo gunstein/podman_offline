@@ -1388,6 +1388,7 @@ changes. For a new demo-style app also consider:
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
 | Proxy/OIDC | `route.conf` with `routes: platform`; `client.yaml` with `clients: identity` and `public_from: platform`. |
+| API secret | An API backend that Identity must authenticate: its own generated secret plus `api.yaml` with `apis: identity` ([API secrets](docs/COMPONENTS.md#api-secrets-apis)). |
 | Credentials | Prepare them yourself, or extend the demo provisioning script deliberately. |
 | E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
 | Docs | Update overview, tests/README and acceptance/README. |

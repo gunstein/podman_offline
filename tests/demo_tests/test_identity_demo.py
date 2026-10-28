@@ -27,7 +27,10 @@ class DemoIdentityTests(ComponentFixture):
         self.assertNotIn("VOLUME_FILES", platform)
         self.assertNotIn("VOLUME_FILES", identity)
         self.assertEqual(DEMO["platform"]["accepts"], {"routes": "platform-routes"})
-        self.assertEqual(DEMO["identity"]["accepts"], {"clients": "identity-clients"})
+        self.assertEqual(
+            DEMO["identity"]["accepts"],
+            {"clients": "identity-clients", "apis": "identity-apis"},
+        )
         self.assertEqual(identity["DB_HOST"], "identity-postgres")
         self.assertEqual(identity["DB_USER"], "identity")
         proxy = rendering.load_yaml_all(

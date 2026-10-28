@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: backend
-    image: localhost/demo-whoami-backend:0.1.0
+    image: localhost/demo-whoami-backend:0.1.1
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 10
@@ -28,6 +28,12 @@ spec:
       value: app3
     - name: BASE_PATH
       value: /app3
+    # The API secret Identity receives through app3's api.yaml (backlog 72).
+    - name: Authentication__ApiSecret
+      valueFrom:
+        secretKeyRef:
+          name: app3-authentication
+          key: Authentication__ApiSecret
     volumeMounts:
     - name: client
       mountPath: /run/secrets/client

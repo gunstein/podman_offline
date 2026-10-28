@@ -14,7 +14,9 @@ items retain their individual scopes below; agree the next priority separately.
 [Item 72](#72-register-api-resource-secrets-with-identity) is the top priority,
 requested by the product owner on 2026-10-28 while converting the organisation's
 .NET backend: an API backend and Identity must hold the same API resource
-secret, and today the operator copies it into two components by hand.
+secret. **Implemented with local tests** (2026-10-28): the `apis` role and
+`api.yaml`, and app3 registered with the demo Identity. Next: a real Podman run
+of the whoami scenario, including the new introspection check.
 
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 **has completed its lab scope**: run `whoami-7b32621` at
@@ -240,9 +242,10 @@ restore core or merge Identity back into platform.
 
 ## 72. Register API resource secrets with Identity
 
-Status: planned, top priority (2026-10-28), requested by the product owner.
-Found while converting the organisation's .NET backend in dev. Direction chosen
-with the product owner on 2026-10-28 (below); two open questions remain.
+Status: implemented with local tests (2026-10-28), top priority, requested by
+the product owner. Found while converting the organisation's .NET backend in
+dev. Direction chosen with the product owner on 2026-10-28 (below); the open
+questions were decided the same day. Not verified with real Podman/Duende yet.
 
 ### Problem
 
@@ -281,7 +284,7 @@ missing secret is refused before anything is written, in dev and production.
 Keep it as simple as possible: **the API component owns its secret and the
 platform copies it to Identity.** No product-wide secrets and no manual copies.
 It reuses two existing mechanisms: per-component secrets and registrations like
-`clients` ([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-and-oidc-clients)).
+`clients` ([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-oidc-clients-and-api-secrets)).
 
 ```text
 myapp (owner of the secret)          identity (receives it)
@@ -339,15 +342,44 @@ and scopes in `appsettings.json`; the environment value must hit the same list
 position. An order chosen by the platform (for example alphabetical) could put
 a secret on the wrong API.
 
-### Open questions (decide before implementation)
+### Decisions (product owner, 2026-10-28)
 
-1. Does the organisation's Identity read `Value` as plain text, or must it be a
-   SHA-256 hash? If hashed, the platform hashes when rendering the owner Secret.
-2. Is an explicit `index` acceptable, or should the platform also render
-   `ApiResources__<index>__Name` so the environment defines the whole entry?
+1. The hash is chosen per API: `api.yaml` requires `hash: sha256` (the owner
+   receives Base64(SHA-256), the form Duende compares for secrets from
+   configuration) or `hash: none` (the value unchanged).
+2. Only an explicit `index`; names and scopes stay in the owner's own
+   configuration. The platform renders no `ApiResources__<index>__Name`.
+3. Both: synthetic fixtures cover the role, and the demo gains a real API.
 
-Also decide whether the demo Identity gains API resources or a fixture covers
-the role.
+### Implementation (2026-10-28)
+
+Contract: [COMPONENTS.md](docs/COMPONENTS.md#api-secrets-apis) and the review
+guide's "API secret registrations".
+
+- `deployment/catalog.py`: role `apis` (`api.yaml`), `accepts.apis` names a
+  Secret; descriptors without `apis` (older bundles/metadata) read as `None`.
+- `deployment/registrations.py`: staging checks `api.yaml`, the declared
+  secret/key and unique indexes before writes; `api_updates` builds the private
+  `apis/<id>.json` after generation; `owner_secrets` renders the owner Secret.
+- `deployment/deploy.py`: dev prepare and install render the owner Secret; an
+  owner outside the install has only that Secret rewritten in its installed
+  YAML, then restarts after the API; uninstall removes the registration.
+- Demo: app3 generates `app3-api-secret`, receives it as
+  `Authentication__ApiSecret` and registers index 0 with `hash: sha256`;
+  Identity names `ApiResources__0__Name: app3-api` (scope `app3`), reads
+  `identity-apis` and activates only APIs with a registered secret; app3's
+  `/api/secret-check` asks Duende's introspection endpoint whether the secret
+  is accepted, and `dev/whoami-smoke-test.py` requires it. Images
+  `demo-identity:0.2.3` and `demo-whoami-backend:0.1.1`; identity 0.4.13 and
+  app3 0.1.1.
+
+Local verification: platform tests (`test_api_registrations.py`, 7 tests) and
+demo tests pass; the shipped demo validates and prepares with an
+`identity-apis` value equal to Base64(SHA-256) of app3's generated secret
+(Podman stubbed). Outstanding: building the two images, a real Podman run of the
+whoami scenario with the secret check, a rotation through one install, and
+Podman's handling of an empty owner Secret (fixed matrix without app3, and the
+renamed product).
 
 ### Constraints
 
@@ -371,10 +403,10 @@ the role.
   after one install.
 - Update COMPONENTS.md and the review guide's contracts.
 
-### Until then
+### Before this change
 
-Use one file per component with the same value and compare checksums, never
-the values:
+Operators used one file per component with the same value and compared
+checksums, never the values:
 
 ```bash
 podman exec <identity-container> printenv ApiResources__0__ApiSecrets__0__Value | sha256sum

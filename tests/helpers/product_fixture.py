@@ -317,6 +317,8 @@ class ProductFixture(DeployFixture):
             (directory / "route.conf").write_text(spec["route"])
         if "client" in spec:
             (directory / "client.yaml").write_text(yaml.safe_dump(spec["client"]))
+        if "api" in spec:
+            (directory / "api.yaml").write_text(yaml.safe_dump(spec["api"]))
 
     def provide_credentials(self, product, base):
         """Externally prepared credentials; generic tools never create these."""

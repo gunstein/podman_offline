@@ -20,7 +20,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
     """Compile one demo component like bundle.py, reading the fixture's files.
 
     The version comes from the fixture's version file. A fixture without
-    route.conf or client.yaml models a release that declares no such
+    route.conf, client.yaml or api.yaml models a release that declares no such
     registration, so that role is left out.
     """
     entry = DEMO[name]
@@ -38,6 +38,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
         "shares": list(entry["shares"]),
         "routes": entry["routes"],
         "clients": entry["clients"],
+        "apis": entry["apis"],
         "accepts": dict(entry["accepts"]),
     }
     for role, filename in catalog.ROLE_FILES.items():

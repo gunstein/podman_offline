@@ -1,11 +1,17 @@
-"""Public route and client registrations, and the pending-operation record.
+"""Route, client and API registrations, and the pending-operation record.
 
 Install and uninstall use these; they do not depend on either. Staging
 builds the registrations in a temporary directory, the pending record
 (pending-operation.json) lists owners that still have to restart, and only
 then are registrations written or deleted in the state directory (common.STATE).
+
+Route and client registrations are public. An API registration
+(apis/<component>.json) holds the value its owner checks the API's secret
+against, so it is private like the API component's own secret files.
 """
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -14,12 +20,14 @@ import ssl
 import tempfile
 from pathlib import Path
 
-from . import catalog, common
+import yaml
+
+from . import catalog, common, templates
 from . import render as rendering
 
 
 def registration_stage(components, directory, known, state=None, configs=None):
-    """Stage existing and proposed public routes and clients without changing live state.
+    """Stage existing and proposed registrations without changing live state.
 
     known maps component IDs to descriptors: installed metadata plus the incoming
     bundle in production, the source catalog in dev. Each existing registration
@@ -32,6 +40,10 @@ def registration_stage(components, directory, known, state=None, configs=None):
 
     configs (dev) maps each component to its config before it is written; dev
     registrations then come only from the catalog, so existing ones are ignored.
+
+    A selected component's API registration needs its secret value, which may
+    not be generated yet: staging checks api.yaml, its secret declaration and
+    the index, and api_updates adds the registration after generation.
     """
     state = state or common.STATE
     owners = catalog.role_owners(known, "registration owners")
@@ -41,7 +53,8 @@ def registration_stage(components, directory, known, state=None, configs=None):
             raise common.DeployError(
                 f"Refuse symlinked shared registration directory: {source}"
             )
-        (directory / name).mkdir()
+        # API registrations are private; routes and clients are public.
+        (directory / name).mkdir(mode=0o700 if name == "apis" else 0o777)
         if configs is not None or not source.exists():
             continue
         for path in sorted(source.iterdir()):
@@ -49,11 +62,12 @@ def registration_stage(components, directory, known, state=None, configs=None):
                 raise common.DeployError(
                     f"Refuse symlinked public registration: {path}"
                 )
-            if name == "routes":
-                owner = path.name[: -len(".conf")] if path.suffix == ".conf" else ""
+            if name in ("routes", "apis"):
+                suffix = ".conf" if name == "routes" else ".json"
+                owner = path.name[: -len(suffix)] if path.suffix == suffix else ""
                 if not path.is_file() or owner not in known:
                     raise common.DeployError(
-                        f"Unexpected public route registration: {path}"
+                        f"Unexpected {name[:-1]} registration: {path}"
                     )
                 if owner not in components:
                     shutil.copy2(path, directory / name / path.name)
@@ -73,11 +87,12 @@ def registration_stage(components, directory, known, state=None, configs=None):
                         f"Refuse symlinked public client file: {public}"
                     )
                 shutil.copy2(public, target / filename)
-    updates, removals = {}, set()
+    updates, removals, selected_apis = {}, set(), {}
     for component in components:
         for role, relative in (
             ("routes", "routes/" + component + ".conf"),
             ("clients", "clients/" + component),
+            ("apis", "apis/" + component + ".json"),
         ):
             if known[component][role] is None and (
                 (state / relative).exists() or (state / relative).is_symlink()
@@ -107,6 +122,10 @@ def registration_stage(components, directory, known, state=None, configs=None):
             updates.update(
                 client_registration(component, declared["clients"], config, config_path)
             )
+        if "apis" in declared:
+            selected_apis[component] = check_api_source(
+                component, declared["apis"], config, config_path
+            )["index"]
     for relative, data in updates.items():
         target = directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -134,12 +153,19 @@ def registration_stage(components, directory, known, state=None, configs=None):
         json.dumps([path.name + "/client.json" for path in client_dirs]),
         encoding="utf-8",
     )
+    indexes = dict(selected_apis)
+    for path in sorted((directory / "apis").iterdir()):
+        indexes[path.name[: -len(".json")]] = api_record(path)["Index"]
+    check_api_indexes(indexes)
     # Imports overwrite files without deleting old entries; only these current indexes are read.
     imports = {}
     if owners["routes"]:
         imports[known[owners["routes"]]["accepts"]["routes"]] = [routes]
     if owners["clients"]:
         imports[known[owners["clients"]]["accepts"]["clients"]] = client_dirs + [index]
+    if owners["apis"]:
+        # A Secret, not a volume: owner_secrets renders it from this directory.
+        imports[known[owners["apis"]]["accepts"]["apis"]] = [directory / "apis"]
     return imports, updates, removals
 
 
@@ -279,6 +305,186 @@ def client_registration(component, path, config, config_path):
     }
 
 
+API_KEYS = ("index", "secret", "hash")
+# How the owner stores an API secret: sha256 is Base64(SHA-256(value)), the
+# form Duende's shared-secret validator compares when secrets come from
+# configuration; none passes the value unchanged.
+API_HASHES = ("sha256", "none")
+API_SECRET = re.compile(r"([a-z0-9-]+)/([-._a-zA-Z0-9]+)\Z")
+
+
+def api_descriptor(path):
+    """Read and check api.yaml: index, secret (<Secret ID>/<key>) and hash."""
+    metadata = rendering.load_yaml(path)
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata) != set(API_KEYS)
+        or type(metadata["index"]) is not int
+        or metadata["index"] < 0
+        or not isinstance(metadata["secret"], str)
+        or not API_SECRET.fullmatch(metadata["secret"])
+        or metadata["hash"] not in API_HASHES
+    ):
+        raise common.DeployError(
+            f"Invalid API registration {path}; expected index (0 or more, the "
+            "position in the owner's ApiResources list), secret (<Secret ID>/<key> "
+            "from this component's SECRET_FILES) and hash ("
+            + " or ".join(API_HASHES)
+            + ")"
+        )
+    return metadata
+
+
+def check_api_source(component, path, config, config_path):
+    """The referenced key must come from this component's SECRET_FILES; no reads."""
+    metadata = api_descriptor(path)
+    group, key = metadata["secret"].split("/")
+    sources = rendering.file_group_sources(config, common.SECRET_FILES)
+    if group not in sources:
+        raise common.DeployError(
+            f"{path}: secret {metadata['secret']} needs {common.SECRET_FILES}."
+            f"{group} in {config_path}"
+        )
+    keys = rendering.secret_keys(config, config_path, [], component).get(group)
+    # None: a missing source, reported with its path by the file checks.
+    if keys is not None and key not in keys:
+        raise common.DeployError(
+            f"{path}: {common.SECRET_FILES}.{group} in {config_path} provides "
+            f"no key {key!r}"
+        )
+    return metadata
+
+
+def check_api_indexes(indexes):
+    """Two APIs at one index would overwrite each other's secret in the owner."""
+    for value in sorted(set(indexes.values())):
+        users = sorted(name for name, index in indexes.items() if index == value)
+        if len(users) > 1:
+            raise common.DeployError(
+                f"API registrations of {' and '.join(users)} both use index "
+                f"{value}; each API needs its own index (api.yaml)"
+            )
+
+
+def api_record(path):
+    """Read one staged API registration; errors never include its value."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"Index", "Value"}
+            or type(record["Index"]) is not int
+            or record["Index"] < 0
+            or not isinstance(record["Value"], str)
+            or not record["Value"]
+        ):
+            raise ValueError("record")
+    except (OSError, ValueError, UnicodeError):
+        raise common.DeployError(f"Invalid API registration: {path.name}") from None
+    return record
+
+
+def api_registration(component, path, config, config_path):
+    """Build one private API registration from api.yaml and the generated secret.
+
+    Call after the component's secrets are generated. The owner receives the
+    value in the form hash names; the API component keeps its own plain value.
+    """
+    metadata = check_api_source(component, path, config, config_path)
+    group, key = metadata["secret"].split("/")
+    where = f"{path}: secret {metadata['secret']}"
+    items = rendering.load_file_group(
+        {common.SECRET_FILES: {group: config[common.SECRET_FILES][group]}},
+        common.SECRET_FILES,
+        config_path.parent,
+        component,
+    )[group]
+    item = next((item for item in items if item.name == key), None)
+    if item is None:
+        raise common.DeployError(f"{where}: missing source file {key}")
+    try:
+        value = item.read_bytes().decode("utf-8").rstrip("\n")
+    except (OSError, UnicodeError):
+        raise common.DeployError(f"{where}: unreadable or invalid UTF-8") from None
+    if not value:
+        raise common.DeployError(f"{where}: empty secret")
+    templates.check_text(value, where, metadata["secret"])
+    if metadata["hash"] == "sha256":
+        value = base64.b64encode(hashlib.sha256(value.encode("utf-8")).digest())
+        value = value.decode("ascii")
+    return {
+        "apis/" + component + ".json": json.dumps(
+            {"Index": metadata["index"], "Value": value}, sort_keys=True
+        ).encode("utf-8")
+    }
+
+
+def api_updates(components, known, imports, configs, state=None):
+    """Stage the API registrations of components whose secrets now exist.
+
+    configs maps each rendered component to (config, config_path); its secrets
+    are generated here if missing (dev renders the owner before the API). A
+    selected component that is not rendered (newer-only at the same version)
+    keeps its installed registration, which matches the secret it runs with.
+    Returns the updates; the staged copies feed owner_secrets.
+    """
+    state = state or common.STATE
+    owner = catalog.role_owners(known, "registration owners")["apis"]
+    updates = {}
+    for component in components:
+        if known[component]["apis"] is None:
+            continue
+        staged = imports[known[owner]["accepts"]["apis"]][0] / (component + ".json")
+        if component not in configs:
+            installed = state / "apis" / (component + ".json")
+            if installed.is_symlink():
+                raise common.DeployError(
+                    f"Refuse symlinked API registration: {installed}"
+                )
+            if installed.is_file():
+                shutil.copy2(installed, staged)
+            continue
+        config, config_path = configs[component]
+        rendering.generate_secrets(config, config_path.parent)
+        update = api_registration(
+            component,
+            common.ROOT / "components" / component / "api.yaml",
+            config,
+            config_path,
+        )
+        rendering.write_private(staged, update["apis/" + component + ".json"].decode())
+        updates.update(update)
+    return updates
+
+
+def owner_secrets(component, imports, known):
+    """Render the registration Secret this component accepts, or nothing.
+
+    One key per registered API: ApiResources__<index>__ApiSecrets__0__Value.
+    """
+    name = known[component]["accepts"].get("apis")
+    if name is None:
+        return []
+    data = {}
+    if name in imports:
+        for path in sorted(imports[name][0].glob("*.json")):
+            record = api_record(path)
+            key = f"ApiResources__{record['Index']}__ApiSecrets__0__Value"
+            data[key] = base64.b64encode(record["Value"].encode("utf-8")).decode(
+                "ascii"
+            )
+    doc = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": name},
+        "type": "Opaque",
+        "data": data,
+    }
+    if len(yaml.safe_dump(doc)) > common.MAX_SECRET_SIZE:
+        raise common.DeployError(f"Registration Secret {name} is too large")
+    return [doc]
+
+
 def write_registrations(updates, state=None, removals=()):
     """Write changed public registrations privately and delete removed ones.
 
@@ -314,8 +520,8 @@ def component_imports(component, imports, known):
     """Return the registration archives this component accepts, if any."""
     selected = {
         volume: imports[volume]
-        for volume in known[component]["accepts"].values()
-        if volume in imports
+        for role, volume in known[component]["accepts"].items()
+        if volume in imports and role not in catalog.SECRET_ROLES
     }
     return selected or None
 
