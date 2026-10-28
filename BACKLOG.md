@@ -11,12 +11,15 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-28)
 
-[Item 72](#72-register-api-resource-secrets-with-identity) is the top priority,
-requested by the product owner on 2026-10-28 while converting the organisation's
+[Item 72](#72-register-api-resource-secrets-with-identity) was requested by
+the product owner on 2026-10-28 while converting the organisation's
 .NET backend: an API backend and Identity must hold the same API resource
-secret. **Implemented with local tests** (2026-10-28): the `apis` role and
-`api.yaml`, and app3 registered with the demo Identity. Next: a real Podman run
-of the whoami scenario, including the new introspection check.
+secret. **Its requested lab scope is complete** at `fd99d31` (2026-10-28):
+`whoami-fd99d31` passed all 46 steps and `normal-fd99d31` all 125 steps,
+including their final audits. Real Duende introspection, private registration
+modes/checksums, one-install rotation, trailing-newline refusal, empty Identity
+Secret and uninstall with app2 sign-in passed. Renamed and optional interrupted
+retry were not run. [Lab results and remaining gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
 
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 **has completed its lab scope**: run `whoami-7b32621` at
@@ -212,7 +215,10 @@ Items 70 and 71 are removed from the open list for their documented lab scope.
 Item 71's complete `whoami-7b32621` run passed all 46 steps, including the shared
 audit fix and final audit. [Evidence and remaining work outside that scope](acceptance/WHOAMI-DOTNET.md#complete-audit-fix-lab-run-2026-10-27).
 
-Open: 72 (top priority, 2026-10-28), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
+[the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
+
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -242,10 +248,14 @@ restore core or merge Identity back into platform.
 
 ## 72. Register API resource secrets with Identity
 
-Status: implemented with local tests (2026-10-28), top priority, requested by
-the product owner. Found while converting the organisation's .NET backend in
-dev. Direction chosen with the product owner on 2026-10-28 (below); the open
-questions were decided the same day. Not verified with real Podman/Duende yet.
+Status: implemented; requested lab scope completed at `fd99d31` (2026-10-28).
+Focused whoami **CLEAN PASS (46/46)** and normal matrix **CLEAN PASS (125/125)**;
+supplemental real rotation, newline refusal and uninstall checks passed.
+Images compiled and 572 product tests passed. All 358 harness tests passed on
+the supported controller; the attempted DEV Python 3.9 run failed (34 errors,
+4 failures), as recorded in the report. Requested by the product owner while
+converting the organisation's .NET backend; direction and open decisions were
+settled on 2026-10-28. [Lab evidence, scope and gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
 
 ### Problem
 
@@ -394,10 +404,14 @@ Local verification: platform tests (`test_api_registrations.py`, 11 tests,
 each new regression checked against its reintroduced defect) and demo tests
 pass; the shipped demo validates and prepares with an
 `identity-apis` value equal to Base64(SHA-256) of app3's generated secret
-(Podman stubbed). Outstanding: building the two images, a real Podman run of the
-whoami scenario with the secret check, a rotation through one install, and
-Podman's handling of an empty owner Secret (fixed matrix without app3, and the
-renamed product).
+(Podman stubbed). This remains local evidence. New lab verification at
+`fd99d31` built both images and passed the focused scenario, one-install
+rotation/refusal, normal matrix with an empty `identity-apis` Secret, and app3
+uninstall with app2 sign-in. See the [dated report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28)
+and [sanitized checksums](acceptance/API-SECRETS-LAB-20261028.md).
+Remaining extensions: renamed `login-service-apis`, interrupted owner-restart
+retry, real `hash: none` / multiple-API deployments and the organisation's backend.
+No claim is made for those paths from this lab result.
 
 ### Constraints
 
