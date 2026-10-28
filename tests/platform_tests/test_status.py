@@ -432,6 +432,7 @@ class StatusLifecycleTests(ProductFixture):
                     "operation": "install",
                     "component": "worker",
                     "product": "cedar",
+                    "version": "1.0.0",
                     "owners": [],
                 }
                 marker_event = ["before-marker", pending]

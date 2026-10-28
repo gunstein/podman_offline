@@ -34,9 +34,11 @@ components:
     shares: [<NAME>, ...]        # config names this component's public_from dependents take from it
     routes: <id>                 # register route.conf with this dependency
     clients: <id>                # register client.yaml with this dependency
+    apis: <id>                   # register api.yaml (this component's API secret) with this dependency
     accepts:                     # roles this component serves
       routes: <id>-<volume>      # volume that receives all routes
       clients: <id>-<volume>     # volume that receives all OIDC clients
+      apis: <id>-<secret>        # Secret the platform renders with every API secret
 ```
 
 `product:` is required; every component field is optional, and `<id>: {}` is a
@@ -64,7 +66,7 @@ IDs use lowercase letters, digits and inner hyphens: `my-identity` is valid,
 `my_identity` and `MyIdentity` are not. An ID becomes the prefix of every Pod,
 Secret, PVC and ConfigMap the component owns, its systemd unit
 (`<product>-<id>.service`) and directory names, so names are checked, never
-rewritten. `installed`, `metadata`, `routes`, `clients` and `files` are
+rewritten. `installed`, `metadata`, `routes`, `clients`, `apis` and `files` are
 reserved for shared state on the target. No ID may be another ID followed by
 `-`: with `orders` and `orders-data`, the name `orders-data-db` would belong to
 both, so their volumes could be confused. The catalog and install refuse such a
@@ -213,20 +215,22 @@ redirect URIs, so they cannot be renamed or shared freely:
 A `PUBLIC_` prefix has no meaning of its own. `deploy.PUBLIC_KEYS` and
 `catalog.UNSHAREABLE` hold these names in code.
 
-### Registrations: routes and OIDC clients
+### Registrations: routes, OIDC clients and API secrets
 
 A component that serves a role declares `accepts`. At most one component may
-accept each role. A component that uses a role names that owner in `routes` or
-`clients`, lists it in `requires`, and ships the matching file:
+accept each role. A component that uses a role names that owner in `routes`,
+`clients` or `apis`, lists it in `requires`, and ships the matching file:
 
 | Role | File in the component | Owner's import |
 | --- | --- | --- |
 | `routes` | `route.conf`, an nginx location block | `installed.conf`, every route concatenated |
 | `clients` | `client.yaml` | one directory per component plus `installed.json` |
+| `apis` | `api.yaml` | Secret `accepts.apis`, one key per API (see below) |
 
 The file must exist exactly when the role is declared. The owner's manifests
-mount the declared volume; its archive is rebuilt from the current
-registrations on every change, so removed registrations do not stay active.
+mount the declared volume (`routes`, `clients`) or read the declared Secret
+(`apis`); both are rebuilt from the current registrations on every change, so
+removed registrations do not stay active.
 
 `client.yaml` follows the protocol of the existing apps and Identity:
 
@@ -250,10 +254,81 @@ have a `location` for `base_path`, and with `environment:` every container that
 sets a named variable must set it to the `client.yaml` value (and one must set
 it). The tools do not know an app's variable names; a product names them here.
 
+#### API secrets (`apis`)
+
+An API backend and Identity must hold the same API resource secret. The API
+component owns it: it declares and generates the secret with the existing
+per-component features, gives it to its own backend, and `api.yaml` registers
+it with the component that accepts `apis` (backlog 72):
+
+```yaml
+# components/orders/config.defaults.yaml
+SECRET_FILES:
+  orders-api-secret:
+  - path: credentials/api
+    generate: [value]
+SECRET_TEMPLATES:
+  orders-authentication:
+    Authentication__ApiSecret: '@@secret:orders-api-secret/value@@'
+
+# components/orders/api.yaml
+index: 0                         # position in the owner's ApiResources list
+secret: orders-api-secret/value  # this component's own SECRET_FILES key
+hash: sha256                     # or none
+```
+
+The owner's manifests read the Secret named in `accepts.apis`, for example
+`envFrom: [{secretRef: {name: identity-apis}}]`. The platform renders it with
+one key per registered API, `ApiResources__<index>__ApiSecrets__0__Value`. With
+`hash: sha256` the value is Base64(SHA-256(secret)), the form Duende compares
+when API resources come from configuration; with `none` it is the secret
+unchanged. The API keeps the plain value. Names, scopes and other API resource
+fields stay in the owner's own configuration at the same index; `index` is
+explicit because a list position chosen by the platform could give a secret to
+the wrong API.
+
+Refused before anything is written, in `validate`, dev `prepare` and
+production `install`: `api.yaml` without the role or the role without
+`api.yaml`; any other field or a value of the wrong type; a secret that is not
+this component's `SECRET_FILES` entry or a key it does not provide; two APIs
+with the same `index`; no component accepting `apis`; and an owner that
+declares the `accepts.apis` name itself in its config. Errors name files,
+components and indexes, never secret values; `validate` reads no secret
+contents, including registered values.
+
+The secret file is used byte for byte, exactly as direct `SECRET_FILES`
+delivery gives it to the API. It must be one line of text without a trailing
+newline, surrounding spaces, quotes, `;` or control characters, because a
+`SECRET_TEMPLATES` recipe would strip a trailing newline or refuse the rest,
+and the API and owner would then disagree. Generated secrets always qualify.
+`install` and `prepare` check this after generation and refuse before any
+registration, YAML or host command; write a provided secret with
+`printf '%s' "$secret" > <file>`, not `echo`.
+
+The registration is a private (0700) directory `apis/<id>/` in state:
+`index` (not secret; the only file staging and `validate` read) and `value`
+(0600), the owner's value: the hash, or the plain secret with `hash: none`. It
+is written after the API's secrets are generated. An owner that is installed
+separately has only that Secret replaced in its installed YAML (published
+atomically; added if missing), then restarts. If that YAML cannot be read,
+install stops with the pending record intact: restore the file from backup
+and run `./deploy.sh install` from the same bundle again.
+
+Rotating means replacing the API's secret file and installing the API again:
+the API restarts first, then its owner. An API with `upgrade: newer-only` is
+re-rendered only by a newer version, so rotate it with a new version; a
+same-version install keeps the installed registration, so the owner never
+receives a value its API does not yet run with. For the same reason an
+interrupted install can be finished only by a bundle that renders the
+component: retrying an interrupted `newer-only` upgrade with the older bundle
+is refused with the version to use. Removing `apis` in a new release or
+uninstalling the API removes its key from the owner's Secret.
+
 Restarts follow the changes: no change restarts no owner, a route change the
-route owner, a client change the client owner. The selected component restarts
-first and owners after it, so a gateway publishes a route only once the service
-behind it is back. Unrelated components never restart.
+route owner, a client change the client owner, an API secret change the API
+owner. The selected component restarts first and owners after it, so a gateway
+publishes a route only once the service behind it is back. Unrelated components
+never restart.
 
 ## Secret templates
 
@@ -467,6 +542,7 @@ would pass some checks and skip others.
 ├── installed/<id>          last completed version; retained during retries
 ├── routes/<id>.conf        registered routes
 ├── clients/<id>/           registered public client files
+├── apis/<id>/              registered API: index, and value for the owner (private)
 └── pending-operation.json  install attempt/owners or scoped uninstall work
 ```
 

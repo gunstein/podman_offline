@@ -265,14 +265,19 @@ class CatalogTests(unittest.TestCase):
                 "shares": [],
                 "routes": None,
                 "clients": None,
+                "apis": None,
                 "accepts": {},
             },
         )
         for descriptor in descriptors.values():
             catalog.check_descriptor(descriptor, "fixture")
-        # Bundles built before shares existed share nothing; still readable.
-        older = {k: v for k, v in descriptors["app"].items() if k != "shares"}
+        # Bundles built before shares or apis existed share nothing and
+        # register no API; still readable.
+        older = {
+            k: v for k, v in descriptors["app"].items() if k not in ("shares", "apis")
+        }
         self.assertEqual(catalog.check_descriptor(older, "fixture")["shares"], [])
+        self.assertIsNone(catalog.check_descriptor(older, "fixture")["apis"])
         self.assertNotIn("shares", older)
         for change, pattern in (
             ({"components": ["app"]}, "expected exactly the fields"),

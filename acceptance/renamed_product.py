@@ -144,7 +144,7 @@ def rename_catalog(data):
         entry = dict(entry or {})
         if "requires" in entry:
             entry["requires"] = [rename(value) for value in entry["requires"]]
-        for key in ("public_from", "routes", "clients"):
+        for key in ("public_from", "routes", "clients", "apis"):
             if key in entry:
                 entry[key] = rename(entry[key])
         if "accepts" in entry:

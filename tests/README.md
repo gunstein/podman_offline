@@ -66,9 +66,26 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory after item 65: 485
-platform tests and 66 demo tests (551 unique tests), plus 266 separate
+renamed-inventory regressions protect the separation. Current inventory after item 72: 500
+platform tests and 72 demo tests (572 unique tests), plus 358 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
+
+# API secret registrations (backlog 72)
+
+`platform_tests/test_api_registrations.py` drives a product without demo names
+(`accounts` accepts `apis`; `ledger` registers with `hash: sha256`, `reports`
+with `none`) through dev `prepare`, `validate`, bundle build, production
+install, rotation, a release that drops the role, a `newer-only` API that is
+not re-rendered, and uninstall. It checks the owner's Secret keys and values,
+private registrations, restart order (API, then owner), refusals before any
+write and that no value reaches output or errors. Review regressions: an
+interrupted owner YAML rewrite keeps the old file and a fresh-process retry
+finishes; a non-rendering retry of another version's pending install is
+refused; `validate` never opens a registered or source `value`; a secret with
+a trailing newline is refused in dev and production before any write. `demo_tests/test_whoami_demo.py`
+checks that app3's `api.yaml`, secret declaration, backend variables and
+Identity's `ApiResources__0__*` settings agree. Podman is stubbed; real sign-in
+and introspection is `dev/whoami-smoke-test.py`.
 
 # .NET/TypeScript demo (backlog 71)
 

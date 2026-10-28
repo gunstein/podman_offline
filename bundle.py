@@ -263,6 +263,7 @@ def build_release(version, descriptor=None):
             "config.defaults.yaml",
             "route.conf",
             "client.yaml",
+            "api.yaml",
             "files",
         ):
             source = directory / entry

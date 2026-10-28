@@ -526,3 +526,121 @@ The following remain outside item 71's completed lab scope.
 - The fixed matrix baseline still lacks persistent user-journal setup.
   `--whoami` runs the guarded production helper in `06-persistent-journal`;
   that step passed without manual repair.
+
+## Backlog 72 API secret lab verification (2026-10-28)
+
+**The requested backlog 72 lab scope passed at
+`fd99d319658391ca6eca1f0f9020137d627d8738`.** This is new evidence for
+`fd99d31`, not a reuse of the item 71 runs above. Only documentation and
+sanitized evidence changed afterwards; `deployment/` and the fixed matrix
+were not changed. [Checksums, methods and artifact fingerprints](API-SECRETS-LAB-20261028.md).
+
+The disposable lab used DEV VM 107 and PROD VM 108, Oracle Linux 9.8,
+rootless Podman **5.8.2**, systemd **252**, and **SELinux Enforcing** on both
+hosts. PROD had fapolicyd active and ran as `myproduct-ops`, with product
+state under `/var/lib/myproduct`. DEV had network access for NuGet/npm/image
+builds; PROD used the signed offline bundles.
+
+### Product/unit and build results
+
+Build-host run `api72-fd99d31-build`, at the commit above, ran
+`dev/build-images.sh` and `python3 -B tests/run.py all` in order:
+
+- Both new images built: `localhost/demo-identity:0.2.3` and
+  `localhost/demo-whoami-backend:0.1.1`. The backend compiled, and all three
+  issuer Checks passed (unpinned risk demonstrated, wrong issuer rejected,
+  public issuer accepted).
+- All **572 product/unit tests passed** on DEV Python 3.9. The normal
+  scenario later repeated the product suite successfully at the same commit.
+
+### Acceptance-harness tests
+
+The requested `python3 -m unittest discover -s acceptance -p 'test_*.py'`
+was first run on DEV: **358 tests, 34 errors and 4 failures**. The errors
+were `AttributeError: module 'datetime' has no attribute 'UTC'`
+(`acceptance/acceptance.py:79`), with cascading flow assertions. This is an
+unsupported controller interpreter: DEV has Python 3.9, whereas
+[the harness requires controller Python 3.11+](README.md).
+Consequently the build-host verification wrapper reports **NOT CLEAN**
+(6/7 steps); that failure is not represented as a passing test.
+
+The same command then passed **all 358 tests** on the controller with
+Python **3.14.4**, before the lab scenario reached its build/functional work.
+No interpreter compatibility patch or parser relaxation was made.
+
+### Real Podman/systemd/Duende results
+
+All runs below tested `fd99d31`; supplemental probes did not change the
+completed scenario records or add app3 to the fixed matrix.
+
+| Requested check | Result and evidence |
+| --- | --- |
+| Build and local tests | Images and 572 product tests passed; supported-controller harness tests passed, with the DEV Python 3.9 failure recorded above. |
+| Focused `--whoami` | `whoami-fd99d31`: **CLEAN PASS, 46/46 steps**, including `11-prod-audit`. PROD smoke printed `PASS: Identity accepts app3's registered API secret (introspection)`. |
+| Registration and rotation | `api72-fd99d31-lifecycle`: **CLEAN PASS, 10/10 probe steps**. Index `0`; directories 0700 and files 0600; registration, rendered owner Secret and running environments matched the expected checksums. A new secret became active through one app3 install; app3 restarted before Identity and platform did not restart; fresh sign-in/introspection passed. |
+| Trailing-newline control | Same lifecycle run: install refused with `trailing newline`, exit 1, without printing the secret. Registration tree, owner YAML, pending record, unit files and service invocation IDs were unchanged. The valid source value was restored and its checksums matched again. |
+| Empty owner Secret / fixed matrix | `normal-fd99d31`: **CLEAN PASS, 125/125 steps**, including final audit; no app3 on PROD. Identity started with `identity-apis` containing `data: {}`. The filtered Identity container log contained `API resource app3-api has no registered secret; inactive`. Renamed was not run, so `login-service-apis` is not lab-verified here. |
+| Uninstall and other applications | `api72-fd99d31-uninstall`: **CLEAN PASS, 13/13 supplemental steps** after the normal run. Installed the original signed app3 0.1.1 bundle alongside app2/help, then checked rotation with both siblings present. Only app3 and Identity restarted; timestamps show app3 active before Identity started. Fresh sign-in/introspection passed. Uninstall removed `state/apis/app3` and the owner Secret key, restarted Identity, and left app2/help running without restarting them. A fresh app2 sign-in/CRUD/CSRF smoke passed afterwards. The owner Secret was empty again. |
+
+The focused step groups all passed: DEV build and smoke; signed-bundle
+creation/transfer; PROD preparation/install/health; subPath mounts; PROD
+sign-in/introspection and protocol-log safety; one saved session across
+service restart and PROD reboot; unrelated-CA failure; internal variant with
+the unrelated CA still mounted; restoration; final state/home checks and
+audit/cleanup. **App3 reboot-session persistence is confirmed at `fd99d31`.**
+
+A separate read-only empty-owner evidence probe initially failed because
+`journalctl --user` returned exit 1 and no records on the normal baseline.
+Diagnosis confirmed `data: {}` and an active Identity service; a separate
+`podman logs` read supplied the exact inactive-API line. The baseline was not
+repaired and the failed probe was not retried. Both official final audits
+passed; this does not establish persistent user-journal availability for the
+normal baseline. The focused scenario's guarded journal setup passed.
+
+### Contracts and understandability
+
+The checked contracts were component-owned secret delivery, `apis` index/hash
+registration, private file modes, owner-only YAML/Secret update, API-before-owner
+restart order, refusal before target-state writes, uninstall cleanup, and
+continued operation of siblings. The generic product/deployment code and
+fixed matrix were unchanged during this verification.
+
+The guide's six understandability questions were traced against this commit:
+
+1. `bundles.yaml`, component config/`SECRET_FILES` and `api.yaml` supply the
+   model; bundle descriptors and installed metadata retain the role/owner.
+   App3 owns the raw value; the platform owns `state/apis/app3` and the owner
+   Secret; Identity consumes the registered SHA-256 form.
+2. `install_checks` and registration staging validate declarations/indexes
+   before writes. `api_registration` checks generated/source bytes and
+   single-line text before publishing registrations, pending state or units.
+3. `install_checks` decides the plan; `install_component_plan` performs image,
+   metadata, registration, unit and service effects. `api_updates` builds
+   registration bytes; `replace_owner_secrets` / `write_install_record`
+   publish the owner's YAML atomically.
+4. Registration work is recorded before publication/restart;
+   `restart_component_services` uses dependent-first `restart_order`.
+   The installed marker is written only after health checks; then
+   `clear_pending` completes the attempt. Real rotation matched that order.
+5. `pending-operation.json` retains operation/component/product/version and
+   unfinished owners; registration files and installed metadata survive a
+   new process. `install_checks` refuses a non-rendering retry against another
+   recorded version. That failure/retry path has unit coverage; the optional
+   real interrupted-owner restart was not performed. The executed newline
+   failure stopped without target changes, then the source value was restored.
+6. API name/scope/index, Duende's inactive-API policy, Basic-auth introspection
+   and the signed-in `secret-check` endpoint belong to the demo. Generic
+   deployment uses the declared role and secret path rather than demo names.
+
+Outcome: the success and refusal flows can be followed through these named
+functions and explicit files without adding abstractions. No implementation
+simplification was made as part of this lab-only task. This is technical
+verification, not an unassisted operator trial or customer-readiness claim;
+no new operator procedure was introduced or human trial performed.
+
+Remaining gaps: renamed-product `login-service-apis`; optional fresh-process
+retry at the Identity restart; real `hash: none` / multiple-API deployments;
+the organisation's backend; a two-level CA; Duende post-logout redirect; and
+server-side session revocation after local logout. The normal baseline's
+persistent user journal remains a known limitation. App3 is still outside the
+fixed PROD counts, install orders and upgrade matrix.

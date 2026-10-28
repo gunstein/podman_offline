@@ -11,10 +11,15 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-28)
 
-[Item 72](#72-register-api-resource-secrets-with-identity) is the top priority,
-requested by the product owner on 2026-10-28 while converting the organisation's
+[Item 72](#72-register-api-resource-secrets-with-identity) was requested by
+the product owner on 2026-10-28 while converting the organisation's
 .NET backend: an API backend and Identity must hold the same API resource
-secret, and today the operator copies it into two components by hand.
+secret. **Its requested lab scope is complete** at `fd99d31` (2026-10-28):
+`whoami-fd99d31` passed all 46 steps and `normal-fd99d31` all 125 steps,
+including their final audits. Real Duende introspection, private registration
+modes/checksums, one-install rotation, trailing-newline refusal, empty Identity
+Secret and uninstall with app2 sign-in passed. Renamed and optional interrupted
+retry were not run. [Lab results and remaining gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
 
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 **has completed its lab scope**: run `whoami-7b32621` at
@@ -210,7 +215,10 @@ Items 70 and 71 are removed from the open list for their documented lab scope.
 Item 71's complete `whoami-7b32621` run passed all 46 steps, including the shared
 audit fix and final audit. [Evidence and remaining work outside that scope](acceptance/WHOAMI-DOTNET.md#complete-audit-fix-lab-run-2026-10-27).
 
-Open: 72 (top priority, 2026-10-28), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
+[the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
+
+Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
@@ -240,9 +248,14 @@ restore core or merge Identity back into platform.
 
 ## 72. Register API resource secrets with Identity
 
-Status: planned, top priority (2026-10-28), requested by the product owner.
-Found while converting the organisation's .NET backend in dev. Direction chosen
-with the product owner on 2026-10-28 (below); two open questions remain.
+Status: implemented; requested lab scope completed at `fd99d31` (2026-10-28).
+Focused whoami **CLEAN PASS (46/46)** and normal matrix **CLEAN PASS (125/125)**;
+supplemental real rotation, newline refusal and uninstall checks passed.
+Images compiled and 572 product tests passed. All 358 harness tests passed on
+the supported controller; the attempted DEV Python 3.9 run failed (34 errors,
+4 failures), as recorded in the report. Requested by the product owner while
+converting the organisation's .NET backend; direction and open decisions were
+settled on 2026-10-28. [Lab evidence, scope and gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
 
 ### Problem
 
@@ -281,7 +294,7 @@ missing secret is refused before anything is written, in dev and production.
 Keep it as simple as possible: **the API component owns its secret and the
 platform copies it to Identity.** No product-wide secrets and no manual copies.
 It reuses two existing mechanisms: per-component secrets and registrations like
-`clients` ([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-and-oidc-clients)).
+`clients` ([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-oidc-clients-and-api-secrets)).
 
 ```text
 myapp (owner of the secret)          identity (receives it)
@@ -339,15 +352,66 @@ and scopes in `appsettings.json`; the environment value must hit the same list
 position. An order chosen by the platform (for example alphabetical) could put
 a secret on the wrong API.
 
-### Open questions (decide before implementation)
+### Decisions (product owner, 2026-10-28)
 
-1. Does the organisation's Identity read `Value` as plain text, or must it be a
-   SHA-256 hash? If hashed, the platform hashes when rendering the owner Secret.
-2. Is an explicit `index` acceptable, or should the platform also render
-   `ApiResources__<index>__Name` so the environment defines the whole entry?
+1. The hash is chosen per API: `api.yaml` requires `hash: sha256` (the owner
+   receives Base64(SHA-256), the form Duende compares for secrets from
+   configuration) or `hash: none` (the value unchanged).
+2. Only an explicit `index`; names and scopes stay in the owner's own
+   configuration. The platform renders no `ApiResources__<index>__Name`.
+3. Both: synthetic fixtures cover the role, and the demo gains a real API.
 
-Also decide whether the demo Identity gains API resources or a fixture covers
-the role.
+### Implementation (2026-10-28)
+
+Contract: [COMPONENTS.md](docs/COMPONENTS.md#api-secrets-apis) and the review
+guide's "API secret registrations".
+
+- `deployment/catalog.py`: role `apis` (`api.yaml`), `accepts.apis` names a
+  Secret; descriptors without `apis` (older bundles/metadata) read as `None`.
+- `deployment/registrations.py`: staging checks `api.yaml`, the declared
+  secret/key and unique indexes before writes; `api_updates` builds the private
+  `apis/<id>/` (`index`, `value`) after generation; `owner_secrets` renders
+  the owner Secret.
+- `deployment/deploy.py`: dev prepare and install render the owner Secret; an
+  owner outside the install has only that Secret rewritten in its installed
+  YAML, then restarts after the API; uninstall removes the registration.
+- Demo: app3 generates `app3-api-secret`, receives it as
+  `Authentication__ApiSecret` and registers index 0 with `hash: sha256`;
+  Identity names `ApiResources__0__Name: app3-api` (scope `app3`), reads
+  `identity-apis` and activates only APIs with a registered secret; app3's
+  `/api/secret-check` asks Duende's introspection endpoint whether the secret
+  is accepted, and `dev/whoami-smoke-test.py` requires it. Images
+  `demo-identity:0.2.3` and `demo-whoami-backend:0.1.1`; identity 0.4.13 and
+  app3 0.1.1.
+
+Review of `19805ee` requested changes; fixed in the follow-up commit:
+
+1. P1: the owner YAML rewrite truncated the file in place. Now published
+   atomically (`write_install_record`); a missing Secret is added; an
+   unreadable YAML names a recovery that works with the pending record.
+2. P1: a retry with an older `newer-only` bundle skipped rendering and
+   restarted the owner with the newer registration. The install record now
+   names its version; `install_checks` refuses a non-rendering retry of another
+   version. A rendering release may still finish it (existing contract).
+3. P2: staging (and so `validate`) read whole registrations including values.
+   Registrations are now `apis/<id>/index` and `apis/<id>/value`; staging reads
+   only `index`, values are read when the owner Secret is rendered.
+4. P2: the registration stripped a trailing newline that direct delivery
+   keeps. Now the bytes are used as stored and text that consumers would see
+   differently is refused before any write.
+
+Local verification: platform tests (`test_api_registrations.py`, 11 tests,
+each new regression checked against its reintroduced defect) and demo tests
+pass; the shipped demo validates and prepares with an
+`identity-apis` value equal to Base64(SHA-256) of app3's generated secret
+(Podman stubbed). This remains local evidence. New lab verification at
+`fd99d31` built both images and passed the focused scenario, one-install
+rotation/refusal, normal matrix with an empty `identity-apis` Secret, and app3
+uninstall with app2 sign-in. See the [dated report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28)
+and [sanitized checksums](acceptance/API-SECRETS-LAB-20261028.md).
+Remaining extensions: renamed `login-service-apis`, interrupted owner-restart
+retry, real `hash: none` / multiple-API deployments and the organisation's backend.
+No claim is made for those paths from this lab result.
 
 ### Constraints
 
@@ -371,10 +435,10 @@ the role.
   after one install.
 - Update COMPONENTS.md and the review guide's contracts.
 
-### Until then
+### Before this change
 
-Use one file per component with the same value and compare checksums, never
-the values:
+Operators used one file per component with the same value and compared
+checksums, never the values:
 
 ```bash
 podman exec <identity-container> printenv ApiResources__0__ApiSecrets__0__Value | sha256sum

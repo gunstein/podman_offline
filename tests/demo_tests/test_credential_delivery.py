@@ -118,7 +118,7 @@ class CredentialDeliveryTests(DeployFixture):
                 )
         self.assertNotEqual(keys["app1"], keys["app2"])
 
-    def test_identity_has_no_unused_api_secret_or_environment_delivery(self):
+    def test_identity_receives_api_secrets_only_through_registrations(self):
         config = self.defaults("identity")
         self.assertEqual(
             [
@@ -137,14 +137,20 @@ class CredentialDeliveryTests(DeployFixture):
         manifest = rendering.load_yaml_all(
             REPO / "components/identity/manifests/50-identity.yaml"
         )[0]
+        # API secrets arrive only in the platform-rendered registration Secret
+        # (backlog 72); Identity's own config declares none.
         self.assertEqual(
             manifest["spec"]["containers"][0]["envFrom"],
-            [{"configMapRef": {"name": "identity-settings"}}],
+            [
+                {"configMapRef": {"name": "identity-settings"}},
+                {"secretRef": {"name": "identity-apis"}},
+            ],
         )
         # Real API scopes, client-certificate authentication and token signing remain.
         application = (REPO / "apps/identity/Program.cs").read_text()
-        self.assertNotIn("ApiSecrets", application)
+        self.assertIn('GetSection("ApiResources")', application)
         for operation in (
+            "AddInMemoryApiResources",
             "AddInMemoryApiScopes",
             "AddJwtBearerClientAuthentication",
             "AddSigningCredential",

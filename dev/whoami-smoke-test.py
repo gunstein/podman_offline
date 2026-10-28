@@ -2,7 +2,7 @@
 
 Checks HTTPS, the OIDC handler's https redirect URI on the client protocol's
 callback path, sign-in through Duende (code, PKCE, private_key_jwt), the claims
-API, CSRF and local logout, and last sends an OIDC error response whose text the
+API, the API secret registered with Identity (backlog 72), CSRF and local logout, and last sends an OIDC error response whose text the
 backend must not log (the harness checks the log). With SMOKE_RESTART_COMMAND (for example
 `podman pod restart app3-whoami`, or `systemctl --user restart myproduct-app3`
 on a target) it restarts the app after sign-in and requires the same session
@@ -196,6 +196,10 @@ def main():
     # The demo Identity issues no name claim; sid shows a Duende session.
     assert values["sub"] == ["alice"] and values.get("sid"), "Unexpected claims"
     print("PASS: alice signed in through Duende (PKCE, private_key_jwt); claims API")
+    response = get(alice, "/api/secret-check")
+    require_success(response, "API secret check")
+    assert response.json() == {"registered": True}, "API secret not accepted"
+    print("PASS: Identity accepts app3's registered API secret (introspection)")
 
     if RESTART:
         subprocess.run(shlex.split(RESTART), check=True, stdout=subprocess.DEVNULL)

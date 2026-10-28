@@ -353,7 +353,9 @@ def dev_settings():
     return known, settings
 
 
-def validate_component(config, config_path, manifests, component=None, imported=()):
+def validate_component(
+    config, config_path, manifests, component=None, imported=(), imported_secrets=()
+):
     """Validate one component's manifests from declarations; no writes or host commands.
 
     Quadlet templates, kinds, names, placeholders, pull policy, mounts and links
@@ -364,21 +366,25 @@ def validate_component(config, config_path, manifests, component=None, imported=
     """
     check_quadlet_templates(component)
     documents = rendering.effective_documents(
-        config, config_path, manifests, component, imported
+        config, config_path, manifests, component, imported, imported_secrets
     )
     database_bindings(config, config_path, documents)
     registrations.check_client_identity(manifests.parent, documents)
     return documents
 
 
-def check_manifests(config, config_path, manifests, component=None, imported=()):
+def check_manifests(
+    config, config_path, manifests, component=None, imported=(), imported_secrets=()
+):
     """Validate the component, then check database volumes; no writes.
 
     Every path (install, prepare, standalone) runs this before generating any
     secret: declarations are validated before any Podman command. Production
     install has already checked the user-manager environment at this point.
     """
-    documents = validate_component(config, config_path, manifests, component, imported)
+    documents = validate_component(
+        config, config_path, manifests, component, imported, imported_secrets
+    )
     database_preflight(config, config_path, documents)
     return documents
 
@@ -405,7 +411,8 @@ def check_dev_components(known, settings):
             path,
             common.ROOT / "components" / component / "manifests",
             component,
-            known[component]["accepts"].values(),
+            catalog.imported_volumes(known[component]),
+            catalog.imported_secrets(known[component]),
         )
         checked[component] = config, documents
     return checked
@@ -441,6 +448,19 @@ def prepare_components():
         # Identity.
         for name in catalog.ROLE_FILES:
             shutil.rmtree(str(state / name), ignore_errors=True)
+        # Owners render before the APIs they serve, so API secrets come first.
+        updates.update(
+            registrations.api_updates(
+                list(known),
+                known,
+                imports,
+                {
+                    component: (config, state / component / "config.yaml")
+                    for component, (config, _) in checked.items()
+                },
+                state=state,
+            )
+        )
         documents, archives = [], []
         for component, (config, component_documents) in checked.items():
             files = state / component / "files"
@@ -451,6 +471,7 @@ def prepare_components():
                 files,
                 registrations.component_imports(component, imports, known),
                 component=component,
+                extra_secrets=registrations.owner_secrets(component, imports, known),
             )
             documents.extend(yaml.safe_load_all(text))
             archives.append((volumes, files))
@@ -776,6 +797,7 @@ def materialize_component_manifests(checked, imports, known):
             files,
             registrations.component_imports(component, imports, known),
             component=component,
+            extra_secrets=registrations.owner_secrets(component, imports, known),
         )
     return rendered
 
@@ -826,6 +848,44 @@ def write_changed_owner_imports(components, changed, imports, known):
                 registrations.component_imports(owner, imports, known) or {},
                 catalog.component_paths(owner)[1],
             )
+            replace_owner_secrets(owner, imports, known)
+
+
+def replace_owner_secrets(owner, imports, known):
+    """Rewrite the registration Secret in an installed owner's YAML.
+
+    The owner is not rendered again: only its accepted Secret (accepts.apis)
+    is replaced, or added if it is missing; restarting the unit runs kube play
+    with the new value. The new YAML is published atomically
+    (write_install_record), so an interruption leaves the old file and the
+    pending record repeats this step.
+    """
+    secrets = registrations.owner_secrets(owner, imports, known)
+    if not secrets:
+        return
+    output = catalog.component_paths(owner)[2]
+    name = secrets[0]["metadata"]["name"]
+    try:
+        documents = [doc for doc in rendering.load_yaml_all(output) if doc is not None]
+        rendering.check_component_names(documents, owner, output)
+    except (OSError, yaml.YAMLError, common.DeployError):
+        raise common.DeployError(
+            f"Cannot read the installed YAML of {owner} ({output}) to update its "
+            f"registration Secret {name}. Restore that file from backup, then run "
+            "./deploy.sh install from this bundle again to finish the pending install"
+        ) from None
+    positions = [
+        position
+        for position, doc in enumerate(documents)
+        if doc["kind"] == "Secret" and doc["metadata"]["name"] == name
+    ]
+    if len(positions) > 1:
+        raise common.DeployError(f"{output} defines Secret {name} more than once")
+    if positions:
+        documents[positions[0]] = secrets[0]
+    else:
+        documents.insert(0, secrets[0])
+    write_install_record(output, yaml.safe_dump_all(documents, sort_keys=False))
 
 
 def restart_order(known, names):
@@ -927,11 +987,23 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     owners = catalog.role_owners(known, "registration owners")
     network, network_text, archive = install_preconditions(name, checked)
     rendered = materialize_component_manifests(checked, imports, known)
+    updates = dict(updates)
+    updates.update(
+        registrations.api_updates(
+            [name],
+            known,
+            imports,
+            {
+                component: (config, catalog.component_paths(component)[0])
+                for component, (config, _) in checked.items()
+            },
+        )
+    )
     load_and_verify_images(archive, components, [name], rendered)
-    registrations.begin_install(name, descriptor["product"])
+    registrations.begin_install(name, descriptor["product"], descriptor["version"])
     write_installed_metadata(descriptor)
     changed, pending = registrations.apply_registration_updates(
-        name, descriptor["product"], updates, removals, owners
+        name, descriptor["product"], descriptor["version"], updates, removals, owners
     )
     write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
@@ -981,6 +1053,17 @@ def install_checks():
         )
     config = rendering.load_config(config_path)
     render = install_needed(descriptor)
+    recorded = pending.get("version") if pending else None
+    if not render and recorded not in (None, descriptor["version"]):
+        # Its interrupted attempt may have published files and registrations
+        # of version <recorded>; finishing without rendering would restart
+        # owners with them while this component keeps running the old ones.
+        raise common.DeployError(
+            f"Pending install of {name} {recorded}; this {descriptor['version']} "
+            f"bundle would not render {name} (upgrade: newer-only), so it cannot "
+            f"finish that install. Run ./deploy.sh install from the {name} "
+            f"{recorded} bundle (or a newer one)"
+        )
     rendering.validate_component_config(
         config, name, config_path, check_placeholders=render
     )
@@ -1020,7 +1103,8 @@ def install_components():
                     config_path,
                     common.ROOT / "components" / name / "manifests",
                     name,
-                    descriptor["accepts"].values(),
+                    catalog.imported_volumes(descriptor),
+                    catalog.imported_secrets(descriptor),
                 ),
             )
         install_component_plan(descriptor, checked, known, imports, updates, removals)
@@ -1048,6 +1132,7 @@ def uninstall_plan(component, delete_data, installed, product):
     _, _, output, _ = catalog.component_paths(component)
     route = common.STATE / "routes" / (component + ".conf")
     client = common.STATE / "clients" / component
+    api = common.STATE / "apis" / component
     documents = rendering.load_yaml_all(output)
     rendering.check_component_names(documents, component, output)
     volumes = sorted(
@@ -1094,6 +1179,8 @@ def uninstall_plan(component, delete_data, installed, product):
         owners.add(role_owners["routes"])
     if client.exists():
         owners.add(role_owners["clients"])
+    if api.exists():
+        owners.add(role_owners["apis"])
     return {
         "operation": "uninstall",
         "component": component,
@@ -1143,11 +1230,13 @@ def uninstall(component=None, delete_data=False):
     _, _, output, quadlet = catalog.component_paths(component)
     route = common.STATE / "routes" / (component + ".conf")
     client = common.STATE / "clients" / component
+    api = common.STATE / "apis" / component
     for path in (
         output,
         quadlet,
         route,
         client,
+        api,
         marker,
         catalog.metadata_path(common.STATE, component),
     ):
@@ -1163,8 +1252,9 @@ def uninstall(component=None, delete_data=False):
     for path in (output, quadlet, route):
         if path.exists():
             path.unlink()
-    if client.exists():
-        shutil.rmtree(client)
+    for directory in (client, api):
+        if directory.exists():
+            shutil.rmtree(directory)
     run("systemctl", "--user", "daemon-reload")
     if state["owners"]:
         with tempfile.TemporaryDirectory(
@@ -1187,6 +1277,7 @@ def uninstall(component=None, delete_data=False):
                     registrations.component_imports(owner, imports, installed) or {},
                     catalog.component_paths(owner)[1],
                 )
+                replace_owner_secrets(owner, imports, installed)
                 restart_service(owner)
                 registrations.acknowledge_owner(state, owner)
     if delete_data:
