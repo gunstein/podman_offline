@@ -241,7 +241,8 @@ restore core or merge Identity back into platform.
 ## 72. Register API resource secrets with Identity
 
 Status: planned, top priority (2026-10-28), requested by the product owner.
-Found while converting the organisation's .NET backend in dev.
+Found while converting the organisation's .NET backend in dev. Direction chosen
+with the product owner on 2026-10-28 (below); two open questions remain.
 
 ### Problem
 
@@ -275,28 +276,78 @@ One source of truth per API secret: the API component delivers or generates its
 secret, Identity receives every registered API secret, and a mismatch or a
 missing secret is refused before anything is written, in dev and production.
 
-### Direction to decide before implementation
+### Chosen direction (2026-10-28)
 
-A third registration role next to `routes` and `clients`
-([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-and-oidc-clients)),
-for example `apis: <identity-id>` with an `api.yaml` in the API component:
+Keep it as simple as possible: **the API component owns its secret and the
+platform copies it to Identity.** No product-wide secrets and no manual copies.
+It reuses two existing mechanisms: per-component secrets and registrations like
+`clients` ([COMPONENTS.md](docs/COMPONENTS.md#registrations-routes-and-oidc-clients)).
 
-- `api.yaml` names the API resource (name, scopes) and the component's own
-  secret source (`SECRET_FILES` ID/key, optionally generated).
-- The owner (`accepts: apis`) mounts a registration volume that receives the
-  registered resources and their secrets, rebuilt from current registrations on
-  every change like `clients`, so a removed API does not stay active.
-- The tools do not know application variable names. As with `client.yaml`
-  `environment:`, the product names how Identity consumes the registrations
-  (an `installed.json`, a file per API, or rendered `ApiResources__N__...`
-  values with a deterministic order) and which variable the API backend reads.
-- Restarts follow the change: an API secret change restarts the API component
-  and then Identity, as for clients.
+```text
+myapp (owner of the secret)          identity (receives it)
+SECRET_FILES: myapp-api-secret  -->  Secret identity-apis
+  generate: [value]                    ApiResources__0__ApiSecrets__0__Value
+        |                                     | envFrom
+        v                                     v
+Authentication__ApiSecret            Duende reads ApiResources__0__...
+(always the same value)
+```
 
-Decide with the product owner whether the API component or Identity owns
-generation, how the organisation's Identity consumes the values (index order,
-plain or hashed `Value`) and whether the demo Identity protocol gains API
-resources or a fixture covers the role.
+What the product writes:
+
+1. In the API component, with existing features: declare and generate the
+   secret, and give it to the backend.
+
+   ```yaml
+   # components/myapp/config.defaults.yaml
+   SECRET_FILES:
+     myapp-api-secret:
+     - path: credentials/api-secret
+       generate: [value]
+   SECRET_TEMPLATES:
+     myapp-authentication:
+       Authentication__ApiSecret: '@@secret:myapp-api-secret/value@@'
+   ```
+
+2. New: a small `api.yaml` in the API component.
+
+   ```yaml
+   index: 0                        # position in Identity's ApiResources list
+   secret: myapp-api-secret/value  # this component's own secret
+   ```
+
+3. New: the registration role in `bundles.yaml`, like `clients`:
+   `apis: identity` on the API component and `apis` in Identity's `accepts`.
+4. In Identity's manifest: `envFrom: [{secretRef: {name: identity-apis}}]`.
+
+What the platform does, in dev `prepare` and production install alike:
+
+- Reads `api.yaml` from every component registered with `apis: <owner>` and
+  renders the owner Secret `<owner>-apis` with one key per API,
+  `ApiResources__<index>__ApiSecrets__0__Value`, holding the API component's
+  own file value.
+- Refuses before writing anything when `api.yaml` is missing or present without
+  the role, the referenced secret is not declared by that component, two APIs
+  use the same `index`, no component accepts `apis`, or `<owner>-apis`
+  collides with a resource the owner declares itself.
+- Rebuilds the owner Secret from the current registrations on every change, so
+  a removed API does not stay active; a changed or removed API secret restarts
+  the API component first and then the owner, as for clients.
+
+`index` is explicit because the organisation's Identity most likely keeps names
+and scopes in `appsettings.json`; the environment value must hit the same list
+position. An order chosen by the platform (for example alphabetical) could put
+a secret on the wrong API.
+
+### Open questions (decide before implementation)
+
+1. Does the organisation's Identity read `Value` as plain text, or must it be a
+   SHA-256 hash? If hashed, the platform hashes when rendering the owner Secret.
+2. Is an explicit `index` acceptable, or should the platform also render
+   `ApiResources__<index>__Name` so the environment defines the whole entry?
+
+Also decide whether the demo Identity gains API resources or a fixture covers
+the role.
 
 ### Constraints
 
@@ -312,7 +363,8 @@ resources or a fixture covers the role.
 ### Verification
 
 - Unit/fixture tests: registration rendered for the owner, matching values on
-  both sides, missing source or missing owner refused before output, removed
+  both sides, missing source, missing owner and duplicate `index` refused
+  before output, removed
   registration not kept, restart order, no secret contents in output.
 - Acceptance: an API component signs in through Identity with a registered
   secret in a real Podman run; a changed secret takes effect on both sides
