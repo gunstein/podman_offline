@@ -174,6 +174,26 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
             root = Path(directory)
             for name in identity_template_baseline.FILES:
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
+            # The current catalog: Identity accepts apis and app3 registers one.
+            (root / "bundles.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "product": "myproduct",
+                        "components": {
+                            "identity": {
+                                "accepts": {
+                                    "clients": "identity-clients",
+                                    "apis": "identity-apis",
+                                }
+                            },
+                            "app3": {"requires": ["identity"], "apis": "identity"},
+                            "help": None,
+                        },
+                    }
+                )
+            )
+            (root / "components/app3").mkdir(parents=True)
+            (root / "components/app3/api.yaml").write_text("index: 0\n")
             with (
                 mock.patch.object(
                     subprocess,
@@ -192,9 +212,20 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
             )
             add, commit = (call.args[0] for call in run.call_args_list[files:])
             self.assertEqual(
-                add[3:], ["add", "--"] + list(identity_template_baseline.FILES)
+                add[3:],
+                ["add", "-A", "--"]
+                + list(identity_template_baseline.FILES)
+                + ["bundles.yaml", "components/app3/api.yaml"],
             )
             self.assertIn("commit", commit)
+            # Identity 0.4.11 accepted no API registrations.
+            catalog = yaml.safe_load((root / "bundles.yaml").read_text())
+            self.assertEqual(
+                catalog["components"]["identity"]["accepts"],
+                {"clients": "identity-clients"},
+            )
+            self.assertNotIn("apis", catalog["components"]["app3"])
+            self.assertFalse((root / "components/app3/api.yaml").exists())
             self.assertEqual(
                 (root / "apps/identity/DatabaseEnvironment.cs").read_bytes(),
                 b"old fixture",

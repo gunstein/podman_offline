@@ -257,6 +257,18 @@ the supported controller; the attempted DEV Python 3.9 run failed (34 errors,
 converting the organisation's .NET backend; direction and open decisions were
 settled on 2026-10-28. [Lab evidence, scope and gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
 
+Remaining matrix on `main` (`58240ea`, code as `fd99d31`): `m72-identity`
+(`--identity-only`) was **NOT CLEAN** at `03-dev-up`, a harness defect, not a
+product defect. `acceptance/identity_template_baseline.py` restored Identity
+0.4.11's files but kept the current catalog, where Identity accepts `apis` and
+app3 registers one, so `validate` refused the unused `identity-apis`. Such a
+catalog never existed: 0.4.11 accepted no API registrations. The baseline now
+also drops `accepts.apis`, every `apis` role and their `api.yaml`, so the
+scenario models the real old release and then exercises the upgrade to an
+Identity that accepts `apis`. Reproduced and fixed locally on a clone with the
+pinned baseline (`validate` and `prepare` pass); harness regression in
+`test_secret_templates.py`. The five remaining scenarios must be (re)run.
+
 ### Problem
 
 The organisation's Duende Identity defines one API resource per API backend and

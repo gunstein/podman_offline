@@ -10,6 +10,8 @@ Never run this against an operator's working checkout.
 import subprocess
 from pathlib import Path
 
+import yaml
+
 BASELINE = "932c7f3a647a84fb5388144bc822f895cc40d959"
 VERSION = "0.4.11"
 FILES = (
@@ -20,6 +22,29 @@ FILES = (
     "apps/identity/DatabaseEnvironment.cs",
     "apps/identity/Containerfile",
 )
+
+
+def old_catalog(source):
+    """Identity 0.4.11 accepted no API registrations (backlog 72 came later).
+
+    Its catalog therefore had no accepts.apis and no component registered an
+    API with it: drop that role from bundles.yaml and every api.yaml. Returns
+    the changed paths. Comments in bundles.yaml do not matter in this clone.
+    """
+    path = source / "bundles.yaml"
+    catalog = yaml.safe_load(path.read_text(encoding="utf-8"))
+    changed = ["bundles.yaml"]
+    for name, entry in catalog["components"].items():
+        entry = entry or {}
+        if name == "identity":
+            entry.get("accepts", {}).pop("apis", None)
+        if entry.pop("apis", None) is not None:
+            api = source / "components" / name / "api.yaml"
+            if api.exists():
+                api.unlink()
+            changed.append("components/" + name + "/api.yaml")
+    path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+    return changed
 
 
 def prepare(source):
@@ -38,9 +63,10 @@ def prepare(source):
         contents[name] = result.stdout
     for name, content in contents.items():
         (source / name).write_bytes(content)
+    changed = old_catalog(source)
     # A local commit in the disposable clone keeps every later build on a clean tree.
     for command in (
-        ["add", "--"] + list(FILES),
+        ["add", "-A", "--"] + list(FILES) + changed,
         [
             "-c",
             "user.name=acceptance",
