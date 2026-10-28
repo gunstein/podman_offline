@@ -6,12 +6,16 @@ ledger (sha256) and reports (plain) register their own generated secrets.
 """
 
 import base64
+import builtins
 import contextlib
 import copy
 import hashlib
 import io
 import json
+import os
 import shutil
+import subprocess
+from unittest import mock
 
 import yaml
 from deployment import catalog, common, deploy, registrations, validation
@@ -145,11 +149,14 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(
             secrets["reports-authentication"], {"Authentication__ApiSecret": reports}
         )
-        for name in ("ledger", "reports"):
-            self.assertEqual(
-                (dev / "apis" / (name + ".json")).stat().st_mode & 0o077, 0
-            )
-        self.assertEqual((dev / "apis").stat().st_mode & 0o077, 0)
+        # Direct SECRET_FILES delivery, the recipe and the owner see one value.
+        self.assertEqual(secrets["ledger-api-secret"], {"value": ledger})
+        self.assertEqual(secrets["reports-api-secret"], {"value": reports})
+        for path in [dev / "apis"] + list((dev / "apis").rglob("*")):
+            self.assertEqual(path.stat().st_mode & 0o077, 0, path)
+        self.assertEqual(
+            sorted(p.name for p in (dev / "apis/ledger").iterdir()), ["index", "value"]
+        )
         for value in (ledger, reports, sha256(ledger)):
             self.assertNotIn(value, output)
         # Prepare again: the same secrets, and validate agrees with prepare.
@@ -168,7 +175,7 @@ class ApiRegistrationTests(ProductFixture):
             list(self.secrets(common.BUILD / "install.yaml")["accounts-apis"]),
             ["ApiResources__0__ApiSecrets__0__Value"],
         )
-        self.assertFalse((common.BUILD / "dev/apis/reports.json").exists())
+        self.assertFalse((common.BUILD / "dev/apis/reports").exists())
 
     def test_invalid_declarations_are_refused_before_dev_writes(self):
         reports = API_PRODUCT["reports"]
@@ -248,11 +255,12 @@ class ApiRegistrationTests(ProductFixture):
                 "ApiResources__1__ApiSecrets__0__Value": self.value("reports"),
             },
         )
-        registration = common.STATE / "apis/ledger.json"
-        self.assertEqual(registration.stat().st_mode & 0o077, 0)
+        registration = common.STATE / "apis/ledger"
+        for path in (registration, registration / "index", registration / "value"):
+            self.assertEqual(path.stat().st_mode & 0o077, 0, path)
+        self.assertEqual((registration / "index").read_text(), "0")
         self.assertEqual(
-            json.loads(registration.read_text()),
-            {"Index": 0, "Value": sha256(self.value("ledger"))},
+            (registration / "value").read_text(), sha256(self.value("ledger"))
         )
 
         with self.subTest("unchanged reinstall leaves the owner alone"):
@@ -298,7 +306,7 @@ class ApiRegistrationTests(ProductFixture):
             self.assertEqual(
                 list(self.owner_secret()), ["ApiResources__0__ApiSecrets__0__Value"]
             )
-            self.assertFalse((common.STATE / "apis/reports.json").exists())
+            self.assertFalse((common.STATE / "apis/reports").exists())
 
         with self.subTest("uninstalling the API removes its resource"):
             self.use_root(releases["ledger"])
@@ -306,7 +314,7 @@ class ApiRegistrationTests(ProductFixture):
             self.quiet(deploy.uninstall)
             self.assertEqual(self.restarts(), ["accounts"])
             self.assertEqual(self.owner_secret(), {})
-            self.assertFalse((common.STATE / "apis/ledger.json").exists())
+            self.assertFalse((common.STATE / "apis/ledger").exists())
 
     def test_newer_only_api_keeps_the_registration_it_runs_with(self):
         """Same version, not rendered: a changed file must not reach the owner alone."""
@@ -317,7 +325,7 @@ class ApiRegistrationTests(ProductFixture):
         (common.STATE / "ledger/credentials/api/value").write_text("not-yet-active")
         self.assertEqual(self.install(releases["ledger"]), [])
         self.assertEqual(self.owner_secret(), before)
-        self.assertTrue((common.STATE / "apis/ledger.json").is_file())
+        self.assertTrue((common.STATE / "apis/ledger/value").is_file())
 
     def test_duplicate_index_is_refused_before_production_writes(self):
         duplicate = copy.deepcopy(API_PRODUCT["reports"])
@@ -335,6 +343,172 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(self.snapshot(common.STATE), before)
         self.process.assert_not_called()
 
+    def fail_on(self, *failing):
+        """Make the recorded host command fail once for each listed argv."""
+        remaining = [list(argv) for argv in failing]
+        recorder = self.process.side_effect
+
+        def host_command(arguments, **kwargs):
+            args = list(map(str, arguments))
+            if args in remaining:
+                remaining.remove(args)
+                raise subprocess.CalledProcessError(1, args)
+            return recorder(arguments, **kwargs)
+
+        self.process.side_effect = host_command
+
+    def test_interrupted_owner_rewrite_keeps_the_old_yaml_and_retry_finishes(self):
+        releases, _ = self.install_all(self.product())
+        output = catalog.component_paths("accounts")[2]
+        before = output.read_bytes()
+        (common.STATE / "ledger/credentials/api/value").write_text("rotated")
+        replace = os.replace
+
+        def interrupted(source, target):
+            if str(target) == str(output):
+                raise OSError("disk full")
+            return replace(source, target)
+
+        with mock.patch.object(os, "replace", side_effect=interrupted):
+            with self.assertRaises(OSError):
+                self.install(releases["ledger"])
+        self.assertEqual(output.read_bytes(), before)
+        self.assertEqual(output.stat().st_mode & 0o077, 0)
+        self.assertEqual(sorted(p.name for p in output.parent.glob(".install-*")), [])
+        pending = json.loads((common.STATE / "pending-operation.json").read_text())
+        self.assertEqual(pending["owners"], ["accounts"])
+        # A fresh process with the same bundle finishes the pending install.
+        self.process.reset_mock()
+        self.quiet(deploy.install)
+        self.assertEqual(self.restarts(), ["ledger", "accounts"])
+        self.assertEqual(
+            self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
+            sha256("rotated"),
+        )
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
+
+        with self.subTest("a missing registration Secret is added again"):
+            documents = [
+                doc
+                for doc in yaml.safe_load_all(output.read_text())
+                if doc["metadata"]["name"] != "accounts-apis"
+            ]
+            output.write_text(yaml.safe_dump_all(documents))
+            (common.STATE / "ledger/credentials/api/value").write_text("again")
+            self.install(releases["ledger"])
+            self.assertEqual(
+                self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
+                sha256("again"),
+            )
+
+        with self.subTest("an unreadable owner YAML names a pending-safe recovery"):
+            output.write_text("- [unbalanced")
+            (common.STATE / "ledger/credentials/api/value").write_text("third")
+            with self.assertRaisesRegex(
+                common.DeployError,
+                r"Restore that file from backup, then run ./deploy.sh install "
+                r"from this bundle again",
+            ) as raised:
+                self.install(releases["ledger"])
+            self.assertNotIn(sha256("third"), str(raised.exception))
+            self.assertTrue((common.STATE / "pending-operation.json").exists())
+
+    def test_skipped_newer_only_retry_of_another_version_is_refused(self):
+        ledger = copy.deepcopy(API_PRODUCT["ledger"])
+        ledger["catalog"]["upgrade"] = "newer-only"
+        product = self.product({"ledger": ledger})
+        old, _ = self.install_all(product)
+        self.write_product(product, version="1.1.0")
+        for name in ("accounts", "reports"):
+            (self.source / "components" / name / "VERSION").write_text("1.0.0\n")
+        new = self.build_and_unpack()
+        (common.STATE / "ledger/credentials/api/value").write_text("upgraded")
+        self.fail_on(["systemctl", "--user", "restart", "myproduct-accounts.service"])
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.install(new["ledger"])
+        self.assertEqual((common.STATE / "installed/ledger").read_text(), "1.0.0\n")
+        # The 1.0.0 bundle would skip rendering and restart only the owner.
+        self.use_root(old["ledger"])
+        before = self.snapshot(common.STATE)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(
+            common.DeployError, r"Pending install of ledger 1\.1\.0; this 1\.0\.0"
+        ):
+            deploy.install()
+        self.assertEqual(self.snapshot(common.STATE), before)
+        self.process.assert_not_called()
+        # The attempted release finishes it; both sides hold the new value.
+        self.use_root(new["ledger"])
+        self.quiet(deploy.install)
+        self.assertEqual(self.restarts(), ["ledger", "accounts"])
+        self.assertEqual(
+            self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
+            sha256("upgraded"),
+        )
+        self.assertEqual(
+            self.secrets(catalog.component_paths("ledger")[2])["ledger-authentication"],
+            {"Authentication__ApiSecret": "upgraded"},
+        )
+
+    def test_validate_never_opens_or_copies_api_values(self):
+        releases, _ = self.install_all(self.product())
+        opened = []
+        real_open, real_io_open = builtins.open, io.open
+
+        def recording(opener):
+            def wrapper(file, *args, **kwargs):
+                opened.append(str(file))
+                return opener(file, *args, **kwargs)
+
+            return wrapper
+
+        for name in ("accounts", "ledger", "reports"):
+            with self.subTest(name):
+                self.use_root(releases[name])
+                del opened[:]
+                with mock.patch.object(
+                    builtins, "open", recording(real_open)
+                ), mock.patch.object(io, "open", recording(real_io_open)):
+                    self.quiet(validation.validate)
+                values = [
+                    path
+                    for path in opened
+                    if path.startswith(str(common.STATE)) and path.endswith("/value")
+                ]
+                self.assertEqual(values, [])
+                self.assertTrue(
+                    any(path.endswith("apis/ledger/index") for path in opened)
+                )
+
+    def test_secret_text_that_consumers_would_see_differently_is_refused(self):
+        self.write_product(self.product())
+        retained = common.BUILD / "dev/reports/credentials/api/value"
+        retained.parent.mkdir(parents=True)
+        retained.write_text("retained-secret\n")
+        with self.assertRaisesRegex(
+            common.DeployError, "without a trailing newline"
+        ) as raised:
+            self.quiet(deploy.prepare)
+        self.assertNotIn("retained-secret", str(raised.exception))
+        self.assertFalse((common.BUILD / "install.yaml").exists())
+        self.assertFalse((common.BUILD / "dev/apis").exists())
+
+        shutil.rmtree(common.BUILD)
+        releases, _ = self.install_all(self.product({"reports": None}))
+        self.write_product(self.product())
+        releases = self.build_and_unpack()
+        self.use_root(releases["reports"])
+        deploy.init_config("reports")
+        retained = common.STATE / "reports/credentials/api/value"
+        retained.parent.mkdir(parents=True)
+        retained.write_text("retained-secret\n")
+        before = self.snapshot(common.STATE)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(common.DeployError, "trailing newline"):
+            self.quiet(deploy.install)
+        self.assertEqual(self.snapshot(common.STATE), before)
+        self.process.assert_not_called()
+
     def test_api_descriptor_and_records_never_echo_values(self):
         path = self.root / "api.yaml"
         for metadata in (
@@ -347,8 +521,15 @@ class ApiRegistrationTests(ProductFixture):
                 path.write_text(yaml.safe_dump(metadata))
                 with self.assertRaisesRegex(common.DeployError, "Invalid API"):
                     registrations.api_descriptor(path)
-        record = self.root / "ledger.json"
-        record.write_text(json.dumps({"Index": "0", "Value": "do-not-show"}))
+        record = self.root / "apis/ledger"
+        record.mkdir(parents=True)
+        (record / "index").write_text("00")
+        (record / "value").write_text("do-not-show")
         with self.assertRaises(common.DeployError) as raised:
-            registrations.api_record(record)
+            registrations.api_index(record)
+        self.assertNotIn("do-not-show", str(raised.exception))
+        (record / "index").write_text("0")
+        (record / "value").write_bytes(b"\xff do-not-show")
+        with self.assertRaises(common.DeployError) as raised:
+            registrations.api_value(record / "value", "ledger")
         self.assertNotIn("do-not-show", str(raised.exception))

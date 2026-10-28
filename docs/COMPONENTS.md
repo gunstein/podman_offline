@@ -294,17 +294,35 @@ this component's `SECRET_FILES` entry or a key it does not provide; two APIs
 with the same `index`; no component accepting `apis`; and an owner that
 declares the `accepts.apis` name itself in its config. Errors name files,
 components and indexes, never secret values; `validate` reads no secret
-contents.
+contents, including registered values.
 
-The registration (`apis/<id>.json` in state) is private (0600) because it holds
-the owner's value: the hash, or the plain secret with `hash: none`. It is
-written after the API's secrets are generated. An owner that is installed
-separately rewrites only that Secret in its installed YAML and restarts; an API
-with `upgrade: newer-only` that is not re-rendered keeps its installed
-registration, so the owner never receives a value its API does not yet run
-with. Rotating means replacing the API's secret file and installing the API
-again: the API restarts first, then its owner. Removing `apis` in a new release
-or uninstalling the API removes its key from the owner's Secret.
+The secret file is used byte for byte, exactly as direct `SECRET_FILES`
+delivery gives it to the API. It must be one line of text without a trailing
+newline, surrounding spaces, quotes, `;` or control characters, because a
+`SECRET_TEMPLATES` recipe would strip a trailing newline or refuse the rest,
+and the API and owner would then disagree. Generated secrets always qualify.
+`install` and `prepare` check this after generation and refuse before any
+registration, YAML or host command; write a provided secret with
+`printf '%s' "$secret" > <file>`, not `echo`.
+
+The registration is a private (0700) directory `apis/<id>/` in state:
+`index` (not secret; the only file staging and `validate` read) and `value`
+(0600), the owner's value: the hash, or the plain secret with `hash: none`. It
+is written after the API's secrets are generated. An owner that is installed
+separately has only that Secret replaced in its installed YAML (published
+atomically; added if missing), then restarts. If that YAML cannot be read,
+install stops with the pending record intact: restore the file from backup
+and run `./deploy.sh install` from the same bundle again.
+
+Rotating means replacing the API's secret file and installing the API again:
+the API restarts first, then its owner. An API with `upgrade: newer-only` is
+re-rendered only by a newer version, so rotate it with a new version; a
+same-version install keeps the installed registration, so the owner never
+receives a value its API does not yet run with. For the same reason an
+interrupted install can be finished only by a bundle that renders the
+component: retrying an interrupted `newer-only` upgrade with the older bundle
+is refused with the version to use. Removing `apis` in a new release or
+uninstalling the API removes its key from the owner's Secret.
 
 Restarts follow the changes: no change restarts no owner, a route change the
 route owner, a client change the client owner, an API secret change the API
@@ -524,7 +542,7 @@ would pass some checks and skip others.
 ├── installed/<id>          last completed version; retained during retries
 ├── routes/<id>.conf        registered routes
 ├── clients/<id>/           registered public client files
-├── apis/<id>.json          registered API secret for the owner (private)
+├── apis/<id>/              registered API: index, and value for the owner (private)
 └── pending-operation.json  install attempt/owners or scoped uninstall work
 ```
 

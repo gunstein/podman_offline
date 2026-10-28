@@ -1254,6 +1254,12 @@ removed from pending work individually; uninstall remains resumable after its
 YAML or data has been removed. Config and credentials remain untouched unless
 the original uninstall explicitly requested data deletion.
 
+An install record also names the version that last published files. A bundle
+of another version may finish it only if it renders the component; retrying an
+interrupted `newer-only` upgrade with the older bundle is refused with the
+version to use, because that bundle would restart registration owners without
+re-rendering the component.
+
 An unfinished operation blocks other component installs/uninstalls and config
 initialization, with a message naming the component and command to finish first.
 A changed deletion flag, invalid record or symlinked state is refused. Do not

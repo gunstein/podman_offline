@@ -360,7 +360,8 @@ guide's "API secret registrations".
   Secret; descriptors without `apis` (older bundles/metadata) read as `None`.
 - `deployment/registrations.py`: staging checks `api.yaml`, the declared
   secret/key and unique indexes before writes; `api_updates` builds the private
-  `apis/<id>.json` after generation; `owner_secrets` renders the owner Secret.
+  `apis/<id>/` (`index`, `value`) after generation; `owner_secrets` renders
+  the owner Secret.
 - `deployment/deploy.py`: dev prepare and install render the owner Secret; an
   owner outside the install has only that Secret rewritten in its installed
   YAML, then restarts after the API; uninstall removes the registration.
@@ -373,8 +374,25 @@ guide's "API secret registrations".
   `demo-identity:0.2.3` and `demo-whoami-backend:0.1.1`; identity 0.4.13 and
   app3 0.1.1.
 
-Local verification: platform tests (`test_api_registrations.py`, 7 tests) and
-demo tests pass; the shipped demo validates and prepares with an
+Review of `19805ee` requested changes; fixed in the follow-up commit:
+
+1. P1: the owner YAML rewrite truncated the file in place. Now published
+   atomically (`write_install_record`); a missing Secret is added; an
+   unreadable YAML names a recovery that works with the pending record.
+2. P1: a retry with an older `newer-only` bundle skipped rendering and
+   restarted the owner with the newer registration. The install record now
+   names its version; `install_checks` refuses a non-rendering retry of another
+   version. A rendering release may still finish it (existing contract).
+3. P2: staging (and so `validate`) read whole registrations including values.
+   Registrations are now `apis/<id>/index` and `apis/<id>/value`; staging reads
+   only `index`, values are read when the owner Secret is rendered.
+4. P2: the registration stripped a trailing newline that direct delivery
+   keeps. Now the bytes are used as stored and text that consumers would see
+   differently is refused before any write.
+
+Local verification: platform tests (`test_api_registrations.py`, 11 tests,
+each new regression checked against its reintroduced defect) and demo tests
+pass; the shipped demo validates and prepares with an
 `identity-apis` value equal to Base64(SHA-256) of app3's generated secret
 (Podman stubbed). Outstanding: building the two images, a real Podman run of the
 whoami scenario with the secret check, a rotation through one install, and

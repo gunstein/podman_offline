@@ -855,27 +855,37 @@ def replace_owner_secrets(owner, imports, known):
     """Rewrite the registration Secret in an installed owner's YAML.
 
     The owner is not rendered again: only its accepted Secret (accepts.apis)
-    is replaced; restarting the unit runs kube play with the new value.
+    is replaced, or added if it is missing; restarting the unit runs kube play
+    with the new value. The new YAML is published atomically
+    (write_install_record), so an interruption leaves the old file and the
+    pending record repeats this step.
     """
     secrets = registrations.owner_secrets(owner, imports, known)
     if not secrets:
         return
     output = catalog.component_paths(owner)[2]
-    documents = rendering.load_yaml_all(output)
     name = secrets[0]["metadata"]["name"]
+    try:
+        documents = [doc for doc in rendering.load_yaml_all(output) if doc is not None]
+        rendering.check_component_names(documents, owner, output)
+    except (OSError, yaml.YAMLError, common.DeployError):
+        raise common.DeployError(
+            f"Cannot read the installed YAML of {owner} ({output}) to update its "
+            f"registration Secret {name}. Restore that file from backup, then run "
+            "./deploy.sh install from this bundle again to finish the pending install"
+        ) from None
     positions = [
         position
         for position, doc in enumerate(documents)
-        if isinstance(doc, dict)
-        and doc.get("kind") == "Secret"
-        and (doc.get("metadata") or {}).get("name") == name
+        if doc["kind"] == "Secret" and doc["metadata"]["name"] == name
     ]
-    if len(positions) != 1:
-        raise common.DeployError(
-            f"{output} has no registration Secret {name}; reinstall {owner} first"
-        )
-    documents[positions[0]] = secrets[0]
-    rendering.write_private(output, yaml.safe_dump_all(documents, sort_keys=False))
+    if len(positions) > 1:
+        raise common.DeployError(f"{output} defines Secret {name} more than once")
+    if positions:
+        documents[positions[0]] = secrets[0]
+    else:
+        documents.insert(0, secrets[0])
+    write_install_record(output, yaml.safe_dump_all(documents, sort_keys=False))
 
 
 def restart_order(known, names):
@@ -990,10 +1000,10 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
         )
     )
     load_and_verify_images(archive, components, [name], rendered)
-    registrations.begin_install(name, descriptor["product"])
+    registrations.begin_install(name, descriptor["product"], descriptor["version"])
     write_installed_metadata(descriptor)
     changed, pending = registrations.apply_registration_updates(
-        name, descriptor["product"], updates, removals, owners
+        name, descriptor["product"], descriptor["version"], updates, removals, owners
     )
     write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
@@ -1043,6 +1053,17 @@ def install_checks():
         )
     config = rendering.load_config(config_path)
     render = install_needed(descriptor)
+    recorded = pending.get("version") if pending else None
+    if not render and recorded not in (None, descriptor["version"]):
+        # Its interrupted attempt may have published files and registrations
+        # of version <recorded>; finishing without rendering would restart
+        # owners with them while this component keeps running the old ones.
+        raise common.DeployError(
+            f"Pending install of {name} {recorded}; this {descriptor['version']} "
+            f"bundle would not render {name} (upgrade: newer-only), so it cannot "
+            f"finish that install. Run ./deploy.sh install from the {name} "
+            f"{recorded} bundle (or a newer one)"
+        )
     rendering.validate_component_config(
         config, name, config_path, check_placeholders=render
     )
@@ -1111,7 +1132,7 @@ def uninstall_plan(component, delete_data, installed, product):
     _, _, output, _ = catalog.component_paths(component)
     route = common.STATE / "routes" / (component + ".conf")
     client = common.STATE / "clients" / component
-    api = common.STATE / "apis" / (component + ".json")
+    api = common.STATE / "apis" / component
     documents = rendering.load_yaml_all(output)
     rendering.check_component_names(documents, component, output)
     volumes = sorted(
@@ -1158,7 +1179,7 @@ def uninstall_plan(component, delete_data, installed, product):
         owners.add(role_owners["routes"])
     if client.exists():
         owners.add(role_owners["clients"])
-    if api.is_file():
+    if api.exists():
         owners.add(role_owners["apis"])
     return {
         "operation": "uninstall",
@@ -1209,7 +1230,7 @@ def uninstall(component=None, delete_data=False):
     _, _, output, quadlet = catalog.component_paths(component)
     route = common.STATE / "routes" / (component + ".conf")
     client = common.STATE / "clients" / component
-    api = common.STATE / "apis" / (component + ".json")
+    api = common.STATE / "apis" / component
     for path in (
         output,
         quadlet,
@@ -1228,11 +1249,12 @@ def uninstall(component=None, delete_data=False):
         run("systemctl", "--user", "stop", catalog.unit_name(component) + ".service")
         state["stopped"] = True
         registrations.save_pending(state)
-    for path in (output, quadlet, route, api):
+    for path in (output, quadlet, route):
         if path.exists():
             path.unlink()
-    if client.exists():
-        shutil.rmtree(client)
+    for directory in (client, api):
+        if directory.exists():
+            shutil.rmtree(directory)
     run("systemctl", "--user", "daemon-reload")
     if state["owners"]:
         with tempfile.TemporaryDirectory(
