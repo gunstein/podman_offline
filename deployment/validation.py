@@ -16,6 +16,7 @@ import yaml
 
 from . import catalog, common, deploy, registrations
 from . import render as rendering
+from .output import log
 
 ERRORS = (common.DeployError, OSError, yaml.YAMLError)
 
@@ -40,7 +41,7 @@ def validate():
             f"{len(findings)} validation finding(s); nothing was written:\n"
             + "\n".join(f"  {scope}: {message}" for scope, message in findings)
         )
-    print(
+    log.info(
         "[OK] validated "
         + ", ".join(names)
         + "; nothing written, no Podman or systemd commands"

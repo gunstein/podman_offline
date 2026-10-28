@@ -66,9 +66,22 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory after item 72: 500
-platform tests and 72 demo tests (572 unique tests), plus 358 separate
+renamed-inventory regressions protect the separation. Current inventory after items 73 and 74: 512
+platform tests and 72 demo tests (584 unique tests), plus 358 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
+
+# Command line and operator messages (backlogs 73 and 74)
+
+`platform_tests/test_cli_output.py` checks every accepted `deploy.sh` form,
+refused forms (unknown, extra, misplaced, abbreviated and repeated options;
+invalid component IDs) with exit 2 and usage on stderr, `--help` per command
+with exit 0, `build-bundle.sh` arguments, the stream and text per message
+class, `--verbose` for `+ command` lines, handlers that follow a redirect, and
+the journal audit trail through a fake `/dev/log` datagram socket, including
+that no generated secret value reaches stdout, stderr or the journal and that
+commands work without a journal. `test_prepare_host.HostAuditTests` covers
+`prepare-host.sh`'s `logger` lines. `DeployFixture` points the audit socket at
+a missing path and resets logging after each test.
 
 # API secret registrations (backlog 72)
 

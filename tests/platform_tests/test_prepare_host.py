@@ -1,6 +1,7 @@
 """Test host validation and idempotent labels using shell stubs, without root."""
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -491,3 +492,63 @@ class HostFapolicydTests(unittest.TestCase):
                 result = self.run_check(content)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(result.stdout, "")
+
+
+class HostAuditTests(unittest.TestCase):
+    """prepare-host.sh records its start and result with logger (backlog 74)."""
+
+    def run_audit(self, body):
+        script = (
+            Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+        ).read_text()
+        block = script[
+            script.index("audit() {") : script.index("trap audit_result EXIT")
+        ]
+        block += "trap audit_result EXIT\n"
+        with tempfile.TemporaryDirectory() as directory:
+            stub = Path(directory) / "logger"
+            stub.write_text('#!/bin/sh\necho "$*" >> "$LOGGER_OUT"\n')
+            stub.chmod(0o755)
+            out = Path(directory) / "out"
+            subprocess.run(
+                ["bash", "-c", "product=shop user=ops port=9443\n" + block + body],
+                check=False,
+                env=dict(
+                    os.environ,
+                    PATH=directory + ":" + os.environ["PATH"],
+                    LOGGER_OUT=str(out),
+                ),
+            )
+            return out.read_text().splitlines()
+
+    def test_start_and_result_reach_the_journal(self):
+        for body, result in (("true", "completed"), ("exit 3", "failed (exit 3)")):
+            with self.subTest(result=result):
+                self.assertEqual(
+                    self.run_audit(body),
+                    [
+                        "-t shop -- prepare-host --user ops --port 9443: started",
+                        "-t shop -- prepare-host --user ops --port 9443: " + result,
+                    ],
+                )
+
+    def test_missing_logger_does_not_stop_preparation(self):
+        script = (
+            Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+        ).read_text()
+        block = script[script.index("audit() {") : script.index("audit_result() {")]
+        result = subprocess.run(
+            [
+                shutil.which("bash"),
+                "-euc",
+                "product=shop\n" + block + 'audit "x"; echo done',
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            env=dict(os.environ, PATH="/nonexistent"),
+        )
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr), (0, "done\n", "")
+        )

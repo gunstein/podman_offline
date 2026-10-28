@@ -416,7 +416,7 @@ replace its checksum too. With `BUNDLE_SIGNING_KEY` set to an OpenPGP key ID or
 fingerprint in the build machine's GnuPG keyring, `./build-bundle.sh` also
 writes a detached signature `<archive>.asc` for every archive (gpg must be able
 to use the key without a prompt, for example through gpg-agent). Without it the
-build prints `[WARN] ... is unsigned` and writes no `.asc`; a rebuilt archive
+build prints `WARNING: ... is unsigned` on stderr and writes no `.asc`; a rebuilt archive
 never keeps an older signature.
 
 ```sh
@@ -977,6 +977,39 @@ certificate authentication and Identity token signing are unchanged.
 The session-cookie example is specific to the Flask Todo backend. A different
 application must explicitly consume its credential files using its own framework;
 deploy and Podman do not infer a file's purpose from the name `session-key`.
+
+## Command line and messages
+
+`./deploy.sh` accepts exactly these forms (backlog 73); each has its own
+`--help`:
+
+```text
+./deploy.sh validate | prepare | install | init-layout
+./deploy.sh uninstall [<component>] [--delete-data]
+./deploy.sh init-config <component>
+./deploy.sh status [--json]
+```
+
+`--verbose` (before or after the command) also shows each host command as a
+`+ podman ...` line. `./build-bundle.sh [<component> ...] [--verbose]` works
+the same way. Exit codes: 0 success (also `--help`), 1 failure, 2 usage error.
+Usage errors print the command's `Usage:` line and an `ERROR:` line on stderr;
+abbreviated or repeated options are refused.
+
+Messages follow one convention (backlog 74; [review guide](docs/REVIEW_GUIDE.md)):
+`[OK] ...` for a completed step and a final `PASS: ...` line on stdout,
+`WARNING: ...` and `ERROR: ...` with the next action on stderr. Data such as
+the `status` table and `--json` is plain stdout. `init-layout`, `init-config`,
+`install` and `uninstall` also write one line when they start and one with the
+result to the runtime account's journal, and `prepare-host.sh` does the same
+as root; support can read them with:
+
+```sh
+journalctl -t <product>
+```
+
+These lines name the command, component and version, never config or secret
+values. Without a journal socket the commands work as before.
 
 ## First production installation
 

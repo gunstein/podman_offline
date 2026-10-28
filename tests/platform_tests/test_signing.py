@@ -71,10 +71,12 @@ class SigningTests(unittest.TestCase):
         )
 
     def sign(self, key):
-        output = io.StringIO()
+        """Return the signature and the operator messages (stdout, then stderr)."""
+        output, errors = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, {bundle.SIGNING_KEY: key}):
-            with contextlib.redirect_stdout(output):
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 signature = bundle.sign(self.archive)
+        self.warnings = errors.getvalue()
         return signature, output.getvalue()
 
     def verify(self):
@@ -103,9 +105,12 @@ class SigningTests(unittest.TestCase):
         self.sign(self.key)
         signature, output = self.sign("")
         self.assertIsNone(signature)
+        # A warning with its next action, on stderr (backlog 74).
         self.assertIn(
-            f"{self.archive.name} is unsigned; set BUNDLE_SIGNING_KEY", output
+            f"WARNING: {self.archive.name} is unsigned; set BUNDLE_SIGNING_KEY",
+            self.warnings,
         )
+        self.assertNotIn("unsigned", output)
         self.assertFalse((self.root / (self.archive.name + ".asc")).exists())
 
     def test_unknown_key_fails_the_build(self):

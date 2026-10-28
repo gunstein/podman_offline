@@ -173,6 +173,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ -n $port && -n $user ]] || die "$usage"
+# One journal line per operator action and result (backlog 74), for support:
+# journalctl -t <product>. Terminal output stays printf; no secret values.
+audit() { logger -t "$product" -- "$1" 2>/dev/null || true; }
+audit_result() {
+    local status=$?
+    if [[ $status == 0 ]]; then
+        audit "prepare-host --user $user --port $port: completed"
+    else
+        audit "prepare-host --user $user --port $port: failed (exit $status)"
+    fi
+}
+audit "prepare-host --user $user --port $port: started"
+trap audit_result EXIT
 [[ $port -ge 1024 && $port -le 65535 ]] || die "The port must be 1024-65535"
 # A portable Linux user name, as for the product name.
 [[ $user =~ ^[A-Za-z_][A-Za-z0-9_.-]{0,31}$ ]] || die "Invalid account name ${user@Q}; use an existing login name"

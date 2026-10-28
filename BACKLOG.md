@@ -459,9 +459,17 @@ podman exec <api-container> printenv Authentication__ApiSecret | sha256sum
 
 ## 73. Parse command lines with argparse subcommands
 
-Status: planned (2026-10-28). Split out of item 69, where the product owner
-asked for it on 2026-10-26 as part of WP2/WP3; it is now done on its own,
-before the RPM work. Do it before item 74, which adds `--verbose`.
+Status: implemented with local tests (2026-10-28); no real Podman/systemd run
+yet. Split out of item 69, where the product owner asked for it on 2026-10-26
+as part of WP2/WP3.
+
+Delivered: `deployment/cli.py` uses argparse subcommands (one parser per
+command, `allow_abbrev=False`, repeated flags refused, per-command `--help`)
+and accepts exactly the earlier forms plus `--verbose`; `bundle.py` parses
+`[<component> ...] [--verbose]` the same way. Decision on the usage stream:
+usage errors now go to stderr (with the `Usage:` line and `ERROR:`), and
+`--help` exits 0 on stdout instead of 2; the two wrapper tests and one CLI test
+that read usage on stdout changed with it. Tests: `test_cli_output.py`.
 
 ### Problem
 
@@ -511,10 +519,25 @@ compatibility (vermin). Update README's command section and the review guide's
 
 ## 74. One operator message convention and Python logging
 
-Status: planned (2026-10-28). Split out of item 69, where the product owner
-asked for it on 2026-10-26 as part of WP2/WP3; it is now done on its own,
-before the RPM work. Do it after item 73 (`--verbose` is a parser option).
-Estimate: 2–3 days.
+Status: implemented with local tests (2026-10-28); the journal lines are not
+yet verified on a real host. Split out of item 69, where the product owner
+asked for it on 2026-10-26 as part of WP2/WP3.
+
+Delivered: `deployment/output.py` (standard-library `logging`, `%(message)s`,
+INFO to stdout and WARNING/ERROR to stderr through handlers that follow the
+current streams, `--verbose` for DEBUG); every operator `print` in
+`deployment/` and `bundle.py` goes through it, data stays `print`. Convention
+chosen: the existing `[OK]`, a final `PASS: ./deploy.sh <command> completed`,
+`WARNING:`/`ERROR:` on stderr; `bundle.py`'s `[WARN]` became `WARNING:` on
+stderr. `+ command` lines are DEBUG, so they are hidden without `--verbose`;
+the harness's platform-downgrade check, which proves no image operation by
+their absence, now runs with `--verbose`. Journal: `init-layout`,
+`init-config`, `install` and `uninstall` write a start and a result line
+(`SysLogHandler`, identifier `<product>[pid]`), `prepare-host.sh` does the same
+with `logger`; neither stops a command without a journal. `HOST-PHASE:` and the
+harness's `[OK] validated`/`PASS:` lines are documented as parsed interfaces
+in the review guide. Outstanding: `journalctl -t <product>` on a real OL9 host
+after install and uninstall (the per-user journal must be persistent, item 64).
 
 ### Problem
 

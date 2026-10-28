@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from . import common, templates
+from .output import log
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -396,7 +397,7 @@ def generate_secrets(config, base_dir):
                     for _ in range(32)
                 )
             )
-        print(f"[OK] Generated secret file {path}")
+        log.info(f"[OK] Generated secret file {path}")
 
 
 def replace(value, config):

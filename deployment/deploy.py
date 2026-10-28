@@ -15,6 +15,7 @@ import yaml
 
 from . import catalog, common, health, layout, registrations, templates
 from . import render as rendering
+from .output import log
 
 
 def init_config(component):
@@ -32,7 +33,7 @@ def init_config(component):
         if path.is_symlink():
             raise common.DeployError(f"Refuse symlinked config path: {path}")
     if target.exists():
-        print(
+        log.info(
             f"[OK] Existing config retained unchanged: {target}; install validates it"
         )
         return
@@ -56,7 +57,7 @@ def init_config(component):
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream, sort_keys=False)
-    print(
+    log.info(
         f"[OK] Initialized {target}; edit config and prepare credentials before install"
     )
 
@@ -483,7 +484,7 @@ def prepare_components():
             common.BUILD / "install.yaml",
             yaml.safe_dump_all(documents, sort_keys=False),
         )
-    print(f"[OK] {common.BUILD / 'install.yaml'}")
+    log.info(f"[OK] {common.BUILD / 'install.yaml'}")
 
 
 def prepare():
@@ -509,12 +510,12 @@ def prepare_standalone():
     text, volumes = rendering.materialize(config, common.CONFIG, documents, files)
     rendering.write_file_archives(volumes, files)
     rendering.write_private(output, text)
-    print(f"[OK] {output}")
+    log.info(f"[OK] {output}")
 
 
 def run(*args):
     """Show and run a command; stop on a failing status."""
-    print("+", " ".join(map(str, args)))
+    log.debug("+ " + " ".join(map(str, args)))
     subprocess.run(list(map(str, args)), check=True)
 
 
@@ -648,7 +649,7 @@ def install_standalone():
     health.wait_healthy(common.SERVICE, common.QUADLET_YAML)
     run("podman", "ps", "--all", "--pod")
 
-    print(
+    log.info(
         f"[OK] {common.SERVICE} is running. Check that the containers above are 'Up'."
     )
 
@@ -1299,6 +1300,6 @@ def uninstall(component=None, delete_data=False):
         if path.exists():
             path.unlink()
     registrations.clear_pending()
-    print(
+    log.info(
         f"[OK] Uninstalled {component}; shared network retained; data {'deleted' if delete_data else 'preserved'}"
     )

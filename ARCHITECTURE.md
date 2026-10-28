@@ -11,7 +11,8 @@ build entrypoint and also uses `-B`.
 | Module | Responsibility |
 | --- | --- |
 | `deployment/__main__.py` | Minimal CLI delegation |
-| `deployment/cli.py` | Arguments, exit codes and concise errors |
+| `deployment/cli.py` | argparse subcommands, exit codes, concise errors and the journal audit lines |
+| `deployment/output.py` | Operator message convention: standard-library logging to stdout/stderr, `--verbose`, journal audit trail |
 | `deployment/status.py` | Read-only installed marker/descriptor/pending report, dependency ordering and bounded user-unit state queries; text/JSON output and status exit code, without config or credential reads |
 | `deployment/common.py` | Release paths, the account's identity home, production path slots, name rules, shared constants and DeployError |
 | `deployment/layout.py` | Production paths outside the login home (backlog 64): reads the bootstrap file `~/.<product>/<product>.env` as data, validates the root-owned `/var/lib/<product>` and the account's `state/`, `config/`, `storage/`, assigns `common.STATE`/`QUADLET_DIR`/`FILES_DIR` and checks the user manager's `XDG_*` |

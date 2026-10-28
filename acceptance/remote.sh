@@ -1521,7 +1521,8 @@ def main():
                 raise SystemExit("FAIL: expected explicit platform restart")
     else:
         # The previous app bundle is still verified/trusted; refuse its older platform.
-        result = subprocess.run(["bash", str(Path(old_release) / "deploy.sh"), "install"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        # --verbose shows each host command (+ podman ...), so their absence below is evidence.
+        result = subprocess.run(["bash", str(Path(old_release) / "deploy.sh"), "install", "--verbose"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
         if result.returncode != 1 or "Platform downgrade refused" not in result.stderr or "+ podman" in result.stdout:
             raise SystemExit("FAIL: older platform was not refused before image operations")
         if observe() != current:

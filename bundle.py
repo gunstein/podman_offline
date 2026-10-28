@@ -4,7 +4,9 @@
 dist/myproduct-<version>-offline.tar.gz (common.STANDALONE_PRODUCT).
 """
 
+import argparse
 import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -14,8 +16,11 @@ from pathlib import Path
 
 import yaml
 
-from deployment import catalog, common
+from deployment import catalog, common, output
 from deployment import render as rendering
+
+# A child of the deployment logger: same handlers, streams and convention.
+log = logging.getLogger("deployment.bundle")
 
 ROOT = Path(__file__).resolve().parent
 STAGE = ROOT / "build" / "bundle"
@@ -35,7 +40,7 @@ RELEASE_DOCS = ("docs/PRODUCTION-INSTALL.md", "docs/PFX-CREDENTIALS.md")
 
 def run(*args):
     """Show and run a command; stop on a failing status."""
-    print("+", " ".join(map(str, args)))
+    log.debug("+ " + " ".join(map(str, args)))
     subprocess.run(list(map(str, args)), check=True)
 
 
@@ -97,7 +102,7 @@ def pull_images(images):
         if registry == "localhost":
             continue
         args = ["podman", "pull", "--policy=always", image]
-        print("+", " ".join(args))
+        log.debug("+ " + " ".join(args))
         try:
             # Registry errors may contain authentication details; report only the image and hint.
             subprocess.run(  # noqa: UP022 - Python 3.6 lacks capture_output
@@ -339,7 +344,7 @@ def build_release(version, descriptor=None):
     )
     sign(archive)
 
-    print(f"[OK] {archive}")
+    log.info(f"[OK] {archive}")
     return archive
 
 
@@ -356,7 +361,9 @@ def sign(archive):
         signature.unlink()
     key = os.environ.get(SIGNING_KEY, "").strip()
     if not key:
-        print(f"[WARN] {archive.name} is unsigned; set {SIGNING_KEY} to sign bundles")
+        log.warning(
+            f"WARNING: {archive.name} is unsigned; set {SIGNING_KEY} to sign bundles"
+        )
         return None
     run(
         "gpg",
@@ -414,13 +421,33 @@ def build(selected=()):
     )
 
 
+def parser():
+    """./build-bundle.sh [--verbose] [<component> ...] (backlog 73)."""
+    result = argparse.ArgumentParser(
+        prog="./build-bundle.sh",
+        description="Build offline bundles; without components, every catalog component.",
+        allow_abbrev=False,
+    )
+    result.add_argument(
+        "--verbose", action="store_true", help="also show each host command"
+    )
+    result.add_argument("components", nargs="*", metavar="<component>")
+    return result
+
+
 def main(arguments=None):
     """Build the bundle and return an exit code without traceback for expected errors.
 
-    arguments are optional component names (default: the command line).
+    arguments are the command-line arguments (default: sys.argv[1:]): optional
+    component names and --verbose. Usage errors exit 2 and --help 0.
     """
     try:
-        build(sys.argv[1:] if arguments is None else arguments)
+        args = parser().parse_args(sys.argv[1:] if arguments is None else arguments)
+    except SystemExit as error:
+        return error.code
+    output.configure(verbose=args.verbose)
+    try:
+        build(args.components)
     except (
         OSError,
         BundleError,
@@ -428,8 +455,9 @@ def main(arguments=None):
         yaml.YAMLError,
         subprocess.CalledProcessError,
     ) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
+        log.error(f"ERROR: {error}")
         return 1
+    log.info("PASS: ./build-bundle.sh completed")
     return 0
 
 

@@ -187,6 +187,10 @@ class PlatformSafetyTests(ComponentFixture):
                     self.assertEqual(cli.main(), status)
                     self.process.assert_not_called()
                     self.assertEqual(self.snapshot(), before)
-        self.assertIn("Usage:", self.stdout.getvalue())
+        # Usage errors go to stderr with the command's own usage line (backlog 73).
+        self.assertIn(
+            "Usage: ./deploy.sh init-config <component>", self.stderr.getvalue()
+        )
+        self.assertIn("invalid component ID 'my_identity'", self.stderr.getvalue())
         self.assertIn("not included in this bundle", self.stderr.getvalue())
         self.assertIn("can only uninstall its own component", self.stderr.getvalue())

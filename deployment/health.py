@@ -12,6 +12,7 @@ import time
 
 from . import common
 from . import render as rendering
+from .output import log
 
 # The acceptance harness uses the same limit; the demo apps need about 15 s.
 TIMEOUT = 150
@@ -77,7 +78,7 @@ def wait_healthy(unit, path):
             ):
                 waiting[name] = state
         if not waiting:
-            print(f"[OK] {unit}: {len(names)} containers running and healthy")
+            log.info(f"[OK] {unit}: {len(names)} containers running and healthy")
             return
         if time.monotonic() >= deadline:
             details = ", ".join(

@@ -12,7 +12,7 @@ from unittest import mock
 
 import bundle
 import yaml
-from deployment import common, health, layout
+from deployment import common, health, layout, output
 from deployment import render as rendering
 
 
@@ -90,6 +90,11 @@ class DeployFixture(unittest.TestCase):
         self.stack.enter_context(
             mock.patch.object(tempfile, "TemporaryDirectory", side_effect=staging)
         )
+        # Logging configuration is global: no host journal, and reset after.
+        self.stack.enter_context(
+            mock.patch.object(output, "SYSLOG", str(self.root / "no-journal"))
+        )
+        self.addCleanup(output.configure)
         self.stdout = self.stack.enter_context(
             contextlib.redirect_stdout(io.StringIO())
         )

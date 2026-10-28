@@ -25,6 +25,7 @@ import uuid
 from pathlib import Path
 
 from . import common
+from .output import log
 
 # Root-owned parent of every installation root; tests replace it.
 ANCHOR = Path("/var/lib")
@@ -97,7 +98,7 @@ def initialize(product):
                 )
             if os.path.lexists(str(path)):
                 install_root(product, read_bootstrap(path), path)
-                print(f"[OK] Existing bootstrap retained: {path}")
+                log.info(f"[OK] Existing bootstrap retained: {path}")
                 return
             temporary = ".bootstrap-" + uuid.uuid4().hex
             fd = os.open(
@@ -116,7 +117,7 @@ def initialize(product):
                     publish_bootstrap(directory, temporary, path.name)
                 except FileExistsError:
                     install_root(product, read_bootstrap(path), path)
-                    print(f"[OK] Existing bootstrap retained: {path}")
+                    log.info(f"[OK] Existing bootstrap retained: {path}")
                     return
             finally:
                 # Only this attempt's private temporary name is cleaned up.
@@ -131,7 +132,7 @@ def initialize(product):
             os.close(directory)
     finally:
         os.close(with_dir)
-    print(f"[OK] Bootstrap ready: {path}; continue with init-config from the manual")
+    log.info(f"[OK] Bootstrap ready: {path}; continue with init-config from the manual")
 
 
 def read_bootstrap(path):
