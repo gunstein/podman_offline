@@ -11,8 +11,11 @@ environment's CA, the internal variant and the restore:
 python3 acceptance/acceptance.py --run whoami-1 --whoami run
 ```
 
-It has not run in the lab yet. Steps, dev results, the six conversion points
-and the public versus internal comparison are in [WHOAMI-DOTNET.md](WHOAMI-DOTNET.md).
+Focused lab results, exact tested commits, the six conversion points and the
+public versus internal comparison are in [WHOAMI-DOTNET.md](WHOAMI-DOTNET.md).
+The [remaining fixed-matrix results](API-SECRETS-MATRIX-20261029.md) record five
+CLEAN PASS scenarios at `0ece0c1`, including renamed and the corrected Identity
+baseline; those runs do not include the focused app3 scenario.
 
 # Manual host setup (backlog 65)
 
