@@ -11,6 +11,12 @@ items retain their individual scopes below; agree the next priority separately.
 
 ## Current priority (updated 2026-10-29)
 
+[Item 76](#76-reach-the-public-origin-from-containers-when-the-host-maps-it-to-loopback)
+is the top priority, requested by the product owner on 2026-10-29: on a host
+whose `/etc/hosts` maps the public host name to `127.0.0.1` (a developer VDI),
+Podman copies that line into every container, so a backend cannot reach Duende
+through the public origin and rejects every token (`IDX10204`).
+
 [Item 72](#72-register-api-resource-secrets-with-identity) was requested by
 the product owner on 2026-10-28 while converting the organisation's
 .NET backend: an API backend and Identity must hold the same API resource
@@ -220,7 +226,7 @@ audit fix and final audit. [Evidence and remaining work outside that scope](acce
 Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
 [the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
 
-Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 76 (top priority, 2026-10-29), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Also open, priority not assigned: [75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
 (Python lifecycle understandability; coordinate with 69 and 73–74).
@@ -250,6 +256,95 @@ baseline before implementation; these tasks are not claims of completed work.
 The refactor must preserve the behavior and naming established by items 8 and 9;
 its original core terminology below is historical scope, not an instruction to
 restore core or merge Identity back into platform.
+
+## 76. Reach the public origin from containers when the host maps it to loopback
+
+Status: planned, top priority (2026-10-29), requested by the product owner.
+Found while converting the organisation's .NET backend on a developer VDI.
+
+### How containers reach the public origin today
+
+A backend that signs in through Duende calls it server to server through the
+public origin, as in Kubernetes (items 70 and 71). Inside the product network
+the name resolves to the proxy because of this chain:
+
+1. `PUBLIC_ORIGIN` gives the derived `PUBLIC_HOSTNAME`.
+2. `components/platform/manifests/80-proxy.yaml` sets the proxy Pod's
+   `hostname: '@@PUBLIC_HOSTNAME@@'`.
+3. Podman registers that host name in the product network's DNS
+   (aardvark-dns); the name appears in
+   `$XDG_RUNTIME_DIR/containers/networks/aardvark-dns/<network>` next to the
+   proxy's internal address.
+4. Other containers resolve the public host name to the proxy's internal
+   address and connect to nginx on `HTTPS_PORT` inside the network.
+   `IP_ADDRESS`/`hostIP` affects only the published host port.
+
+This chain is not documented anywhere and no test asserts it.
+
+### Problem
+
+By default Podman builds each container's `/etc/hosts` from the host's file
+(`base_hosts_file`), and `/etc/hosts` is read before DNS. The developer VDI
+maps its own name to loopback (`127.0.0.1 <public host name>`) and the operator
+cannot edit that file. Every container then resolves the public origin to its
+own loopback, the backend cannot fetch the discovery document, and JwtBearer has
+no expected issuer: `IDX10204`, `WWW-Authenticate: ... The issuer '...' is
+invalid`, with no `IDX20803`. The symptom points at issuer configuration, not at
+name resolution, so it took a long diagnosis. The lab matrix never met it: the
+lab maps the public name to the VM's real address and tests from DEV with
+`CONNECT_IP`, without a loopback line on the installation host.
+
+Observed on the VDI on 2026-10-29 (operator-run, Podman version not recorded;
+not a lab result):
+
+- In the backend container the public name resolved to `127.0.0.1` and
+  `openssl s_client` got `Connection refused`.
+- With `--no-hosts` added locally to `podman kube play` in `dev/dev.sh`, the
+  name resolved through aardvark-dns, the TLS connection to the proxy succeeded
+  and, after the trust chain (item 70) and a matching web certificate, the
+  backend accepted tokens. The browser on the VDI still used the host's
+  loopback line and `IP_ADDRESS: 127.0.0.1`.
+
+Two follow-up traps met in the same session:
+
+- `dev/generate-certificates.sh` keeps an existing web certificate, so after a
+  `PUBLIC_ORIGIN` change the proxy still presents the old name (`openssl`
+  `num=62: hostname mismatch`) until `web.crt`/`web.key` are removed and issued
+  again.
+- `openssl s_client` inside a container does not use trust-chain files mounted
+  under `/etc/ssl/certs` by name (it needs the bundle or hashed names), so it
+  reports `num=20` although .NET trusts the chain; test with `-CAfile`.
+
+### Tasks
+
+1. Choose the mechanism so that a host `/etc/hosts` entry for the public name
+   never reaches the containers, in dev and production alike. Preferred:
+   `podman kube play --no-hosts` in `dev/dev.sh` and `PodmanArgs=--no-hosts` in
+   `quadlet/template.kube`. Confirm on Podman 5.8.2 that the option exists for
+   `kube play`/Quadlet, that nothing in the shipped components depends on host
+   entries (for example `host.containers.internal`) and that Pod-local
+   `localhost` still works. If `--no-hosts` is unsuitable, compare a proxy
+   network alias plus `hostAliases`, and record why.
+2. Document the chain above in COMPONENTS.md next to the trust chain recipe:
+   containers reach the public origin through the proxy's host name in the
+   product network; `IP_ADDRESS` only publishes the host port.
+3. Warn in `validate`/`prepare` when the web certificate does not cover
+   `PUBLIC_HOSTNAME`, and document re-issuing it after a `PUBLIC_ORIGIN` change
+   (or let the dev credential tooling re-issue a certificate whose name no
+   longer matches).
+4. Add the `openssl ... -CAfile` check and the `IDX10204` symptom to the
+   trust-chain troubleshooting text.
+
+### Verification
+
+- Unit/fixture tests: the rendered dev command and the Quadlet unit carry the
+  chosen option; the certificate-name warning.
+- Acceptance: on the installation host, add `127.0.0.1 <public host name>` to
+  `/etc/hosts`, install, and show from a backend container that the name
+  resolves to the proxy's internal address and that app3's public-HTTPS sign-in
+  passes; remove the line afterwards. Run in dev and in the production layout.
+- Report Podman version, SELinux mode and whether any shipped component
+  changed behaviour without host entries.
 
 ## 72. Register API resource secrets with Identity
 
