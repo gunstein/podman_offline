@@ -160,17 +160,32 @@ A container that cannot resolve `localhost` is a finding for the
 
 The run leaves platform, identity and app3 installed on PROD. Log in to PROD as
 `SSH_USER`; the helpers run commands as the runtime account the same way the
-harness does:
+harness does.
+
+Revision 3 (2026-10-29): run systemctl directly in the runtime user's local
+manager context. `systemctl --user -M myproduct-ops@ cat` is unsupported on the
+lab host (`Cannot remotely cat units.`). Starting commands from the runtime
+user's home also avoids inheriting the SSH account's inaccessible working
+directory. Read each unit's effective `ExecStart` successfully before counting flags,
+so an inspection failure cannot be mistaken for a missing option. Do not count
+all of `systemctl cat`: the generated unit retains `PodmanArgs=--no-hosts`
+as well as the effective `ExecStart`, giving two text matches for one start
+flag.
 
 ```sh
 host=<PROD_HOST>; port=<HTTPS_PORT>
 ops() { sudo -n -H -u myproduct-ops env XDG_RUNTIME_DIR=/run/user/$(id -u myproduct-ops) \
-        XDG_CONFIG_HOME=/var/lib/myproduct/config XDG_DATA_HOME=/var/lib/myproduct/storage "$@"; }
-units() { sudo -n systemctl --user -M myproduct-ops@ "$@"; }
+        XDG_CONFIG_HOME=/var/lib/myproduct/config XDG_DATA_HOME=/var/lib/myproduct/storage \
+        bash -c 'cd "$HOME" || exit; exec "$@"' bash "$@"; }
+units() { ops systemctl --user "$@"; }
 podman --version; getenforce
 
 # 1. The generated units run kube play with --no-hosts.
-for u in platform identity app3; do printf '%s ' "$u"; units cat myproduct-$u.service | grep -c -- '--no-hosts'; done
+for u in platform identity app3; do
+  start_command=$(units show --property=ExecStart --value myproduct-$u.service) || exit
+  printf '%s ' "$u"
+  printf '%s\n' "$start_command" | grep -c -- '--no-hosts' || exit
+done
 
 # 2. Map the public name to loopback and recreate the containers.
 sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
