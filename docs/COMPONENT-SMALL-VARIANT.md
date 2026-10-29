@@ -96,8 +96,11 @@ is unchanged.
 If `gateway` is not set: no component may have `route.conf`, and no component
 gets `public_from`. A worker-only product works as today.
 
-**R2. Identity.** If `identity: I` is set, `I` must be a listed component and
-gets `accepts.clients: I-clients` and `accepts.apis: I-apis`. Every component
+**R2. Identity.** If `identity: I` is set, `I` must be a listed component. It
+gets `accepts.clients: I-clients` **only if at least one component has
+`client.yaml`**, and `accepts.apis: I-apis` **only if at least one component
+has `api.yaml`**, so an Identity that uses neither registration needs no
+unused volume or Secret in its manifests. Every component
 with `client.yaml` gets `clients: I` and every component with `api.yaml` gets
 `apis: I`, each with `I` in `requires`. A component with neither file has no
 link to Identity and does not depend on it.
@@ -297,7 +300,7 @@ its manifest per rule 3.2.7), not the deferred `orders` application.
 | --- | --- |
 | Inference changes the `RENAMED` fixture's `manual` | Accepted product change (2.4); test updated. |
 | Check B1: only `POSTGRES_PASSWORD_FILE` was kept out of `env/` | Every `POSTGRES_PASSWORD*` variable stays in the manifest (3.2.7). |
-| Check B2: `RENAMED`'s `login-service` also gains `accepts.apis` | Expected: one Identity receives both roles (R2). The fixture's Identity manifest gets a reference to `login-service-apis` and its expected descriptor is updated. |
+| Check B2: `RENAMED`'s `login-service` also gains `accepts.apis` | Resolved by R2's condition: no `RENAMED` component has `api.yaml`, so no `accepts.apis` is derived and the fixture's manifests stay unchanged. Only `manual`'s `public_from` changes. |
 | Check M1: `client.yaml` without a gateway | Refused with a file-specific message (2.5). |
 | Check M2: a declared but unmounted receiving PVC passes | New focused mount check (R3). |
 | Check M3: where synthetic recipes live | Transient effective config only (3.2.5). |
@@ -330,7 +333,7 @@ reserve; carrying `env/` recipes through validate, prepare and install is the
 most likely overrun). Tests must show, for the demo, the acceptance renamed
 product, platform+help, a product with a component that does not use Identity,
 and a worker-only product: the normalized catalog from the new form equals the
-one from today's explicit form (except the two documented `RENAMED` changes);
+one from today's explicit form (except the documented `RENAMED` `manual` change);
 every **declaration** refusal in 2.5 and 3.2 happens before any write,
 generation or host command; checks that need private substituted bytes run
 before any rendered YAML or registration is published or a service changes,
