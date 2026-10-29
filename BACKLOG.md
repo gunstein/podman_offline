@@ -273,6 +273,8 @@ organisation's .NET/TypeScript solution in dev. Nothing below is current
 behaviour; the "Today" sections describe the code at `5f4b499`. An independent
 analysis must confirm or correct this item before any implementation plan.
 
+Independent assessment: [Component model analysis](docs/COMPONENT-MODEL-ANALYSIS.md).
+
 ### Why simplicity is a requirement here
 
 The people who write and change components are application developers and
