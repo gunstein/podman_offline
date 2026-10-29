@@ -24,7 +24,7 @@ makes components intuitive for developers who do not read documentation.
 Direction decided on 2026-10-29 after an [independent analysis](docs/COMPONENT-MODEL-ANALYSIS.md):
 phase 1 is `env/<container>.yaml` with short, declared secret references and a
 working example component for the organisation's SPA/.NET architecture, on top
-of today's lifecycle. Phase 0's design ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) is signed off; a developer walkthrough is next, then phase 1 after item 76's matrix.
+of today's lifecycle. Phase 0's design ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) is signed off and the walkthrough dropped; phase 1 follows item 76's matrix.
 
 [Item 72](#72-register-api-resource-secrets-with-identity) was requested by
 the product owner on 2026-10-28 while converting the organisation's
@@ -235,7 +235,7 @@ audit fix and final audit. [Evidence and remaining work outside that scope](acce
 Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
 [the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
 
-Open: 76 (top priority, 2026-10-29; implemented locally, lab check pending), 77 (phase 0 signed off; developer walkthrough next), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 76 (top priority, 2026-10-29; implemented locally, lab check pending), 77 (phase 0 signed off; phase 1 after item 76's matrix), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Also open, priority not assigned: [75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
 (Python lifecycle understandability; coordinate with 69 and 73–74).
@@ -270,8 +270,9 @@ restore core or merge Identity back into platform.
 
 Status: **planned; direction decided 2026-10-29; phase 0 design
 ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) signed off by the
-product owner on 2026-10-29; the developer walkthrough is the remaining gate
-before phase 1; not implemented.** Requested by the product owner after converting the
+product owner on 2026-10-29; the developer walkthrough was dropped by the
+product owner the same day; phase 1 is next, after item 76's matrix; not
+implemented.** Requested by the product owner after converting the
 organisation's .NET/TypeScript solution in dev. The first draft was reviewed by
 an independent analysis; the decisions, corrections and revised phases below
 replace that draft's proposal. "Today" describes the code at `5f4b499`.
@@ -472,7 +473,7 @@ ConnectionStrings__Default: 'Host=myapp-postgres;Database=myapp;Username=myapp;P
 
 | Phase | Deliverable | Gate before the next phase |
 | --- | --- | --- |
-| 0 | Confirm syntax (short `@@secret:<id>@@`, conflict rules, exact-byte rules), write the example component design for the organisation's architecture: [design](docs/COMPONENT-ENV-DESIGN.md), including two demo gaps found (no public SPA client in the demo Identity, SPA runtime config) | Product-owner sign-off of its section 7; the developer walkthrough in its section 8 |
+| 0 | Confirm syntax (short `@@secret:<id>@@`, conflict rules, exact-byte rules), write the example component design for the organisation's architecture: [design](docs/COMPONENT-ENV-DESIGN.md), including two demo gaps found (no public SPA client in the demo Identity, SPA runtime config) | Product-owner sign-off of its section 7 (done 2026-10-29); the developer walkthrough was dropped by the product owner |
 | 1 | `env/<container>.yaml` with `@@NAME@@` and short/long secret references; bundling and inventory; wiring report; **working example component** (SPA + .NET JwtBearer + GraphQL/WebSocket + `route.conf` + runtime frontend config) | Unit/fixture tests (targets, init containers, conflicts, private classification, no secret reads in `validate`, refusal before side effects, isolated bundle); real OL9 env delivery; **human trial with the example** |
 | 2 | `mounts/<container>/<path>` for text files | Podman 5.8.2 ConfigMap/Secret `subPath` tests: non-root UID, SELinux Enforcing, replaced/shortened/removed/renamed files (a reused Podman volume keeps old unlisted files), public-to-private transitions; uninstall without PVC loss |
 | 3 | Gateway convenience: when a gateway exists, derive routes and public values; drop `routes:`/`public_from` lines where derivable; keep copied public values and their checks until propagation is designed | Gateway-free and renamed fixtures; custom shared names; cycles; dev overrides; isolated releases |

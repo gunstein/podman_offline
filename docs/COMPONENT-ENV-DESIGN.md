@@ -1,7 +1,8 @@
 # Component environment files: phase 0 design (backlog 77)
 
 Status: **decisions in section 7 signed off by the product owner
-(2026-10-29); developer walkthrough (section 8) pending; not implemented.** Phase 0 of [backlog 77](../BACKLOG.md#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets),
+(2026-10-29); the developer walkthrough in section 8 was dropped by the
+product owner the same day; phase 1 is next; not implemented.** Phase 0 of [backlog 77](../BACKLOG.md#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets),
 after the [component model analysis](COMPONENT-MODEL-ANALYSIS.md). Code
 references describe `main` at `00d34e4`. Nothing here changes current
 behaviour until phase 1 is implemented and verified.
@@ -382,7 +383,11 @@ The product owner approved all ten recommendations below unchanged.
 | 9 | SPA runtime config through an nginx entrypoint script writing `config.json` | Yes |
 | 10 | Health checks in examples use `127.0.0.1` | Yes. Item 76's part 2 lab run found `localhost` resolving to `::1` first in every demo container; a service listening on IPv4 only would not answer `localhost` |
 
-## 8. Developer walkthrough (gate before phase 1)
+## 8. Developer walkthrough (dropped 2026-10-29)
+
+The product owner decided not to run this walkthrough before phase 1. It is
+kept as a reference for the human trial in phase 1's verification. Without it,
+misreadings of the example are found only after implementation.
 
 Show a developer who has not seen this work only the example files (section 5)
 and the checklist (section 6), not this document. Ask, and record the answers
