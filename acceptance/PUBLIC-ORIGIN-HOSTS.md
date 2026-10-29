@@ -45,37 +45,159 @@ the backend rejected tokens with `IDX10204`. With `--no-hosts` added by hand to
 proxy's internal address, the TLS connection succeeded (with item 70's chain
 and a re-issued web certificate) and sign-in plus GraphQL worked.
 
-## Lab check (required)
+## Lab recipe
 
-On the DEV VM, as an ordinary user, with the demo including app3:
+Four parts, in this order. Part 1 is the existing automated scenario; parts 2
+and 3 are manual and add the host loopback line that no scenario sets; part 4
+repeats the fixed matrix because every installed unit now carries
+`--no-hosts`. Stop at the first failure and record it.
+
+Values used below come from `~/.config/podman-offline-acceptance/lab.env` on the
+controller: `SSH_USER`, `DEV_IP`, `PROD_IP`, `PROD_HOST`, `HTTPS_PORT`. The
+product is `myproduct`, its runtime account `myproduct-ops`.
+
+### Part 1: whoami scenario (controller)
+
+From a clean checkout of the commit under test on the controller:
 
 ```sh
-host=myproduct-proxy        # the host name in the effective dev PUBLIC_ORIGIN
-podman --version
-sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"     # lab admin
-./dev/demo-credentials.sh && ./dev/dev.sh up
-podman exec app3-whoami-backend sh -c "grep -c '$host' /etc/hosts || true"   # expect 0
-podman exec app3-whoami-backend getent hosts "$host"             # expect the proxy's address
+git rev-parse --short HEAD                # record it; must contain backlog 76
+run=hosts76-whoami-$(git rev-parse --short HEAD)
+python3 acceptance/acceptance.py --run "$run" --whoami run
+```
+
+Pass: `CLEAN PASS`, all steps. This shows that DEV `dev/dev.sh up` and the PROD
+Quadlet units start with `--no-hosts` and that app3 signs in through the public
+origin (`03-dev-whoami-e2e`, `08-whoami-e2e`), restarts and survives a reboot.
+It does **not** yet set a loopback line in `/etc/hosts`.
+
+### Part 2: DEV with the public name mapped to loopback (DEV VM)
+
+The run leaves its source checkout, images and smoke environment on DEV. Log
+in to DEV as `SSH_USER`:
+
+```sh
+run=<run ID from part 1>
+cd ~/podman-offline-acceptance/$run/src
+host=myproduct-proxy                      # config/dev.yaml: PUBLIC_ORIGIN host
+podman --version; getenforce
+
+# 1. Map the public name to loopback on the host, as on a developer VDI.
+sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
+getent hosts "$host"                      # expect 127.0.0.1 (host view)
+
+# 2. Negative control: without --no-hosts a container would get that line.
+proxy_image=$(python3 -B -c 'import yaml; d=[x for x in yaml.safe_load_all(open("components/platform/manifests/80-proxy.yaml")) if x and x["kind"]=="Pod"][0]; print(d["spec"]["containers"][0]["image"])')
+podman network exists myproduct || podman network create myproduct
+podman run --rm --pull=never --network myproduct --entrypoint getent "$proxy_image" hosts "$host"   # expect 127.0.0.1
+
+# 3. Start dev the normal way (dev/dev.sh passes --no-hosts).
+./dev/dev.sh up
+podman exec app3-whoami-backend sh -c "grep -c '$host' /etc/hosts || true"    # expect 0
+podman exec app3-whoami-backend getent hosts "$host"                           # expect the proxy address below
 podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 for c in $(podman ps --format '{{.Names}}'); do printf '%s ' "$c"; podman exec "$c" getent hosts localhost || echo NO-LOCALHOST; done
-SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-app/bin/python dev/whoami-smoke-test.py
-sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts                # restore
+
+# 4. Sign-in through the public origin while the host maps it to loopback.
+SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
+
+# 5. hostAliases conflict (records Podman's behaviour behind the refusal).
+cat > /tmp/hostaliases-test.yaml <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata: {name: hostaliases-test}
+spec:
+  hostAliases: [{ip: 192.0.2.10, hostnames: [alias.example.test]}]
+  containers:
+  - {name: c, image: PROXY_IMAGE, imagePullPolicy: Never, command: [sleep, "30"]}
+EOF
+sed -i "s|PROXY_IMAGE|$proxy_image|" /tmp/hostaliases-test.yaml
+podman kube play --no-hosts /tmp/hostaliases-test.yaml; echo "exit=$?"
+podman kube down /tmp/hostaliases-test.yaml 2>/dev/null; rm -f /tmp/hostaliases-test.yaml
+
+# 6. Restore.
+./dev/dev.sh down
+sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts
+getent hosts "$host" || echo 'restored: no host entry'
 ```
 
-Pass: no host line in the container, the name resolves to the proxy's address,
-every container still resolves `localhost`, and the whoami smoke test passes
-while the host maps the name to loopback.
+Pass: step 2 shows `127.0.0.1` (the line would have reached a container);
+step 3 shows no line in the backend's `/etc/hosts`, the name resolves to the
+proxy's address and every container resolves `localhost`; step 4 prints its
+`PASS` lines. Step 5 is informational: record the exit status and message.
 
-On PROD after installing the platform and app3 releases, as the runtime user:
+### Part 3: installed PROD with the public name mapped to loopback (PROD VM)
+
+The run leaves platform, identity and app3 installed on PROD. Log in to PROD as
+`SSH_USER`; the helpers run commands as the runtime account the same way the
+harness does:
 
 ```sh
-systemctl --user cat myproduct-platform.service | grep -c -- --no-hosts   # expect >= 1
+host=<PROD_HOST>; port=<HTTPS_PORT>
+ops() { sudo -n -H -u myproduct-ops env XDG_RUNTIME_DIR=/run/user/$(id -u myproduct-ops) \
+        XDG_CONFIG_HOME=/var/lib/myproduct/config XDG_DATA_HOME=/var/lib/myproduct/storage "$@"; }
+units() { sudo -n systemctl --user -M myproduct-ops@ "$@"; }
+podman --version; getenforce
+
+# 1. The generated units run kube play with --no-hosts.
+for u in platform identity app3; do printf '%s ' "$u"; units cat myproduct-$u.service | grep -c -- '--no-hosts'; done
+
+# 2. Map the public name to loopback and recreate the containers.
+sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
+units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service
+sleep 20; units is-active myproduct-platform.service myproduct-identity.service myproduct-app3.service
+
+# 3. The backend sees the proxy, not the host's line.
+ops podman exec app3-whoami-backend sh -c "grep -c '$host' /etc/hosts || true"   # expect 0
+ops podman exec app3-whoami-backend getent hosts "$host"                          # expect the proxy address below
+ops podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+for c in $(ops podman ps --format '{{.Names}}'); do printf '%s ' "$c"; ops podman exec "$c" getent hosts localhost || echo NO-LOCALHOST; done
 ```
 
-Repeat the hosts-line part of the DEV check against the installed units and
-run the installed public-HTTPS smoke. Also record whether `podman kube play
---no-hosts` with a Pod that declares `hostAliases` fails (the refusal assumes
-it conflicts, as `--no-hosts` does with `--add-host` for `podman run`).
+Still on PROD, while the line is present, start a sign-in the way the harness
+does (`whoami_login` in `remote.sh`). The backend needs the discovery document
+to answer, so `302` to the authorize endpoint means it reached Duende through
+the public origin; `500` was the chain-break result:
 
-Record Podman version, SELinux mode, the outputs above and any shipped component
-that behaved differently without host entries.
+```sh
+ops curl --noproxy '*' --cacert /var/lib/myproduct/state/PKI/private/ca.crt \
+  --resolve "$host:$port:<PROD_IP>" --silent --show-error --max-time 30 \
+  --output /dev/null --write-out '%{http_code} %{redirect_url}\n' \
+  "https://$host:$port/app3/auth/login"        # expect 302 .../identity/connect/authorize?...
+```
+
+Then on PROD restore and confirm:
+
+```sh
+sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts
+units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service
+```
+
+Pass: `1` for each unit in step 1, all units active, no line and the proxy's
+address in step 3, every container resolves `localhost`, and `302` to the
+authorize endpoint while the line was present. Part 1's next run
+resets both VMs from their snapshots.
+
+### Part 4: fixed matrix (controller)
+
+```sh
+rev=$(git rev-parse --short HEAD)
+python3 acceptance/acceptance.py --run hosts76-normal-$rev run
+python3 acceptance/acceptance.py --run hosts76-app2-$rev --first-app app2 run
+python3 acceptance/acceptance.py --run hosts76-identity-$rev --identity-only run
+python3 acceptance/acceptance.py --run hosts76-help-$rev --help-only run
+python3 acceptance/acceptance.py --run hosts76-platform-help-$rev --platform-help-only run
+python3 acceptance/acceptance.py --run hosts76-renamed-$rev --renamed-product run
+```
+
+Pass: `CLEAN PASS` in all six. If time is short, run `normal` first; the other
+five follow before item 76 is called verified. These runs also give the first
+real-host evidence for items 73 and 74 at this commit.
+
+### Record
+
+Add a dated result section here with: tested commit, run IDs and verdicts,
+Podman version, SELinux mode, the outputs of parts 2 and 3 (addresses may be
+shortened, no credentials), the hostAliases result, and any shipped component
+that behaved differently without host entries. Update item 76's status and the
+review guide's gap row only from these results.
