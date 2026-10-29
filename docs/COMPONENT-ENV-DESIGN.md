@@ -1,7 +1,7 @@
 # Component environment files: phase 0 design (backlog 77)
 
-Status: **design for product-owner sign-off and a developer walkthrough; not
-implemented** (2026-10-29). Phase 0 of [backlog 77](../BACKLOG.md#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets),
+Status: **decisions in section 7 signed off by the product owner
+(2026-10-29); developer walkthrough (section 8) pending; not implemented.** Phase 0 of [backlog 77](../BACKLOG.md#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets),
 after the [component model analysis](COMPONENT-MODEL-ANALYSIS.md). Code
 references describe `main` at `00d34e4`. Nothing here changes current
 behaviour until phase 1 is implemented and verified.
@@ -365,7 +365,9 @@ trap seen in the conversion.
 10. **Check:** `./deploy.sh validate` and read the wiring lines, then
     `./dev/dev.sh up`. Test sign-in in a private browser window.
 
-## 7. Decisions to sign off
+## 7. Decisions (signed off 2026-10-29)
+
+The product owner approved all ten recommendations below unchanged.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
@@ -378,7 +380,7 @@ trap seen in the conversion.
 | 7 | Example component `orders` (separate from app3) with the architecture above | Yes |
 | 8 | Public SPA client: extend the demo `client.yaml` with `public: true` (demo-only Identity code) | Yes, as part of phase 1's example work |
 | 9 | SPA runtime config through an nginx entrypoint script writing `config.json` | Yes |
-| 10 | Health checks in examples use `127.0.0.1` (item 76's open `localhost` question) | Yes, pending item 76's result |
+| 10 | Health checks in examples use `127.0.0.1` | Yes. Item 76's part 2 lab run found `localhost` resolving to `::1` first in every demo container; a service listening on IPv4 only would not answer `localhost` |
 
 ## 8. Developer walkthrough (gate before phase 1)
 
