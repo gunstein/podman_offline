@@ -466,6 +466,115 @@ podman exec <identity-container> printenv ApiResources__0__ApiSecrets__0__Value 
 podman exec <api-container> printenv Authentication__ApiSecret | sha256sum
 ```
 
+## 73. Parse command lines with argparse subcommands
+
+Status: planned (2026-10-28). Split out of item 69, where the product owner
+asked for it on 2026-10-26 as part of WP2/WP3; it is now done on its own,
+before the RPM work. Do it before item 74, which adds `--verbose`.
+
+### Problem
+
+`deploy.sh` (`deployment/cli.py`) parses `sys.argv` by hand: one compound
+validity expression decides which forms of `validate`, `prepare`, `install`,
+`uninstall [<component>] [--delete-data]`, `init-layout`,
+`init-config <component>` and `status [--json]` are accepted. It works for
+today's few options but is hard to extend, gives no per-command `--help`, and
+every new option (item 66's `install-set`, WP3's `init-config --settings`)
+would grow the same condition. `scripts/release.py` uses one flat `argparse`
+parser whose options are shared by every operation and checked afterwards
+("setup arguments are only accepted for setup").
+
+### Task
+
+Use standard-library `argparse` with subcommands (`add_subparsers`, one parser
+per command declaring only its own arguments, `allow_abbrev=False`) for
+`deploy.sh`, and for every new command line from its first version: item 66's
+install-set entry point and item 69's `<product>-admin` and `<product>`
+commands. No third-party CLI library (offline hosts, fapolicyd, Python 3.6).
+
+### Constraints
+
+- Release interface: newer tools call older releases' `deploy.sh`, and the
+  manual, the harness and the tests use its current forms. Keep accepting
+  exactly those forms with the same meaning.
+- Keep the exit codes (2 usage, 1 failure, 3 needs input where defined) and the
+  usage and error messages and streams that tests, the harness and the manual
+  rely on, or change them together with those consumers. argparse writes usage
+  errors to stderr where `cli.py` prints its usage line to stdout today: decide
+  once and update the consumers in the same change.
+- Component arguments keep their current check (`common.ID`, then the bundle's
+  own descriptor); argparse does not validate component names against a list.
+- Prompts with defaults for paper operation (item 69) are a separate layer on
+  top of parsing: ask only when an option is missing and stdin is a terminal;
+  otherwise fail as today.
+- `scripts/release.py` is not converted: item 69's WP6 removes that flow.
+
+### Verification
+
+Parser tests per command: every accepted form, unknown and misplaced options,
+refused abbreviations, a missing or extra component, `--help` per command and
+the exit codes. Existing CLI tests and the acceptance harness pass unchanged
+(or are changed together with a deliberate message change). Python 3.6
+compatibility (vermin). Update README's command section and the review guide's
+"CLI entry point" contract.
+
+## 74. One operator message convention and Python logging
+
+Status: planned (2026-10-28). Split out of item 69, where the product owner
+asked for it on 2026-10-26 as part of WP2/WP3; it is now done on its own,
+before the RPM work. Do it after item 73 (`--verbose` is a parser option).
+Estimate: 2–3 days.
+
+### Problem
+
+Operator output is `print` in Python (about 24 calls in `deployment/`, 5 in
+`bundle.py`, 14 in `scripts/release.py`) and `printf`/`echo` in shell, with no
+documented convention and no Python `logging`. Prefixes vary (`[OK]`, `PASS:`,
+`INFO:`, `START:`, `ERROR:`, `WARNING:`, `HOST-PHASE:`, `+ command`), stdout and
+stderr are mixed without a rule, `release.py` parses `HOST-PHASE:` from
+`prepare-host.sh`, many assertions in the tests and the acceptance harness match
+these strings, and nothing records afterwards what the administrator or runtime
+account did, which matters on closed networks.
+
+### Task
+
+- One convention, written into the review guide: completed steps `OK:` (or the
+  existing `[OK]`, chosen once), `WARNING:`/`ERROR:` on stderr with the next
+  action in the same message, a final `PASS:` line, no secret values. Results
+  and data (the `status` table, `--json`, rendered output) stay plain `print`
+  on stdout.
+- Python: standard-library `logging` (Python 3.6, no extra packages) configured
+  once in each command's entry point (`deployment/cli.py`, `bundle.py`), format
+  `%(message)s` so visible text is unchanged; `INFO` to stdout,
+  `WARNING`/`ERROR` to stderr (two handlers, since the default handler writes
+  everything to stderr). `--verbose` (item 73) enables `DEBUG`, which carries
+  today's `+ command` lines.
+- Audit trail: one line per operator action and result to the journal via
+  `logging.handlers.SysLogHandler` (`/dev/log`), identifier `<product>`, so
+  support can ask for `journalctl -t <product>`. Shell scripts use
+  `logger -t <product>` for the same; their terminal output stays `printf`.
+  Without `/dev/log` (tests, containers) the command still works.
+- Markers that other code parses (`HOST-PHASE:`, `PASS:`) become a documented,
+  tested interface or are replaced by exit codes or `--json`.
+
+### Constraints
+
+- Keep existing messages and streams that tests, the harness and the manual
+  rely on, or change them together with those consumers.
+- Never log secret values, complete connection strings or config contents,
+  also not at `DEBUG` or in the journal (credential-retention contract).
+- Not in scope: `scripts/release.py` (removed in item 69's WP6) and
+  application/container logs (already in journald through systemd and Podman).
+
+### Verification
+
+Tests for format and stream per message class, `--verbose`, the syslog handler
+(with a fake socket), absence of secret values in every handler, and logging
+reset between tests (configuration is global). Existing tests and the
+acceptance harness pass unchanged. A real Podman/systemd run checks
+`journalctl -t <product>` after install and uninstall. Update the review guide
+with the convention and README where it shows output.
+
 ## 64. Support new rootless installations outside the login home
 
 Status: implemented with local regressions on `claude/friendly-mendel-8u3bqs`
@@ -1219,72 +1328,14 @@ Deliverables: lab findings for the questions above, a chosen design recorded in
 a plan document, then changes to 65/66 and a printed-manual human trial under
 item 68 (console-only and SSH variants, one person with both accounts).
 
-### Command-line parsing (product owner, 2026-10-26)
+### Command-line parsing and operator logging
 
-Today `deploy.sh` (`deployment/cli.py`) parses `sys.argv` by hand with a
-compound validity expression, and `scripts/release.py` uses one flat `argparse`
-parser whose options are shared by every operation and checked afterwards
-("setup arguments are only accepted for setup"). Both work for today's few
-options but are hard to extend, give no per-command help, and the flat option
-list is part of why the administrator command is long.
-
-Use standard-library `argparse` with subcommands (`add_subparsers`, one parser
-per command declaring only its own arguments, `allow_abbrev=False`) for:
-
-- the new `<product>-admin` and `<product>` commands of the
-  [RPM delivery plan](docs/RPM-DELIVERY-PLAN.md), from their first version;
-- `deploy.sh` when WP3 adds `init-config --settings` and the other release
-  interface 2 options, instead of growing the hand-written condition.
-
-No third-party CLI library (offline hosts, fapolicyd, Python 3.6). Keep the
-existing exit codes (2 usage, 1 failure, 3 needs input where defined), the
-messages and output streams that tests, the harness and the manual rely on,
-or change them together with those consumers. Newer tools call older
-releases' `deploy.sh`, so its accepted command forms are a release interface:
-keep accepting them. Prompts with defaults for paper operation are a separate
-layer on top of parsing: ask only when an option is missing and stdin is a
-terminal; otherwise fail as today. `scripts/release.py` is not converted, since
-WP6 removes that flow. Add parser tests per command (valid forms, unknown and
-misplaced options, abbreviations refused, `--help`).
-
-### Operator messages and logging (product owner, 2026-10-26)
-
-Operator output today is `print` in Python (about 25 calls in `deployment/`,
-14 in `scripts/release.py`, 5 in `bundle.py`) and `printf`/`echo` in shell, with
-no documented convention and no Python `logging`. Prefixes vary (`[OK]`,
-`PASS:`, `INFO:`, `START:`, `ERROR:`, `WARNING:`, `HOST-PHASE:`, `+ command`),
-stdout and stderr are mixed without a rule, `release.py` parses
-`HOST-PHASE:` from `prepare-host.sh`, about 100 assertions in 33 test files and
-the acceptance harness match these strings, and nothing records afterwards what
-the administrator or runtime user did, which matters on closed networks.
-
-Do this together with the command-line parsing above, in WP2 (`<product>-admin`)
-and WP3 (`<product>` and `deploy.sh`), not as a separate cleanup:
-
-- One convention, written into the review guide: completed steps `OK:` (or the
-  existing `[OK]`, chosen once), `WARNING:`/`ERROR:` on stderr with the next
-  action in the same message, a final `PASS:` line, no secret values. Results
-  and data (the `status` table, `--json`, rendered output) stay plain `print`
-  on stdout.
-- Python: standard-library `logging` (Python 3.6, no extra packages) configured
-  once in each command's entry point, format `%(message)s` so visible text is
-  unchanged; `INFO` to stdout, `WARNING`/`ERROR` to stderr (two handlers, since
-  the default handler writes everything to stderr). `--verbose` enables `DEBUG`,
-  which carries today's `+ command` lines.
-- Audit trail: one line per operator action and result to the journal via
-  `logging.handlers.SysLogHandler` (`/dev/log`), identifier `<product>`, so
-  support can ask for `journalctl -t <product>`. Shell scripts use
-  `logger -t <product>` for the same; their terminal output stays `printf`.
-- Markers that other code parses (`HOST-PHASE:`, `PASS:`) become a documented,
-  tested interface or are replaced by exit codes or `--json`.
-- Tests: format and stream per message class, `--verbose`, the syslog handler
-  (with a fake socket), and logging reset between tests (configuration is
-  global). Keep existing messages and streams that tests, the harness and the
-  manual rely on, or change them together with those consumers.
-
-Not in scope: `scripts/release.py` (removed in WP6) and application/container
-logs (already in journald through systemd and Podman). Estimate: 2–3 days
-within WP2/WP3.
+Split out on 2026-10-28 into
+[item 73](#73-parse-command-lines-with-argparse-subcommands) (argparse
+subcommands) and [item 74](#74-one-operator-message-convention-and-python-logging)
+(message convention and Python `logging`), so they can be done before the RPM
+work. The new `<product>-admin` and `<product>` commands of WP2/WP3 use both
+from their first version.
 
 ## 66. Install sets: several signed bundles through one entry point
 
@@ -1312,8 +1363,8 @@ to be present); keep independent component versions; keep existing config and
 credentials; offline only; a rerun after interruption continues without
 restarting finished components needlessly; the runtime account needs no sudo.
 Coordinate with item 60 (CLI name) and the per-component lifecycle; do not add a
-second deployment engine. New command-line options follow item 69's
-"Command-line parsing" (argparse subcommands, no hand-written `sys.argv`
+second deployment engine. New command-line options follow
+[item 73](#73-parse-command-lines-with-argparse-subcommands) (argparse subcommands, no hand-written `sys.argv`
 conditions). Tests: dependency order, partial failure and retry,
 manifest/bundle mismatch, and a real OL9 run.
 
