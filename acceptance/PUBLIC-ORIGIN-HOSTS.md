@@ -201,3 +201,124 @@ Podman version, SELinux mode, the outputs of parts 2 and 3 (addresses may be
 shortened, no credentials), the hostAliases result, and any shipped component
 that behaved differently without host entries. Update item 76's status and the
 review guide's gap row only from these results.
+
+## Lab verification (2026-10-29): stopped in part 2
+
+Tested commit: `5f4b499f7cc0c9123fdc6f4078031d5cfa24d371`, from a clean
+`main` checkout. The controller's private `lab.env` was present; SSH as its
+`SSH_USER` (`gunstein`) and `sudo -n true` succeeded on both configured lab VMs
+before execution. Only the configured disposable VMs were reset by part 1.
+
+**Overall: incomplete; stopped at the first unexpected result, part 2,
+step 3 (the backend `/etc/hosts` grep).** No command was retried, no recipe,
+code or configuration was repaired, and parts 3 and 4 were not started.
+The required DEV restoration completed successfully.
+
+### Environment recorded by this run
+
+| Host | VM | OS | Podman | systemd | SELinux | fapolicyd |
+| --- | --- | --- | --- | --- | --- | --- |
+| DEV | 107 / 192.168.0.102 | Oracle Linux 9.8 | 5.8.2 | 252 | Enforcing | inactive / disabled |
+| PROD | 108 / 192.168.0.108 | Oracle Linux 9.8 | 5.8.2 | 252 | Enforcing | active / enabled |
+
+Lab values: `PROD_HOST=myproduct-proxy`, `HTTPS_PORT=8443`. No credentials,
+private-file contents, authentication redirect parameters or raw journals are
+included in this report.
+
+### Harness runs: parts 1 and 4
+
+| Part | Run ID | Result | Passed / recorded steps |
+| --- | --- | --- | ---: |
+| 1 | `hosts76-whoami-5f4b499` | **CLEAN PASS** | **46/46** |
+| 4 | Fixed matrix (normal, app2-first, Identity-only, help-only, platform/help, renamed) | **NOT RUN**, due to the part 2 stop | 0 recorded; no runs created |
+
+Part 1 ran the specified command:
+
+```sh
+python3 acceptance/acceptance.py --run hosts76-whoami-5f4b499 --whoami run
+```
+
+The run started at 2026-10-29 16:53 UTC. Image builds, DEV startup and whoami
+smoke, signed bundle installation on PROD, subPath checks, PROD whoami smoke,
+log safety, session persistence over service restart and reboot, trust-chain
+negative control, internal variant, restoration, final checks,
+`11-prod-audit` and cleanup all passed. This run did not set a host loopback
+line; it does not establish the manual loopback results requested below.
+
+Original harness artifacts remain at
+`~/podman-offline-acceptance-runs/hosts76-whoami-5f4b499/REPORT.md`,
+`record.jsonl` and `EVIDENCE.md` on the controller. Older lab results are not
+used as evidence here. No separate product/unit suite or isolated
+acceptance-harness unittest suite was run for this verification.
+
+### Manual checks: part 2 (DEV)
+
+The source checkout was the one left by part 1:
+`~/podman-offline-acceptance/hosts76-whoami-5f4b499/src`.
+The recipe's `host=myproduct-proxy` was used unchanged.
+
+| Recipe step | Result | Recorded output / observation |
+| --- | --- | --- |
+| 1. Add host loopback line and resolve on DEV | PASS | `getent hosts "$host"`: `127.0.0.1 myproduct-proxy` (exit 0). |
+| 2. Negative control without `--no-hosts` | PASS | `podman run ... --entrypoint getent "$proxy_image" hosts "$host"`: `127.0.0.1 myproduct-proxy myproduct-proxy` (exit 0); image `docker.io/library/nginx:1.28-alpine`. |
+| 3. Normal DEV startup | Startup passed | `./dev/dev.sh up` exited 0 with the host line present. |
+| 3. Backend hosts-file check | **STOP: expected count missing** | Empty stdout; stderr `grep: /etc/hosts: No such file or directory`; enclosing shell exit 0 because of the recipe's `|| true`. Expected stdout was `0`. |
+| 3. Backend DNS/proxy address comparison | NOT RUN | Stopped before the two address commands; no proxy address comparison recorded. |
+| 3. All-container localhost loop | NOT RUN | Neither a localhost pass nor a `NO-LOCALHOST` observation is available. |
+| 4. Sign-in/restart smoke with the host loopback line | NOT RUN | No manual-loopback sign-in result; part 1's smoke is separate evidence. |
+| 5. Raw Podman hostAliases test | NOT RUN | No exit status or Podman message exists for this test; no hostAliases manifest/pod was created. |
+| 6. Restore | PASS | DEV down, loopback-line removal and confirmation all exited 0; details below. |
+
+Of the five numbered verification steps (1–5), steps 1 and 2 fully passed;
+step 3 stopped partway through, and steps 4–5 were not run. Restore step 6
+is recorded separately and is not counted as a passed verification step.
+
+The first unexpected command, exactly as executed with the recipe's host
+variable, was:
+
+```sh
+podman exec app3-whoami-backend sh -c "grep -c '$host' /etc/hosts || true"
+```
+
+Bounded output:
+
+```text
+stdout: <empty>
+stderr: grep: /etc/hosts: No such file or directory
+enclosing command exit: 0
+expected stdout: 0
+```
+
+The backend had no `/etc/hosts` file, rather than an existing file with zero
+matching lines. Therefore the shell exit alone was not accepted as a pass.
+This establishes a mismatch with the recipe's expected observation; it does
+not establish whether backend DNS or localhost resolution would pass. No
+alternative command or workaround was attempted.
+
+All shipped restoration commands were executed after the stop:
+
+```sh
+./dev/dev.sh down
+sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts
+getent hosts "$host" || echo 'restored: no host entry'
+```
+
+Each command exited 0. Confirmation printed:
+
+```text
+restored: no host entry
+```
+
+### Manual checks: part 3 (PROD) and remaining limits
+
+Part 3 was **NOT RUN**. PROD's `/etc/hosts` was not modified manually, so no
+PROD hosts-file restoration was needed. No manual unit grep counts, backend
+addresses, localhost results or `302` sign-in-start result were collected.
+The raw hostAliases behavior, manual loopback sign-in on either host, and the
+six fixed matrix scenarios remain unverified at this commit. No
+`NO-LOCALHOST` was observed because that loop was not reached; this is not a
+localhost pass.
+
+Only this dated evidence section was added. `BACKLOG.md`,
+`docs/REVIEW_GUIDE.md`, the recipe above and implementation code are unchanged.
+The result awaits product-owner review; no verification status is promoted.
