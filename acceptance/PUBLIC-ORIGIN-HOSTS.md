@@ -513,3 +513,80 @@ explicit unchanged-code condition above. This report does not claim runtime
 verification of `--hosts-file=none` through kube play or Quadlet, or empirical
 understandability/operator-trial verification. Earlier result sections are
 unchanged; neither `BACKLOG.md` nor `docs/REVIEW_GUIDE.md` was edited.
+
+## Remaining verification attempt (2026-10-29): stopped in part 3
+
+Controller revision: `00d34e454d234c776e8bdd6c013b82264f2232ed`, a clean
+`main` checkout at execution start. Fetch confirmed that this was also the
+current remote main. The non-Markdown diff against `5f4b499` was empty.
+Part 1 remains the explicit reused run `hosts76-whoami-5f4b499`
+(**CLEAN PASS, 46/46**); the Revision 2 part-2 results above are unchanged.
+Neither was rerun. This attempt started at part 3 on the existing PROD
+installation, after confirming sudo access and that app3's installed marker
+still existed. No VM was reset.
+
+**Stopped at the first failure: part 3, step 1.** The recipe's `units cat`
+command failed before any unit contents could be checked. No workaround,
+alternative inspection command, recipe fix, code change or retry was made.
+Part 4 was not started.
+
+PROD (configured VM 108, `192.168.0.108`): **Oracle Linux 9.8, Podman 5.8.2,
+SELinux Enforcing**. The SSH account was `gunstein`.
+
+### Manual PROD result
+
+The helper was used exactly as supplied in Revision 2:
+
+```sh
+units() { sudo -n systemctl --user -M myproduct-ops@ "$@"; }
+```
+
+The failed recipe command was:
+
+```sh
+for u in platform identity app3; do printf '%s ' "$u"; units cat myproduct-$u.service | grep -c -- '--no-hosts'; done
+```
+
+Complete stdout:
+
+```text
+platform 0
+identity 0
+app3 0
+```
+
+Complete application stderr (SSH transport warnings excluded):
+
+```text
+Cannot remotely cat units.
+Cannot remotely cat units.
+Cannot remotely cat units.
+```
+
+The enclosing command exited **1**. The expected output was `1` for each
+unit. Here `systemctl cat` rejected the remote-machine access form and supplied
+no unit text to `grep`; the zero counts therefore **do not establish that
+`--no-hosts` is absent**. No generated service command line was obtained.
+
+| Part 3 check | Result |
+| --- | --- |
+| Step 1: generated-unit `--no-hosts` counts | **FAIL**, inspection command rejected; 0/1 attempted numbered checks passed. |
+| Step 2: host loopback mapping and service recreation | NOT RUN. |
+| Step 3: backend hosts file, proxy address and localhost observations | NOT RUN. |
+| Public-origin sign-in start (`302`) | NOT RUN. |
+| Restore | NOT NEEDED: the failure preceded the hosts-file append and service restart. No PROD host entry was added and no services were changed. |
+
+### Harness runs, scope and gaps
+
+No new harness run was created. All six part-4 scenarios (normal, app2-first,
+Identity-only, help-only, platform/help and renamed) are **NOT RUN**, with zero
+recorded steps in this attempt, because execution stopped at the part-3
+failure. No product/unit or isolated acceptance-harness tests were run.
+
+The successful DEV loopback/sign-in and localhost observations from part 2
+remain available, but this attempt adds no PROD loopback, localhost, sign-in
+or fixed-matrix verification. The full backlog 76 lab scope is still
+incomplete. Only this evidence section was appended; the recipe, earlier
+results, `BACKLOG.md`, `docs/REVIEW_GUIDE.md` and implementation code were not
+changed. The unsupported inspection command is reported for review rather than
+silently bypassed.
