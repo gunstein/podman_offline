@@ -386,6 +386,52 @@ class CASettingsTests(CertificateFixture):
             sorted(str(path.relative_to(target)) for path in target.rglob("*")), paths
         )
 
+    def test_web_certificate_for_an_earlier_host_name_is_reported(self):
+        # Backlog 76: a retained certificate must not silently keep an old name.
+        target = self.root / "pki"
+        web = target / "platform/credentials/web"
+        self.assertEqual(
+            self.run_script(
+                "--root", str(target), "platform", "old.example.test"
+            ).returncode,
+            0,
+        )
+        before = self.fingerprints(target)
+        result = self.run_script("--root", str(target), "platform", "new.example.test")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("does not cover host name new.example.test", result.stdout)
+        self.assertIn("remove web.crt and web.key", result.stdout)
+        self.assertEqual(self.fingerprints(target), before)
+        # The same name, or localhost which every web certificate covers, still passes.
+        for name in ("old.example.test", "localhost"):
+            with self.subTest(name=name):
+                result = self.run_script("--root", str(target), "platform", name)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(self.fingerprints(target), before)
+        # Following the instruction issues the new name from the retained CA.
+        ca = target / "PKI/private/ca.crt"
+        ca_before = ca.read_bytes()
+        (web / "web.crt").unlink()
+        (web / "web.key").unlink()
+        result = self.run_script("--root", str(target), "platform", "new.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(ca.read_bytes(), ca_before)
+        names = subprocess.run(
+            [
+                "openssl",
+                "x509",
+                "-in",
+                str(web / "web.crt"),
+                "-noout",
+                "-checkhost",
+                "new.example.test",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            universal_newlines=True,
+        ).stdout
+        self.assertIn("does match certificate", names)
+
     def test_invalid_ca_settings_write_nothing_in_all_modes(self):
         target = self.root / "must-not-exist"
         invalid = (

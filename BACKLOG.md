@@ -15,7 +15,9 @@ items retain their individual scopes below; agree the next priority separately.
 is the top priority, requested by the product owner on 2026-10-29: on a host
 whose `/etc/hosts` maps the public host name to `127.0.0.1` (a developer VDI),
 Podman copies that line into every container, so a backend cannot reach Duende
-through the public origin and rejects every token (`IDX10204`).
+through the public origin and rejects every token (`IDX10204`). Implemented
+with local tests (`--no-hosts` in dev and Quadlet); the real Podman check in
+[PUBLIC-ORIGIN-HOSTS.md](acceptance/PUBLIC-ORIGIN-HOSTS.md) is next.
 
 [Item 72](#72-register-api-resource-secrets-with-identity) was requested by
 the product owner on 2026-10-28 while converting the organisation's
@@ -226,7 +228,7 @@ audit fix and final audit. [Evidence and remaining work outside that scope](acce
 Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
 [the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
 
-Open: 76 (top priority, 2026-10-29), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 76 (top priority, 2026-10-29; implemented locally, lab check pending), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Also open, priority not assigned: [75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
 (Python lifecycle understandability; coordinate with 69 and 73–74).
@@ -259,8 +261,17 @@ restore core or merge Identity back into platform.
 
 ## 76. Reach the public origin from containers when the host maps it to loopback
 
-Status: planned, top priority (2026-10-29), requested by the product owner.
-Found while converting the organisation's .NET backend on a developer VDI.
+Status: **implemented with local regression coverage (2026-10-29); real
+Podman/Quadlet verification pending** ([change, local evidence and lab check](acceptance/PUBLIC-ORIGIN-HOSTS.md)).
+Top priority, requested by the product owner. Found while converting the
+organisation's .NET backend on a developer VDI. Implemented: tasks 1 (`--no-hosts`
+in `dev/dev.sh` and `PodmanArgs=--no-hosts` in `quadlet/template.kube`,
+`hostAliases` refused by the shared Pod shape guard), 2 and 4 (COMPONENTS.md),
+and task 3 in the dev credential tooling only: `generate-certificates.sh
+platform <host>` refuses a retained web certificate for another name.
+`validate` does not read the web certificate (it reads no credential source).
+Open: the Podman confirmations in task 1 and the lab check, then an automated
+acceptance step.
 
 ### How containers reach the public origin today
 

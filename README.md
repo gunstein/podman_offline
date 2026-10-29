@@ -309,6 +309,8 @@ entry. Both YAML sequence indentation styles work. This is a focused structural
 guard, not full Kubernetes schema validation; other Pod fields and arbitrary
 ConfigMap/Secret keys and annotations remain supported. Bundle building uses
 the same guard before image operations. See [verification](acceptance/MANIFEST-STRUCTURE.md).
+The same guard refuses Pod `spec.hostAliases`: pods run with `--no-hosts`
+(backlog 76; [how containers reach the public origin](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
 
 Run `./deploy.sh prepare` from the source checkout; product bundles reject dev
 prepare and use persistent config through install. Standalone fixtures retain
@@ -324,7 +326,12 @@ are retained between renders. Keys and import archives also live there. `build/i
 the corresponding database volumes: their initialized passwords would differ.
 The default HTTPS name is `myproduct-proxy:8443`; the smoke test maps it locally
 without editing `/etc/hosts`. A manual browser needs suitable DNS/hosts and CA
-trust. Each app uses `/app1/` or `/app2/`; help is public at `/help/`.
+trust; a host `/etc/hosts` line such as `127.0.0.1 <public host name>` serves
+only the browser, because pods start with `--no-hosts` and resolve the name to
+the proxy ([details](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
+After changing `PUBLIC_ORIGIN`, `dev/demo-credentials.sh` refuses a retained
+web certificate for the old name; remove `web.crt` and `web.key` as it says.
+Each app uses `/app1/` or `/app2/`; help is public at `/help/`.
 
 Smoke tests use actual HTTPS, OIDC code/PKCE/private_key_jwt, user isolation,
 CRUD, CSRF and help navigation. They withhold auth URLs and response bodies on

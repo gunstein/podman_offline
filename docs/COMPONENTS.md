@@ -405,6 +405,43 @@ environments and child processes. File mounts avoid the extra environment copy
 but still require suitable container ownership/modes. No new credential files,
 network services, SELinux exceptions or fapolicyd trust rules are needed.
 
+## Reaching the public origin from a container
+
+A backend calls Duende (or any routed service) through the public origin, as in
+Kubernetes. Inside the product network the public host name resolves to the
+proxy:
+
+1. `PUBLIC_ORIGIN` gives the derived `PUBLIC_HOSTNAME`.
+2. The platform proxy Pod sets `hostname: '@@PUBLIC_HOSTNAME@@'`
+   (`components/platform/manifests/80-proxy.yaml`).
+3. Podman registers that host name with the proxy's internal address in the
+   network's DNS (aardvark-dns; rootless:
+   `$XDG_RUNTIME_DIR/containers/networks/aardvark-dns/<network>`).
+4. Other containers resolve the name there and connect to nginx on
+   `HTTPS_PORT` inside the network. `IP_ADDRESS` (the Pod's `hostIP`) only
+   publishes the port on the host for browsers; containers never use it.
+
+By default Podman copies the host's `/etc/hosts` into every container, and
+`/etc/hosts` is read before DNS. A host line such as
+`127.0.0.1 <public host name>` (common on developer VDIs, or added for a local
+browser) would then send each container to its own loopback. Pods therefore
+start with `--no-hosts`: `dev/dev.sh` passes it to `podman kube play`, and the
+Quadlet unit sets `PodmanArgs=--no-hosts`. Containers keep the image's own
+`/etc/hosts` (normally `localhost`) and resolve everything else through the
+network's DNS, which forwards unknown names to the host's resolvers. Pod
+`spec.hostAliases` conflicts with this and is refused by validation and bundle
+building.
+
+Symptom of a container that cannot reach the public origin: the backend
+rejects every token with `IDX10204` (no expected issuer, because the discovery
+document could not be fetched) and `WWW-Authenticate: ... The issuer '...' is
+invalid`, often without `IDX20803`. Check from the backend Pod:
+
+```sh
+podman exec <backend-container> getent hosts <public host name>   # proxy's internal address
+podman inspect <proxy-container> --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+```
+
 ## Trusting the environment's CA in a backend
 
 A backend that signs in through Duende is an OIDC client: it calls Duende
@@ -478,6 +515,24 @@ backend must call Duende with the host name in `web.crt` (the one in
 `PUBLIC_ORIGIN`). `subPath` with a Secret volume under `podman kube play` is
 verified separately on the lab host; see
 [trust chain verification](../acceptance/TRUST-CHAIN.md).
+
+Checking the chain from inside the backend container: `openssl s_client` does
+not find a CA mounted under `/etc/ssl/certs` by an ordinary file name (it uses
+the bundle and hashed names), so it reports `num=20`/`21` even when .NET trusts
+the chain. Name the file explicitly:
+
+```sh
+h=<public host name>
+openssl s_client -connect "$h:<HTTPS_PORT>" -servername "$h" -verify_hostname "$h" \
+  -CAfile /etc/ssl/certs/myproduct-root.pem </dev/null 2>&1 | grep 'Verify return code'
+```
+
+`0 (ok)` is expected. `62` (hostname mismatch) means the web certificate was
+issued for an earlier `PUBLIC_ORIGIN`: in dev, `dev/demo-credentials.sh` and
+`dev/generate-certificates.sh platform <host>` refuse such a retained
+certificate and say to remove `web.crt` and `web.key` so a new one is issued
+from the same CA. In production the operator replaces the provided web
+certificate.
 
 ## ConfigMap inline values
 

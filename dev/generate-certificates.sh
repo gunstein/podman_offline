@@ -486,6 +486,13 @@ if [[ ${1:-} == platform || ${1:-} == identity || ${1:-} == app1 || ${1:-} == ap
     }
     case "$component" in
         platform)
+            # A retained certificate for an earlier PUBLIC_ORIGIN would fail hostname
+            # checks later in browsers and backends (backlog 76); say so now.
+            web=platform/credentials/web/web.crt
+            if [[ -s $web ]] && ! openssl x509 -in "$web" -noout -checkhost "$hostname" 2>/dev/null | grep -q ' does match certificate'; then
+                echo "ERROR: $root/$web does not cover host name $hostname (PUBLIC_ORIGIN changed?); remove web.crt and web.key from $root/platform/credentials/web and run again to issue a new certificate from the same CA" >&2
+                exit 1
+            fi
             issue_component web platform/credentials/web "$(printf 'extendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,DNS:localhost,IP:127.0.0.1' "$hostname")"
             ;;
         identity)

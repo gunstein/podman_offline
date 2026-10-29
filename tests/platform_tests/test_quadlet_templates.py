@@ -202,7 +202,11 @@ class QuadletBundleTests(ProductFixture):
             "# ./deploy.sh install fills in the product name (bundles.yaml) and the unit name\n"
             "# (<product>-<component>, or the product for a standalone fixture).\n"
             "[Unit]\nDescription=cedar-processor\n\n[Kube]\nYaml=cedar-processor.yaml\n"
-            "Network=cedar.network\n\n[Service]\nRestart=on-failure\nTimeoutStartSec=180\n"
+            "Network=cedar.network\n"
+            "# Keep host /etc/hosts entries out of the containers: the public host name must\n"
+            "# resolve to the proxy in the product network, not to a host loopback line.\n"
+            "PodmanArgs=--no-hosts\n"
+            "\n[Service]\nRestart=on-failure\nTimeoutStartSec=180\n"
             "\n[Install]\nWantedBy=default.target\n"
         )
         self.assertEqual(unit.read_text(), expected)

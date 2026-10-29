@@ -38,7 +38,12 @@ def export_platform(target):
     shutil.copy2(str(TESTS / "run.py"), str(target / "tests/run.py"))
     shutil.copy2(str(TESTS / "README.md"), str(target / "tests/README.md"))
     (target / "dev").mkdir()
-    for name in ("build-images.sh", "pull-images.sh", "generate-certificates.sh"):
+    for name in (
+        "build-images.sh",
+        "pull-images.sh",
+        "generate-certificates.sh",
+        "dev.sh",
+    ):
         shutil.copy2(str(ROOT / "dev" / name), str(target / "dev" / name))
     fixture = TESTS / "fixtures/catalog"
     shutil.copytree(str(fixture / "components"), str(target / "components"))

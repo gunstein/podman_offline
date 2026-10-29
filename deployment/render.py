@@ -864,6 +864,14 @@ def pod_specs(documents, source="manifests"):
                         f"{source}: spec.{field} is not allowed here; place {field} "
                         "under spec.containers[] or spec.initContainers[]"
                     )
+            if "hostAliases" in spec:
+                # Pods run with --no-hosts (backlog 76), which conflicts with hostAliases.
+                raise common.DeployError(
+                    f"{source}: spec.hostAliases is not supported: pods run with "
+                    "--no-hosts so that host /etc/hosts lines stay out; containers "
+                    "reach the public origin through the proxy's host name in the "
+                    "product network"
+                )
             check_lists(spec, ("volumes",), f"{source}: Pod spec")
             specs.append((doc, spec))
     return specs
