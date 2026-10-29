@@ -12,6 +12,7 @@ build entrypoint and also uses `-B`.
 | --- | --- |
 | `deployment/__main__.py` | Minimal CLI delegation |
 | `deployment/cli.py` | argparse subcommands, exit codes, concise errors and the journal audit lines |
+| `deployment/arguments.py` | argparse conventions shared with `bundle.py`: `Usage:`/`ERROR:`, exit codes, repeated flags and `--` refused |
 | `deployment/output.py` | Operator message convention: standard-library logging to stdout/stderr, `--verbose`, journal audit trail |
 | `deployment/status.py` | Read-only installed marker/descriptor/pending report, dependency ordering and bounded user-unit state queries; text/JSON output and status exit code, without config or credential reads |
 | `deployment/common.py` | Release paths, the account's identity home, production path slots, name rules, shared constants and DeployError |

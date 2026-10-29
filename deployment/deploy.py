@@ -1199,7 +1199,11 @@ def uninstall_plan(component, delete_data, installed, product):
 
 
 def uninstall(component=None, delete_data=False):
-    """Resume one scoped uninstall from validated metadata, even after removing its YAML."""
+    """Resume one scoped uninstall from validated metadata, even after removing its YAML.
+
+    Returns the installed version that was removed, which can differ from this
+    bundle's version (the journal records both).
+    """
     production_environment()
     descriptor = bundle_descriptor()
     own = descriptor["name"]
@@ -1295,6 +1299,7 @@ def uninstall(component=None, delete_data=False):
                 raise common.DeployError(f"Cannot check volume {name} before deletion")
         if (common.STATE / component).exists():
             shutil.rmtree(common.STATE / component)
+    removed = catalog.installed_version(common.STATE, component)
     # Marker first: metadata without a marker is an unfinished install, never the reverse.
     for path in (marker, catalog.metadata_path(common.STATE, component)):
         if path.exists():
@@ -1303,3 +1308,4 @@ def uninstall(component=None, delete_data=False):
     log.info(
         f"[OK] Uninstalled {component}; shared network retained; data {'deleted' if delete_data else 'preserved'}"
     )
+    return removed

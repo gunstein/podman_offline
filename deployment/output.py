@@ -19,8 +19,8 @@ when they write, so redirected streams receive the messages. Entry points call
 """
 
 import logging
-import logging.handlers
 import os
+import socket
 import sys
 
 log = logging.getLogger("deployment")
@@ -45,11 +45,28 @@ class CurrentStream(logging.StreamHandler):
         """StreamHandler assigns a stream; the current one is always used."""
 
 
-class QuietSysLogHandler(logging.handlers.SysLogHandler):
-    """A journal that goes away never interrupts or clutters the command."""
+class JournalHandler(logging.Handler):
+    """Send each audit line as one syslog datagram to the local journal socket.
 
-    def handleError(self, record):
-        pass
+    A new socket per line, closed at once: there is no connection to keep,
+    repair or close at shutdown, on any Python version. A missing or refusing
+    socket never interrupts or clutters the command.
+    """
+
+    PRIORITY = "<14>"  # facility user, severity info
+
+    def __init__(self, address, ident):
+        super().__init__()
+        self.address = address
+        self.ident = ident
+
+    def emit(self, record):
+        try:
+            line = self.PRIORITY + self.ident + self.format(record)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+                sender.sendto(line.encode("utf-8"), self.address)
+        except OSError:
+            pass
 
 
 def terminal_handlers():
@@ -89,16 +106,10 @@ def configure(verbose=False, product=None, address=None):
     for handler in list(audit_log.handlers):
         audit_log.removeHandler(handler)
         handler.close()
-    handler = None
-    if product is not None:
-        try:
-            handler = QuietSysLogHandler(address=address or SYSLOG)
-        except OSError:
-            handler = None
-    if handler is None:
+    if product is None:
         audit_log.addHandler(logging.NullHandler())
         return
-    handler.ident = f"{product}[{os.getpid()}]: "
+    handler = JournalHandler(address or SYSLOG, f"{product}[{os.getpid()}]: ")
     handler.setFormatter(logging.Formatter("%(message)s"))
     audit_log.addHandler(handler)
 

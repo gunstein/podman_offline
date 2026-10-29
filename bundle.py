@@ -4,7 +4,6 @@
 dist/myproduct-<version>-offline.tar.gz (common.STANDALONE_PRODUCT).
 """
 
-import argparse
 import hashlib
 import logging
 import os
@@ -16,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from deployment import catalog, common, output
+from deployment import arguments, catalog, common, output
 from deployment import render as rendering
 
 # A child of the deployment logger: same handlers, streams and convention.
@@ -423,27 +422,33 @@ def build(selected=()):
 
 def parser():
     """./build-bundle.sh [--verbose] [<component> ...] (backlog 73)."""
-    result = argparse.ArgumentParser(
+    result = arguments.Parser(
         prog="./build-bundle.sh",
+        usage="./build-bundle.sh [<component> ...] [--verbose]",
         description="Build offline bundles; without components, every catalog component.",
         allow_abbrev=False,
     )
     result.add_argument(
-        "--verbose", action="store_true", help="also show each host command"
+        "--verbose",
+        action=arguments.Once,
+        default=False,
+        help="also show each host command",
     )
     result.add_argument("components", nargs="*", metavar="<component>")
     return result
 
 
-def main(arguments=None):
+def main(command_line=None):
     """Build the bundle and return an exit code without traceback for expected errors.
 
-    arguments are the command-line arguments (default: sys.argv[1:]): optional
+    command_line is the argument list (default: sys.argv[1:]): optional
     component names and --verbose. Usage errors exit 2 and --help 0.
     """
     try:
-        args = parser().parse_args(sys.argv[1:] if arguments is None else arguments)
-    except SystemExit as error:
+        args = arguments.parse(
+            parser(), sys.argv[1:] if command_line is None else command_line
+        )
+    except arguments.UsageError as error:
         return error.code
     output.configure(verbose=args.verbose)
     try:

@@ -993,8 +993,9 @@ deploy and Podman do not infer a file's purpose from the name `session-key`.
 `--verbose` (before or after the command) also shows each host command as a
 `+ podman ...` line. `./build-bundle.sh [<component> ...] [--verbose]` works
 the same way. Exit codes: 0 success (also `--help`), 1 failure, 2 usage error.
-Usage errors print the command's `Usage:` line and an `ERROR:` line on stderr;
-abbreviated or repeated options are refused.
+Usage errors print the command's `Usage:` line and an `ERROR:` line on stderr,
+for both commands; abbreviated or repeated options (anywhere on the line) and
+the `--` separator are refused.
 
 Messages follow one convention (backlog 74; [review guide](docs/REVIEW_GUIDE.md)):
 `[OK] ...` for a completed step and a final `PASS: ...` line on stdout,
@@ -1008,8 +1009,10 @@ as root; support can read them with:
 journalctl -t <product>
 ```
 
-These lines name the command, component and version, never config or secret
-values. Without a journal socket the commands work as before.
+These lines name the command, the component and the version of the bundle
+that ran it, for example `uninstall app1 (bundle 1.0.0): completed; removed
+installed version 1.1.0`, never config or secret values. Without a journal
+socket the commands work as before.
 
 ## First production installation
 

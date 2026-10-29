@@ -15,6 +15,7 @@ import sys
 import yaml
 
 from . import catalog, common, deploy, status, validation
+from .arguments import Once, Parser, UsageError, parse
 from .output import audit, configure, log
 
 USAGE = (
@@ -23,42 +24,6 @@ USAGE = (
 )
 # Commands that change the target; each start and result goes to the journal.
 AUDITED = ("init-layout", "init-config", "install", "uninstall")
-
-
-class UsageError(Exception):
-    """Raised instead of argparse's own exit, so main returns the code."""
-
-
-class Parser(argparse.ArgumentParser):
-    """Keep the historical "Usage:" line and never exit from inside main."""
-
-    def format_usage(self):
-        return "Usage: " + (self.usage or USAGE) + "\n"
-
-    def format_help(self):
-        return self.format_usage() + super().format_help().split("\n", 1)[1]
-
-    def error(self, message):
-        sys.stderr.write(self.format_usage())
-        sys.stderr.write(f"ERROR: {message}\n")
-        raise UsageError()
-
-    def exit(self, status=0, message=None):
-        if message:
-            sys.stderr.write(message)
-        raise UsageError(status)
-
-
-class Once(argparse.Action):
-    """A flag that may be given once; a repeat is a usage error."""
-
-    def __init__(self, option_strings, dest, **kwargs):
-        super().__init__(option_strings, dest, nargs=0, **kwargs)
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        if getattr(namespace, self.dest, False):
-            parser.error(f"{option_string} given more than once")
-        setattr(namespace, self.dest, True)
 
 
 def component_id(value):
@@ -126,12 +91,16 @@ def parser():
 
 
 def audit_subject(command, args):
-    """Name the command, component and version for the journal; never config."""
+    """Name the command, component and executing bundle's version; never config.
+
+    The bundle version is labelled as such: an uninstall may run from another
+    release's bundle than the installed one (run() adds what it removed).
+    """
     subject = command
     try:
         descriptor = deploy.bundle_descriptor()
         name = getattr(args, "component", None) or descriptor["name"]
-        subject += f" {name} {descriptor['version']}"
+        subject += f" {name} (bundle {descriptor['version']})"
     except (OSError, common.DeployError, yaml.YAMLError):
         if getattr(args, "component", None):
             subject += " " + args.component
@@ -149,14 +118,17 @@ def journal_product():
 
 
 def run(args):
-    """Run one parsed command; return 1 for an expected failure."""
+    """Run one parsed command; return (exit code, result note for the journal)."""
+    note = ""
     try:
         if args.command == "status":
-            return status.status(json_output=args.json)
+            return status.status(json_output=args.json), note
         if args.command == "init-config":
             deploy.init_config(args.component)
         elif args.command == "uninstall":
-            deploy.uninstall(args.component, args.delete_data)
+            removed = deploy.uninstall(args.component, args.delete_data)
+            if removed:
+                note = f"; removed installed version {removed}"
         else:
             {
                 "prepare": deploy.prepare,
@@ -176,28 +148,31 @@ def run(args):
                 f"Troubleshoot: journalctl --user -u {service} and "
                 "/usr/lib/systemd/user-generators/podman-user-generator --dryrun"
             )
-        return 1
+        return 1, note
     except (OSError, common.DeployError, yaml.YAMLError) as error:
         log.error(f"ERROR: {error}")
-        return 1
+        return 1, note
     log.info(f"PASS: ./deploy.sh {args.command} completed")
-    return 0
+    return 0, note
 
 
 def main(arguments=None):
     """Parse the command line, run the command and return its exit code."""
     try:
-        args = parser().parse_args(sys.argv[1:] if arguments is None else arguments)
+        args = parse(
+            parser(),
+            sys.argv[1:] if arguments is None else arguments,
+            flags=("--verbose", "--delete-data", "--json"),
+        )
     except UsageError as error:
-        return error.args[0] if error.args else 2
+        return error.code
     audited = args.command in AUDITED
     configure(verbose=args.verbose, product=journal_product() if audited else None)
     if not audited:
-        return run(args)
+        return run(args)[0]
     subject = audit_subject(args.command, args)
     audit(f"{subject}: started")
-    code = run(args)
-    audit(
-        f"{subject}: {'completed' if code == 0 else 'failed (exit ' + str(code) + ')'}"
-    )
+    code, note = run(args)
+    result = "completed" + note if code == 0 else f"failed (exit {code})"
+    audit(f"{subject}: {result}")
     return code

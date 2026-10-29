@@ -5,7 +5,10 @@ import copy
 import io
 import logging
 import socket
+import subprocess
+import sys
 import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +16,7 @@ import bundle
 from deployment import cli, common, deploy, output
 
 from helpers.deploy_fixture import DeployFixture
-from helpers.product_fixture import ProductFixture, pod
+from helpers.product_fixture import REPO, ProductFixture, pod
 
 
 class ParserTests(DeployFixture):
@@ -68,6 +71,12 @@ class ParserTests(DeployFixture):
             ["status", "--json", "--json"],
             ["status", "--delete-data"],
             ["--verb", "install"],
+            # Subparsers fill their own namespace; repeats count over the line.
+            ["--verbose", "validate", "--verbose"],
+            # No accepted form needs the separator (component IDs never start with -).
+            ["--"],
+            ["uninstall", "--"],
+            ["init-config", "--", "app1"],
             ["install", "--verbose", "--verbose"],
         ):
             with self.subTest(arguments=arguments):
@@ -106,7 +115,21 @@ class ParserTests(DeployFixture):
     def test_build_bundle_arguments(self):
         with mock.patch.object(bundle, "build") as build:
             self.assertEqual(bundle.main(["--help"]), 0)
-            self.assertEqual(bundle.main(["--verb"]), 2)
+            self.assertTrue(
+                self.stdout.getvalue().startswith(
+                    "Usage: ./build-bundle.sh [<component> ...] [--verbose]"
+                )
+            )
+            for refused in (["--verb"], ["--verbose", "--verbose"], ["--", "app1"]):
+                with self.subTest(refused=refused):
+                    self.stderr.truncate(0)
+                    self.stderr.seek(0)
+                    self.assertEqual(bundle.main(refused), 2)
+                    errors = self.stderr.getvalue()
+                    self.assertTrue(errors.startswith("Usage: ./build-bundle.sh "))
+                    self.assertIn("\nERROR: ", errors)
+                    self.assertNotIn("usage:", errors)
+                    self.assertNotIn("error:", errors)
             build.assert_not_called()
             self.assertEqual(bundle.main(["app1", "help", "--verbose"]), 0)
             build.assert_called_once_with(["app1", "help"])
@@ -172,8 +195,7 @@ class Journal:
         found = []
         with contextlib.suppress(BlockingIOError):
             while True:
-                # SysLogHandler ends each datagram with NUL by default.
-                found.append(self.socket.recv(65536).decode("utf-8").rstrip("\x00"))
+                found.append(self.socket.recv(65536).decode("utf-8"))
         return found
 
     def close(self):
@@ -185,7 +207,7 @@ class AuditTests(ProductFixture):
 
     def setUp(self):
         super().setUp()
-        directory = tempfile.TemporaryDirectory(prefix="journal-", dir="/tmp")
+        directory = tempfile.TemporaryDirectory(prefix="journal-")
         self.addCleanup(directory.cleanup)
         self.journal = Journal(directory.name)
         self.addCleanup(self.journal.close)
@@ -225,12 +247,12 @@ class AuditTests(ProductFixture):
         self.assertEqual(
             [line.split(": ", 1)[1] for line in lines],
             [
-                "init-config worker 1.0.0: started",
-                "init-config worker 1.0.0: completed",
-                "install worker 1.0.0: started",
-                "install worker 1.0.0: completed",
-                "uninstall other 1.0.0: started",
-                "uninstall other 1.0.0: failed (exit 1)",
+                "init-config worker (bundle 1.0.0): started",
+                "init-config worker (bundle 1.0.0): completed",
+                "install worker (bundle 1.0.0): started",
+                "install worker (bundle 1.0.0): completed",
+                "uninstall other (bundle 1.0.0): started",
+                "uninstall other (bundle 1.0.0): failed (exit 1)",
             ],
         )
         for line in lines:
@@ -241,11 +263,64 @@ class AuditTests(ProductFixture):
         for text in (self.stdout.getvalue(), self.stderr.getvalue(), "".join(lines)):
             self.assertNotIn(token, text)
 
+    def test_uninstall_records_the_removed_installed_version(self):
+        """An older bundle may uninstall a newer install; the journal says both."""
+        self.write_product(self.product())
+        old = self.build_and_unpack()["worker"]
+        self.write_product(self.product(), version="1.1.0")
+        new = self.build_and_unpack()["worker"]
+        self.install(new)
+        self.journal.lines()
+        self.use_root(old)
+        self.assertEqual(cli.main(["uninstall"]), 0)
+        self.assertEqual(
+            [line.split(": ", 1)[1] for line in self.journal.lines()],
+            [
+                "uninstall worker (bundle 1.0.0): started",
+                (
+                    "uninstall worker (bundle 1.0.0): completed; "
+                    "removed installed version 1.1.0"
+                ),
+            ],
+        )
+
     def test_commands_work_without_a_journal(self):
         self.journal.close()
         self.write_product(self.product())
         releases = self.build_and_unpack()
         self.use_root(releases["worker"])
-        self.assertEqual(cli.main(["init-config", "worker"]), 0)
+        for _ in range(3):  # Repeated configuration in one process.
+            self.assertEqual(cli.main(["init-config", "worker"]), 0)
         output.audit("install worker 1.0.0: started")
         self.assertNotIn("Logging error", self.stderr.getvalue())
+        self.assertNotIn("Traceback", self.stderr.getvalue())
+
+
+class JournalShutdownTests(unittest.TestCase):
+    """A missing or refusing journal leaves nothing to fail at interpreter exit."""
+
+    def test_unreachable_journal_in_a_fresh_interpreter(self):
+        with tempfile.TemporaryDirectory(prefix="journal-") as directory:
+            refusing = Path(directory) / "log"
+            # A bound socket path whose owner has gone: connections are refused.
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as gone:
+                gone.bind(str(refusing))
+            for address in (str(refusing), str(Path(directory) / "missing")):
+                with self.subTest(address=address):
+                    code = (
+                        "import sys\n"
+                        "sys.path.insert(0, sys.argv[1])\n"
+                        "from deployment import output\n"
+                        "for _ in range(3):\n"
+                        "    output.configure(product='shop', address=sys.argv[2])\n"
+                        "    output.audit('install shop: started')\n"
+                    )
+                    result = subprocess.run(
+                        [sys.executable, "-I", "-c", code, str(REPO), address],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True,
+                        check=False,
+                        timeout=30,
+                    )
+                    self.assertEqual((result.returncode, result.stderr), (0, ""))

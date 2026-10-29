@@ -66,8 +66,8 @@ real Podman/systemd behaviour. No hosted CI is added.
 Discovery previously counted seven imported `RenamedProductTests` methods twice:
 410 executions represented 403 distinct tests. Extracting fixtures removes that
 duplication while retaining every original test method. New suite-layout and
-renamed-inventory regressions protect the separation. Current inventory after items 73 and 74: 512
-platform tests and 72 demo tests (584 unique tests), plus 358 separate
+renamed-inventory regressions protect the separation. Current inventory after items 73 and 74: 514
+platform tests and 72 demo tests (586 unique tests), plus 358 separate
 acceptance-harness tests. Inventory counts do not imply real runtime verification.
 
 # Command line and operator messages (backlogs 73 and 74)

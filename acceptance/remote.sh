@@ -1521,8 +1521,13 @@ def main():
                 raise SystemExit("FAIL: expected explicit platform restart")
     else:
         # The previous app bundle is still verified/trusted; refuse its older platform.
-        # --verbose shows each host command (+ podman ...), so their absence below is evidence.
-        result = subprocess.run(["bash", str(Path(old_release) / "deploy.sh"), "install", "--verbose"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        # The absence of "+ podman" lines below is the evidence. Releases with
+        # backlog 74 show them only with --verbose; older ones always print them
+        # and refuse the option, so ask the old release's own help first.
+        deploy = str(Path(old_release) / "deploy.sh")
+        probe = subprocess.run(["bash", deploy, "install", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        verbose = ["--verbose"] if probe.returncode == 0 and "--verbose" in probe.stdout else []
+        result = subprocess.run(["bash", deploy, "install"] + verbose, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
         if result.returncode != 1 or "Platform downgrade refused" not in result.stderr or "+ podman" in result.stdout:
             raise SystemExit("FAIL: older platform was not refused before image operations")
         if observe() != current:

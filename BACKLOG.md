@@ -471,6 +471,14 @@ usage errors now go to stderr (with the `Usage:` line and `ERROR:`), and
 `--help` exits 0 on stdout instead of 2; the two wrapper tests and one CLI test
 that read usage on stdout changed with it. Tests: `test_cli_output.py`.
 
+Review of `731b97f` (2026-10-29), fixed in the follow-up commit: a repeated
+`--verbose` before and after the command passed (subparsers have their own
+namespace), `build-bundle.sh` accepted repeats and printed lowercase
+`usage:`/`error:`, and `uninstall --` or `init-config -- app1` were accepted
+where the old parser refused them. `deployment/arguments.py` now holds the
+shared parser (`Usage:`/`ERROR:`), counts repeated flags over the whole line
+and refuses `--`; both commands use it.
+
 ### Problem
 
 `deploy.sh` (`deployment/cli.py`) parses `sys.argv` by hand: one compound
@@ -531,13 +539,25 @@ chosen: the existing `[OK]`, a final `PASS: ./deploy.sh <command> completed`,
 `WARNING:`/`ERROR:` on stderr; `bundle.py`'s `[WARN]` became `WARNING:` on
 stderr. `+ command` lines are DEBUG, so they are hidden without `--verbose`;
 the harness's platform-downgrade check, which proves no image operation by
-their absence, now runs with `--verbose`. Journal: `init-layout`,
-`init-config`, `install` and `uninstall` write a start and a result line
-(`SysLogHandler`, identifier `<product>[pid]`), `prepare-host.sh` does the same
-with `logger`; neither stops a command without a journal. `HOST-PHASE:` and the
+their absence, now asks the old release's `install --help` and passes
+`--verbose` only where it exists (older releases print them unconditionally).
+Journal: `init-layout`, `init-config`, `install` and `uninstall` write a start
+and a result line (one syslog datagram per line, identifier `<product>[pid]`),
+naming the executing bundle's version and, for uninstall, the removed
+installed version; `prepare-host.sh` does the same with `logger`; neither stops
+a command without a journal.
+
+Review of `731b97f` (2026-10-29), fixed in the follow-up commit: on Python
+3.6 a failed `SysLogHandler` connection could leave a handler without a
+socket, so a later `configure()` or interpreter exit raised; the
+`SysLogHandler` is replaced by `output.JournalHandler`, which opens and closes
+one datagram socket per line and keeps no state. The downgrade probe passed
+`--verbose` to releases that refuse it. The uninstall line named the bundle's
+version instead of the removed one. `HOST-PHASE:` and the
 harness's `[OK] validated`/`PASS:` lines are documented as parsed interfaces
 in the review guide. Outstanding: `journalctl -t <product>` on a real OL9 host
-after install and uninstall (the per-user journal must be persistent, item 64).
+after install and uninstall (the per-user journal must be persistent, item 64),
+and a run under a real Python 3.6 (not available where the fix was made).
 
 ### Problem
 
