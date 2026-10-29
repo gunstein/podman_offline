@@ -272,7 +272,9 @@ Status: **planned; direction decided 2026-10-29; phase 0 design
 ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) signed off by the
 product owner on 2026-10-29; the developer walkthrough was dropped by the
 product owner the same day; phase 1 is next, after item 76's matrix; not
-implemented.** Requested by the product owner after converting the
+implemented.** A much smaller alternative scope (list-only `bundles.yaml`
+derived from files and manifests, `env/`, short secret reference, checklist)
+is proposed for review in [COMPONENT-SMALL-VARIANT.md](docs/COMPONENT-SMALL-VARIANT.md). Requested by the product owner after converting the
 organisation's .NET/TypeScript solution in dev. The first draft was reviewed by
 an independent analysis; the decisions, corrections and revised phases below
 replace that draft's proposal. "Today" describes the code at `5f4b499`.
