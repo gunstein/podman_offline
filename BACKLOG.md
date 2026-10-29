@@ -19,6 +19,13 @@ through the public origin and rejects every token (`IDX10204`). Implemented
 with local tests (`--no-hosts` in dev and Quadlet); the real Podman check in
 [PUBLIC-ORIGIN-HOSTS.md](acceptance/PUBLIC-ORIGIN-HOSTS.md) is next.
 
+[Item 77](#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets)
+makes components intuitive for developers who do not read documentation.
+Direction decided on 2026-10-29 after an [independent analysis](docs/COMPONENT-MODEL-ANALYSIS.md):
+phase 1 is `env/<container>.yaml` with short, declared secret references and a
+working example component for the organisation's SPA/.NET architecture, on top
+of today's lifecycle. Phase 0 (syntax and example design) is next.
+
 [Item 72](#72-register-api-resource-secrets-with-identity) was requested by
 the product owner on 2026-10-28 while converting the organisation's
 .NET backend: an API backend and Identity must hold the same API resource
@@ -228,7 +235,7 @@ audit fix and final audit. [Evidence and remaining work outside that scope](acce
 Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
 [the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
 
-Open: 76 (top priority, 2026-10-29; implemented locally, lab check pending), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Open: 76 (top priority, 2026-10-29; implemented locally, lab check pending), 77 (direction decided; phase 0 next), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Also open, priority not assigned: [75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
 (Python lifecycle understandability; coordinate with 69 and 73–74).
@@ -258,6 +265,256 @@ baseline before implementation; these tasks are not claims of completed work.
 The refactor must preserve the behavior and naming established by items 8 and 9;
 its original core terminology below is historical scope, not an instruction to
 restore core or merge Identity back into platform.
+
+## 77. Make a component intuitive to write: env files, mounts and shared secrets
+
+Status: **planned; direction decided 2026-10-29, phase 0 next; not
+implemented.** Requested by the product owner after converting the
+organisation's .NET/TypeScript solution in dev. The first draft was reviewed by
+an independent analysis; the decisions, corrections and revised phases below
+replace that draft's proposal. "Today" describes the code at `5f4b499`.
+
+Independent assessment: [Component model analysis](docs/COMPONENT-MODEL-ANALYSIS.md).
+
+### Why simplicity is a requirement here
+
+The people who write and change components are application developers and
+integrators converting existing Kubernetes/docker-compose solutions, not the
+platform's authors and not AI agents. They do not read documentation first;
+they copy something that looks right, change names and expect it to work. A
+model is only good enough if such a person can **guess** where a setting goes,
+what a line does and why something failed, from the files alone.
+
+This matters for concrete reasons:
+
+- **Errors surface late and far from the cause.** In the dev conversion every
+  mistake showed up as a browser or token error (CSP, 404, `invalid
+  redirect_uri`, `IDX10204`), never at the line that caused it. Each one took a
+  long guided diagnosis. A model with fewer places and fewer coupled values
+  produces fewer such errors.
+- **Values that must agree in several places drift.** The conversion met
+  `PUBLIC_ORIGIN` versus hand-built `DNS_HOST.DNS_DOMAIN` URLs without the port,
+  an API resource whose name (ConfigMap) and secret (Secret template) must
+  share an index, the same API secret copied into two components, and a web
+  certificate for an older name. Every duplicated fact is a future outage.
+- **The platform is only adopted if conversion is cheap.** If converting one
+  backend needs an expert session, teams will not move further applications.
+- **Simple models are easier to verify.** Fewer mechanisms mean fewer
+  lifecycle paths to test, review and keep correct (see the review guide's
+  understandability rules).
+- **Operators mostly do not see this**: they never edit `bundles.yaml`,
+  manifests or templates. They do see supplied secrets and restarts, so every
+  such step must stay explicit in the manual and in install-set messages.
+
+Rule for this item and its follow-ups: **one fact in one place, written where a
+developer would look for it, with the platform deriving everything else and
+explaining what it derived.** Prefer conventions over repeated declarations,
+keep the one declaration that carries a decision (who owns a secret, how it is
+obtained), and refuse ambiguity loudly instead of guessing silently.
+Simplicity must not remove a safety check: the analysis showed that several
+shortcuts in the first draft would have bypassed existing protections.
+
+### What a component author handles today
+
+For the organisation's `myapp` (backend + frontend + database) behind the
+proxy, signing in through their Duende (`myidentity-server`):
+
+| Concern | Where it is written today |
+| --- | --- |
+| Membership, order, dependencies | `bundles.yaml`: entry, `requires` |
+| Same public address as the proxy | `bundles.yaml`: `public_from: platform`; owner's `shares` |
+| Proxy routes | `route.conf` **and** `bundles.yaml`: `routes: platform`; owner `accepts.routes` |
+| Public environment values | hand-written ConfigMap manifest with `@@NAME@@`, plus `configMapRef`/`env` in the Pod |
+| Values for placeholders | `config.defaults.yaml`, `config.dev.yaml`, `config/dev.yaml`, production `config.yaml` |
+| Secret environment values | `SECRET_TEMPLATES` in `config.defaults.yaml`, plus `secretRef` in the Pod |
+| Secret sources | `SECRET_FILES` (path, `generate`), files under the config folder |
+| Templated files (e.g. `bootstrap.sql`) | inline text in `SECRET_TEMPLATES` plus a Secret volume and `volumeMount` |
+| API secret shared with Identity | `SECRET_FILES` + `SECRET_TEMPLATES` + `api.yaml` (`index`, `secret`, `hash`) + `bundles.yaml` `apis:` + owner `accepts.apis` + owner `envFrom` (item 72) |
+| Identity's API resource names | Identity's ConfigMap, at the same index as `api.yaml` |
+| Trusting the environment's CA | `SECRET_FILES` + Secret volume + two `subPath` mounts + copying `ca.crt` (item 70) |
+| Pods, images, volumes | Pod/PVC manifests |
+
+Observed in the dev conversion (2026-10-28/29, operator-run, not lab results):
+each issue above needed a long guided diagnosis; none was a platform defect
+except the `/etc/hosts` gap addressed by item 76.
+
+The table shows the organisation's full multi-container case, not the minimum
+for every component. Several rows have simpler existing alternatives (direct
+`env.value`, `secretKeyRef` without a recipe, `component_file`); see the
+analysis, section 2, for the row-by-row corrections.
+
+### Decisions (product owner, 2026-10-29)
+
+Taken after the [independent analysis](docs/COMPONENT-MODEL-ANALYSIS.md), which
+found real errors in the first draft of this item (corrected below). The
+product owner follows the recommendations recorded here:
+
+1. **First goal:** make environment and file wiring simple to write while
+   keeping today's lifecycle underneath (ownership, retention, registrations,
+   pending/retry). Success means a developer can copy the example component and
+   adapt it without reading the full component manual.
+2. **Recipes belong to the release, values to the operator.** `env/` and
+   `mounts/` ship with the component and change only with a new release; the
+   operator owns the values in `config.yaml`. Persistent config is never
+   silently re-merged.
+3. **Secrets are declared once, referenced briefly.** The source and its policy
+   (generated, or supplied by the operator) are declared in one place; `env/`
+   and `mounts/` refer to it by a short name; an unknown name is refused before
+   anything is written. A reference never creates a secret by itself.
+4. **Ambiguity is refused, never resolved silently:** duplicate container
+   targets, the same variable from two sources (generated and hand-written),
+   the same mount path twice, and conflicts with hand-written YAML.
+5. **The example proves the organisation's real architecture:** a TypeScript
+   SPA doing OIDC/PKCE in the browser, a .NET backend validating bearer tokens
+   (JwtBearer) and serving GraphQL over HTTP and WebSocket, `route.conf` with
+   the needed `rewrite`, and runtime frontend configuration.
+6. **The gateway is optional in the platform but used automatically when
+   present.** Products with a proxy (all web products) get routes and public
+   values from it without per-component lines; a worker-only product stays
+   supported.
+7. **API secrets keep item 72's contract** (API owns the secret, installed
+   membership, per-API `hash`, staged registration, restart order). Only its
+   authoring may be simplified later (for example moving `api.yaml` into the
+   catalog or deriving it); general product-wide shared secrets are deferred
+   until a concrete non-API need exists.
+8. **CA trust becomes an explicit, tested opt-in profile per image/runtime**,
+   not automatic injection into every container.
+
+### Corrections to the first draft (from the analysis)
+
+- Empty catalog entries already work (`catalog.load_catalog` turns `null` into
+  `{}`); there is nothing to remove.
+- A mandatory gateway would remove a supported product shape (worker without
+  gateway); hence decision 6.
+- The PostgreSQL example was unsafe: the platform's database preflight only
+  understands `POSTGRES_PASSWORD_FILE` with a Secret mount (`deploy.postgres_binding`),
+  which is what lets it refuse a new password against an existing volume. The
+  database container keeps that binding; `env/` must not carry its password
+  until a replacement resolver is designed and tested.
+- The Identity example needs the hashed value for configuration-bound Duende
+  resources (as the demo uses) and the scopes. Which form an organisation's
+  Identity needs stays a per-API `hash` choice (item 72).
+- `@@shared:` as written let a typo silently create a new secret and could not
+  tell Identity whether an API is installed or uninstalled; hence decisions 3
+  and 7.
+- Two PEM files in `/etc/ssl/certs` are not a universal trust interface (.NET,
+  Node and Java read different locations); hence decision 8.
+- Value rules are not uniform today: templates strip a trailing newline,
+  item 72 refuses it, direct file delivery is byte for byte. The new syntax
+  must state its exact-byte behaviour.
+- `bundle.py` copies a fixed set of component entries; `env/` and `mounts/` must
+  be shipped, covered by the authenticated inventory and path-checked.
+- Operators are affected after all: supplied secrets, their file locations and
+  any update that restarts several components must appear in the manual and in
+  item 66's stop/resume messages.
+- Setting environment variables on a static-file container does not change
+  already built JavaScript. The SPA needs a runtime configuration contract (for
+  example an entrypoint that writes `config.json` from the environment), and the
+  example must prove it in a browser. The organisation's images already consume
+  these variables in Kubernetes; the example must show how.
+- The "about six concepts" estimate is withdrawn. The analysis counts roughly the
+  same number of concepts with a different granularity; the useful measure is
+  how many places hold one fact and how many values must agree, and finally the
+  human trial.
+
+### Revised model, first delivery
+
+```text
+components/myapp/
+  manifests/                       Pods, PVCs (as today)
+  route.conf                       proxy locations (as today)
+  config.defaults.yaml             values and secret declarations (as today)
+  env/backend.yaml                 environment of container "backend"
+  env/frontend.yaml                environment of container "frontend"
+  mounts/frontend/usr/share/nginx/html/config.json
+                                   file at that path in container "frontend"
+```
+
+`mounts/` is used because `files/` already holds `component_file` sources.
+
+```yaml
+# config.defaults.yaml: declared once (existing SECRET_FILES, policy on the declaration)
+SECRET_FILES:
+  myapp-database-password:
+  - path: credentials/database
+    generate: [password]
+  myapp-export-key:
+  - path: credentials/export          # supplied by the operator; no generate
+
+# env/backend.yaml: short reference to a declared, single-key source
+Authentication__Authority: '@@PUBLIC_ORIGIN@@/myidentity-server'
+Cors__default__origin__0: '@@PUBLIC_ORIGIN@@'
+ConnectionStrings__Default: 'Host=myapp-postgres;Database=myapp;Username=myapp;Password=@@secret:myapp-database-password@@'
+```
+
+- `@@secret:<id>@@` is a short form of today's `@@secret:<id>/<key>@@` for a
+  source with exactly one key; the long form stays valid. An undeclared `<id>`
+  is refused. (Exact syntax to be confirmed in phase 0.)
+- `env/<container>.yaml`: values without a secret reference go to a generated
+  ConfigMap, values with one to a generated private Secret; both are injected
+  into the container of that name (regular or init). Unmatched files, a
+  container name used in more than one Pod, and keys also set by hand-written
+  `env`/`envFrom` are refused, naming the file and key.
+- `mounts/<container>/<path>`: read-only single-file mounts (`subPath`), private
+  if the text contains a secret reference. Text only, with size limits; binary
+  files, directories and PFX keep `SECRET_FILES`/`VOLUME_FILES`/`component_file`.
+- Both lower into the existing validated structures (`effective_documents`
+  before database preflight), so existing checks keep applying. One renderer,
+  not two.
+- `validate` reports the wiring by name (`myapp/backend: 3 settings, 1 secret
+  (myapp-database-password)`) and never prints values.
+- `SECRET_TEMPLATES` stays as the internal representation and an escape hatch;
+  it is no longer the recommended way to write environment or file recipes.
+
+### Revised phases
+
+| Phase | Deliverable | Gate before the next phase |
+| --- | --- | --- |
+| 0 | Confirm syntax (short `@@secret:<id>@@`, conflict rules, exact-byte rules), write the example component design for the organisation's architecture | Product-owner sign-off; a developer walkthrough of the design |
+| 1 | `env/<container>.yaml` with `@@NAME@@` and short/long secret references; bundling and inventory; wiring report; **working example component** (SPA + .NET JwtBearer + GraphQL/WebSocket + `route.conf` + runtime frontend config) | Unit/fixture tests (targets, init containers, conflicts, private classification, no secret reads in `validate`, refusal before side effects, isolated bundle); real OL9 env delivery; **human trial with the example** |
+| 2 | `mounts/<container>/<path>` for text files | Podman 5.8.2 ConfigMap/Secret `subPath` tests: non-root UID, SELinux Enforcing, replaced/shortened/removed/renamed files (a reused Podman volume keeps old unlisted files), public-to-private transitions; uninstall without PVC loss |
+| 3 | Gateway convenience: when a gateway exists, derive routes and public values; drop `routes:`/`public_from` lines where derivable; keep copied public values and their checks until propagation is designed | Gateway-free and renamed fixtures; custom shared names; cycles; dev overrides; isolated releases |
+| 4 | Opt-in CA trust profiles for named images/runtimes (starting with .NET on Linux) | Real application TLS: right chain, missing trust, wrong CA, hostname mismatch, two-level chain, renewal |
+| 5 | Simpler authoring for item 72 (catalog entry or derivation instead of `api.yaml`), same contract | Item 72's affected scenarios rerun; general shared secrets only if a concrete need appears, with the analysis's revision/membership requirements |
+
+Phase 1 gives the largest simplification for the least risk; the example is
+part of phase 1, not the end.
+
+### Deferred, with the reason
+
+- **Product-wide `@@shared:` secrets:** need ownership, installed membership,
+  typo protection, consistent revisions across consumers, rotation with retry
+  and cleanup (analysis sections 4–6). Item 72 covers the known API case.
+- **Reading gateway values at render instead of copying:** changes production
+  config authority and needs a propagation design for installed dependents,
+  including `newer-only` and pinned releases.
+- **Database password via `env/`:** needs a replacement for
+  `deploy.postgres_binding` that keeps the existing-volume refusal.
+
+### Risks still open
+
+From the analysis, kept as requirements for phases 1–2: deterministic generated
+names that cannot collide; YAML scalar conversion (quote booleans/numbers);
+no secret in parser errors, wiring reports or temporary public YAML; mount
+cleanup in reused volumes; file ownership for non-root images; size limits per
+file and per resource; descriptor/metadata compatibility for new fields;
+interplay with items 66 (stop for supplied secrets, resume) and 69 (package and
+authenticate the new files, no secret creation in package scripts).
+
+### Verification
+
+- Unit/fixture tests per phase, including refusal before side effects and no
+  secret values in output.
+- Acceptance: the fixed matrix and `--whoami` after converting the demo; focused
+  negative cases the matrix does not cover.
+- Real Podman/systemd checks named in each phase gate.
+- **Human trial (required):** a developer who has not seen this discussion
+  converts a small .NET/TypeScript service using only the example component
+  and checklist. Record time, edits, stops, questions and every error message
+  they could not act on; repeat with today's model for comparison. The item is
+  not done until the trial shows fewer stops and no help needed for the common
+  case. The analysis's code-understandability check (one successful and one
+  interrupted operation traced by a Python developer) applies as well.
 
 ## 76. Reach the public origin from containers when the host maps it to loopback
 
