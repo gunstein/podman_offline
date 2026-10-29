@@ -222,6 +222,9 @@ Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
 
 Open: 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
+Also open, priority not assigned: [75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
+(Python lifecycle understandability; coordinate with 69 and 73–74).
+
 Earlier per-item verification reports stay linked from each item:
 [credential paths](acceptance/CREDENTIAL-PATHS.md),
 [retry](acceptance/RETRY-SAFETY.md),
@@ -488,6 +491,9 @@ where the old parser refused them. `deployment/arguments.py` now holds the
 shared parser (`Usage:`/`ERROR:`), counts repeated flags over the whole line
 and refuses `--`; both commands use it.
 
+Implementation remains owned here; [item 75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
+reuses the resulting parser and does not commission a parallel CLI rewrite.
+
 ### Problem
 
 `deploy.sh` (`deployment/cli.py`) parses `sys.argv` by hand: one compound
@@ -568,6 +574,10 @@ in the review guide. Outstanding: `journalctl -t <product>` on a real OL9 host
 after install and uninstall (the per-user journal must be persistent, item 64),
 and a run under a real Python 3.6 (not available where the fix was made).
 
+[Item 75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change) owns
+additional lifecycle decision/phase DEBUG context after this infrastructure is
+integrated; handlers, streams, audit policy and existing review fixes stay here.
+
 ### Problem
 
 Operator output is `print` in Python (about 24 calls in `deployment/`, 5 in
@@ -617,6 +627,291 @@ reset between tests (configuration is global). Existing tests and the
 acceptance harness pass unchanged. A real Podman/systemd run checks
 `journalctl -t <product>` after install and uninstall. Update the review guide
 with the convention and README where it shows output.
+
+## 75. Make Python lifecycle code easier to follow, diagnose and change
+
+Status: **planned; not implemented**, requested 2026-10-29.
+Static analysis is recorded below; implementation remains future work.
+This entry does not implement a refactor or establish a functional defect.
+It follows the completed [item 1](#1-deploy-maintainability-refactor), rather
+than reopening that package extraction. No new priority over agreed operator
+work is implied; select a small first slice with the product owner.
+
+### Audience, outcome and preserved strengths
+
+The reader is an ordinary developer with some Python experience who already
+understands Podman, Kubernetes-like manifests and this project's configuration
+model. Maintenance difficulty must be addressed in the Python, not attributed
+to missing Podman training. Make it reasonably easy to find a behavior, follow
+its control/data flow, distinguish checks from effects, locate a failure,
+correct it without changing unrelated paths, and place an extension in one
+clear home with a bounded set of related edits.
+
+Retain ordinary functions, standard-library dependencies, the catalog/render/
+registrations/lifecycle/CLI/status module boundaries, declarative dict lookups,
+named install stages, shared validation, and host-independent lifecycle fixtures.
+This is incremental code and testability work, not a rewrite, a new deployment
+engine, a framework, or documentation as a substitute for clearer code. A large
+developer guide and an organised trial with a new developer are deferred.
+
+### Checked revision and coordination
+
+The initial analysis inspected `120d4eb` and the in-flight 73–74 work at
+`5bb5e26`. Before delivery, fetched and integrated latest `main`,
+`870e85225557da63062dc06801a9fccb161899fe`, and rechecked the affected code
+and updated review-guide contracts on 2026-10-29. This is the primary checked revision below. It includes
+both `731b97f` (the product owner's review base) and its review fixes in
+`5bb5e26`; the earlier `120d4eb` main did not. These are static observations,
+not new test results. Reconfirm the base and ongoing work before each slice.
+
+- [73](#73-parse-command-lines-with-argparse-subcommands) and
+  [74](#74-one-operator-message-convention-and-python-logging) are now integrated
+  on the checked main: argparse, `deployment/arguments.py`,
+  `deployment/output.py`, `--verbose` command diagnostics, agreed terminal
+  streams and a separate journal audit logger already exist. The earlier
+  no-verbose observation applied only to `120d4eb` and is superseded. The
+  original observation about command-focused verbose output remains relevant:
+  `deploy.run` emits DEBUG command lines, while lifecycle decisions still lack
+  comparable phase context. Do not commission parsing, logging handlers,
+  operator/audit conventions or the review fixes in 73–74 again. Reuse their
+  integrated interfaces; this item adds only justified lifecycle diagnostics.
+- [69](#69-paper-first-installation-for-closed-networks),
+  [66](#66-install-sets-several-signed-bundles-through-one-entry-point) and
+  [RPM plan](docs/RPM-DELIVERY-PLAN.md) own new command boundaries, release
+  selection, operation locking, RPM layout/authentication and replacement of
+  `scripts/release.py`. Do not refactor that retiring publication tool here,
+  redesign its replacement, or create a competing runtime entry point/context.
+  Agree ownership before changing a shared lifecycle/path interface; defer
+  larger path changes where the selected RPM work is actively changing it.
+- Existing `install_checks`, `install_preconditions`, write/restart helpers,
+  `uninstall_plan`, atomic owner-YAML publication, pending records and shared
+  validation are already present. Do not propose creating these from scratch,
+  re-extracting the package, or making all work pure before secret generation.
+
+### Current observations, maintenance assessment and candidate actions
+
+The evidence below is at the checked main revision. Line numbers identify
+starting points, not stable interfaces. Maintenance assessments are review
+judgments; proposed actions require justification and tests before coding.
+
+| Area | Observed code/dependency | Maintenance assessment | Candidate action, not an implemented fix |
+| --- | --- | --- | --- |
+| A. Production dependencies | `layout.select` (`deployment/layout.py:308`) assigns `common.STATE`, `FILES_DIR`, `QUADLET_DIR`, `QUADLET_TARGET`, `QUADLET_YAML` and updates the process's XDG environment. `service_user` establishes this; `catalog.component_paths`, pending functions and lifecycle functions then read it implicitly. `DeployFixture.setUp` patches a dictionary of paths and `layout.select`; the fresh-process retry driver patches another subset. | A caller must know earlier initialisation and the selected product. Debugging crosses both the operation and its environment setup; test patching shows concrete coupling. This is not evidence that repeated commands currently fail. | Later, choose a coherent production-path boundary and pass a small explicit path value from the command boundary to its consumers. Assess `ROOT`/release identity and child-process environment separately. Keep stable constants, regex rules and account identity as constants unless a real variable dependency requires otherwise. |
+| B. Boundary data | `install_checks` returns a five-position tuple; `known` overlays the incoming descriptor on installed descriptors. `checked` maps component to `(effective config, effective documents)`; `rendered` maps component to `(YAML text, import volumes)`. `registration_stage` returns `(imports, updates, removals)`. `imports` is both volume-to-path-list and, for APIs, an ordered `[staged API directory, persistent API directory]`; after `api_updates`, update bytes include private registered values. | Shape, validation state, source/installed/effective meaning and privacy must be reconstructed from producers and consumers. Positional API inputs hide why two directories are required. Rendered YAML contains Secret data and is sensitive despite base64 encoding. | Name these distinctions at the producer/consumer boundaries; consider small Python 3.6-compatible named results for checked components, staged registration results and materialized manifests where that reduces unpacking ambiguity. Keep dicts for natural lookup and YAML; do not wrap every document in a parallel model. |
+| C. Effect names | `install_component_plan` (`deployment/deploy.py:984`) materializes/generates secrets, loads images, persists pending/metadata/registrations, writes units/imports, restarts services, writes the marker and clears pending. `materialize_component_manifests` explicitly permits secret generation; `registration_stage` writes temporary files. | "plan" suggests calculation, although the function executes. Staging and materialization are also not pure checks. Existing docstrings help, but names should not require reading the entire body to discover critical effects. | Rename the executor to describe execution (for example `apply_component_install`, subject to review), update callers, and make short contracts distinguish read/check, calculation, generation/temporary staging, persistent publication, host commands, health and acknowledgement/completion. Do not invent a plan object merely to justify its old name. |
+| D. Interleaved responsibilities | `registration_stage` (`deployment/registrations.py:31`) retains non-selected registrations, validates incoming role declarations, records removals, stages route/client bytes, defers API values and builds aggregate indexes/imports. `uninstall` (`deployment/deploy.py:1201`) resumes a durable record, stops/removes resources, rebuilds/restarts owners, optionally deletes data and finalizes. `uninstall_plan` already validates a first attempt and captures volumes/owners before YAML deletion. | Changing one role or failure boundary requires tracking several independent branches and the durability order. Length alone is not the problem. | First consider three cohesive staging steps: retain existing registrations, stage selected declarations/removals, build/check derived indexes/import inputs. Keep role-specific cases explicit. Separately consider owner-refresh and optional data-removal extraction in uninstall, leaving its stop/persist/delete/rebuild/acknowledge/finalize order visible at the top level. Accept an extraction only if it reduces simultaneous concepts rather than adding forwarding calls. |
+| E. Diagnosis | On main `deploy.run` (`deployment/deploy.py:516`) emits command lines at DEBUG; `install_needed`, pending-owner selection and render-skip decisions have no comparable phase trace. CLI catches expected subprocess/OS/deploy/YAML errors; it does not catch all programming exceptions. The integrated 74 implementation already separates terminal diagnostics from journal action/result audit. | A failed host command is easier to identify than the preceding decision that selected it or skipped rendering. This is a diagnostic limitation, not proof of wrong decisions. | Through the existing logger, add only useful DEBUG boundaries: operation/component, render/skip reason, resumed pending operation/version, remaining owner IDs, and phase reached. Preserve useful existing causes and narrow expected-error handling; do not wrap all exceptions in "install failed". |
+
+For A, a later slice must first list the exact changing globals and consumers
+it replaces. Establish checked paths/process settings at the command boundary;
+use explicit inputs for the selected core functions, and configure child
+command environment explicitly where needed. A small immutable path record may
+help, but must not contain logger/catalog/secrets/services or the whole app.
+Do not retain two mutable sources of truth: migrate a bounded call chain and
+its fixtures together, with one authoritative selection. Keep an adapter only
+at an explicit boundary with no independent mutable copy. Preserve source dev,
+bundle install and standalone contexts; test independent roots and repeated
+operations in the same process where this dependency is changed. Global-path
+work is not a prerequisite for the smaller staging/naming improvements.
+
+For B, describe whether each field holds public metadata, effective config,
+paths, documents or finished bytes, and whether it can contain sensitive data.
+Use names such as installed descriptors versus effective descriptors rather
+than indiscriminately renaming every local variable. Choose a plain record or
+simple class only where named fields help; type hints should explain rather
+than create a complex type system. Never log a record/config/document with
+`repr`, formatting, `vars` or automatic object dumps; consider suppressing a
+sensitive record's automatic representation. No new serialized schema, bundle
+metadata, registration format or pending format follows from an internal type.
+
+For E, use allowlisted scalar context (operation, component, owner IDs,
+version, phase, finite reason), not config, paths read from arbitrary secrets,
+connection strings, exception-object dumps or whole plans. Keep operator text,
+DEBUG diagnostics, machine-readable output and journal action/result audit
+separate. Add no log line without a concrete debugging question it answers;
+logging every helper is not the task. Context added to expected failures must
+identify operation/phase/component while preserving the underlying cause.
+Coordinate any visible message/stream changes with 74 and its consumers.
+
+### Extension placement analysis (F)
+
+No new feature is requested by these examples. Record the actual affected
+implementation/caller/test sites in each slice; a lower line count is not a
+success measure and a numeric edit budget is not a universal requirement.
+
+| Representative change | Current authoritative home and consumers | Proposed boundary to protect |
+| --- | --- | --- |
+| A new manifest declaration rule | `render.effective_documents` and its checks, through `deploy.validate_component`; called by `check_manifests` in prepare/install and by `validation.validate_catalog`, `validate_bundle`, `validate_standalone`. `test_secret_keys.test_missing_key_is_found_by_every_path_before_writes` is an existing cross-path example. A bundle/installed-state rule instead belongs in `install_checks`; it need not run in a source-only context. | One rule implementation in the appropriate shared check plus focused fixtures for relevant contexts; do not copy it into each CLI mode or `validation.py`. Keep validation-only source checks and later workload-volume inspection explicitly distinct. |
+| A new install decision | `install_checks` / `install_needed` decide against the descriptor, installed markers, config and pending version; `install_components` selects `checked`, then the executor consumes it. `validation.validate_bundle` also calls `install_checks` / `install_preconditions`. | A named decision result with an explicit reason and render eligibility, if justified; the executor acts on it and diagnostics describe it. Declaration-only decisions remain shared with validate; decisions requiring generated bytes or host queries stay at their necessary later boundary. No duplicate decision in CLI, validation and execution. |
+| Change how a registration updates its owner | `registration_stage` / `api_updates` create inputs; `apply_registration_updates` persists owner work before mutations; `write_changed_owner_imports` and uninstall's owner loop publish imports and `replace_owner_secrets`; `restart_component_services` / uninstall restart and acknowledge. | Consider one cohesive owner-publication helper reused at those two publication sites, while each caller retains visible restart/health/acknowledgement ordering. Keep API Secret and route/client-volume differences explicit. Do not introduce a plugin/role registry or merge whole install/uninstall paths behind boolean flags. |
+
+Concrete current fan-out: `install_checks` has two direct consumers,
+`install_components` and `validation.validate_bundle`; changing its result
+requires reviewing both, rather than patching only the executor. Registration
+staging has six call sites across `deploy.py` and `validation.py` (dev prepare,
+install, uninstall planning, uninstall owner refresh, catalog validate, bundle
+validate). An owner-publication change has two orchestration sites (install's
+`write_changed_owner_imports` and uninstall's owner loop), already sharing
+`replace_owner_secrets`. These are review surfaces, not a demand to edit every
+caller. A new shared declaration predicate normally needs one implementation
+plus tests for its consumers, not six copies. Record actual changes per slice.
+
+The first row does not claim all rules fit one universal validator. Preserve
+necessary dev/source, installed-bundle and standalone differences visibly,
+without forcing them through one function with accumulating mode flags.
+
+### Staged delivery and dependencies
+
+1. Recheck main and relevant in-flight 69/73/74 changes; choose **registration
+   staging plus the install executor name/data boundary** as the proposed
+   first slice, or justify a smaller alternative. Trace a successful operation
+   and an interrupted retry before editing. Inventory existing tests and
+   agree which behavior/effect boundaries the slice touches.
+2. Fix the misleading executor name and clarify selected boundary results and
+   data names. Keep behavior, serialization and side-effect timing unchanged.
+   Do not turn this into a wholesale renaming/type-annotation exercise.
+3. Extract only the cohesive interleaved responsibilities justified above,
+   keeping orchestration order apparent. Review staging first; uninstall is a
+   separate later slice, not an automatic addition to the first patch.
+4. Add bounded diagnostic context through the integrated 74 logger. Reassess
+   its current diagnostics first: missing lifecycle decision context is this
+   item's scope; parser/audit follow-ups remain with 73–74. Do not introduce a
+   second logger or reconfigure handlers in lifecycle helpers.
+5. Reassess remaining global dependencies with concrete caller/test evidence.
+   A later small explicit-path migration may be warranted; do not make moving
+   every global/module a condition for landing earlier useful improvements.
+
+Each slice must explain what dependencies/branches a maintainer no longer has
+to reconstruct, what complexity deliberately remains, and why the changed
+call graph is simpler. Reject extraction that only shortens a file or adds
+one-line forwarding layers. Keep functional fixes in separate patches/items
+where practical; record newly discovered defects separately with reproductions.
+Do not quietly alter retry/validation semantics as part of this structural task.
+
+### Preserved contracts
+
+Follow [the complete review guide](docs/REVIEW_GUIDE.md), especially sections
+1–6. Preserve Python 3.6, standard/offline dependencies, CLI forms, exit codes
+and agreed message/data streams (including status JSON). Preserve declaration
+checks before relevant writes and workload commands: validate reads no
+credential contents, generates no secrets and runs no workload commands; its
+existing temporary staging is not permission for persistent writes.
+
+Keep private modes, credential retention, secret-safe diagnostics, installed
+metadata and all registration/pending on-disk formats unchanged. Preserve the
+actual install sequence: declaration checks and environment checks -> temporary
+staging/checks -> materialization (which may generate retained credentials) ->
+image load/verification -> pending record -> installed metadata -> changed-owner
+work durably recorded -> registration publication/removal -> unit/import and
+owner-YAML publication -> component/owner restart and health -> acknowledgement
+-> completed marker -> clear pending. Do not move generation earlier or imply
+rollback of already performed writes. The temporary stage may check API indexes
+before secret bytes exist; API value validation happens after generation and
+before pending/live registration publication.
+
+Keep a fresh process able to resume every partial attempt, including after
+registration deletion or loss of installed YAML. Ordinary uninstall retains
+config/credentials/data; `--delete-data` removes only the selected component's
+recorded volumes and state. Preserve unaffected component data/config/services,
+owner restart eligibility/order and pending conflict/version guards. Path
+clarification must not weaken user-manager/XDG agreement, symlink/ownership
+checks, SELinux/fapolicyd boundaries, isolated bundles or source-dev separation.
+
+### Current success and interrupted-operation traces
+
+For a component bundle, `cli.main` parses/configures logging and audit, then
+`cli.run` dispatches `deploy.install` to
+`install_components`: `service_user`/`layout.select` establish paths;
+`install_checks` decides render eligibility; environment checks and temporary
+`registration_stage` precede checked manifests and `install_component_plan`.
+That executor materializes, verifies images, calls `begin_install`, publishes
+metadata and registration work, writes units/owner imports, restarts/checks
+services, writes the marker and clears pending. The API owns its source secret;
+registrations own derived per-component records; the owner's installed YAML
+holds the rendered Secret; the pending record owns unfinished owner work.
+
+For failure during owner YAML replacement, `write_install_record` keeps the old
+file when replacement fails; registration changes and pending owners can
+already exist. A later process must reconstruct the same operation from
+installed metadata and `pending-operation.json`, rebuild the owner's Secret,
+restart/check it and acknowledge only after success, then mark completion.
+`install_checks` also guards a non-rendering retry against a different pending
+version. This is a static trace of the intended existing code and test
+assertions, not new process-retry evidence (see the API test limitation below).
+In uninstall, the stored plan retains volumes/owners after YAML removal; it
+must remain the source for retry instead of rediscovering deleted information.
+
+### Existing coverage, specific gaps and verification plan
+
+This inventory is **inspection**, not a claim that tests ran for this entry.
+Read test bodies and fixtures before adding cases; do not replace behavior
+assertions with checks for proposed internal names or function counts.
+
+| Boundary | Existing coverage inspected | Remaining work for an affected slice |
+| --- | --- | --- |
+| Validation before effects / rendered bytes | `test_validation_order.py` checks prepare/install/standalone ordering, registration refusal before workload commands, archive checks before generation, and exact bytes installed from the single materialization. `test_validate.py`, `test_secret_keys.py`, `test_manifest_structure.py` and `test_api_registrations.py` cover shared declaration/credential-read refusals. | Reuse these guards. Add only a demonstrated missing path, with a malformed synthetic input and before/after files/host-call assertions, not a second string copy of the implementation. |
+| Pending, registration/import writes, restart/health and completion | `test_retry.py` uses `helpers/retry_lifecycle.py` / `retry_driver.py`: each attempt starts `sys.executable -B`, checks distinct PIDs and retains actual files/archives. It covers partial client writes, owner import failure, restart/active/health failure, metadata/marker replacement interruption, completion cleanup, pending conflicts and owner acknowledgement ordering. `test_install_failures.py` protects image-failure state and old markers after service failure; `test_health_wait.py` covers the wait itself. | Do not commission an entirely new retry framework. Inventory explicit injection at pending-record replacement/fsync and acknowledgement persistence before claiming all durability boundaries are covered; the inspected record-failure matrix targets installed metadata/markers, not every `save_pending` boundary. Add focused fresh-process cases only where absent and touched. |
+| Registration removal / uninstall | `test_registration_removal.py` checks exact removals/restarts, a component omitted from source not being removed, and interruption after deletion with a fresh-process continuation. `test_retry.py` covers uninstall after YAML removal, owner/import failure, partial `--delete-data`, mounted ConfigMap deletion, removed marker/data, conflicting flags and volume-inspection errors. | Preserve separate retention/deletion cases and actual sibling snapshots; extend only for extracted behavior not already protected. |
+| API owner YAML update | `test_api_registrations.py::test_interrupted_owner_rewrite_keeps_the_old_yaml_and_retry_finishes` verifies atomic replacement, retained old YAML, pending owners and successful retry. Despite its "fresh process" comment, the retry calls `self.quiet(deploy.install)` in the same interpreter, after resetting the subprocess mock. This is not a real process restart. | Add an API owner-YAML publication failure followed by a genuinely fresh-process attempt using the existing driver/fixtures; assert owner Secret bytes, restart order, pending/completion, modes and sibling retention. Correct the misleading test comment when that test is changed. This coverage finding is not a demonstrated product retry bug and does not rewrite historical lab reports. |
+| Paths / global initialisation | `DeployFixture` patches paths/layout/environment; retry transport patches a separate path subset. `test_layout.py` covers production selection, XDG agreement, refusing unsafe bootstrap/root state, and source-dev ignoring production layout; bootstrap interruption has fresh-process coverage. | If paths become explicit, retain those guards and add independent-root/repeated-operation isolation without recreating conflicting global and explicit states. Avoid tests tied to a particular context class name. |
+
+For implementation, run the repository's existing product groups
+(`python3 -B tests/run.py all`, plus `platform --isolate` for a generic lifecycle
+slice), and applicable established static/Python 3.6 checks from the test/CI
+instructions. Separately run
+`python3 -B -m unittest discover -s acceptance -p 'test_*.py'` for harness wiring.
+Test assertions must check observable outputs,
+private-file access/modes, durable bytes and host effects, not the new helper
+names. Add safe sentinel coverage for any new diagnostic's handlers/streams;
+`test_cli_output.py` already covers parser forms, verbose command visibility,
+terminal stream routing, secret-safe lifecycle audit and unreachable journal
+sockets (including a fresh interpreter); extend it for new decision context
+only where coverage is missing, rather than rebuilding 73–74 infrastructure. Test unexpected programming exceptions
+remain diagnosable instead of being converted into generic success/failure text.
+
+Select real Podman/systemd verification according to the actual slice: normal
+and renamed lifecycle for changed staging/owner publication; include declaration
+removal and unchanged siblings, and a minimal external-image worker fixture for
+generic assumptions. For install/uninstall/paths, exercise restart, reboot,
+upgrade/skip, retention and `--delete-data` on configured disposable lab VMs,
+plus a controlled relevant failure and retry in a fresh process. For API-owner
+or API path changes, include focused `--whoami` with registration/introspection
+and rotation/removal, and the owner-publication/restart interruption missed by
+ordinary happy-path smoke. If diagnostics change, check the agreed terminal
+streams/status JSON and relevant journal audit on a real host without exposing
+values. Never reset unrelated environments. Record exact tested revisions,
+commands, results and gaps separately for product/unit, harness and real
+runtime. Historical green lab runs cannot verify a future refactor.
+
+### Understandability acceptance gate
+
+Green tests and shorter files are insufficient. The final review of each slice
+must answer the review guide's six questions and trace one success and one
+interrupted operation/retry, naming state ownership and functions. Show that:
+
+- The command entry and principal operation sequence are easy to find.
+- Names and placement reveal important effects; temporary staging/generation,
+  persistent publication and host commands are distinguishable from checks.
+- Central inputs/results reveal shape, validation stage, origin and sensitivity
+  without a long producer/consumer hunt; named results serve actual readers.
+- Required paths/process settings and any remaining initialisation order are
+  visible; no competing implicit/explicit source can drift.
+- A new declaration rule has one identifiable authoritative home and can be
+  exercised across relevant flows without copying the rule.
+- Safe diagnostic context identifies the relevant component/phase/reason while
+  preserving useful failure causes and existing machine-readable interfaces.
+- The retry can be explained from files left by the first process, including
+  owner work and completion; unrelated components remain untouched.
+- The new call graph reduces hidden relationships rather than multiplying
+  helpers. Document intentional complexity (three roles, source versus bundle,
+  generation-dependent checks, existing durable protocol) and why it remains.
+
+Record this as a code-review assessment, not empirical proof of human
+comprehension. The larger developer guide/new-developer trial are deferred.
+No operator commands/prerequisites are changed by this planning entry, so the
+section 7 AI operator walkthrough and human trial are not performed here. If
+implementation changes such procedures, apply section 7 then; green code tests
+are not a human/operator usability result.
 
 ## 64. Support new rootless installations outside the login home
 
@@ -1379,6 +1674,9 @@ subcommands) and [item 74](#74-one-operator-message-convention-and-python-loggin
 (message convention and Python `logging`), so they can be done before the RPM
 work. The new `<product>-admin` and `<product>` commands of WP2/WP3 use both
 from their first version.
+[Item 75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change) is
+limited to incremental lifecycle readability/testability; coordinate any shared
+path interfaces with this RPM work rather than redesigning either command flow.
 
 ## 66. Install sets: several signed bundles through one entry point
 
@@ -1779,6 +2077,9 @@ Prefer a few strong tests over many overlapping tests.
 Status: done in 0.4.3 after items 10, 8, 9, 12 and 13; directory trust of each
 release's `deployment/` package (add, wait, retire) is verified on the target by
 the full lab matrix (latest `b34-*` on `77b27cd`, CLEAN PASS). See [verification](acceptance/DEPLOY-REFACTOR.md).
+Further lifecycle readability work is planned separately in
+[item 75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change);
+this completed package extraction and its historical evidence remain unchanged.
 No existing installation requires migration: this implementation adds no migration,
 old-module fallback or compatibility layer. The original task follows.
 
