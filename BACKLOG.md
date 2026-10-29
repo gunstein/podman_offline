@@ -272,9 +272,15 @@ Status: **planned; direction decided 2026-10-29; phase 0 design
 ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) signed off by the
 product owner on 2026-10-29; the developer walkthrough was dropped by the
 product owner the same day; phase 1 is next, after item 76's matrix; not
-implemented.** A much smaller alternative scope (list-only `bundles.yaml`
-derived from files and manifests, `env/`, short secret reference, checklist)
-is proposed for review in [COMPONENT-SMALL-VARIANT.md](docs/COMPONENT-SMALL-VARIANT.md). Requested by the product owner after converting the
+implemented.**
+
+**Scope decided 2026-10-29 (replaces phases 1–5 for now):** the simple catalog
+(`gateway:` plus a plain component list; receivers, routes, public settings and
+their dependencies derived), `env/<container>.yaml`, the short secret reference
+and a checklist, specified in [COMPONENT-SMALL-VARIANT.md](docs/COMPONENT-SMALL-VARIANT.md)
+after an [independent review](docs/COMPONENT-SMALL-VARIANT-REVIEW.md). The
+product owner deliberately drops three rarely used product shapes (that
+specification, section 2.4). Everything else in this item stays deferred. Requested by the product owner after converting the
 organisation's .NET/TypeScript solution in dev. The first draft was reviewed by
 an independent analysis; the decisions, corrections and revised phases below
 replace that draft's proposal. "Today" describes the code at `5f4b499`.
