@@ -357,3 +357,159 @@ localhost pass.
 Only this dated evidence section was added. `BACKLOG.md`,
 `docs/REVIEW_GUIDE.md`, the recipe above and implementation code are unchanged.
 The result awaits product-owner review; no verification status is promoted.
+
+## Part 2, Revision 2 verification (2026-10-29)
+
+**Part 2 PASS**, including restoration. Only part 2 of Revision 2 was run.
+The controller used clean `main` at
+`d2ca3dc52e865607dccb186d969fb2ac92bb39e2`. The required command
+
+```sh
+git diff --stat 5f4b499 HEAD -- . ':(exclude)*.md'
+```
+
+produced no output before execution. The existing DEV source checkout at
+`~/podman-offline-acceptance/hosts76-whoami-5f4b499/src` was confirmed present;
+no VM was reset and part 1 was not rerun. Part 1 is explicitly reused from
+`hosts76-whoami-5f4b499` (**CLEAN PASS, 46/46**) because non-Markdown code is
+unchanged from `5f4b499`. This manual run is new real-DEV evidence for the
+revised recipe, not a new harness run or an isolated unit/harness-test result.
+
+DEV: **Oracle Linux 9.8, Podman 5.8.2, SELinux Enforcing**. Commands ran as
+`gunstein` on configured DEV VM 107 (`192.168.0.102`), using sudo only where
+the recipe requires it. The public name was `myproduct-proxy`.
+
+### Result by recipe step
+
+| Step | Result | Observation |
+| --- | --- | --- |
+| 1. Host loopback mapping | PASS | Host lookup returned `127.0.0.1 myproduct-proxy`. |
+| 2. Negative control | PASS | A container without `--no-hosts` returned `127.0.0.1 myproduct-proxy myproduct-proxy`. Image: `docker.io/library/nginx:1.28-alpine`. |
+| 2b. Hosts options and alternative | OBSERVED | All three enclosing commands exited 0; their complete stdout is reproduced unchanged below. |
+| 3. Normal DEV startup / public-name resolution | PASS | `./dev/dev.sh up` exited 0. Backend check printed `no /etc/hosts`; backend DNS returned `10.89.0.24 myproduct-proxy.dns.podman`, matching proxy inspect address `10.89.0.24`. |
+| 3. Localhost loop | OBSERVED | All 12 application containers resolved `localhost` to `::1`; all 9 infra containers reported `hosts-file=?` and `NO-SHELL`. No `NO-LOCALHOST` or `NO-GETENT` result. Full per-container output below. |
+| 4. Sign-in and app restart | PASS | Smoke exited 0 with all six PASS lines, including Duende sign-in, introspection and the same session after app restart. |
+| 5. hostAliases conflict | OBSERVED | Raw `podman kube play --no-hosts` exited **125** with `Error: HostAliases in yaml file will not work with --no-hosts`. The enclosing `...; echo "exit=$?"` command exited 0. Manifest cleanup completed. |
+| 6. Restore | PASS | DEV down, loopback-line removal and confirmation all exited 0. Confirmation: `restored: no host entry`. |
+
+No operational step failed and none was retried. Step 2b, localhost results
+and the raw hostAliases conflict were observations as specified, rather than
+stop conditions. No code, recipe or persistent product configuration was
+changed to obtain these results.
+
+### Complete step 2b output (unchanged)
+
+The recipe filters the two help outputs; the following are the complete
+outputs of those exact commands, including original spacing. No stderr was
+emitted by these three Podman observation commands.
+
+`podman kube play --help | grep -iE -- '--(no-hosts|hosts-file)' || echo 'kube play: no hosts options listed'`:
+
+```text
+      --no-hosts                      Do not create /etc/hosts within the pod's containers, instead use the version from the image
+```
+
+`podman run --help | grep -iE -- '--hosts-file' || echo 'run: no --hosts-file'`:
+
+```text
+      --hosts-file string                        Base file to create the /etc/hosts file inside the container, or one of the special values. ("image"|"none")
+```
+
+`podman run --rm --pull=never --network myproduct --hosts-file=none --entrypoint cat "$proxy_image" /etc/hosts` (with the recipe's fallback):
+
+```text
+127.0.0.1	localhost
+::1	localhost
+169.254.1.2	host.containers.internal host.docker.internal
+10.89.0.23	869e178e7961 practical_raman
+```
+
+The `kube play` help lists `--no-hosts` and does **not** list
+`--hosts-file`; `run` help lists `--hosts-file`. No unlisted kube-play option
+was attempted. In the separate `run --hosts-file=none` observation, the file
+contains `127.0.0.1 localhost` and `::1 localhost`, plus generated internal and
+container entries. It does not contain `127.0.0.1 myproduct-proxy` or any other
+`myproduct-proxy` entry. This is decision input for the product owner; the
+implementation remains `--no-hosts`.
+
+### Localhost and hosts-file observations for every container
+
+The following is the complete output of the recipe's observation loop. A
+`?`/`NO-SHELL` on an infra container means the shell-based file/resolution
+probe could not run; it is not proof that the file is absent or localhost
+resolution is broken there. Containers reporting `hosts-file=no` still
+resolved `localhost` in this run.
+
+```text
+275d7c7d2888-infra hosts-file=? localhost=NO-SHELL
+platform-proxy-nginx hosts-file=yes localhost=::1               localhost  localhost
+cfa2804e89ea-infra hosts-file=? localhost=NO-SHELL
+identity-postgres-db hosts-file=no localhost=::1             localhost
+e481adffc279-infra hosts-file=? localhost=NO-SHELL
+identity-server-app hosts-file=no localhost=::1             localhost
+10aa54d0289e-infra hosts-file=? localhost=NO-SHELL
+app1-postgres-db hosts-file=no localhost=::1             localhost
+47066fa3bf5d-infra hosts-file=? localhost=NO-SHELL
+app1-todo-backend hosts-file=no localhost=::1             localhost
+app1-todo-frontend hosts-file=yes localhost=::1               localhost  localhost
+52fa6c84797b-infra hosts-file=? localhost=NO-SHELL
+app2-postgres-db hosts-file=no localhost=::1             localhost
+63cf83e8ad21-infra hosts-file=? localhost=NO-SHELL
+app2-todo-backend hosts-file=no localhost=::1             localhost
+app2-todo-frontend hosts-file=yes localhost=::1               localhost  localhost
+bd1867ce3796-infra hosts-file=? localhost=NO-SHELL
+app3-whoami-backend hosts-file=no localhost=::1             localhost
+app3-whoami-frontend hosts-file=yes localhost=::1               localhost  localhost
+33a863fc00ee-infra hosts-file=? localhost=NO-SHELL
+help-web-web hosts-file=yes localhost=::1               localhost  localhost
+```
+
+### Sign-in/restart smoke and hostAliases
+
+With the host loopback line still present, the exact recipe smoke command
+exited 0:
+
+```text
+PASS: HTTPS, routes, compiled frontend, anonymous 401, https callback URI
+PASS: alice signed in through Duende (PKCE, private_key_jwt); claims API
+PASS: Identity accepts app3's registered API secret (introspection)
+PASS: the session cookie still works after restarting the app
+PASS: CSRF and origin checks; local logout
+PASS: an OIDC error response is refused without echoing its text
+```
+
+For the raw hostAliases probe, Podman stderr was:
+
+```text
+Error: HostAliases in yaml file will not work with --no-hosts
+```
+
+The recipe's exit-status output was:
+
+```text
+exit=125
+```
+
+The subsequent `podman kube down ...; rm -f /tmp/hostaliases-test.yaml`
+cleanup command exited 0.
+
+### Restoration, scope and remaining verification
+
+Step 6 completed all three prescribed commands. Its final output was:
+
+```text
+restored: no host entry
+```
+
+DEV pods were stopped and the temporary host loopback entry removed. No PROD
+commands or changes were performed. **Parts 3 and 4 were intentionally not
+run**, as requested: the product owner first decides whether to retain
+`--no-hosts` or change mechanism based on these part-2 observations. The
+installed-PROD loopback check and fixed matrix therefore remain outstanding.
+
+No separate product/unit tests or acceptance-harness unittests were run in
+this round; part 1's existing real-runtime evidence is reused only under the
+explicit unchanged-code condition above. This report does not claim runtime
+verification of `--hosts-file=none` through kube play or Quadlet, or empirical
+understandability/operator-trial verification. Earlier result sections are
+unchanged; neither `BACKLOG.md` nor `docs/REVIEW_GUIDE.md` was edited.
