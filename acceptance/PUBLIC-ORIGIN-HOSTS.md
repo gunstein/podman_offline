@@ -47,6 +47,21 @@ and a re-issued web certificate) and sign-in plus GraphQL worked.
 
 ## Lab recipe
 
+Revision 2 (2026-10-29), after the first run stopped in part 2: with
+`--no-hosts` Podman creates no `/etc/hosts`, so an image without its own file
+(`mcr.microsoft.com/dotnet/aspnet:8.0`) has none at all. That is the intended
+result (no host line reaches the container), not a failure. Step 3 now accepts
+a missing file, the `localhost` checks are recorded observations instead of stop
+conditions, and part 2 first records whether this Podman offers
+`--hosts-file=none` (a generated `/etc/hosts` with `localhost` but without the
+host's lines), which may be a better choice than `--no-hosts`.
+
+**Continuing after the first run:** only documentation changed after
+`5f4b499`, so part 1's CLEAN PASS (`hosts76-whoami-5f4b499`) still covers the
+code. Start again at part 2, from its beginning, in that run's DEV checkout;
+PROD still has that run's installation for part 3. If either VM was reset
+since, run part 1 again first.
+
 Four parts, in this order. Part 1 is the existing automated scenario; parts 2
 and 3 are manual and add the host loopback line that no scenario sets; part 4
 repeats the fixed matrix because every installed unit now carries
@@ -91,12 +106,24 @@ proxy_image=$(python3 -B -c 'import yaml; d=[x for x in yaml.safe_load_all(open(
 podman network exists myproduct || podman network create myproduct
 podman run --rm --pull=never --network myproduct --entrypoint getent "$proxy_image" hosts "$host"   # expect 127.0.0.1
 
+# 2b. Record the hosts options this Podman offers (decision input, not a pass/fail step).
+podman kube play --help | grep -iE -- '--(no-hosts|hosts-file)' || echo 'kube play: no hosts options listed'
+podman run --help | grep -iE -- '--hosts-file' || echo 'run: no --hosts-file'
+podman run --rm --pull=never --network myproduct --hosts-file=none --entrypoint cat "$proxy_image" /etc/hosts \
+  || echo 'run --hosts-file=none not usable'
+# Wanted: localhost present, no "127.0.0.1 $host" line from the host.
+
 # 3. Start dev the normal way (dev/dev.sh passes --no-hosts).
 ./dev/dev.sh up
-podman exec app3-whoami-backend sh -c "grep -c '$host' /etc/hosts || true"    # expect 0
+podman exec app3-whoami-backend sh -c "if [ -e /etc/hosts ]; then grep -c '$host' /etc/hosts || true; else echo 'no /etc/hosts'; fi"
+                                                                               # expect 0 or 'no /etc/hosts'
 podman exec app3-whoami-backend getent hosts "$host"                           # expect the proxy address below
 podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-for c in $(podman ps --format '{{.Names}}'); do printf '%s ' "$c"; podman exec "$c" getent hosts localhost || echo NO-LOCALHOST; done
+# Observation (record, do not stop): does each container resolve "localhost"?
+for c in $(podman ps --format '{{.Names}}'); do
+  printf '%s hosts-file=%s localhost=' "$c" "$(podman exec "$c" sh -c '[ -e /etc/hosts ] && echo yes || echo no' 2>/dev/null || echo ?)"
+  podman exec "$c" sh -c 'command -v getent >/dev/null || { echo NO-GETENT; exit 0; }; getent hosts localhost || echo NO-LOCALHOST' 2>/dev/null || echo NO-SHELL
+done
 
 # 4. Sign-in through the public origin while the host maps it to loopback.
 SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
@@ -122,9 +149,12 @@ getent hosts "$host" || echo 'restored: no host entry'
 ```
 
 Pass: step 2 shows `127.0.0.1` (the line would have reached a container);
-step 3 shows no line in the backend's `/etc/hosts`, the name resolves to the
-proxy's address and every container resolves `localhost`; step 4 prints its
-`PASS` lines. Step 5 is informational: record the exit status and message.
+step 3 shows `0` or `no /etc/hosts` for the backend and the name resolves to
+the proxy's address; step 4 prints its `PASS` lines. Record, without stopping:
+step 2b's output, the `localhost` line for every container (an address,
+`NO-LOCALHOST`, `NO-GETENT` or `NO-SHELL`) and step 5's exit status and message.
+A container that cannot resolve `localhost` is a finding for the
+`--hosts-file` decision, not a failure of this run.
 
 ### Part 3: installed PROD with the public name mapped to loopback (PROD VM)
 
@@ -148,10 +178,15 @@ units restart myproduct-platform.service myproduct-identity.service myproduct-ap
 sleep 20; units is-active myproduct-platform.service myproduct-identity.service myproduct-app3.service
 
 # 3. The backend sees the proxy, not the host's line.
-ops podman exec app3-whoami-backend sh -c "grep -c '$host' /etc/hosts || true"   # expect 0
+ops podman exec app3-whoami-backend sh -c "if [ -e /etc/hosts ]; then grep -c '$host' /etc/hosts || true; else echo 'no /etc/hosts'; fi"
+                                                                               # expect 0 or 'no /etc/hosts'
 ops podman exec app3-whoami-backend getent hosts "$host"                          # expect the proxy address below
 ops podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-for c in $(ops podman ps --format '{{.Names}}'); do printf '%s ' "$c"; ops podman exec "$c" getent hosts localhost || echo NO-LOCALHOST; done
+# Observation (record, do not stop), as in part 2.
+for c in $(ops podman ps --format '{{.Names}}'); do
+  printf '%s localhost=' "$c"
+  ops podman exec "$c" sh -c 'command -v getent >/dev/null || { echo NO-GETENT; exit 0; }; getent hosts localhost || echo NO-LOCALHOST' 2>/dev/null || echo NO-SHELL
+done
 ```
 
 Still on PROD, while the line is present, start a sign-in the way the harness
@@ -173,9 +208,9 @@ sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts
 units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service
 ```
 
-Pass: `1` for each unit in step 1, all units active, no line and the proxy's
-address in step 3, every container resolves `localhost`, and `302` to the
-authorize endpoint while the line was present. Part 1's next run
+Pass: `1` for each unit in step 1, all units active, `0` or `no /etc/hosts`
+and the proxy's address in step 3, and `302` to the authorize endpoint while
+the line was present. Record the `localhost` observations as in part 2. Part 1's next run
 resets both VMs from their snapshots.
 
 ### Part 4: fixed matrix (controller)

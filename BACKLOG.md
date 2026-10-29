@@ -527,8 +527,14 @@ in `dev/dev.sh` and `PodmanArgs=--no-hosts` in `quadlet/template.kube`,
 and task 3 in the dev credential tooling only: `generate-certificates.sh
 platform <host>` refuses a retained web certificate for another name.
 `validate` does not read the web certificate (it reads no credential source).
-Open: the Podman confirmations in task 1 and the lab check, then an automated
-acceptance step.
+First lab attempt (2026-10-29, `5f4b499`): part 1 `--whoami` CLEAN PASS
+46/46 with `--no-hosts` in dev and installed units; part 2 stopped because the
+recipe expected an `/etc/hosts` that `--no-hosts` does not create for the
+`aspnet` image. The recipe is revised (missing file accepted, `localhost`
+recorded per container, `--hosts-file=none` support recorded); parts 2–4 remain.
+Open: whether `localhost` resolves without `/etc/hosts` in every shipped image,
+whether `--hosts-file=none` is available for `kube play`/Quadlet and preferable,
+the rest of the lab check, then an automated acceptance step.
 
 ### How containers reach the public origin today
 
