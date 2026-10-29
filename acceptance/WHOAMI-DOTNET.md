@@ -644,3 +644,30 @@ the organisation's backend; a two-level CA; Duende post-logout redirect; and
 server-side session revocation after local logout. The normal baseline's
 persistent user journal remains a known limitation. App3 is still outside the
 fixed PROD counts, install orders and upgrade matrix.
+
+## Backlog 72 remaining fixed-matrix results (recorded 2026-10-29)
+
+The operator completed five remaining scenarios on 2026-10-28 at
+`0ece0c1ff22126f9d7ca28056be0ca30b74c2dfd` on `main`. Local report metadata
+and step records confirm **CLEAN PASS for all five, 347/347 steps**:
+
+| Run | Scenario | Passed steps |
+| --- | --- | ---: |
+| `m72c-identity` | Identity-only baseline/upgrade | 66/66 |
+| `m72c-renamed` | Renamed product | 57/57 |
+| `m72c-app2` | App2 first | 125/125 |
+| `m72c-help` | Help only | 60/60 |
+| `m72c-platform-help` | Platform/help without Identity on PROD | 39/39 |
+
+All five final audits passed on OL9.8 / Podman 5.8.2 / systemd 252 with
+SELinux Enforcing. The four scenarios with `03-unit` each passed 572 product
+tests; no new isolated harness-unittest run is claimed. The corrected Identity
+0.4.11 baseline passed, as did the renamed product's startup and lifecycle
+without app3. The earlier failed `m72-identity` result is retained as history.
+
+[Detailed results, scope and artifact fingerprints](API-SECRETS-MATRIX-20261029.md).
+This closes the pending five-scenario regression and renamed-product runtime
+gap recorded above. It does not rerun the focused app3/hash/rotation checks:
+those remain evidence at `fd99d31`. No normal app1-first, `--whoami`,
+`--status-retry` or human operator trial at `0ece0c1` is claimed. The remaining
+API-secret and organisation/backend verification limits still apply.

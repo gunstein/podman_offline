@@ -9,7 +9,7 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-28)
+## Current priority (updated 2026-10-29)
 
 [Item 72](#72-register-api-resource-secrets-with-identity) was requested by
 the product owner on 2026-10-28 while converting the organisation's
@@ -18,8 +18,10 @@ secret. **Its requested lab scope is complete** at `fd99d31` (2026-10-28):
 `whoami-fd99d31` passed all 46 steps and `normal-fd99d31` all 125 steps,
 including their final audits. Real Duende introspection, private registration
 modes/checksums, one-install rotation, trailing-newline refusal, empty Identity
-Secret and uninstall with app2 sign-in passed. Renamed and optional interrupted
-retry were not run. [Lab results and remaining gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
+Secret and uninstall with app2 sign-in passed. The five remaining fixed scenarios
+subsequently passed at `0ece0c1` (347/347 steps), including the corrected Identity
+baseline and renamed product; [matrix evidence](acceptance/API-SECRETS-MATRIX-20261029.md).
+Optional API-secret interruption/retry remains untested. [Lab results and remaining gaps](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28).
 
 [Item 71](#71-add-a-net-and-typescript-demo-app-that-signs-in-through-duende)
 **has completed its lab scope**: run `whoami-7b32621` at
@@ -267,7 +269,12 @@ also drops `accepts.apis`, every `apis` role and their `api.yaml`, so the
 scenario models the real old release and then exercises the upgrade to an
 Identity that accepts `apis`. Reproduced and fixed locally on a clone with the
 pinned baseline (`validate` and `prepare` pass); harness regression in
-`test_secret_templates.py`. The five remaining scenarios must be (re)run.
+`test_secret_templates.py`. The five remaining scenarios subsequently passed
+on 2026-10-28 at `0ece0c1`: `m72c-identity` 66/66, `m72c-renamed` 57/57,
+`m72c-app2` 125/125, `m72c-help` 60/60 and `m72c-platform-help` 39/39,
+all **CLEAN PASS**, including final audits. [Results recorded 2026-10-29](acceptance/API-SECRETS-MATRIX-20261029.md).
+The earlier failed run is not relabelled; no normal app1-first or focused whoami
+rerun at this commit is claimed.
 
 ### Problem
 
@@ -421,9 +428,11 @@ pass; the shipped demo validates and prepares with an
 rotation/refusal, normal matrix with an empty `identity-apis` Secret, and app3
 uninstall with app2 sign-in. See the [dated report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28)
 and [sanitized checksums](acceptance/API-SECRETS-LAB-20261028.md).
-Remaining extensions: renamed `login-service-apis`, interrupted owner-restart
-retry, real `hash: none` / multiple-API deployments and the organisation's backend.
-No claim is made for those paths from this lab result.
+The renamed startup/lifecycle regression is now verified by `m72c-renamed` at
+`0ece0c1`; [scope and remaining limits](acceptance/API-SECRETS-MATRIX-20261029.md).
+Remaining extensions: interrupted API owner-restart retry, real `hash: none` /
+multiple-API deployments and the organisation's backend. No claim is made for
+those paths from these lab results.
 
 ### Constraints
 
