@@ -275,8 +275,9 @@ product owner the same day; phase 1 is next, after item 76's matrix; not
 implemented.**
 
 **Scope decided 2026-10-29 (replaces phases 1–5 for now):** the simple catalog
-(`gateway:` plus a plain component list; receivers, routes, public settings and
-their dependencies derived), `env/<container>.yaml`, the short secret reference
+(`gateway:` and `identity:` plus a plain component list; routes, public
+settings, receivers and their dependencies derived from files, without
+reading manifests), `env/<container>.yaml`, the short secret reference
 and a checklist, specified in [COMPONENT-SMALL-VARIANT.md](docs/COMPONENT-SMALL-VARIANT.md)
 after an [independent review](docs/COMPONENT-SMALL-VARIANT-REVIEW.md). The
 product owner deliberately drops three rarely used product shapes (that
