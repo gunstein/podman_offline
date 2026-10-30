@@ -114,7 +114,7 @@ On a machine with network access to the image and package registries:
 cp config/dev.yaml.example config/dev.yaml && chmod 600 config/dev.yaml
 ./dev/demo-credentials.sh && ./deploy.sh validate && ./dev/dev.sh up
 python3 -m venv .venv-app && .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
-SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-app/bin/python dev/whoami-smoke-test.py
+SMOKE_RESTART_COMMAND='dev/dev.sh restart app3-whoami' .venv-app/bin/python dev/whoami-smoke-test.py
 ```
 
 Expected: four `PASS` lines (HTTPS, routes, compiled frontend, anonymous `401`

@@ -574,7 +574,12 @@ fixed matrix counts/install orders are unchanged.
 retain all earlier attempts and distinguish inspected harness artifacts from
 operator-reported manual results. Direct DEV stop/start/restart commands must
 select the same `CONTAINERS_CONF_OVERRIDE` as `dev.sh up`; production service
-restarts inherit it from the installed unit. No implementation change was
+restarts inherit it from the installed unit. Follow-up (2026-10-30): to remove
+that hidden rule, `dev/dev.sh restart <pod>...` selects the policy for
+`podman pod restart`; README, the whoami smoke documentation and the harness
+`dev-whoami-e2e` step use it, with a stubbed-Podman regression test. Dev
+scripts are not in bundles, so no component version changes. Not yet run on
+real Podman; the next harness whoami run exercises it. No implementation change was
 made between the failed and successful manual runs. An automated host-loopback
 acceptance step, broader runtime/version coverage and component work remain
 separate follow-ups; the other five fixed scenarios were not rerun for this

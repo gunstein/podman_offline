@@ -275,7 +275,7 @@ python3 -m venv .venv-app
 .venv-app/bin/pip install -r apps/todo-backend/requirements.txt
 APP_BASE_PATH=/app1 .venv-app/bin/python dev/smoke-test.py
 APP_BASE_PATH=/app2 .venv-app/bin/python dev/smoke-test.py
-SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-app/bin/python dev/whoami-smoke-test.py
+SMOKE_RESTART_COMMAND='dev/dev.sh restart app3-whoami' .venv-app/bin/python dev/whoami-smoke-test.py
 ./dev/dev.sh down
 ```
 
@@ -330,9 +330,9 @@ trust; a host `/etc/hosts` line such as `127.0.0.1 <public host name>` serves
 only the browser: pods use a bundled `base_hosts_file = "none"` override to
 generate localhost entries without copying the host's file, and resolve the name to
 the proxy ([details](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
-Direct dev Podman stop/start/restart commands must select the same
-`CONTAINERS_CONF_OVERRIDE`; `dev.sh up` does not set it in your shell
-([restart example](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
+Restart a dev pod with `dev/dev.sh restart <pod>...`: Podman rewrites
+`/etc/hosts` on every start, and a plain `podman pod restart` would copy the
+host's lines in again ([details](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
 After changing `PUBLIC_ORIGIN`, `dev/demo-credentials.sh` refuses a retained
 web certificate for the old name; remove `web.crt` and `web.key` as it says.
 Each app uses `/app1/` or `/app2/`; help is public at `/help/`.

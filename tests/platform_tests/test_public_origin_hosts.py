@@ -119,7 +119,7 @@ class HostsPolicyTests(ProductFixture):
         with self.assertRaisesRegex(common.DeployError, "Control character"):
             deploy.quadlet_text(".kube", "cedar", "cedar-processor")
 
-    def test_dev_scopes_the_override_to_kube_play_and_preserves_user_settings(self):
+    def test_dev_scopes_the_override_to_starts_and_preserves_user_settings(self):
         script = self.source / "dev/dev.sh"
         script.parent.mkdir()
         shutil.copy2(REPO / "dev/dev.sh", script)
@@ -131,7 +131,7 @@ class HostsPolicyTests(ProductFixture):
         inherited = self.write("inherited.conf", "retained override")
         podman = self.write(
             "bin/podman",
-            '#!/usr/bin/env python3\nimport configparser, json, os, sys\nargs = sys.argv[1:]\noverride = os.environ.get("CONTAINERS_CONF_OVERRIDE")\nevent = {"args": args, "override": override, "config": os.environ.get("CONTAINERS_CONF")}\nif args[:2] == ["kube", "play"]:\n    policy = configparser.ConfigParser()\n    policy.read(override)\n    event["base_hosts_file"] = policy["containers"]["base_hosts_file"]\n    event["no_hosts"] = policy.getboolean("containers", "no_hosts")\nwith open(os.environ["HOSTS_TEST_RECORD"], "a") as stream:\n    stream.write(json.dumps(event) + "\\n")\n',
+            '#!/usr/bin/env python3\nimport configparser, json, os, sys\nargs = sys.argv[1:]\noverride = os.environ.get("CONTAINERS_CONF_OVERRIDE")\nevent = {"args": args, "override": override, "config": os.environ.get("CONTAINERS_CONF")}\nif args[:2] in (["kube", "play"], ["pod", "restart"]):\n    policy = configparser.ConfigParser()\n    policy.read(override)\n    event["base_hosts_file"] = policy["containers"]["base_hosts_file"]\n    event["no_hosts"] = policy.getboolean("containers", "no_hosts")\nwith open(os.environ["HOSTS_TEST_RECORD"], "a") as stream:\n    stream.write(json.dumps(event) + "\\n")\n',
             0o755,
         )
         env = dict(
@@ -142,28 +142,51 @@ class HostsPolicyTests(ProductFixture):
             CONTAINERS_CONF_OVERRIDE=str(inherited),
             HOSTS_TEST_RECORD=str(record),
         )
-        result = REAL_RUN(
-            ["bash", str(script), "up"],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        def dev(*args):
+            return REAL_RUN(
+                ["bash", str(script), *args],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False,
+            )
+
+        for args in (("up",), ("restart", "app3-whoami", "other-pod"), ("down",)):
+            result = dev(*args)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # A restart without a pod name is a usage error before any Podman command.
+        before = record.read_text()
+        result = dev("restart")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Usage: dev/dev.sh restart <pod>", result.stderr)
+        self.assertEqual(record.read_text(), before)
+
         events = [json.loads(line) for line in record.read_text().splitlines()]
-        (play,) = [event for event in events if event["args"][:2] == ["kube", "play"]]
-        self.assertNotIn("--no-hosts", play["args"])
+        # Podman regenerates /etc/hosts on every start: both starts carry the policy.
+        starts = [
+            event
+            for event in events
+            if event["args"][:2] in (["kube", "play"], ["pod", "restart"])
+        ]
         self.assertEqual(
-            play["override"], str(self.source / "quadlet/containers-hosts.conf")
+            [event["args"][:2] for event in starts],
+            [["kube", "play"], ["pod", "restart"]],
         )
-        self.assertEqual(play["base_hosts_file"], '"none"')
-        self.assertFalse(play["no_hosts"])
+        self.assertEqual(starts[1]["args"][2:], ["app3-whoami", "other-pod"])
+        for event in starts:
+            self.assertNotIn("--no-hosts", event["args"])
+            self.assertEqual(
+                event["override"], str(self.source / "quadlet/containers-hosts.conf")
+            )
+            self.assertEqual(event["base_hosts_file"], '"none"')
+            self.assertFalse(event["no_hosts"])
         self.assertTrue(
             all(
                 event["override"] == str(inherited)
                 for event in events
-                if event is not play
+                if event not in starts
             )
         )
         self.assertTrue(all(event["config"] == str(user_config) for event in events))

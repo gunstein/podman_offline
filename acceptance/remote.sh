@@ -1039,7 +1039,7 @@ example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
 dev-whoami-e2e)
     cd "$src"
-    SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
+    SMOKE_RESTART_COMMAND='dev/dev.sh restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
     output=$(podman logs --tail 5000 app3-whoami-backend 2>&1)
     whoami_log_safety "$output"
     ;;

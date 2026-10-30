@@ -86,7 +86,8 @@ a missing path and resets logging after each test.
 # Generated localhost without host entries (backlog 76)
 
 `platform_tests/test_public_origin_hosts.py` executes the dev wrapper with a
-Podman stub to check command-scoped `CONTAINERS_CONF_OVERRIDE`, preserved
+Podman stub to check command-scoped `CONTAINERS_CONF_OVERRIDE` on `up` and
+`restart`, preserved
 caller config and absence of `--no-hosts`. It installs a checksummed policy
 from a relocated external-image bundle, verifies the unit's release-local
 path and literal systemd escaping, and refuses missing/symlinked policies and

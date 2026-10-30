@@ -4,7 +4,7 @@ Checks HTTPS, the OIDC handler's https redirect URI on the client protocol's
 callback path, sign-in through Duende (code, PKCE, private_key_jwt), the claims
 API, the API secret registered with Identity (backlog 72), CSRF and local logout, and last sends an OIDC error response whose text the
 backend must not log (the harness checks the log). With SMOKE_RESTART_COMMAND (for example
-`podman pod restart app3-whoami`, or `systemctl --user restart myproduct-app3`
+`dev/dev.sh restart app3-whoami`, or `systemctl --user restart myproduct-app3`
 on a target) it restarts the app after sign-in and requires the same session
 cookie to still work, which needs the persisted Data Protection keys.
 Run with the Todo backend dependencies installed (requests).
