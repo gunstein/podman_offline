@@ -578,8 +578,9 @@ restarts inherit it from the installed unit. Follow-up (2026-10-30): to remove
 that hidden rule, `dev/dev.sh restart <pod>...` selects the policy for
 `podman pod restart`; README, the whoami smoke documentation and the harness
 `dev-whoami-e2e` step use it, with a stubbed-Podman regression test. Dev
-scripts are not in bundles, so no component version changes. Not yet run on
-real Podman; the next harness whoami run exercises it. No implementation change was
+scripts are not in bundles, so no component version changes. Harness run
+`hosts76-devrestart-whoami-15e1cd6`: CLEAN PASS 46/46, including the real dev
+restart (without a host loopback line). No implementation change was
 made between the failed and successful manual runs. An automated host-loopback
 acceptance step, broader runtime/version coverage and component work remain
 separate follow-ups; the other five fixed scenarios were not rerun for this

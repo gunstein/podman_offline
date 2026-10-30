@@ -927,3 +927,21 @@ the implementation review above are unchanged. The procedure review found
 and corrected the missing restart environment; the assisted operator run
 checks execution, not empirical unassisted usability. Documentation checks
 cover consistent scope, relative links, shell syntax and `git diff --check`.
+
+## Dev restart command (recorded 2026-10-30)
+
+Change: `dev/dev.sh restart <pod>...` selects the same hosts policy for
+`podman pod restart`; the harness `dev-whoami-e2e` step uses it as its
+`SMOKE_RESTART_COMMAND`.
+
+| Run ID | Revision | Result | Passed / total steps |
+| --- | --- | --- | ---: |
+| `hosts76-devrestart-whoami-15e1cd6` | `15e1cd6` | **CLEAN PASS** (operator-reported console output) | 46/46 |
+
+`03-dev-whoami-e2e` passed, so the real Podman restart through
+`dev/dev.sh restart app3-whoami` kept the signed-in session working. This run
+sets no host loopback line: it shows that the command works on real Podman,
+not that a host loopback line stays out after the restart (that is covered
+only by the stubbed-Podman test that the policy is selected). The
+`EVIDENCE.md`/`record.jsonl` files remain on the operator's controller and
+were not inspected here.
