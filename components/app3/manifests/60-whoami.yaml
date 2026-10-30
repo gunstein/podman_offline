@@ -20,7 +20,7 @@ spec:
       periodSeconds: 10
       timeoutSeconds: 5
       failureThreshold: 6
-    # Other settings and the API secret: components/app3/env/backend.yaml.
+    # Other settings and the API secret: ENVIRONMENT in config.defaults.yaml.
     # These two stay here: the platform compares them with client.yaml.
     env:
     - name: APP_ID

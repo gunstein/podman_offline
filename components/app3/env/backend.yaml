@@ -1,9 +1,0 @@
-# The backend's environment (backlog 77). APP_ID and BASE_PATH stay in the
-# manifest's env: the platform compares them with client.yaml.
-PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
-IDENTITY_INTERNAL_URL: '@@IDENTITY_INTERNAL_URL@@'
-# Must match ApiResources__0__Name in components/identity/env/app.yaml.
-Authentication__ApiName: app3-api
-# The secret app3 shares with Identity: the same placeholder is on Identity's
-# ApiResources__0__ApiSecrets__0__Value line. The platform generates it.
-Authentication__ApiSecret: '@@api-secret:app3@@'

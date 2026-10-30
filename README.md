@@ -77,7 +77,7 @@ path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 
 In `bundles.yaml`, `gateway: platform` and `identity: identity` name the
 receivers; the apps and help register with them through their `route.conf`,
-`client.yaml` and `env/` files ([the catalog](docs/COMPONENTS.md#the-catalog-bundlesyaml)). Each component has its own
+`client.yaml` and Identity's API secret line ([the catalog](docs/COMPONENTS.md#the-catalog-bundlesyaml)). Each component has its own
 `components/<id>/VERSION` containing `major.minor.patch`. Platform and Identity
 use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
 names must start with their component prefix; the renderer rejects other names
@@ -215,7 +215,12 @@ its credentials and install it. For app1/app2, next initialize and install Ident
 from its own bundle before either app. For a platform/help-only setup, install
 help after platform; Identity and the apps are not required. Prepare each
 component’s certificates/credentials with the certificate script, edit
-component-specific settings, then install. Every component except the gateway
+component-specific settings, then install. app3 generates the secret it shares
+with Identity at its first install (`app3-api-secret` in app3's `config.yaml`,
+file `credentials/api-secret/value`). To reuse a value, or to rotate it, write
+it there as the runtime account (mode 0600, one line, no trailing newline)
+and run `./deploy.sh install` from the app3 bundle; app3 restarts, then
+Identity. Every component except the gateway
 (Identity, the apps and help) initializes with only the
 installed platform config's actual `PUBLIC_ORIGIN` and `HTTPS_PORT` as final
 overrides; dev prepare inherits them the same way. Other platform settings are never copied.
@@ -1442,9 +1447,9 @@ changes. For a new demo-style app also consider:
 | Config | `components/<id>/config.defaults.yaml` for initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
-| Settings | `env/<container>.yaml` per container; short `<id>: generate` secrets ([checklist](docs/COMPONENTS.md#converting-a-service)). |
+| Settings | One `config.defaults.yaml`: settings and `SECRET_FILES` at the top, each container's variables under `ENVIRONMENT` ([checklist](docs/COMPONENTS.md#converting-a-service)). |
 | Proxy/OIDC | `route.conf` and `client.yaml` in the component; the catalog derives the rest. |
-| API secret | `@@api-secret:<component>@@` in the API's and Identity's `env/` files ([API secrets](docs/COMPONENTS.md#api-secrets)). |
+| API secret | The API declares the secret in `SECRET_FILES`; both sides name it as `@@secret:<id>/<key>@@` ([API secrets](docs/COMPONENTS.md#api-secrets)). |
 | Credentials | Prepare them yourself, or extend the demo provisioning script deliberately. |
 | E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
 | Docs | Update overview, tests/README and acceptance/README. |
@@ -1510,14 +1515,16 @@ The table documents default identities; manifests/config remain the source of
 truth. The two Todo users have the same name in **different clusters** and have
 independently generated credentials.
 
-Identity's `SECRET_TEMPLATES.identity-database` composes the retained password and
-ordinary `DB_*` config into `ConnectionStrings__Default`. The container receives
-it through `secretKeyRef` and uses only that complete environment value, matching
-unmodified .NET images. `--database-check` connects with the same value and emits
+Identity's `ENVIRONMENT` line `ConnectionStrings__Default` (in its
+`config.defaults.yaml`, backlog 77) composes the retained password and ordinary
+`DB_*` config into the connection string. The container receives it through the
+platform's generated Secret and uses only that complete environment value,
+matching unmodified .NET images. `--database-check` connects with the same value and emits
 only pass/fail diagnostics (exit 0/2/3; missing/invalid config exits 1).
 The former in-image `DatabaseEnvironment.cs` builder is removed in Identity 0.2.2.
-Add the declaration explicitly to an existing installation's authoritative config
-before upgrading; new defaults never replace persistent config automatically.
+Upgrading an existing Identity needs no config change: the connection string
+comes with the release, and the operator's `config.yaml` keeps only the `DB_*`
+settings and the password source.
 
 The Todo examples keep an alternative application interface: `database.py` reads
 the same `DB_*` values and mounted Secret file, and passes separate keyword

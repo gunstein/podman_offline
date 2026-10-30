@@ -38,6 +38,8 @@ SERVICE = STANDALONE_PRODUCT + ".service"
 
 SECRET_FILES = "SECRET_FILES"
 SECRET_TEMPLATES = "SECRET_TEMPLATES"
+# Each container's environment; only in the release's config.defaults.yaml.
+ENVIRONMENT = "ENVIRONMENT"
 VOLUME_FILES = "VOLUME_FILES"
 
 IMPORT_SOURCE = "volume.podman.io/import-source"

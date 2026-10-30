@@ -20,13 +20,7 @@ spec:
       periodSeconds: 10
       timeoutSeconds: 5
       failureThreshold: 6
-    # Settings and API secrets: components/identity/env/app.yaml (backlog 77).
-    env:
-    - name: ConnectionStrings__Default
-      valueFrom:
-        secretKeyRef:
-          name: identity-database
-          key: ConnectionStrings__Default
+    # Settings, connection string and API secrets: ENVIRONMENT in config.defaults.yaml.
     volumeMounts:
     - name: signing
       mountPath: /run/secrets/signing

@@ -308,9 +308,12 @@ class ProductFixture(DeployFixture):
         (directory / "manifests/10-resources.yaml").write_text(
             yaml.safe_dump_all(spec["manifests"], sort_keys=False)
         )
-        if "defaults" in spec:
+        defaults = dict(spec.get("defaults", {}))
+        if "env" in spec:
+            defaults["ENVIRONMENT"] = spec["env"]
+        if defaults:
             (directory / "config.defaults.yaml").write_text(
-                yaml.safe_dump(spec["defaults"])
+                yaml.safe_dump(defaults, sort_keys=False)
             )
         if "route" in spec:
             (directory / "route.conf").write_text(spec["route"])
@@ -318,11 +321,6 @@ class ProductFixture(DeployFixture):
             (directory / "client.yaml").write_text(yaml.safe_dump(spec["client"]))
         if "api" in spec:  # Only to test the refusal of the removed format.
             (directory / "api.yaml").write_text(yaml.safe_dump(spec["api"]))
-        for container, values in spec.get("env", {}).items():
-            (directory / "env").mkdir(exist_ok=True)
-            (directory / "env" / (container + ".yaml")).write_text(
-                yaml.safe_dump(values, sort_keys=False)
-            )
 
     def provide_credentials(self, product, base):
         """Externally prepared credentials; generic tools never create these."""

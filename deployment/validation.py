@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, deploy, envfiles, registrations
+from . import catalog, common, deploy, environment, registrations
 from . import render as rendering
 from .output import log
 
@@ -58,7 +58,7 @@ def validate_catalog():
     known, settings = deploy.dev_settings()
     # Show what the catalog derived from gateway/identity and the files.
     entries = catalog.load_catalog(common.ROOT)
-    for line in catalog.derived_lines(entries) + api_secret_lines(entries):
+    for line in catalog.derived_lines(entries) + api_secret_summary(entries):
         log.info("[OK] " + line)
     findings = []
     for component, component_settings in settings.items():
@@ -76,7 +76,7 @@ def validate_catalog():
             )
             check_images(documents)
             check_sources(config, path, documents, imported, component)
-            for line in envfiles.summary(component, config):
+            for line in environment.summary(component, config):
                 log.info("[OK] " + line)
         except ERRORS as error:
             findings.append((component, str(error)))
@@ -92,29 +92,15 @@ def validate_catalog():
     return list(known), findings
 
 
-def api_secret_lines(entries):
-    """One line per API secret: where it is generated, used and received."""
+def api_secret_summary(entries):
+    """One line per API secret: which declared secret goes to which Identity line."""
     lines = []
     for owner, entry in entries.items():
-        for api, index in sorted(entry["api_secrets"].items()):
-            used = [
-                f"{api}/{container} {key}"
-                for container, key, _, _ in envfiles.api_secret_lines(
-                    common.ROOT / "components" / api
-                )
-            ]
-            received = [
-                f"{owner}/{container} {key}"
-                for container, key, _, ids in envfiles.api_secret_lines(
-                    common.ROOT / "components" / owner
-                )
-                if ids == [api]
-            ]
+        for api, line in sorted(entry["api_secrets"].items()):
             lines.append(
-                f"api-secret {api}: generated at {api} "
-                f"{envfiles.API_SOURCE_PATH}/value; "
-                + "; ".join(used + received)
-                + f"; install {owner} first"
+                f"API secret {line['secret']}: declared by {api}, delivered to "
+                f"{owner} ApiResources__{line['index']}__ApiSecrets__0__Value "
+                f"while {api} is installed"
             )
     return lines
 
@@ -154,7 +140,7 @@ def validate_bundle():
         deploy.install_preconditions(name, checked)
         for effective, documents in checked.values():
             check_sources(effective, config_path, documents, imported, name)
-            for line in envfiles.summary(name, effective):
+            for line in environment.summary(name, effective):
                 log.info("[OK] " + line)
     except ERRORS as error:
         findings.append((name, str(error)))

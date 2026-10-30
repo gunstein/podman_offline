@@ -106,21 +106,20 @@ def rename_route(text):
 
 
 def rename_env(values):
-    """Rename secret references in one env/<container>.yaml (backlog 77).
+    """Rename secret references in one ENVIRONMENT container (backlog 77).
 
-    An @@api-secret: line for a demo component left out of the renamed product
-    (app3) is dropped: Identity receives secrets only from listed APIs.
+    Identity's API secret line for a demo component left out of the renamed
+    product (app3) is dropped: Identity names secrets of listed APIs only.
     """
     result = {}
     for key, value in values.items():
         if isinstance(value, str):
-            if any(
-                api not in NAMES for api in re.findall(r"@@api-secret:([^@]+)@@", value)
-            ):
-                continue
+            ids = re.findall(r"@@secret:([a-z0-9-]+)/", value)
+            if any(rename(name) == name for name in ids):
+                continue  # Not a renamed component's secret: app3's.
             value = re.sub(
-                r"@@(api-secret|secret):([a-z0-9-]+)",
-                lambda match: f"@@{match[1]}:{rename(match[2])}",
+                r"@@secret:([a-z0-9-]+)/",
+                lambda match: f"@@secret:{rename(match[1])}/",
                 value,
             )
         result[key] = value
@@ -144,6 +143,11 @@ def rename_defaults(config):
                 for key, text in values.items()
             }
             for name, values in result["SECRET_TEMPLATES"].items()
+        }
+    if "ENVIRONMENT" in result:
+        result["ENVIRONMENT"] = {
+            container: rename_env(values)
+            for container, values in result["ENVIRONMENT"].items()
         }
     if "DB_HOST" in result:
         result["DB_HOST"] = rename(result["DB_HOST"])
@@ -228,11 +232,6 @@ def generate(source, target):
                     if document is not None
                 ]
             dump(destination / "manifests" / manifest.name, documents, multiple=True)
-        for env in sorted((origin / "env").glob("*.yaml")):
-            with env.open(encoding="utf-8") as stream:
-                values = rename_env(yaml.safe_load(stream))
-            (destination / "env").mkdir(exist_ok=True)
-            dump(destination / "env" / env.name, values)
         defaults = origin / "config.defaults.yaml"
         if defaults.exists():
             with defaults.open(encoding="utf-8") as stream:

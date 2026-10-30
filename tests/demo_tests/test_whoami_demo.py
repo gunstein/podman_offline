@@ -163,16 +163,17 @@ class WhoamiSourceTests(unittest.TestCase):
         self.assertIn("proxy_set_header X-Forwarded-Proto https;", route)
 
     def test_api_registration_matches_identity_and_the_backend(self):
-        """Backlog 77: the same @@api-secret:app3@@ on both sides, nothing else."""
-        backend_env = yaml.safe_load((COMPONENT / "env/backend.yaml").read_text())
+        """Backlog 77: app3 declares its secret; both sides name it, nothing else."""
+        backend_env = yaml.safe_load((COMPONENT / "config.defaults.yaml").read_text())[
+            "ENVIRONMENT"
+        ]["backend"]
         identity_env = yaml.safe_load(
-            (ROOT / "components/identity/env/app.yaml").read_text()
-        )
+            (ROOT / "components/identity/config.defaults.yaml").read_text()
+        )["ENVIRONMENT"]["app"]
+        reference = "@@secret:app3-api-secret/value@@"
+        self.assertEqual(backend_env["Authentication__ApiSecret"], reference)
         self.assertEqual(
-            backend_env["Authentication__ApiSecret"], "@@api-secret:app3@@"
-        )
-        self.assertEqual(
-            identity_env["ApiResources__0__ApiSecrets__0__Value"], "@@api-secret:app3@@"
+            identity_env["ApiResources__0__ApiSecrets__0__Value"], reference
         )
         self.assertEqual(
             identity_env["ApiResources__0__Name"],
@@ -182,10 +183,17 @@ class WhoamiSourceTests(unittest.TestCase):
         self.assertFalse((COMPONENT / "api.yaml").exists())
         config = yaml.safe_load((COMPONENT / "config.defaults.yaml").read_text())
         self.assertNotIn("SECRET_TEMPLATES", config)
+        self.assertEqual(
+            config["SECRET_FILES"]["app3-api-secret"],
+            [{"path": "credentials/api-secret", "generate": ["value"]}],
+        )
         catalog = deployment_catalog.load_catalog(ROOT)
         self.assertEqual(catalog["app3"]["apis"], "identity")
         self.assertEqual(catalog["identity"]["accepts"]["apis"], "identity-apis")
-        self.assertEqual(catalog["identity"]["api_secrets"], {"app3": 0})
+        self.assertEqual(
+            catalog["identity"]["api_secrets"],
+            {"app3": {"index": 0, "secret": "app3-api-secret/value"}},
+        )
         _, backend = backend_container()
         self.assertNotIn("envFrom", backend)
         # Identity hashes the raw value itself (Duende compares hashes).

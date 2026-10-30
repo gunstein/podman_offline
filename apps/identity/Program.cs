@@ -62,10 +62,10 @@ var registrations = JsonSerializer.Deserialize<string[]>(File.ReadAllText("/clie
 var clients = registrations.Select(path => LoadClient(Path.Combine("/clients", path))).ToArray();
 if (clients.Select(client => client.ClientId).Distinct().Count() != clients.Length)
     throw new InvalidOperationException("Duplicate OIDC client IDs");
-// API resources (backlog 77): names and scopes from env/app.yaml; each secret
+// API resources (backlog 77): names and scopes from ENVIRONMENT; each secret
 // is the API's raw value from the platform-rendered identity-apis Secret
-// (@@api-secret:<api>@@). A named API without a secret is not installed yet
-// and stays inactive.
+// (the API's own secret, named on the ApiSecrets line). A named
+// API without a secret is not installed yet and stays inactive.
 var configuredApis = builder.Configuration.GetSection("ApiResources").Get<ApiResource[]>()
     ?? Array.Empty<ApiResource>();
 if (configuredApis.Any(api => string.IsNullOrEmpty(api.Name) || api.ApiSecrets.Count > 1))

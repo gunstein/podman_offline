@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from deployment import common, deploy
+from deployment import common, deploy, environment
 from deployment import render as rendering
 
 from demo_tests.demo_fixture import (
@@ -270,7 +270,7 @@ class DatabaseTests(DeployFixture):
             }
             client_env = {
                 e["name"]: e["value"]
-                for e in client["spec"]["containers"][0]["env"]
+                for e in client["spec"]["containers"][0].get("env", [])
                 if "value" in e
             }
             if component == "identity":
@@ -279,19 +279,17 @@ class DatabaseTests(DeployFixture):
                     "DB_NAME": config["DB_NAME"],
                     "DB_PORT": config["DB_PORT"],
                 }
-                ref = client["spec"]["containers"][0]["env"][0]["valueFrom"][
-                    "secretKeyRef"
-                ]
-                self.assertEqual(
-                    ref,
-                    {"name": "identity-database", "key": "ConnectionStrings__Default"},
-                )
+                # The connection string is a secret line of Identity's ENVIRONMENT.
+                env = environment.read_defaults(
+                    REPO / "components/identity/config.defaults.yaml"
+                )["app"]
                 self.assertIn(
-                    "@@secret:identity-database-password/password@@",
-                    config["SECRET_TEMPLATES"]["identity-database"][
-                        "ConnectionStrings__Default"
-                    ],
+                    "Password=@@secret:identity-database-password/password@@",
+                    env["ConnectionStrings__Default"],
                 )
+                for setting in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"):
+                    self.assertIn(f"@@{setting}@@", env["ConnectionStrings__Default"])
+                self.assertNotIn("SECRET_TEMPLATES", config)
             self.assertEqual(server_env["POSTGRES_USER"], client_env["DB_USER"])
             self.assertEqual(server_env["POSTGRES_DB"], client_env["DB_NAME"])
             self.assertEqual(server_env["PGPORT"], client_env["DB_PORT"])

@@ -150,8 +150,8 @@ def check_api_secret_lines(descriptor, installed, render):
     if dropped:
         raise common.DeployError(
             f"This {name} release has no API secret line for installed "
-            f"{', '.join(dropped)}; uninstall {dropped[0]} first, or keep "
-            f"ApiResources__<n>__ApiSecrets__0__Value: '@@api-secret:{dropped[0]}@@'"
+            f"{', '.join(dropped)}; uninstall {dropped[0]} first, or keep its "
+            f"ApiResources__<n>__ApiSecrets__0__Value line in {name}'s ENVIRONMENT"
         )
     if (
         not render
@@ -161,7 +161,7 @@ def check_api_secret_lines(descriptor, installed, render):
         raise common.DeployError(
             f"This {name} {descriptor['version']} bundle changes its API secret "
             f"lines but would not be rendered (upgrade: newer-only, same version); "
-            f"raise {name}'s version"
+            f"give {name} a higher version"
         )
 
 

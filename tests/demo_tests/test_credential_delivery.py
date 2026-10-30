@@ -138,12 +138,12 @@ class CredentialDeliveryTests(DeployFixture):
             REPO / "components/identity/manifests/50-identity.yaml"
         )[0]
         # API secrets arrive only in the platform-rendered registration Secret
-        # (backlogs 72 and 77): Identity's env/ line names the API, the
-        # platform adds envFrom; its own config and manifest declare none.
+        # (backlogs 72 and 77): Identity's ENVIRONMENT line names app3's own secret,
+        # the platform adds envFrom; its own config and manifest declare none.
         self.assertNotIn("envFrom", manifest["spec"]["containers"][0])
         self.assertIn(
-            "ApiResources__0__ApiSecrets__0__Value: '@@api-secret:app3@@'",
-            (REPO / "components/identity/env/app.yaml").read_text(),
+            "ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'",
+            (REPO / "components/identity/config.defaults.yaml").read_text(),
         )
         # Real API scopes, client-certificate authentication and token signing remain.
         application = (REPO / "apps/identity/Program.cs").read_text()

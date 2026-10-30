@@ -147,9 +147,7 @@ def generated_secret_guard(config_dirs=None):
     for path, base, component in sources:
         if path.exists():
             try:
-                config = rendering.expand_secret_files(
-                    rendering.config_layer(path), path
-                )
+                config = rendering.config_layer(path)
                 secrets.update(rendering.generated_secret_paths(config, base))
                 for group in (common.SECRET_FILES, common.VOLUME_FILES):
                     for entries in rendering.file_group_sources(config, group).values():
@@ -269,7 +267,6 @@ def build_release(version, descriptor=None):
             "config.defaults.yaml",
             "route.conf",
             "client.yaml",
-            "env",
             "files",
         ):
             source = directory / entry

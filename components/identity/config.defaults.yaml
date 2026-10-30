@@ -1,3 +1,4 @@
+# Settings the operator may change: init-config copies them to config.yaml.
 DB_HOST: identity-postgres
 DB_PORT: '5432'
 DB_USER: identity
@@ -11,6 +12,18 @@ SECRET_FILES:
     - password
   identity-demo-users:
   - path: credentials/users
-SECRET_TEMPLATES:
-  identity-database:
-    ConnectionStrings__Default: "Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:identity-database-password/password@@;Timeout=5;Include Error Detail=false"
+
+# The environment of each container. It comes with the release and is never
+# copied to config.yaml.
+ENVIRONMENT:
+  app:
+    PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
+    HTTPS_PORT: '@@HTTPS_PORT@@'
+    ConnectionStrings__Default: 'Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:identity-database-password/password@@;Timeout=5;Include Error Detail=false'
+    # One API resource per API component, as in the organisation's appsettings.json.
+    ApiResources__0__Name: app3-api
+    ApiResources__0__Scopes__0: app3
+    # app3's own secret (components/app3/config.defaults.yaml). It is delivered
+    # while app3 is installed; until then this API resource is inactive.
+    # Identity hashes it itself when it loads it.
+    ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'

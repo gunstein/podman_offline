@@ -23,30 +23,6 @@ FILES = (
 )
 
 
-def without_api_registrations(source):
-    """Identity 0.4.11 had no env/ files and accepted no API secrets.
-
-    Its settings come from the pinned 10-configmap.yaml, so Identity's env/
-    folder goes, and every remaining @@api-secret: line is dropped: Identity
-    then derives no API role (backlogs 72 and 77 came later). Returns the
-    changed paths.
-    """
-    changed = []
-    folder = source / "components/identity/env"
-    for path in sorted(folder.glob("*")):
-        path.unlink()
-        changed.append(str(path.relative_to(source)))
-    if folder.is_dir():
-        folder.rmdir()
-    for path in sorted((source / "components").glob("*/env/*.yaml")):
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        kept = [line for line in lines if "@@api-secret:" not in line]
-        if kept != lines:
-            path.write_text("".join(kept), encoding="utf-8")
-            changed.append(str(path.relative_to(source)))
-    return changed
-
-
 def prepare(source):
     """Read pinned files from local git; no network or dependency on an old tree."""
     contents = {}
@@ -63,10 +39,11 @@ def prepare(source):
         contents[name] = result.stdout
     for name, content in contents.items():
         (source / name).write_bytes(content)
-    changed = without_api_registrations(source)
+    # The pinned config.defaults.yaml has no ENVIRONMENT: Identity 0.4.11 names
+    # no API secret, so app3 keeps its own secret without being an API.
     # A local commit in the disposable clone keeps every later build on a clean tree.
     for command in (
-        ["add", "-A", "--"] + list(FILES) + changed,
+        ["add", "-A", "--"] + list(FILES),
         [
             "-c",
             "user.name=acceptance",

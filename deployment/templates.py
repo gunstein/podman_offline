@@ -15,68 +15,13 @@ from . import common
 TOKEN = re.compile(r"@@(.*?)@@", re.DOTALL)
 CONFIG_NAME = re.compile(r"[A-Z0-9_]+\Z")
 SECRET_REF = re.compile(r"secret:([a-z0-9-]+)/([-._a-zA-Z0-9]+)\Z")
-# @@secret:<id>@@: the one generated value of SECRET_FILES.<id> (backlog 77).
-SHORT_SECRET_REF = re.compile(r"secret:([a-z0-9-]+)\Z")
-
-
-def generated_key(config, name, where):
-    """The key a short reference means: the single generate name of SECRET_FILES.<id>.
-
-    Known from the declaration alone, so validation reads no file.
-    """
-    sources = (config.get(common.SECRET_FILES) or {}).get(name)
-    names = (
-        sources[0].get("generate")
-        if isinstance(sources, list)
-        and len(sources) == 1
-        and isinstance(sources[0], dict)
-        else None
-    )
-    if not isinstance(names, list) or len(names) != 1:
-        raise common.DeployError(
-            f"{where}: @@secret:{name}@@ needs SECRET_FILES.{name} declared as "
-            f"'{name}: generate' (or with exactly one generate name); otherwise "
-            f"write @@secret:{name}/<key>@@"
-        )
-    return names[0]
-
-
-def expand_short(text, config, where):
-    """Rewrite each @@secret:<id>@@ to @@secret:<id>/<key>@@ before other checks."""
-
-    def long_form(match):
-        short = SHORT_SECRET_REF.fullmatch(match[1])
-        if not short:
-            return match[0]
-        return f"@@secret:{short[1]}/{generated_key(config, short[1], where)}@@"
-
-    return TOKEN.sub(long_form, text)
-
-
-def short_groups(config):
-    """SECRET_FILES IDs that some recipe references in the short form."""
-    recipes = config.get(common.SECRET_TEMPLATES) or {}
-    return {
-        short[1]
-        for values in (recipes.values() if isinstance(recipes, dict) else ())
-        if isinstance(values, dict)
-        for text in values.values()
-        if isinstance(text, str)
-        for match in TOKEN.finditer(text)
-        for short in [SHORT_SECRET_REF.fullmatch(match[1])]
-        if short
-    }
 
 
 def declarations(config):
-    """Check recipe shape and resource collisions without opening any file.
-
-    Returns the recipes with short references already in the long form.
-    """
+    """Check recipe shape and resource collisions without opening any file."""
     recipes = config.get(common.SECRET_TEMPLATES, {})
     if not isinstance(recipes, dict):
         raise common.DeployError("SECRET_TEMPLATES must be a map of Secret IDs")
-    expanded = {}
     for name, values in recipes.items():
         if not isinstance(name, str) or not common.ID.fullmatch(name):
             raise common.DeployError("Invalid Secret ID in SECRET_TEMPLATES")
@@ -98,11 +43,7 @@ def declarations(config):
                 )
             if not isinstance(text, str):
                 raise common.DeployError(f"SECRET_TEMPLATES.{name}.{key} must be text")
-        expanded[name] = {
-            key: expand_short(text, config, f"SECRET_TEMPLATES.{name}.{key}")
-            for key, text in values.items()
-        }
-    return expanded
+    return recipes
 
 
 def reference(match, where):
@@ -111,9 +52,6 @@ def reference(match, where):
     secret = SECRET_REF.fullmatch(name)
     if secret:
         return secret[1], secret[2]
-    short = SHORT_SECRET_REF.fullmatch(name)
-    if short:
-        return short[1], None  # declarations() expands it before any lookup.
     if CONFIG_NAME.fullmatch(name):
         return None, name
     raise common.DeployError(f"{where}: unknown or nested placeholder")
@@ -215,15 +153,6 @@ def references(config):
 def documents(config, file_documents):
     """Compose Opaque Secrets from already loaded file bytes, with no writes/logs."""
     sources = {doc["metadata"]["name"]: doc["data"] for doc in file_documents}
-    # A short reference names one generated key; a retained source directory
-    # with other files would make that ambiguous to the reader, so refuse it.
-    for group in sorted(short_groups(config)):
-        key = generated_key(config, group, f"@@secret:{group}@@")
-        if set(sources.get(group, {})) != {key}:
-            raise common.DeployError(
-                f"SECRET_FILES.{group} must deliver exactly the file {key} for "
-                f"@@secret:{group}@@; remove other files from its directory"
-            )
     result = []
     for name, values in declarations(config).items():
         data = {}

@@ -99,36 +99,40 @@ actual hosts generation. The new localhost/loopback lab checks are in
 Local correction inventory: 520 platform and 72 demo tests (592 total), with
 358 separate harness tests. Counts are not runtime evidence.
 
-# Catalog, env/ files and API secrets (backlogs 72 and 77)
+# Catalog, ENVIRONMENT and API secrets (backlogs 72 and 77)
 
 `platform_tests/test_catalog.py` checks that `gateway:`/`identity:` plus the
 component files derive exactly the earlier explicit entries, the derived
 `validate` lines, and every catalog refusal (unlisted roles, `route.conf` or
 `client.yaml` in the wrong place, removed fields, derived cycles).
 `platform_tests/test_validation_order.py` refuses a received volume that no
-container mounts. `platform_tests/test_env_files.py` drives `env/<container>.yaml`
-through dev `prepare`, bundle build and install: the generated ConfigMap,
-Secret and `envFrom`, recipes kept out of `config.yaml`, the short
-`<id>: generate` declaration and `@@secret:<id>@@` reference, the value-free
-`validate` line, and each declaration refusal before any write.
+container mounts. `platform_tests/test_environment.py` drives `ENVIRONMENT` in
+`config.defaults.yaml` through dev `prepare`, bundle build and install: the
+generated ConfigMap, Secret and `envFrom`, `ENVIRONMENT` and recipes kept out of
+the operator's `config.yaml` (and refused there), values kept as written text
+(`0022`, `yes`, `1.10`), the value-free `validate` line, and each declaration
+refusal before any write (undeclared secret with the declared IDs, unknown
+placeholder, another component's secret, a leftover `env/` directory).
 
 `platform_tests/test_api_registrations.py` drives a product without demo names
-(`accounts` is identity; `ledger` and `reports` use `@@api-secret:<own id>@@`)
+(`accounts` is identity; `ledger` and `reports` declare `<api>-api-secret` and
+accounts names it on its `ApiResources__<n>__ApiSecrets__0__Value` lines)
 through dev `prepare`, `validate`, bundle build, production install, rotation,
-a release that drops the role, a `newer-only` API that is not re-rendered, and
-uninstall. It checks the raw values on both sides, the descriptor mapping,
-private registrations, restart order (API, then owner), refusals before any
-write (foreign use, missing/duplicate/partial lines, a removed `api.yaml`, an
-explicit source collision, an API the installed Identity does not list, an
-Identity release that drops an installed API, a changed skipped mapping), a
-moved `<n>`, and that no value reaches output or errors. Review regressions: an
-interrupted owner YAML rewrite keeps the old file and a fresh-process retry
-finishes; a non-rendering retry of another version's pending install is
-refused; `validate` never opens a registered or source `value`; a secret with a
-trailing newline is refused in dev and production before any write.
-`demo_tests/test_whoami_demo.py` checks that app3's and Identity's `env/`
-lines, names and scopes agree and that the demo Identity hashes the value.
-Podman is stubbed; real sign-in and introspection is `dev/whoami-smoke-test.py`.
+a release built without the identity line, a `newer-only` API that is not
+re-rendered, and uninstall. It checks the raw values on both sides, the
+descriptor mapping, private registrations, restart order (API, then owner),
+refusals before any write (foreign use, duplicate/partial lines, unowned
+secrets, a removed `api.yaml`, an API that does not declare the named secret
+or key, an API the installed Identity does not list, an Identity release that
+drops an installed API, a changed skipped mapping), a moved `<n>`, and that no
+value reaches output or errors. Review regressions: an interrupted owner YAML
+rewrite keeps the old file and a fresh-process retry finishes; a non-rendering
+retry of another version's pending install is refused; `validate` never opens
+a registered or source `value`; a secret with a trailing newline is refused in
+dev and production before any write. `demo_tests/test_whoami_demo.py` checks
+that app3's and Identity's `ENVIRONMENT` lines, names and scopes agree and that
+the demo Identity hashes the value. Podman is stubbed; real sign-in and
+introspection is `dev/whoami-smoke-test.py`.
 
 # .NET/TypeScript demo (backlog 71)
 

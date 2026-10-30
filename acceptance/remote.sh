@@ -1353,12 +1353,14 @@ import yaml
 root = Path(os.environ["PRODUCT_STATE"])
 path = root / "identity/config.yaml"
 config = yaml.safe_load(path.read_text())
-if "SECRET_TEMPLATES" not in config:
+defaults = yaml.safe_load((Path(sys.argv[1]) / "components/identity/config.defaults.yaml").read_text())
+# Since backlog 77 the connection string is in Identity's ENVIRONMENT, so the
+# upgrade needs no config addition; only a release with a recipe gets one.
+if "SECRET_TEMPLATES" not in config and "SECRET_TEMPLATES" in defaults:
     snapshot = root / "identity-lifecycle.json"
     before = json.loads(snapshot.read_text())
     if hashlib.sha256(path.read_bytes()).hexdigest() != before["files"]["config.yaml"]["hash"]:
         raise SystemExit("FAIL: Identity config changed before explicit template addition")
-    defaults = yaml.safe_load((Path(sys.argv[1]) / "components/identity/config.defaults.yaml").read_text())
     config["SECRET_TEMPLATES"] = defaults["SECRET_TEMPLATES"]
     fd = os.open(str(path), os.O_WRONLY | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as stream:

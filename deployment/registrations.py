@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, envfiles, templates
+from . import catalog, common, templates
 from . import render as rendering
 
 
@@ -45,8 +45,9 @@ def registration_stage(components, directory, known, state=None, configs=None):
 
     A selected component's API registration needs its secret value, which may
     not be generated yet: staging checks that the owner's descriptor has a line
-    for the API, and api_updates adds the registration after generation.
-    Staging never reads registered values.
+    for the API and that the API's config declares the secret that line names,
+    and api_updates adds the registration after generation. Staging never
+    reads registered values.
     """
     state = state or common.STATE
     owners = catalog.role_owners(known, "registration owners")
@@ -119,22 +120,16 @@ def registration_stage(components, directory, known, state=None, configs=None):
                 raise common.DeployError(
                     f"{source / filename} must exist exactly when {component} declares {role}"
                 )
-        api_owner = known[component]["apis"]
-        if api_owner is not None and component not in known.get(api_owner, {}).get(
-            "api_secrets", {}
-        ):
-            raise common.DeployError(
-                f"{component} uses @@api-secret:{component}@@, but the {api_owner} "
-                f"release has no line for it; install the {api_owner} release that "
-                f"lists {component} first"
-            )
-        if not declared:
+        api_line = api_secret_line(component, known)
+        if not declared and api_line is None:
             continue
         config_path = catalog.state_paths(component, state)[0]
         if configs is None:
             config = rendering.load_config(config_path)
         else:
             config = configs[component]
+        if api_line is not None:
+            check_api_source(component, api_line, config, config_path)
         if "routes" in declared:
             updates["routes/" + component + ".conf"] = declared["routes"].read_bytes()
         if "clients" in declared:
@@ -332,6 +327,43 @@ def check_api_registration(directory):
         raise common.DeployError(f"Invalid API registration: {directory}")
 
 
+def api_secret_line(component, known):
+    """Identity's line for this API ({"index", "secret"}), or None for a non-API.
+
+    The installed (or incoming) Identity's descriptor is the only mapping; an
+    API it does not list is refused before anything is written.
+    """
+    owner = known[component]["apis"]
+    if owner is None:
+        return None
+    line = known.get(owner, {}).get("api_secrets", {}).get(component)
+    if line is None:
+        raise common.DeployError(
+            f"{component} is an API of {owner}, but the {owner} release has no "
+            f"ApiResources__<n>__ApiSecrets__0__Value line naming a {component} "
+            f"secret; install the {owner} release that lists {component} first"
+        )
+    return line
+
+
+def check_api_source(component, line, config, config_path):
+    """The secret Identity's line names must be declared in the API's config; no reads."""
+    group, key = line["secret"].split("/")
+    where = f"identity's ApiResources__{line['index']}__ApiSecrets__0__Value"
+    if group not in rendering.file_group_sources(config, common.SECRET_FILES):
+        raise common.DeployError(
+            f"{where} names {line['secret']}; declare {common.SECRET_FILES}.{group} "
+            f"in {config_path}"
+        )
+    keys = rendering.secret_keys(config, config_path, [], component).get(group)
+    # None: a missing source, reported with its path by the file checks.
+    if keys is not None and key not in keys:
+        raise common.DeployError(
+            f"{where} names {line['secret']}, but {common.SECRET_FILES}.{group} in "
+            f"{config_path} provides no key {key!r}"
+        )
+
+
 def api_value(path, where):
     """Read one registered value; errors never include it."""
     try:
@@ -343,23 +375,24 @@ def api_value(path, where):
     return value
 
 
-def api_registration(component, config, config_path):
-    """Build one private API registration from the API's generated secret.
+def api_registration(component, line, config, config_path):
+    """Build one private API registration from the secret Identity's line names.
 
     Call after the component's secrets are generated. The file is used byte
-    for byte, as the API's own env/ recipe gives it to the API; text a recipe
+    for byte, as the API's own ENVIRONMENT recipe gives it to the API; text a recipe
     would change (a trailing newline) or refuse is refused here, so both sides
     see the same value. Identity receives the raw value and hashes it itself.
     """
-    group = envfiles.api_source(component)
-    where = f"@@api-secret:{component}@@ ({envfiles.API_SOURCE_PATH}/value)"
+    check_api_source(component, line, config, config_path)
+    group, key = line["secret"].split("/")
+    where = f"API secret {line['secret']} of {component}"
     items = rendering.load_file_group(
         {common.SECRET_FILES: {group: config[common.SECRET_FILES][group]}},
         common.SECRET_FILES,
         config_path.parent,
         component,
     )[group]
-    item = next((item for item in items if item.name == "value"), None)
+    item = next((item for item in items if item.name == key), None)
     if item is None:
         raise common.DeployError(f"{where}: missing source file")
     try:
@@ -406,7 +439,9 @@ def api_updates(components, known, imports, configs, state=None):
             continue
         config, config_path = configs[component]
         rendering.generate_secrets(config, config_path.parent)
-        update = api_registration(component, config, config_path)
+        update = api_registration(
+            component, api_secret_line(component, known), config, config_path
+        )
         staged.mkdir(mode=0o700)
         rendering.write_private(
             staged / "value", str(update["apis/" + component + "/value"], "utf-8")
@@ -443,7 +478,8 @@ def owner_secrets(component, imports, known):
                     f"{directory.name}; uninstall {directory.name} or install a "
                     f"{component} release that lists it"
                 )
-            key = f"ApiResources__{mapping[directory.name]}__ApiSecrets__0__Value"
+            index = mapping[directory.name]["index"]
+            key = f"ApiResources__{index}__ApiSecrets__0__Value"
             data[key] = base64.b64encode(
                 api_value(value, directory.name).encode("utf-8")
             ).decode("ascii")

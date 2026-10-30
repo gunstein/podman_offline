@@ -284,6 +284,33 @@ harness tests ([change, evidence and lab check](acceptance/COMPONENT-MODEL-77.md
 Verified on real Podman/systemd 2026-10-30: six scenarios CLEAN PASS on
 `0459e5a`; `--renamed-product` CLEAN PASS on `6210670` after a harness fix.**
 
+**Decision (product owner, 2026-10-30, after review of the first
+implementation):** config must be in as few files as possible and easy to
+understand, and no name or path may appear that no file states. Hence one
+config file per component (`ENVIRONMENT` in `config.defaults.yaml` instead of
+`env/` files), one secret form (declared `SECRET_FILES` source with its path,
+`@@secret:<id>/<key>@@`; the short forms are dropped) and API secrets declared
+by the API and named on Identity's line (instead of `@@api-secret:`).
+Implemented the same day ([change](acceptance/COMPONENT-MODEL-77.md)).
+
+**Simplification candidates (assessment 2026-10-30, not decided):** each
+config type was checked for whether it can go.
+
+| Config | Assessment |
+| --- | --- |
+| `bundles.yaml` `product`, `gateway`, `identity`, component list | Keep: each is one decision no file can derive. |
+| `upgrade:` | Can go: `always` allows a silent downgrade, `newer-only` silently ignores changed config and rotated secrets on a same-version install, and it causes most special cases of item 72/77. One rule instead: refuse downgrades, a same-version install re-applies config. Needs a decision whether reinstalling the same platform/Identity may restart them. |
+| `requires:` | Keep for the rare extra dependency; everything else is derived. |
+| `shares:` | Probably can go: unused by the demo; only needed if a product shares settings beyond `PUBLIC_ORIGIN`/`HTTPS_PORT` with every component. |
+| Hand-written settings ConfigMaps (app1, app2, platform `10-configmap.yaml`) | Can go: move to `ENVIRONMENT`, so settings have one form. No decision needed. |
+| `SECRET_TEMPLATES` | Can leave the authoring model: no component writes it any more; `ENVIRONMENT` covers environment variables. The remaining case is a templated secret *file* (for example `bootstrap.sql`). Needs a decision whether that case is needed. |
+| `config/common.defaults.yaml` | Can go: its two values belong in the gateway's `config.defaults.yaml`, from which every component already inherits them. |
+| `components/<id>/config.dev.yaml` | Probably can go: only app1 uses it (demo layer marker, dev SQL sample); `config/dev.yaml` stays for machine-specific values. |
+| `client.yaml` `environment:` plus `APP_ID`/`BASE_PATH` in the manifest | The same id and path are written twice and compared. Can be written once: `ENVIRONMENT` lines `APP_ID: '@@CLIENT_ID@@'`, `BASE_PATH: '@@CLIENT_BASE_PATH@@'` filled from `client.yaml`, without the compare. |
+| `route.conf`, `client.yaml` (id, path, scopes, certificate), `VERSION`, `files/`, manifests | Keep: each holds facts nothing else has. |
+| Operator `config.yaml`, credentials | Keep: one file per component with only settings and secret sources. |
+| Registration volume names `<gateway>-routes`, `<identity>-clients` in manifests | A naming rule; the error names the exact volume. Writing them elsewhere would add config. |
+
 **Scope decided 2026-10-29 (replaces phases 1–5 for now):** the simple catalog
 (`gateway:` and `identity:` plus a plain component list; routes, public
 settings, receivers and their dependencies derived from files, without

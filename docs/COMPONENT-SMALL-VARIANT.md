@@ -1,8 +1,16 @@
 # Backlog 77: the simple catalog and `env/` files (decided specification)
 
 Status: **decided by the product owner on 2026-10-29; implemented on
-2026-10-30 and verified on real Podman/systemd the same day
-([evidence and lab results](../acceptance/COMPONENT-MODEL-77.md)).** This
+2026-10-30; this first implementation was verified on real Podman/systemd
+the same day ([evidence and lab results](../acceptance/COMPONENT-MODEL-77.md)).**
+The product owner then changed three points, after the first implementation:
+one config file per component (`ENVIRONMENT` in `config.defaults.yaml`
+replaces section 3's `env/` files), one secret form (the short
+`<id>: generate` and `@@secret:<id>@@` are dropped) and API secrets declared
+by the API and named on Identity's line (replacing section 5's
+`@@api-secret:`). Rule: no name or path may appear that no file states. These
+changes have unit and harness coverage only; their lab run is outstanding.
+[Current contract](COMPONENTS.md#one-config-file-per-component-configdefaultsyaml). This
 document replaces the earlier proposal text in this file and is the scope of
 backlog 77 for now. Everything else in backlog 77 (example application,
 `mounts/`, CA profiles, shared secrets, read-through public values) stays

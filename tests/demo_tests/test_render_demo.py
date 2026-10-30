@@ -18,12 +18,17 @@ class DemoRenderTests(DeployFixture):
         repo = Path(__file__).resolve().parents[2]
         docs = []
         for component in DEMO_COMPONENTS:
-            for folder in ("files", "env"):
-                source_files = repo / "components" / component / folder
-                if source_files.exists():
-                    shutil.copytree(
-                        source_files, self.root / "components" / component / folder
-                    )
+            source_files = repo / "components" / component / "files"
+            if source_files.exists():
+                shutil.copytree(
+                    source_files, self.root / "components" / component / "files"
+                )
+            # ENVIRONMENT is read from the release's config.defaults.yaml.
+            (self.root / "components" / component).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                str(repo / "components" / component / "config.defaults.yaml"),
+                str(self.root / "components" / component / "config.defaults.yaml"),
+            )
             config = rendering.merge_config(
                 repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",

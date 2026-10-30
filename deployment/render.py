@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from . import common, envfiles, templates
+from . import common, environment, templates
 from .output import log
 
 
@@ -85,6 +85,12 @@ def validate_config(config, path):
                 f"{path}: use generate on a file source; GENERATED_SECRETS is not supported"
             )
 
+        if key == common.ENVIRONMENT:
+            raise common.DeployError(
+                f"{path}: ENVIRONMENT belongs only in the release's "
+                "components/<id>/config.defaults.yaml; remove it here"
+            )
+
         if key in (common.SECRET_FILES, common.VOLUME_FILES, common.SECRET_TEMPLATES):
             continue  # File groups and generated paths validate their own structures.
 
@@ -119,31 +125,7 @@ def validate_config(config, path):
                 f"DB_PORT in {path} must be text containing an integer 1-{common.MAX_PORT}"
             )
 
-    return expand_secret_files(config, path)
-
-
-def expand_secret_files(config, path):
-    """Expand the short declaration `<id>: generate` to its long form.
-
-    It means one generated value at credentials/<id>/value, Secret key value.
-    Runs in validate_config, so every consumer sees only the long form.
-    """
-    mapping = config.get(common.SECRET_FILES)
-    if not isinstance(mapping, dict):
-        return config
-    expanded = {}
-    for name, sources in mapping.items():
-        if isinstance(sources, str):
-            if sources != "generate":
-                raise common.DeployError(
-                    f"{common.SECRET_FILES}.{name} in {path}: write '{name}: generate' "
-                    "or a list of file sources"
-                )
-            sources = [{"path": f"credentials/{name}", "generate": ["value"]}]
-        expanded[name] = sources
-    result = dict(config)
-    result[common.SECRET_FILES] = expanded
-    return result
+    return config
 
 
 def load_config(path):
@@ -152,10 +134,20 @@ def load_config(path):
 
 
 def merge_config(*paths, overrides=None):
-    """Merge mappings at the top level, in order, then validate the result."""
+    """Merge mappings at the top level, in order, then validate the result.
+
+    ENVIRONMENT belongs to the release (deployment/environment.py), so it is
+    left out of the merged config and never reaches the operator's config.yaml.
+    """
     config = {}
     for path in paths:
-        config.update(config_layer(path))
+        layer = config_layer(path)
+        if (
+            path.name == "config.defaults.yaml"
+            and path.parent.parent.name == "components"
+        ):
+            layer.pop(common.ENVIRONMENT, None)
+        config.update(layer)
     config.update(overrides or {})
     return validate_config(config, paths[-1] if paths else "config")
 
@@ -819,8 +811,9 @@ def check_links(docs, from_config, sources=None, recipe_references=()):
     for key, where in sorted(from_config.items()):
         if key not in used:
             raise common.DeployError(
-                f"{where} is not used by any manifest. "
-                "Check that the id matches secretName/claimName in the manifest"
+                f"{where} is not used by any manifest or ENVIRONMENT. Check that "
+                "the id matches secretName/claimName in a manifest or "
+                "@@secret:<id>/<key>@@ in ENVIRONMENT"
             )
 
 
@@ -1010,13 +1003,13 @@ def check_imported_mounted(documents, imported, path):
 
 
 def effective_config(config, path, component):
-    """Validate a component's config; add PUBLIC_HOSTNAME and env/ recipes; no writes.
+    """Validate a component's config; add PUBLIC_HOSTNAME and ENVIRONMENT recipes; no writes.
 
     The result is transient: validation and materialization use it, nobody
     writes it to config.yaml.
     """
     validate_component_config(config, component, path)
-    return envfiles.with_recipes(with_derived(config, path), component)
+    return environment.with_recipes(with_derived(config, path), component)
 
 
 def declared_volume_names(config, path, imported):
@@ -1059,8 +1052,19 @@ def client_variables(component):
     path = common.ROOT / "components" / component / "client.yaml"
     if not path.is_file():
         return ()
-    environment = (load_yaml(path) or {}).get("environment") or {}
-    return tuple(environment.values()) if isinstance(environment, dict) else ()
+    data = load_yaml(path)
+    # A malformed client.yaml is reported by registrations.client_registration.
+    variables = data.get("environment") if isinstance(data, dict) else None
+    return tuple(variables.values()) if isinstance(variables, dict) else ()
+
+
+def named_containers(documents):
+    """Map each container name (regular or init) to the container dicts with it."""
+    found = {}
+    for _, spec in pod_specs(documents):
+        for _, container in containers(spec):
+            found.setdefault(container.get("name"), []).append(container)
+    return found
 
 
 def effective_documents(
@@ -1101,8 +1105,13 @@ def effective_documents(
         documents += rendered
         sources += [manifest] * len(rendered)
     if component:
-        documents, sources = envfiles.apply(
-            documents, sources, config, component, path, client_variables(component)
+        documents, sources = environment.apply(
+            documents,
+            sources,
+            config,
+            component,
+            named_containers(documents),
+            client_variables(component),
         )
 
     imported = set(imported)

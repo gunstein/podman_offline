@@ -1,9 +1,13 @@
-# Simple catalog, `env/` files and API secrets (backlog 77)
+# Simple catalog, one config file per component and API secrets (backlog 77)
 
-Status: implemented with product/unit and acceptance-harness test coverage
-(2026-10-30) and verified on real Podman/systemd: all seven lab scenarios are
-CLEAN PASS (six on `0459e5a`, the renamed product on `6210670` after a harness
-fix). See [lab results](#lab-results-2026-10-30).
+Status: the first implementation (`env/` files, `@@api-secret:`) is verified
+on real Podman/systemd: all seven lab scenarios are CLEAN PASS (six on
+`0459e5a`, the renamed product on `6210670` after a harness fix); see
+[lab results](#lab-results-2026-10-30). The product owner's later changes (one
+config file per component, one secret form, declared API secrets, and on
+2026-10-31 no `upgrade:`/`shares:` with public settings read from the gateway)
+have product/unit and harness coverage only; **their lab run is outstanding**
+with the commands below.
 
 ## Change
 
@@ -11,15 +15,28 @@ fix). See [lab results](#lab-results-2026-10-30).
   `requires`, `upgrade` and (gateway) `shares`. `catalog.derive_entries`
   derives the normalized entries from them and the component files; compiled
   descriptors keep the earlier normalized form plus Identity's `api_secrets`.
-- `env/<container>.yaml` (`deployment/envfiles.py`), the short
-  `<id>: generate` declaration and `@@secret:<id>@@`.
-- API secrets as `@@api-secret:<component>@@` on both sides; `api.yaml`, its
-  index and platform hashing are removed. The demo Identity hashes the raw
-  value itself (image `localhost/demo-identity:0.2.4`).
-- Demo: Identity and app3 use `env/` files; all components advance one patch
+- One config file per component (product owner, 2026-10-30): `ENVIRONMENT` in
+  `config.defaults.yaml` holds each container's variables
+  (`deployment/environment.py`); it belongs to the release and never reaches
+  the operator's `config.yaml`. Values are the written text. There are no
+  `env/` files.
+- One secret form: a declared `SECRET_FILES` source with its path and
+  `@@secret:<id>/<key>@@`. The short `<id>: generate` declaration and
+  `@@secret:<id>@@` reference of the first implementation are removed: they
+  created a path (`credentials/<id>/value`) that no file named.
+- API secrets: the API declares its secret in `SECRET_FILES`; Identity's
+  `ApiResources__<n>__ApiSecrets__0__Value` line names it. `api.yaml`, its
+  index, platform hashing and the first implementation's
+  `@@api-secret:<component>@@` (a secret no file declared) are removed. The
+  demo Identity hashes the raw value itself (image
+  `localhost/demo-identity:0.2.4`).
+- Demo: Identity's connection string, settings and API resources and app3's
+  backend settings are in `ENVIRONMENT`; Identity's `SECRET_TEMPLATES` and both
+  hand-written ConfigMaps are gone, so the operator's Identity `config.yaml`
+  holds only `DB_*` and the secret sources. All components advance one patch
   version because every bundle carries the changed deployment code.
 - Contracts: [the catalog](../docs/COMPONENTS.md#the-catalog-bundlesyaml),
-  [environment files](../docs/COMPONENTS.md#environment-files-envcontaineryaml),
+  [one config file per component](../docs/COMPONENTS.md#one-config-file-per-component-configdefaultsyaml),
   [API secrets](../docs/COMPONENTS.md#api-secrets) and the
   [conversion checklist](../docs/COMPONENTS.md#converting-a-service).
 
@@ -58,24 +75,26 @@ python3 acceptance/acceptance.py --run "c77-renamed-$rev" --renamed-product run
 
 What each part exercises for this change:
 
-- `--whoami`: app3's and Identity's `env/` files, the generated
+- `--whoami`: app3's and Identity's `ENVIRONMENT`, app3's generated
   `credentials/api-secret/value`, Identity hashing it itself, introspection
   through `dev/whoami-smoke-test.py`, and app3's restart.
 - normal and app2-first: the derived catalog on the fixed demo,
   `newer-only` platform/Identity upgrades and Identity's injected `envFrom`
   with an empty `identity-apis` (app3 is not installed).
 - `--identity-only`: the pinned old Identity baseline (its own ConfigMap, no
-  `env/`) upgrading to the `env/` Identity.
+  `ENVIRONMENT`) upgrading to the `ENVIRONMENT` Identity without any operator
+  config addition (the harness adds none when the release has no recipe).
 - platform/help and help-only: products without Identity links.
 - `--renamed-product`: the renamed generator's catalog (`gateway:`/`identity:`
-  renamed) and renamed `env/` files without app3's line.
+  renamed) and renamed `ENVIRONMENT` without Identity's app3 line.
 
 Record unit/product tests, harness tests and real runs separately. Keep
 failures and their output before any repair.
 
 ### Lab results (2026-10-30)
 
-Real Podman/systemd runs; OS and Podman details are in each run's
+These cover the first implementation only (`0459e5a`/`6210670`), not the
+later changes listed under Change. Real Podman/systemd runs; OS and Podman details are in each run's
 `EVIDENCE.md`.
 
 | Run | Result | Passed steps |
@@ -107,4 +126,11 @@ the product code.
   `credentials/api-secret/value`, reinstall a newer app3) is not part of the automated scenarios.
 - An Identity that declares `<identity>-apis` itself while no API exists is not
   refused (with an API it is).
+- `--identity-only` assumes the pinned 0.4.11 config declares `DB_*` and
+  `identity-database-password` with key `password`: the earlier harness added a
+  recipe naming exactly these to that config and passed the lab, but the
+  pinned commit is not in this shallow clone, so it was not rechecked here.
+- A release that stops using a secret leaves its declaration in the operator's
+  persistent `config.yaml`, which is then refused as unused (existing
+  behaviour for every secret); the operator removes the entry.
 - No unassisted human trial of the conversion checklist.
