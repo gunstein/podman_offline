@@ -8,7 +8,11 @@ deferred. The review in [COMPONENT-SMALL-VARIANT-REVIEW.md](COMPONENT-SMALL-VARI
 found problems in the earlier proposal; section 8 lists how each is handled.
 The [check of this specification](COMPONENT-SMALL-VARIANT-CHECK.md) found two
 blocking and five minor points; they are corrected here (section 8).
-Code references describe `main` at `75594c6`.
+**Update 2026-10-30:** API secrets are written as `@@api-secret:<component>@@`
+on both sides instead of `api.yaml` (section 5), and a short
+`<id>: generate` declaration is added (section 4). These two changes have not
+been through the independent check yet. Code references describe `main` at
+`75594c6`.
 
 ## 1. Why, in one paragraph
 
@@ -61,7 +65,7 @@ components:
 | --- | --- | --- |
 | `product` | top level | Unchanged. |
 | `gateway` | top level, optional | The ID of the component that is the reverse proxy. |
-| `identity` | top level, optional | The ID of the component that receives OIDC clients (`client.yaml`) and API secrets (`api.yaml`). |
+| `identity` | top level, optional | The ID of the component that receives OIDC clients (`client.yaml`) and API secrets (`@@api-secret:...@@`, section 5). |
 | `components` | top level | The list of components. An empty entry is fine. |
 | `upgrade` | per component, optional | Unchanged (`always` or `newer-only`). |
 | `shares` | on the gateway only, optional | Unchanged meaning: extra config names every other component takes from the gateway. |
@@ -99,15 +103,18 @@ gets `public_from`. A worker-only product works as today.
 **R2. Identity.** If `identity: I` is set, `I` must be a listed component. It
 gets `accepts.clients: I-clients` **only if at least one component has
 `client.yaml`**, and `accepts.apis: I-apis` **only if at least one component
-has `api.yaml`**, so an Identity that uses neither registration needs no
-unused volume or Secret in its manifests. Every component
-with `client.yaml` gets `clients: I` and every component with `api.yaml` gets
-`apis: I`, each with `I` in `requires`. A component with neither file has no
-link to Identity and does not depend on it.
+is an API** (its `env/` files use `@@api-secret:<its own id>@@`, section 5), so
+an Identity that uses neither registration needs no unused volume or Secret.
+Every component with `client.yaml` gets `clients: I` and every API gets
+`apis: I`, each with `I` in `requires`. A component with neither has no link to
+Identity and does not depend on it. To decide this, the catalog function looks
+at file existence and at the `env/` files' `@@api-secret:` placeholders; it
+still never parses manifests.
 
 **R3. Fixed receiver names.** The receiving resources are always
 `<gateway>-routes` (PVC), `<identity>-clients` (PVC) and `<identity>-apis`
-(Secret). The catalog does **not** read manifests. Rendering validation
+(Secret; internal, injected by the platform, never written by anyone, see
+section 5). The catalog does **not** read manifests. Rendering validation
 (`effective_documents`) checks that the receiver uses them: the existing link
 checks refuse an accepted resource no manifest references, and a **new focused
 check** follows each receiving PVC from Pod `spec.volumes` to a regular or init
@@ -134,6 +141,8 @@ means no *derived* dependency; a written `requires` still applies.
 | `public_from` pointing at a component that is not the gateway | Allowed by `check_entry` | Not possible. |
 | Receiver resources with other names (e.g. `accepts.routes: gateway-includes`) | Any name with the component prefix | Only `<gateway>-routes`, `<identity>-clients`, `<identity>-apis`. |
 | Clients and API secrets received by two different components | Possible (`accepts.clients` and `accepts.apis` on different components) | One `identity` receives both. |
+| `api.yaml` with `index`, `secret`, `hash` | Item 72's declaration | Replaced by `@@api-secret:<component>@@` on both sides (section 5). |
+| Platform-side hashing (`hash: sha256`) | Item 72 could hash for Identity | Removed: both sides get the same value; Identity hashes it itself. The demo Identity is changed accordingly. |
 
 The organisation's product and every shipped demo/acceptance product already
 fit the new rules (checked in the review, section 1, and against the shipped
@@ -147,7 +156,9 @@ Each names the file and the next action, never a value:
 
 - `gateway` or `identity` names an unlisted component;
 - `route.conf` exists but no `gateway` is set;
-- `client.yaml` or `api.yaml` exists but no `identity` is set;
+- `client.yaml` exists, or an `@@api-secret:` placeholder is used, but no
+  `identity` is set;
+- an `api.yaml` file exists (replaced by `@@api-secret:`; the message says how);
 - `client.yaml` exists but no `gateway` is set, or on the gateway itself (a
   client needs the gateway's public origin for its redirect URI; today's
   normalized check "clients needs public_from" stays);
@@ -159,8 +170,8 @@ Each names the file and the next action, never a value:
 ### 2.6 `validate` shows what it derived
 
 ```text
-[OK] gateway: platform (routes PVC platform-routes); identity: identity (clients PVC identity-clients, apis Secret identity-apis)
-[OK] app3: public settings and routes from platform; client.yaml, api.yaml -> identity; requires platform, identity
+[OK] gateway: platform (routes PVC platform-routes); identity: identity (clients PVC identity-clients)
+[OK] app3: public settings and routes from platform; client.yaml -> identity; API secret -> identity; requires platform, identity
 [OK] reports: public settings from platform; requires platform
 ```
 
@@ -187,8 +198,9 @@ ConnectionStrings__Default: 'Host=myapp-postgres;Database=myapp;Username=myapp;P
    with a digit; `:` is refused with "use `__`". Values: strings or integers
    only; booleans, floats, null, lists and maps are refused with "quote it".
    Duplicate keys refused. Empty file refused.
-3. Placeholders as today (`@@NAME@@`, `@@secret:<id>/<key>@@`) plus the short
-   form (section 4).
+3. Placeholders: `@@NAME@@` (a config value, as today),
+   `@@secret:<id>/<key>@@` and its short form `@@secret:<id>@@` (section 4),
+   and `@@api-secret:<component>@@` (section 5).
 4. Lines without a secret reference go into a generated **ConfigMap**
    `<component>-<container>-env`. Lines with one go into a generated **Secret**
    `<component>-<container>-env-secret`. Different names are required: the
@@ -205,10 +217,8 @@ ConnectionStrings__Default: 'Host=myapp-postgres;Database=myapp;Username=myapp;P
    manifest `env` may keep only single named entries, and a variable may not be
    in both places (checked immediately, no secret keys needed). Mixing is
    refused with "use env/<container>.yaml or keep this container's hand-written
-   envFrom, not both". Containers that consume a platform-rendered
-   registration Secret (Identity reading `<identity>-apis`) keep their existing
-   `envFrom` and do not use `env/`; in this delivery only app3's backend is
-   converted.
+   envFrom, not both". Identity no longer needs a hand-written `envFrom` for
+   API secrets: the platform injects them (section 5).
 7. **Variables the platform checks must stay in the manifest's `env`**, because
    those checks read `env` only: the names in `client.yaml` `environment:`
    (for example `APP_ID`, `BASE_PATH`; `registrations.check_client_identity`)
@@ -235,11 +245,31 @@ ConnectionStrings__Default: 'Host=myapp-postgres;Database=myapp;Username=myapp;P
 [OK] myapp/backend: env/backend.yaml -> 3 settings (ConfigMap myapp-backend-env), 1 secret (Secret myapp-backend-env-secret: myapp-database-password)
 ```
 
-## 4. Short secret reference `@@secret:<id>@@`
+## 4. Short secret declaration and reference
 
-- Means "the generated value of `SECRET_FILES.<id>`". Allowed **only** for a
-  declaration with exactly one source and exactly one `generate` name; the key
-  is that name, known from the declaration without reading files. Supplied
+A secret generated by the platform can be declared in one line:
+
+```yaml
+# config.defaults.yaml
+SECRET_FILES:
+  myapp-database-password: generate
+```
+
+This means one generated value (32 letters and digits, as today), stored at
+`credentials/<id>/value` in the component's config folder, Secret key `value`.
+A container that mounts the Secret sees the file `value` (for example
+`POSTGRES_PASSWORD_FILE: /run/secrets/db/value`). The long form
+(`- path: ...` with `generate: [<name>]`, or a supplied file without
+`generate`) stays for several files, chosen file names and supplied secrets.
+Examples and the checklist show the database case complete, so nobody has to
+guess the `value` file name.
+
+The short reference:
+
+- `@@secret:<id>@@` means "the generated value of `SECRET_FILES.<id>`". Allowed
+  **only** for `<id>: generate` or a declaration with exactly one source and
+  exactly one `generate` name; the key is known from the declaration without
+  reading files. Supplied
   secrets (no `generate`) and multi-key sources use the long form
   `@@secret:<id>/<key>@@`, which keeps working.
 - `<id>` not declared in this component's `SECRET_FILES`, or declared without
@@ -250,26 +280,102 @@ ConnectionStrings__Default: 'Host=myapp-postgres;Database=myapp;Username=myapp;P
   lists unexpected files in a retained directory).
 - Accepted in `env/` and in `SECRET_TEMPLATES`.
 
-## 5. Assumptions that keep it simple (product-owner decision)
+## 5. API secrets: `@@api-secret:<component>@@`
+
+An API backend and Identity must hold the same secret. Both sides write the
+same placeholder; that is the whole declaration:
+
+```yaml
+# components/myidentity-server/env/identity.yaml
+ApiResources__0__Name: myapp
+ApiResources__0__Scopes__0: myapp
+ApiResources__0__ApiSecrets__0__Value: '@@api-secret:myapp@@'
+ApiResources__1__Name: myapp2
+ApiResources__1__Scopes__0: myapp2
+ApiResources__1__ApiSecrets__0__Value: '@@api-secret:myapp2@@'
+
+# components/myapp/env/backend.yaml
+Authentication__ApiSecret: '@@api-secret:myapp@@'
+```
+
+Rules:
+
+1. A component is an **API** when one of its own `env/` files uses
+   `@@api-secret:<its own id>@@`. It may not use another component's API secret.
+2. Identity's `env/` files may use `@@api-secret:<component>@@` for any API
+   component. The variable name on that line (for example
+   `ApiResources__0__ApiSecrets__0__Value`) is where Identity receives the
+   value; the index lives only there, next to the name and scopes. The API
+   resource name is free; the placeholder is the link.
+3. **One value, unchanged on both sides.** The platform generates it once (32
+   letters and digits) when the API is first installed or prepared and keeps it
+   byte for byte at `credentials/api-secret/value` in the API component's config
+   folder. To reuse an existing value, put it there with `printf '%s'` before
+   the first install. There is no hash setting: Identity hashes the value
+   itself when it loads it.
+4. **Under the hood this is item 72's mechanism**, with the declaration moved:
+   the API's install registers the value (private registration, pending state,
+   restart of the API first, then Identity, removal on uninstall, `newer-only`
+   retention); the Identity side is rebuilt as one platform-rendered Secret
+   `<identity>-apis` that holds only the `@@api-secret` lines. When Identity is
+   built, the mapping "API component -> variable name" is read from its `env/`
+   files and compiled into its descriptor, so an API's install can rebuild that
+   Secret without Identity's source. The platform injects `<identity>-apis` into
+   the Identity container whose `env/` file has the lines; nobody writes its
+   name. `api.yaml`, `index`, `secret` and `hash` disappear.
+5. **Lines for APIs that are not installed yet are left out** of Identity's
+   environment until the API is installed (Identity is installed first).
+6. Refused, naming files and the next action:
+   - an API uses `@@api-secret:` but Identity's `env/` files have no line for it
+     ("add `ApiResources__<n>__ApiSecrets__0__Value: '@@api-secret:myapp@@'` to
+     components/myidentity-server/env/<container>.yaml");
+   - Identity references `@@api-secret:X@@` but X is not a listed component, or
+     X never uses its own `@@api-secret:X@@` (checked in the source catalog);
+   - at an isolated install: the API is not in the installed Identity's
+     compiled mapping ("install the Identity release that lists myapp first");
+   - `@@api-secret:` lines in more than one Identity container, or in a component
+     that is neither the API itself nor Identity;
+   - an `@@api-secret:` placeholder used outside a whole env value is allowed
+     only in the API's own files (composition like any secret); in Identity's
+     files it must be the whole value.
+7. `validate` shows the link:
+
+   ```text
+   [OK] api-secret myapp: myidentity-server/identity (ApiResources__0__ApiSecrets__0__Value) and myapp/backend
+   ```
+
+Requirements on the Identity code (not platform rules; in the checklist):
+it hashes API secrets itself when loading them (Duende compares hashes), and it
+starts while an API resource has no secret yet (left out until that API is
+installed). The demo Identity is changed to do both.
+
+Limits: one API secret per component, one secret per API resource
+(`ApiSecrets__0`); rotation restarts the API and Identity (short interruption,
+no overlap of old and new secrets).
+
+## 6. Assumptions that keep it simple (product-owner decision)
 
 1. **Fresh installations only.** No customer installation exists. The old
    catalog fields are removed outright: no dual format, no transition period,
    no conversion of retained `config.yaml`. Dev and lab installations are set
    up again.
-2. **Gateway and Identity are named, not detected.** The catalog reads only
-   `bundles.yaml` and checks whether `route.conf`, `client.yaml` and
-   `api.yaml` exist. It never parses manifests.
+2. **Gateway and Identity are named, not detected.** The catalog reads
+   `bundles.yaml`, checks whether `route.conf` and `client.yaml` exist, and looks
+   for `@@api-secret:` placeholders in `env/` files. It never parses manifests.
 3. **No mixing in a container**: `env/` or hand-written `envFrom`, not both
    (rule 3.2.6).
 4. **Short reference only for generated single-key secrets** (section 4).
+5. **Identity hashes API secrets itself** and tolerates a missing one
+   (section 5).
 
-## 6. How the code must be structured
+## 7. How the code must be structured
 
 To keep the Python as easy to follow as today (see backlog 75):
 
 1. **One catalog function** (for example `catalog.derive_entries(document,
    component_files)`) turns the new `bundles.yaml` plus "which of `route.conf`,
-   `client.yaml`, `api.yaml` exist per component" into exactly today's
+   `client.yaml` exist and which `@@api-secret:` placeholders the `env/` files
+   use, per component" into exactly today's
    normalized entry dicts. Pure: no writes, no host commands, no manifest
    parsing; tested on its own. `load_catalog` calls it; everything after is
    unchanged. `catalog_document` (used by `product_name`) accepts the new
@@ -280,21 +386,34 @@ To keep the Python as easy to follow as today (see backlog 75):
    `SECRET_TEMPLATES` entries and the `envFrom` additions. `effective_documents`
    calls it once, before its existing checks. No new modes, flags or second
    validation path.
-3. **Delete what the new form makes unnecessary**: parsing and cross-checks of
-   the removed catalog fields in source catalogs (keep `check_descriptor` and
-   its defaults for compiled descriptors and installed metadata unchanged).
-4. **Comments explain why** (for example why checked variables stay in `env`),
+3. **API secrets reuse item 72's registration code**: replace reading
+   `api.yaml` (index, secret, hash) with the API's own generated value and
+   Identity's compiled variable-name mapping; the owner-Secret rebuild, pending
+   state and restart order stay. No second registration mechanism.
+4. **Delete what the new form makes unnecessary**: parsing and cross-checks of
+   the removed catalog fields in source catalogs, `api.yaml` and hashing (keep
+   `check_descriptor` and its defaults for compiled descriptors and installed
+   metadata unchanged).
+5. **Comments explain why** (for example why checked variables stay in `env`),
    matching the existing style; no generic framework.
 
-## 7. Checklist
+## 8. Checklist
 
 Add a short "Converting a service" checklist to `docs/COMPONENTS.md`, taken
 from [phase 0 design, section 6](COMPONENT-ENV-DESIGN.md#6-conversion-checklist-draft-one-page),
 adapted: the catalog follows section 2 here; the example to copy is
 **app3** (converted to `env/` in this delivery, with `APP_ID`/`BASE_PATH` kept in
-its manifest per rule 3.2.7), not the deferred `orders` application.
+its manifest per rule 3.2.7), not the deferred `orders` application. Add:
 
-## 8. The review's findings and how they are handled
+- API secrets: `@@api-secret:<component>@@` on both sides; the two Identity
+  code requirements of section 5.
+- Init containers that need the database: a first init container that waits
+  with `pg_isready` (same image as the database, bounded retries, one folded
+  `command` line), the Pod annotation
+  `io.podman.annotations.init.container.type: always`, idempotent init steps,
+  and the database manifest in a lower-numbered file. Show the complete YAML.
+
+## 9. The review's findings and how they are handled
 
 | Review finding | Handling |
 | --- | --- |
@@ -304,7 +423,7 @@ its manifest per rule 3.2.7), not the deferred `orders` application.
 | Check M1: `client.yaml` without a gateway | Refused with a file-specific message (2.5). |
 | Check M2: a declared but unmounted receiving PVC passes | New focused mount check (R3). |
 | Check M3: where synthetic recipes live | Transient effective config only (3.2.5). |
-| Check M4: private-content checks cannot run before generation | Declaration checks run before any write; private-content checks before any YAML/registration is published or a service changes (section 9). |
+| Check M4: private-content checks cannot run before generation | Declaration checks run before any write; private-content checks before any YAML/registration is published or a service changes (section 10). |
 | Check M5: "move to env/" is not always possible | Message changed; Identity keeps its registration `envFrom` (3.2.6). |
 | Gateway would depend on itself | R1: no `public_from` for the gateway. |
 | Resource suffix is not proof of a receiver; arbitrary accepted names | Receivers are named (`gateway`, `identity`), not detected; fixed resource names (R3/R4). |
@@ -316,21 +435,24 @@ its manifest per rule 3.2.7), not the deferred `orders` application.
 | One `generate` name is not always one delivered key | Short form only for single-`generate` secrets, plus a delivered-key safety check (section 4). |
 | Retained config keeps old `SECRET_TEMPLATES` after conversion | Conversion is for fresh dev/lab installations only; existing lab installations are reset (no customer installation exists). Bump the version of converted `newer-only` components. |
 | `acceptance/renamed_product.py` rewrites removed fields, copies no `env/`, renames only long references | Update it: write the new catalog form, copy `env/`, rename short references too. |
-| Checklist pointed at the deferred `orders` example | Points at app3 (section 5). |
+| Checklist pointed at the deferred `orders` example | Points at app3 (section 8). |
+| (Product owner, 2026-10-30) `api.yaml` and the `-apis` name were hidden rules | `@@api-secret:` on both sides; `<identity>-apis` injected by the platform (section 5). Not yet independently checked. |
 
-## 9. Work, tests and verification
+## 10. Work, tests and verification
 
 | Part | Estimate |
 | --- | --- |
 | Catalog: `gateway`/`identity`, rules R1–R6, refusals, receiver mount check, `validate` lines; tests | 1.5–2 days |
-| `env/` and short reference; tests | 2 days |
+| `env/`, short declaration and reference; tests | 2 days |
+| API secrets: `@@api-secret:`, compiled Identity mapping, injection into Identity, item 72 registration rewired, demo Identity hashes itself; tests | 2 days |
 | Convert demo `bundles.yaml`, app3 to `env/`, fixtures, `renamed_product.py` | 1 day |
 | `docs/COMPONENTS.md`, README, review-guide contracts, checklist | half a day |
-| Lab: fixed matrix (6 scenarios) and `--whoami` | 1 day, mostly machine time |
+| Lab: fixed matrix (6 scenarios) and `--whoami` (covers API secret, rotation, uninstall) | 1 day, mostly machine time |
 
-Total about 1–1.5 weeks (the check counts about six working days with little
-reserve; carrying `env/` recipes through validate, prepare and install is the
-most likely overrun). Tests must show, for the demo, the acceptance renamed
+Total about 1.5–2 weeks (the check counted about six working days before the
+API-secret change, which adds about two; carrying `env/` recipes through
+validate, prepare and install and rewiring item 72 are the most likely
+overruns). Tests must show, for the demo, the acceptance renamed
 product, platform+help, a product with a component that does not use Identity,
 and a worker-only product: the normalized catalog from the new form equals the
 one from today's explicit form (except the documented `RENAMED` `manual` change);
