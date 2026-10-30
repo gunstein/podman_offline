@@ -605,3 +605,150 @@ incomplete. Only this evidence section was appended; the recipe, earlier
 results, `BACKLOG.md`, `docs/REVIEW_GUIDE.md` and implementation code were not
 changed. The unsupported inspection command is reported for review rather than
 silently bypassed.
+
+## Completed PROD check and fixed matrix (recorded 2026-10-30)
+
+The corrected part-3 procedure and all six part-4 scenarios have now been
+executed. **Part 3's required functional checks passed, with three
+`NO-LOCALHOST` observations retained as findings. Part 4 finished CLEAN PASS
+in all six scenarios, 472/472 steps**, including all final audits and cleanup.
+This updates the earlier incomplete attempts without changing their reports.
+No tests or VM operations were rerun while recording these results.
+
+### Revisions and evidence scope
+
+- The corrected Revision 3 recipe was committed as
+  `84eabd639fc6191b06dac60c061ac4d0a8feef86` and used for the new PROD check on
+  2026-10-29. Part 1's existing installation was retained for that check.
+- The operator then ran all six matrix scenarios on 2026-10-29,
+  19:26–21:46 UTC, at **`d5e5d70e24188f8dd4df5676c82d29cebcf1b20b`**,
+  after merging the latest remote documentation. Local `REPORT.md` metadata
+  and `record.jsonl` files confirm that exact revision and each verdict.
+- `git diff --stat 5f4b499 HEAD -- . ':(exclude)*.md'` was empty before the
+  PROD continuation; the same code comparison is empty for `d5e5d70`.
+  Thus part 1 is explicitly reused from `hosts76-whoami-5f4b499`
+  (**CLEAN PASS, 46/46**), and the Revision 2 DEV manual observations above
+  remain applicable to this unchanged implementation. They were not rerun or
+  relabelled as new results.
+- DEV and PROD metadata for every matrix run report **Oracle Linux 9.8,
+  Podman 5.8.2, systemd 252 and SELinux Enforcing**. PROD had fapolicyd
+  active/enabled; DEV had it inactive/disabled. The manual PROD check also
+  reported Podman 5.8.2 and Enforcing.
+
+### Manual real-host verification: part 3
+
+The original failed `systemctl --user -M ... cat` attempt remains recorded
+above. Revision 3 executes commands directly as `myproduct-ops` with its XDG
+runtime/config/data paths and its own home as the working directory.
+It checks the effective `ExecStart` property, rather than counting the whole
+unit: full unit text contains both retained `PodmanArgs` and the generated
+`ExecStart`. Failed property reads stop before flag counting. These are recipe
+corrections; no product code or deployment configuration was changed.
+
+| Check | Result | Output / observation |
+| --- | --- | --- |
+| Effective `ExecStart` contains `--no-hosts` | PASS | `platform 1`, `identity 1`, `app3 1`; inspection exit 0. |
+| Add PROD host loopback line and recreate services | PASS | Append/restart commands exited 0; platform, Identity and app3 each reported `active`. |
+| Backend `/etc/hosts` | PASS | `no /etc/hosts`, accepted by Revision 3. |
+| Backend public-name lookup | PASS | `10.89.0.12 myproduct-proxy.dns.podman`. |
+| Proxy inspect address | PASS | `10.89.0.12`, matching the backend lookup rather than the host's loopback entry. |
+| Localhost loop | OBSERVED | Three application containers reported `NO-LOCALHOST`; two resolved to `::1`; seven service/infra containers reported `NO-SHELL`. See complete output below. |
+| Public-origin sign-in start | PASS | `302 https://myproduct-proxy:8443/identity/connect/authorize`; redirect query withheld. |
+| Restore | PASS | Host-line removal and the prescribed platform/Identity/app3 restart both exited 0. No temporary PROD hosts entry was intentionally retained. |
+
+Complete localhost observation output:
+
+```text
+505487900842-service localhost=NO-SHELL
+0cc37bc73d5d-infra localhost=NO-SHELL
+app3-whoami-backend localhost=NO-LOCALHOST
+app3-whoami-frontend localhost=::1               localhost  localhost
+cd4cad9917e5-service localhost=NO-SHELL
+2f6b7191c337-infra localhost=NO-SHELL
+identity-postgres-db localhost=NO-LOCALHOST
+e88e0b00f993-infra localhost=NO-SHELL
+identity-server-app localhost=NO-LOCALHOST
+cc4a03a3ecab-service localhost=NO-SHELL
+3b71c950755e-infra localhost=NO-SHELL
+platform-proxy-nginx localhost=::1               localhost  localhost
+```
+
+The three `NO-LOCALHOST` observations are `app3-whoami-backend`,
+`identity-postgres-db` and `identity-server-app`. In contrast, all 12 DEV
+application containers resolved localhost in the earlier part-2 check.
+That DEV/PROD difference is a real finding, despite successful public-name DNS,
+sign-in and the matrix. A `NO-SHELL` result means the probe could not execute;
+it does not establish hostname behavior in that container. No workaround,
+image/hosts-file adjustment or resolver configuration change was applied.
+
+The login result stored for reporting is:
+
+```text
+302 https://myproduct-proxy:8443/identity/connect/authorize [query withheld]
+```
+
+### Real harness-driven verification: part 4
+
+| Run ID | Scenario | Result | Passed / total steps |
+| --- | --- | --- | ---: |
+| `hosts76-normal-d5e5d70` | Normal, app1 first | **CLEAN PASS** | 125/125 |
+| `hosts76-app2-d5e5d70` | App2 first | **CLEAN PASS** | 125/125 |
+| `hosts76-identity-d5e5d70` | Identity-only baseline/upgrade | **CLEAN PASS** | 66/66 |
+| `hosts76-help-d5e5d70` | Help only | **CLEAN PASS** | 60/60 |
+| `hosts76-platform-help-d5e5d70` | Platform/help without Identity on PROD | **CLEAN PASS** | 39/39 |
+| `hosts76-renamed-d5e5d70` | Renamed product | **CLEAN PASS** | 57/57 |
+
+The normal and app2-first runs exercised stop/start, restart, crash/hang
+recovery, reboot/offline operation, independent help/app/platform/Identity
+upgrades, downgrade refusal, data/sibling preservation, and scoped uninstall.
+The other scenarios covered the pinned historical Identity baseline and
+upgrade, isolated help upgrade, platform/help without Identity on PROD, and
+the renamed product's registration removal and retained-bundle uninstall.
+All six final `11-prod-audit` steps and cleanup steps passed. App3 remains
+outside the fixed PROD matrix; the focused/manual checks above supply its
+runtime evidence.
+
+### Product/unit tests and acceptance-harness tests
+
+The `03-unit` logs show **590 tests, OK** in each of normal, app2-first,
+Identity-only, help-only and platform/help. The renamed scenario has no
+separate `03-unit` step. All six image-build steps passed. These results come
+from the operator's completed runs, not new test executions while editing this
+report.
+
+No isolated acceptance-harness unittest command was run or supplied in this
+batch; no new harness-unittest pass is claimed. A CLEAN acceptance scenario
+is real runtime evidence and is kept separate from that test category.
+
+### Artifact fingerprints and remaining findings
+
+Original harness files remain under
+`~/podman-offline-acceptance-runs/<run-id>/`. The following fingerprints link
+this summary to the local records without copying secrets or unfiltered logs.
+
+| Run ID | SHA-256 of record.jsonl | SHA-256 of final audit log |
+| --- | --- | --- |
+| `hosts76-normal-d5e5d70` | `832f5d36be0743e739ffd1fb8899c25233a644c6e0b75207daa63b6b6ac9bae7` | `f8620c0c03de7922057b2ab341d22b1697f18a3ec8bde3e2a2e632ee858f1314` |
+| `hosts76-app2-d5e5d70` | `d25e853c8bfd544bfd48109cd71667b366a30980ecd7879eb1cde8da1f49fb8a` | `9e5c07d8b0b418bef4c003288f947c3a15a0a77c7e31420ff904ffd060138790` |
+| `hosts76-identity-d5e5d70` | `0f3d8af1ffe79bfbc9272f7f4b06d5413d982a019cf0b5a13c91b9eac3265fea` | `05735dae9b4b7eea54baafa8a39e5f9e3756d9550a6d19bdca1251af9bc64880` |
+| `hosts76-help-d5e5d70` | `8e396c57b058394f8bd3af8c8838d95ffc2b027acea14c3aac798c1424f97def` | `5a68ac10b9755b8a172afdc42962a61165205be9aed1191decaa8b7ddd18f051` |
+| `hosts76-platform-help-d5e5d70` | `99a31eb59758762cccf74a0fd1480a80a0e0f2f6c7c33df01861745c655b1d5c` | `06f7cf18a9158d7a25002c66cbcb6009cfd8699988f08aa1333ff332ca853661` |
+| `hosts76-renamed-d5e5d70` | `53e34e4ec2239053fefe2cedb68ebc82eff18213e62b3393a4ad270fe3e30736` | `79ba30bbea18b3ceec5ccc642173761949c74433cb7b9ed26de2980d148fad35` |
+
+The required functional PROD loopback checks and all fixed-matrix runs are now
+recorded; the former inspection-command blocker is resolved. This does **not**
+make the three PROD localhost findings disappear or select a different hosts
+mechanism. Part 2 found `--hosts-file` in `podman run` help but not kube-play
+help; use of that alternative through kube play/Quadlet is still unverified.
+The product owner must assess the localhost findings before treating the
+behavior as unconditionally acceptable. An automated loopback acceptance
+step is not added by this evidence-only update.
+
+Only this report was changed while recording the results. `BACKLOG.md`,
+`docs/REVIEW_GUIDE.md`, earlier result sections and implementation code are
+unchanged; no backlog status is promoted. The relevant checked contracts are
+host-line isolation, public-origin routing through network DNS, effective
+Quadlet start flags, credential-safe output and restoration, plus the
+lifecycle/isolation checks actually exercised by the matrix. No implementation
+refactor or new understandability assessment is claimed; no unassisted human
+operator trial occurred.
