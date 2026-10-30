@@ -433,6 +433,13 @@ images without `/etc/hosts` and made localhost depend on external DNS in the
 lab. Public host names still resolve through the product network's DNS.
 
 Dev selects the absolute source-tree path only for its `kube play` command.
+For direct dev Podman stop/start/restart commands, select the same override;
+it is not retained in the calling shell. For example, from the source root:
+
+```sh
+CONTAINERS_CONF_OVERRIDE="$PWD/quadlet/containers-hosts.conf" podman pod restart <pod-name>
+```
+
 An installed unit's `[Service] Environment=` selects the immutable copy in
 that component's own release. The internal Quadlet token
 `@@PODMAN_HOSTS_CONFIG@@` resolves to that file, with systemd path escaping;
@@ -451,8 +458,10 @@ platform and Identity patch versions advance so `newer-only` will not skip
 this change. No installed release is modified in place.
 
 The `--no-hosts` version passed the six-scenario matrix, but three PROD
-containers could not resolve localhost. That evidence and the outstanding
-retest for this replacement are recorded in
+containers could not resolve localhost. The replacement passed focused whoami
+46/46 and normal 125/125 at `e99c6be`, with operator-reported manual DEV/PROD
+localhost and loopback checks. DEV restart requires the explicit policy above.
+The failed first attempt and the successful scope are recorded in
 [PUBLIC-ORIGIN-HOSTS.md](../acceptance/PUBLIC-ORIGIN-HOSTS.md).
 
 Symptom of a container that cannot reach the public origin: the backend

@@ -1,10 +1,12 @@
 # Public origin and deterministic localhost entries (backlog 76)
 
-Status (2026-10-30): the previous `--no-hosts` implementation passed its
-functional loopback checks and all six matrix scenarios (**472/472**), but
-three PROD application containers could not resolve localhost. The replacement
-below has local regression coverage and **requires a fresh lab test**. Earlier
-results remain unchanged below and do not verify this new mechanism.
+Status (2026-10-30): **localhost correction verified in the requested lab scope**
+at `e99c6be9406f5441fa21ac17ec9db73e813c306c`. The focused scenario passed
+46/46 steps, the normal scenario passed 125/125, and the operator reported
+successful manual DEV/PROD localhost, host-loopback and restoration checks.
+DEV restart must select the same hosts policy as dev startup; the first manual
+attempt failed without it. See the dated results at the end. The earlier
+472/472 matrix remains evidence for the previous `--no-hosts` implementation.
 
 ## Current change
 
@@ -114,12 +116,19 @@ dev and removes its temporary hosts entry, including after a failed check.
   printf 'backend: %s\nproxy: %s\n' "$resolved" "$proxy"
   test -n "$proxy"
   test "${resolved%%[[:space:]]*}" = "$proxy"
-  SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
+  CONTAINERS_CONF_OVERRIDE="$PWD/quadlet/containers-hosts.conf" \
+    SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' \
+    .venv-smoke/bin/python dev/whoami-smoke-test.py
 )
 ```
 
 Require localhost entries in a real `/etc/hosts`, successful localhost lookup,
 zero public-name entries, proxy address equality and all smoke PASS lines.
+The explicit environment assignment above is required for the smoke test's
+Podman restart subprocess too. `dev.sh up` scopes its assignment to `kube play`;
+it does not configure subsequent direct Podman commands in the caller's shell.
+A direct dev stop/start/restart must select the same policy. Production service
+restarts receive it from the installed unit's Environment setting.
 Record any other application/infra observations separately if collected;
 infra images without a shell/getent cannot supply resolution evidence.
 
@@ -804,3 +813,117 @@ checks with restoration, then preferably one normal matrix scenario. Record
 the exact new commit and generated-policy paths/contents. Keep the historical
 472/472 result scoped to the old mechanism. Backlog 76 remains open until this
 new behavior is verified on real Podman/Quadlet.
+
+
+## Localhost correction lab results (2026-10-30)
+
+Tested commit: `e99c6be9406f5441fa21ac17ec9db73e813c306c`. No implementation
+change was made between the failed manual attempt and the successful run; the
+controller supplied the explicit override to the DEV smoke process and its
+restart subprocess. The current recipe above now includes that assignment.
+Earlier result sections are preserved.
+
+### First attempt: focused pass, manual DEV failure
+
+`hosts76-localhost-whoami-e99c6be` finished **CLEAN PASS, 46/46**. In the
+following operator-run DEV check, all three formerly failing containers had
+real hosts files containing localhost entries and resolved localhost. With the
+host loopback entry present, the backend had zero public-name hosts entries;
+its DNS result and proxy address both equalled `10.89.0.12`.
+
+The smoke test passed initial HTTPS/sign-in/claims, API-secret introspection,
+session persistence across restart and local logout. It then failed before
+the final synthetic OIDC-error check completed. Filtered journal inspection
+for the failed backend container found discovery-fetch failures (`IDX20803` /
+`IDX20804`), `HttpRequestException` / `SocketException` with connection refusal,
+and a 500 response at the public-name login start. Message bodies, protocol
+URLs and private values were withheld. The DEV cleanup completed with
+`restored: no host entry`. PROD manual checks and the normal scenario were
+not run in this attempt.
+
+The direct `podman pod restart` lacked `CONTAINERS_CONF_OVERRIDE`. Podman
+5.8.2's [addHosts implementation](https://github.com/containers/podman/blob/v5.8.2/libpod/container_internal_common.go#L2224)
+falls back to the invoking runtime's config when no per-container base file
+is set. Re-inheriting the host line during restart is the source-supported
+explanation, consistent with the journal facts and the subsequent corrected
+pass; the failed container's hosts file was not inspected after restart
+because cleanup had removed it. Do not claim that file content was observed.
+
+### Completed corrected run: harness-driven real runtime
+
+Both local `REPORT.md` and `record.jsonl` files were inspected when recording
+these results; each names the exact tested commit above and a clean source.
+Private artifacts remain under
+`/home/gunstein/podman-offline-acceptance-runs/<run-ID>/` and are not copied
+into the repository.
+
+| Run ID | Verdict | Passed / total |
+| --- | --- | --- |
+| `hosts76-localhost-whoami-e99c6be-20261030T151555Z` | CLEAN PASS | 46/46 |
+| `hosts76-localhost-normal-e99c6be-20261030T151555Z` | CLEAN PASS | 125/125 |
+
+Both completed `11-prod-audit` and `11-cleanup`: **171/171** total steps.
+The focused scenario covers app3 trust controls, log safety, service restart
+and reboot/session persistence. The normal scenario exercises the fixed
+matrix's normal lifecycle, reboot and upgrades. The other five fixed scenarios
+were not repeated for this replacement; their old 472/472 result is not current
+verification of it.
+
+| Host | OS | Podman | SELinux | systemd | fapolicyd |
+| --- | --- | --- | --- | --- | --- |
+| DEV | Oracle Linux Server 9.8 | 5.8.2 | Enforcing | 252 | inactive |
+| PROD | Oracle Linux Server 9.8 | 5.8.2 | Enforcing | 252 | active |
+
+These facts come from both runs' metadata.
+
+### Completed corrected run: manual real-host checks
+
+The operator ran the supplied fail-stop controller block and reported its
+final `PASS: whoami, DEV, PROD and normal matrix completed`. This confirms the
+manual scripts returned zero between the two harness runs. Detailed stdout
+for this successful manual run was not supplied or archived with the harness
+artifacts; the table records the enforced conditions, not invented address
+values or reconstructed terminal output.
+
+| Part | Enforced conditions and reported result |
+| --- | --- |
+| DEV localhost | PASS: `identity-postgres-db`, `identity-server-app` and `app3-whoami-backend` each had `/etc/hosts` with localhost entries and a successful localhost lookup; no NO-LOCALHOST in these three checks. |
+| DEV host-loopback | PASS: with the temporary host loopback mapping, backend public-name hosts count was 0 and the backend's resolved address equalled the proxy's nonempty address. |
+| DEV smoke/restart | PASS: all six smoke PASS lines, including sign-in, introspection, saved session after restart, local logout and synthetic OIDC-error refusal. The restart inherited the explicit source-local override. |
+| DEV restoration | PASS: dev down and removal of the temporary hosts entry. |
+| PROD units | PASS: all three units exposed a hosts-policy override, none had `--no-hosts` in ExecStart, and all became active after restart. |
+| PROD localhost | PASS: the same three formerly failing containers each had generated localhost entries and resolved localhost. |
+| PROD host-loopback/login | PASS: backend public-name hosts count 0, resolved address equal to the proxy, and HTTP 302 to the public `/identity/connect/authorize` endpoint with query withheld. |
+| PROD restoration | PASS: temporary hosts entry removed and all three service restarts completed. |
+
+No hostAliases experiment was repeated in this shorter recipe. Its shared
+validation guard remains covered by the local product regression tests; the
+old raw-Podman flag-conflict result is historical. No unrelated VM was reset.
+
+### Evidence levels, contracts and remaining scope
+
+- **Product/unit:** the normal run's `03-unit` log records **592 tests, OK**.
+  The separately recorded 520 isolated platform tests and focused policy tests
+  above were local implementation checks, not rerun while writing this report.
+- **Acceptance-harness unit tests:** the correction's previously recorded
+  **358 tests, OK** remain separate local evidence for scenario wiring. No
+  harness-unit suite was rerun for this documentation-only update.
+- **Real Podman/systemd/Duende:** the two inspected CLEAN reports and the
+  operator-reported manual checks above establish the tested runtime scope.
+  The original full matrix is retained as historical evidence only.
+
+The requested item 76 lab scope is complete for policy-aware invocations:
+localhost generation, host-line isolation, public-origin network DNS and
+sign-in, installed Quadlet policy selection and cleanup passed. Ordinary
+user/system config is not edited. A plain DEV Podman restart without the
+policy is outside the successful result and must not be represented as fixed.
+Broader image/Podman-version coverage, an automated host-loopback harness step
+and a repeated six-scenario matrix for the replacement remain unperformed.
+The organisation's backend and unassisted human operator verification are
+not established by these demo results.
+
+This update changes documentation only. Code-understandability findings from
+the implementation review above are unchanged. The procedure review found
+and corrected the missing restart environment; the assisted operator run
+checks execution, not empirical unassisted usability. Documentation checks
+cover consistent scope, relative links, shell syntax and `git diff --check`.

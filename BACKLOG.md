@@ -12,24 +12,22 @@ items retain their individual scopes below; agree the next priority separately.
 ## Current priority (updated 2026-10-30)
 
 [Item 76](#76-reach-the-public-origin-from-containers-when-the-host-maps-it-to-loopback)
-is the top priority, requested by the product owner on 2026-10-29: on a host
-whose `/etc/hosts` maps the public host name to `127.0.0.1` (a developer VDI),
-Podman copies that line into every container, so a backend cannot reach Duende
-through the public origin and rejects every token (`IDX10204`). Implemented
-initially with `--no-hosts`: six scenarios passed **CLEAN PASS, 472/472**
-steps at `d5e5d70`, with 590 product tests OK in each of five runs. PROD
-loopback DNS, 302 sign-in and restoration passed, but three containers could
-not resolve localhost. The replacement now uses a release-local
-`base_hosts_file = "none"` / `no_hosts = false` override in dev and Quadlet,
-without editing user config. **New localhost/loopback lab verification is
-pending; item 76 is not closed.** [Evidence and shorter retest](acceptance/PUBLIC-ORIGIN-HOSTS.md).
+**has completed its requested lab scope** at `e99c6be` (2026-10-30).
+The replacement uses the bundled `base_hosts_file = "none"` / `no_hosts =
+false` override without editing user config: focused whoami **46/46** and
+normal **125/125**, both CLEAN PASS, plus operator-reported DEV/PROD
+localhost, host-loopback, sign-in and restoration checks. The normal run's
+product suite passed **592 tests**. DEV direct restart must select the same
+hosts-policy override as startup; the first manual attempt failed without it.
+The earlier six-scenario 472/472 matrix belongs to the old `--no-hosts`
+implementation. [Results, failed attempt and scope](acceptance/PUBLIC-ORIGIN-HOSTS.md#localhost-correction-lab-results-2026-10-30).
 
 [Item 77](#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets)
 makes components intuitive for developers who do not read documentation.
 Direction decided on 2026-10-29 after an [independent analysis](docs/COMPONENT-MODEL-ANALYSIS.md):
 phase 1 is `env/<container>.yaml` with short, declared secret references and a
 working example component for the organisation's SPA/.NET architecture, on top
-of today's lifecycle. Phase 0's design ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) is signed off and the walkthrough dropped; phase 1 follows item 76's matrix.
+of today's lifecycle. Phase 0's design ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) is signed off and the walkthrough dropped; phase 1 can follow item 76's completed requested lab scope.
 
 [Item 72](#72-register-api-resource-secrets-with-identity) was requested by
 the product owner on 2026-10-28 while converting the organisation's
@@ -240,7 +238,10 @@ audit fix and final audit. [Evidence and remaining work outside that scope](acce
 Item 72 is removed from the open list for its requested lab scope at `fd99d31`;
 [the report](acceptance/WHOAMI-DOTNET.md#backlog-72-api-secret-lab-verification-2026-10-28) records the unsupported DEV harness interpreter and untested extensions.
 
-Open: 76 (top priority, 2026-10-29; implemented locally, lab check pending), 77 (phase 0 signed off; phase 1 after item 76's matrix), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
+Item 76 is removed from the open list for its requested lab scope at `e99c6be`;
+DEV restart requires the explicit hosts-policy environment described in its report.
+
+Open: 77 (phase 0 signed off; item 76's requested lab scope complete), 64 (urgent; on main, OL9 matrix clean, manual run worked with help; usability via 65), 65 (implemented; lab passed), 69, 66 and 67 (high priority, in that order; 69 settles paper-first requirements before 66's commands), 68 (human verification before customer readiness), 54 (on main, OL9 matrix clean; Python 3.6 and integrity strategy pending), 63 (high priority, after 54; 59 and 60 implemented locally), 48, 49, 44, 45b, 45c, 42, 3, 2, 37, 47, 35, 36, 50, 22, 24, 51 and 52 (low priority), 53, 55, 5, 7, 6, and
 item 30 steps 3-4.
 Also open, priority not assigned: [75](#75-make-python-lifecycle-code-easier-to-follow-diagnose-and-change)
 (Python lifecycle understandability; coordinate with 69 and 73–74).
@@ -536,19 +537,23 @@ authenticate the new files, no secret creation in package scripts).
 
 ## 76. Reach the public origin from containers when the host maps it to loopback
 
-Status: **localhost correction implemented; fresh lab verification pending**
-(2026-10-30). The original `--no-hosts` implementation has real runtime
-evidence: `hosts76-whoami-5f4b499` CLEAN PASS 46/46, DEV manual checks,
-corrected PROD manual loopback DNS/302/restoration checks, and all six fixed
-scenarios at `d5e5d70` **CLEAN PASS, 472/472** (590 product tests OK in each
-of five runs). This evidence is recorded, not still pending.
+Status: **requested lab scope complete** (2026-10-30), tested at
+`e99c6be9406f5441fa21ac17ec9db73e813c306c`. Runs
+`hosts76-localhost-whoami-e99c6be-20261030T151555Z` and
+`hosts76-localhost-normal-e99c6be-20261030T151555Z` finished **CLEAN PASS,
+46/46 and 125/125** including audits/cleanup. The normal run passed 592
+product tests. Both hosts ran Oracle Linux 9.8, Podman 5.8.2 and SELinux
+Enforcing. The operator reported passing DEV/PROD generated-hosts localhost,
+public-name DNS/loopback, sign-in and restoration checks.
 
-The remaining real finding is that `identity-server-app`,
-`identity-postgres-db` and `app3-whoami-backend` could not resolve localhost
-on PROD without `/etc/hosts`; all 12 DEV application containers could.
-The DNS-dependent explanation is a hypothesis, not a verified diagnosis.
-Numeric loopback probes and successful public-origin sign-in did not detect
-this difference, so the green matrix alone does not close the item.
+The earlier `--no-hosts` finding (three PROD containers unable to resolve
+localhost) was addressed by the replacement below. The first replacement
+manual DEV attempt failed after a direct Podman restart without its override;
+filtered logs showed discovery connection refusal and HTTP 500. The corrected
+run explicitly propagated the override to the smoke/restart process and
+passed. A plain Podman restart without that policy is not covered by the pass.
+The original six-scenario 472/472 matrix at `d5e5d70` remains historical,
+not verification of this replacement.
 
 The product-owner-approved direction is now `quadlet/containers-hosts.conf`:
 `[containers] base_hosts_file = "none"` and `no_hosts = false`, selected by
@@ -565,12 +570,15 @@ identity 0.4.14, app1/app2/help 0.4.12, app3 0.1.2. This also makes the
 `newer-only` platform/Identity render the new unit on upgrade. Images and
 fixed matrix counts/install orders are unchanged.
 
-[The report and current short lab recipe](acceptance/PUBLIC-ORIGIN-HOSTS.md)
-retain all earlier attempts and findings. **Do not reuse their passes as
-verification of this changed hosts mechanism.** Next: fresh DEV and PROD
-checks with the host loopback line, generated localhost entries and sign-in,
-then preferably one normal matrix run. The automated loopback acceptance
-step and the broader component work are separate follow-ups.
+[The report and corrected short lab recipe](acceptance/PUBLIC-ORIGIN-HOSTS.md)
+retain all earlier attempts and distinguish inspected harness artifacts from
+operator-reported manual results. Direct DEV stop/start/restart commands must
+select the same `CONTAINERS_CONF_OVERRIDE` as `dev.sh up`; production service
+restarts inherit it from the installed unit. No implementation change was
+made between the failed and successful manual runs. An automated host-loopback
+acceptance step, broader runtime/version coverage and component work remain
+separate follow-ups; the other five fixed scenarios were not rerun for this
+replacement.
 
 ### How containers reach the public origin today
 
@@ -589,7 +597,9 @@ the name resolves to the proxy because of this chain:
    address and connect to nginx on `HTTPS_PORT` inside the network.
    `IP_ADDRESS`/`hostIP` affects only the published host port.
 
-This chain is not documented anywhere and no test asserts it.
+This chain is documented in `docs/COMPONENTS.md`; the manual loopback checks
+assert DNS/proxy equality. A dedicated automated host-loopback step remains
+a follow-up.
 
 ### Problem
 
