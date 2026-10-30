@@ -269,7 +269,6 @@ def build_release(version, descriptor=None):
             "config.defaults.yaml",
             "route.conf",
             "client.yaml",
-            "api.yaml",
             "env",
             "files",
         ):

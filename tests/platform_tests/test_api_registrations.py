@@ -159,7 +159,16 @@ class ApiRegistrationTests(ProductFixture):
         # Prepare again: the same secrets, and validate agrees with prepare.
         self.quiet(deploy.prepare)
         self.assertEqual(self.secrets(common.BUILD / "install.yaml"), secrets)
-        self.quiet(validation.validate)
+        validated = self.quiet(validation.validate)
+        self.assertIn(
+            "[OK] api-secret ledger: generated at ledger credentials/api-secret/value; "
+            "ledger/main Authentication__ApiSecret; "
+            "accounts/main ApiResources__0__ApiSecrets__0__Value; install accounts first",
+            validated,
+        )
+        self.assertIn(
+            "[OK] ledger: API secret -> accounts; requires accounts", validated
+        )
         self.process.assert_not_called()
 
     def test_dev_drops_an_api_removed_from_the_catalog(self):
@@ -198,6 +207,9 @@ class ApiRegistrationTests(ProductFixture):
             product["reports"]["defaults"] = {
                 "SECRET_FILES": {"reports-api-secret": "generate"}
             }
+
+        def old_file(product):
+            product["reports"]["api"] = {"index": 1}
 
         def no_line(product):
             product["accounts"]["env"]["main"] = identity_lines("ledger")
@@ -245,6 +257,11 @@ class ApiRegistrationTests(ProductFixture):
                 "billing is not a listed component",
             ),
             ("owner declares it", owner_declares, "platform renders it"),
+            (
+                "old api.yaml",
+                old_file,
+                "api.yaml is no longer read: write @@api-secret:reports@@",
+            ),
             (
                 "explicit source collides",
                 own_source,

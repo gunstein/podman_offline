@@ -92,9 +92,11 @@ skip others ([components](docs/COMPONENTS.md#manifest-resource-kinds)).
 
 ## Declared component model (0.4.9)
 
-The component model is data. `bundles.yaml` (the catalog) declares each
-component's dependencies, version file, upgrade policy, `public_from` contract
-and route/client roles; [docs/COMPONENTS.md](docs/COMPONENTS.md) is the schema
+The component model is data. `bundles.yaml` (the catalog) names the gateway
+and identity and lists the components with their upgrade policy and extra
+dependencies; `catalog.derive_entries()` derives the normalized `public_from`
+contract and route/client/API roles from those names and each component's
+files (backlog 77); [docs/COMPONENTS.md](docs/COMPONENTS.md) is the schema
 reference. `catalog.py` is the single reader and validator:
 
 1. `load_catalog()` checks IDs, fields, dependencies, cycles and role owners.

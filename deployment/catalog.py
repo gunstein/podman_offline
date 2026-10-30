@@ -227,6 +227,12 @@ def registration_files(directory):
     Reads only file existence and the env/ files' @@api-secret: placeholders;
     never manifests.
     """
+    if (directory / "api.yaml").exists():
+        raise common.DeployError(
+            f"{directory / 'api.yaml'} is no longer read: write "
+            f"@@api-secret:{directory.name}@@ in this component's env/ file and on "
+            "identity's ApiResources__<n>__ApiSecrets__0__Value line, then remove it"
+        )
     return {
         "route": (directory / ROLE_FILES["routes"]).is_file(),
         "client": (directory / ROLE_FILES["clients"]).is_file(),

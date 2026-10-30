@@ -75,8 +75,9 @@ With all components installed there are 8 pods, 10 app containers and 2 app1 ini
 containers (schema preparation, then SQL seeding). The root
 path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 
-In `bundles.yaml`, platform accepts routes and Identity accepts OIDC clients;
-the apps and help register with them. Each component has its own
+In `bundles.yaml`, `gateway: platform` and `identity: identity` name the
+receivers; the apps and help register with them through their `route.conf`,
+`client.yaml` and `env/` files ([the catalog](docs/COMPONENTS.md#the-catalog-bundlesyaml)). Each component has its own
 `components/<id>/VERSION` containing `major.minor.patch`. Platform and Identity
 use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
 names must start with their component prefix; the renderer rejects other names
@@ -125,8 +126,8 @@ coverage, local evidence and pending lab commands.
 Some setting names have built-in meaning (`PUBLIC_ORIGIN`, `HTTPS_PORT`,
 `PUBLIC_HOSTNAME`, `SECRET_FILES`, `VOLUME_FILES`); every other name only
 replaces its placeholder in each component separately. A component can share
-its own settings with its `public_from` dependents through `shares:` in
-`bundles.yaml`. See [reserved configuration names and shared
+the gateway's settings with every other component through `shares:` on the
+gateway's entry in `bundles.yaml`. See [reserved configuration names and shared
 settings](docs/COMPONENTS.md#reserved-configuration-names).
 
 | File | Role |
@@ -155,8 +156,8 @@ The component dev file contains shared, non-secret development settings. Since
 it wins over the ignored global dev file, changing a key it defines on one
 machine requires editing the tracked component file. Do not commit secrets or
 machine-specific absolute paths. Keep credentials in external/generated files.
-A `public_from` dependent may not set its owner's shared keys in its component
-dev file, even to the same value: this fails naming the key, file and owner.
+A component may not set the gateway's shared keys in its own component dev
+file, even to the same value: this fails naming the key, file and owner.
 Set these keys on the owner, whose effective settings are inherited afterwards.
 Shared keys always come from the owner's effective dev config, which includes the
 global `config/dev.yaml`, so a global value reaches the owner and every dependent
@@ -214,8 +215,8 @@ its credentials and install it. For app1/app2, next initialize and install Ident
 from its own bundle before either app. For a platform/help-only setup, install
 help after platform; Identity and the apps are not required. Prepare each
 component’s certificates/credentials with the certificate script, edit
-component-specific settings, then install. A component declaring
-`public_from: platform` (Identity, the apps and help) initializes with only the
+component-specific settings, then install. Every component except the gateway
+(Identity, the apps and help) initializes with only the
 installed platform config's actual `PUBLIC_ORIGIN` and `HTTPS_PORT` as final
 overrides; dev prepare inherits them the same way. Other platform settings are never copied.
 An invalid platform config or missing shared setting fails instead of falling back
@@ -1441,8 +1442,9 @@ changes. For a new demo-style app also consider:
 | Config | `components/<id>/config.defaults.yaml` for initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
-| Proxy/OIDC | `route.conf` with `routes: platform`; `client.yaml` with `clients: identity` and `public_from: platform`. |
-| API secret | An API backend that Identity must authenticate: its own generated secret plus `api.yaml` with `apis: identity` ([API secrets](docs/COMPONENTS.md#api-secrets-apis)). |
+| Settings | `env/<container>.yaml` per container; short `<id>: generate` secrets ([checklist](docs/COMPONENTS.md#converting-a-service)). |
+| Proxy/OIDC | `route.conf` and `client.yaml` in the component; the catalog derives the rest. |
+| API secret | `@@api-secret:<component>@@` in the API's and Identity's `env/` files ([API secrets](docs/COMPONENTS.md#api-secrets)). |
 | Credentials | Prepare them yourself, or extend the demo provisioning script deliberately. |
 | E2E | Extend dev/smoke-test.py and acceptance/markers.py with new app/isolation/persistence checks. |
 | Docs | Update overview, tests/README and acceptance/README. |

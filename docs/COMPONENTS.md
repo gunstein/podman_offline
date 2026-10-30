@@ -25,26 +25,48 @@ and without the release directories of other components.
 ## The catalog: `bundles.yaml`
 
 ```yaml
-product: <name>                  # required; names the whole installation
+product: myproduct          # required; names the whole installation
+gateway: platform           # optional: the reverse proxy component
+identity: identity          # optional: the component that registers OIDC clients and API secrets
 components:
-  <id>:
-    requires: [<id>, ...]        # installed first; default []
-    upgrade: always              # or newer-only; default always
-    public_from: <id>            # take PUBLIC_ORIGIN, HTTPS_PORT and its shares from this dependency
-    shares: [<NAME>, ...]        # config names this component's public_from dependents take from it
-    routes: <id>                 # register route.conf with this dependency
-    clients: <id>                # register client.yaml with this dependency
-    apis: <id>                   # register api.yaml (this component's API secret) with this dependency
-    accepts:                     # roles this component serves
-      routes: <id>-<volume>      # volume that receives all routes
-      clients: <id>-<volume>     # volume that receives all OIDC clients
-      apis: <id>-<secret>        # Secret the platform renders with every API secret
+  platform:
+    upgrade: newer-only     # or always (the default)
+  identity:
+    upgrade: newer-only
+  app1:                     # an empty entry is complete
+  reports:
+    requires: [app1]        # only dependencies the rules below do not create
 ```
 
-`product:` is required; every component field is optional, and `<id>: {}` is a
-complete entry. Unknown fields,
-duplicate keys and invalid values are refused before any file, secret, image or
-service is touched. Errors name `bundles.yaml`, the component and the field.
+Per component only `upgrade`, `requires` and, on the gateway, `shares` exist.
+Everything else is derived from `gateway:`, `identity:` and the component's
+files (backlog 77):
+
+| Rule | Result |
+| --- | --- |
+| The gateway | Receives every `route.conf` in the volume `<gateway>-routes`, which its manifests must mount. |
+| Every other component, when a gateway is set | Takes the gateway's `PUBLIC_ORIGIN`, `HTTPS_PORT` and `shares`, and requires the gateway. |
+| A component with `route.conf` | Registers it with the gateway. Without a gateway, or on the gateway itself, it is refused. |
+| A component with `client.yaml` | Registers it with identity and requires identity. It needs a gateway (the redirect URI uses the public origin); not on the gateway or identity itself. |
+| A component whose `env/` files use `@@api-secret:<own id>@@` | Is an API: identity receives its secret ([API secrets](#api-secrets)) and it requires identity. |
+| Identity | Receives clients in `<identity>-clients` only while some component has `client.yaml`, and API secrets in the platform-rendered Secret `<identity>-apis` only while some component is an API. |
+| A component with none of these files | Has no link to identity and does not depend on it. |
+
+Written `requires` keep their order; the derived dependencies (gateway, then
+identity) are appended. The earlier fields `public_from`, `routes`, `clients`,
+`apis` and `accepts` are refused with the rule that replaced them; there is only
+one way to write a catalog. `./deploy.sh validate` prints what was derived:
+
+```text
+[OK] platform: receives routes in platform-routes
+[OK] app3: public settings and routes from platform; client.yaml -> identity; API secret -> identity; requires platform, identity
+[OK] help: public settings and routes from platform; requires platform
+```
+
+Unknown fields, duplicate keys and invalid values are refused before any file,
+secret, image or service is touched. Errors name the file, the component and
+the rule. The normalized result is compiled into each `bundle.yaml` exactly as
+before, so targets never derive anything themselves.
 
 ### Product name
 
@@ -115,20 +137,19 @@ no migration. Standalone manifest fixtures without a catalog keep root `VERSION`
 
 ### Public settings and shared settings
 
-`public_from: <id>` declares that the component uses the same `PUBLIC_ORIGIN`
-and `HTTPS_PORT` as that dependency, plus every name that dependency lists in
-`shares`. `init-config` copies these values from the dependency's persistent
-config, dev prepare copies them from the dependency's dev config, and install
-(and `validate`) refuse a mismatch, naming the setting, both files and the
-owner, never the values. A component without `public_from` needs none of them
-unless its manifests use them.
+Every component except the gateway uses the same `PUBLIC_ORIGIN` and
+`HTTPS_PORT` as the gateway, plus every name the gateway lists in `shares`.
+`init-config` copies these values from the gateway's persistent config, dev
+prepare copies them from its dev config, and install (and `validate`) refuse a
+mismatch, naming the setting, both files and the gateway, never the values.
+Without a gateway no component takes them.
 
 ```yaml
-gateway:
-  shares: [SHOP_NAME]            # dependents with public_from: gateway take it
-orders:
-  requires: [gateway]
-  public_from: gateway           # gets PUBLIC_ORIGIN, HTTPS_PORT and SHOP_NAME
+gateway: gateway
+components:
+  gateway:
+    shares: [SHOP_NAME]          # every other component takes it
+  orders:                        # gets PUBLIC_ORIGIN, HTTPS_PORT and SHOP_NAME
 ```
 
 `shares` holds config names (`A-Z`, `0-9`, `_`, the placeholder rule) without
@@ -149,7 +170,7 @@ file is tracked shared configuration, contains no secret values, and wins over
 the ignored global dev file. It is excluded from bundles and never read by
 production `init-config`, `validate` or `install`.
 
-An owner's component dev settings are inherited by its `public_from` dependents.
+The gateway's component dev settings are inherited by every other component.
 A dependent that declares any of those shared keys in its own component dev file
 is refused, rather than silently losing the value to inheritance. This includes
 `PUBLIC_ORIGIN`, `HTTPS_PORT` and custom `shares`. Shared keys always come from
@@ -206,31 +227,27 @@ redirect URIs, so they cannot be renamed or shared freely:
 
 | Name | What the tools do with it |
 | --- | --- |
-| `PUBLIC_ORIGIN` | Validated as an HTTPS origin; always shared with `public_from` dependents (copied at `init-config` and in dev, compared at install); OIDC redirect URIs are built from it |
+| `PUBLIC_ORIGIN` | Validated as an HTTPS origin; always taken from the gateway by every other component (copied at `init-config` and in dev, compared at install); OIDC redirect URIs are built from it |
 | `HTTPS_PORT` | Validated as a port 1-65535; always shared and compared like `PUBLIC_ORIGIN` |
 | `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error; cannot be shared |
 | `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES` | File-source and Secret-template declarations, not placeholder values; cannot be shared |
-| Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@`; each component keeps its own copy unless the `public_from` owner lists it in `shares` |
+| Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@`; each component keeps its own copy unless the gateway lists it in `shares` |
 
 A `PUBLIC_` prefix has no meaning of its own. `deploy.PUBLIC_KEYS` and
 `catalog.UNSHAREABLE` hold these names in code.
 
 ### Registrations: routes, OIDC clients and API secrets
 
-A component that serves a role declares `accepts`. At most one component may
-accept each role. A component that uses a role names that owner in `routes`,
-`clients` or `apis`, lists it in `requires`, and ships the matching file:
-
-| Role | File in the component | Owner's import |
+| Registration | In the component | Received by |
 | --- | --- | --- |
-| `routes` | `route.conf`, an nginx location block | `installed.conf`, every route concatenated |
-| `clients` | `client.yaml` | one directory per component plus `installed.json` |
-| `apis` | `api.yaml` | Secret `accepts.apis`, one key per API (see below) |
+| Route | `route.conf`, an nginx location block | the gateway: volume `<gateway>-routes` with `installed.conf`, every route concatenated |
+| OIDC client | `client.yaml` | identity: volume `<identity>-clients`, one directory per component plus `installed.json` |
+| API secret | `@@api-secret:<own id>@@` in an `env/` file | identity: Secret `<identity>-apis`, one key per API |
 
-The file must exist exactly when the role is declared. The owner's manifests
-mount the declared volume (`routes`, `clients`) or read the declared Secret
-(`apis`); both are rebuilt from the current registrations on every change, so
-removed registrations do not stay active.
+The receiving component's manifests must mount the volume in a container
+(declaring it as a Pod volume is not enough; `validate` refuses that). Both
+are rebuilt from the current registrations on every change, so removed
+registrations do not stay active.
 
 `client.yaml` follows the protocol of the existing apps and Identity:
 
@@ -244,91 +261,181 @@ environment:                   # optional: the app's variables carrying id and b
   base_path: BASE_PATH
 ```
 
-A component with `clients` must also declare `public_from`, because the
-redirect URI needs the public origin. Only public certificates are accepted.
-
-The same id and base_path appear in three places: `client.yaml`, the app's own
-settings and `route.conf`. A mismatch would show only as an OIDC failure at
-login, so `validate`, `prepare` and `install` check it first: `route.conf` must
-have a `location` for `base_path`, and with `environment:` every container that
-sets a named variable must set it to the `client.yaml` value (and one must set
-it). The tools do not know an app's variable names; a product names them here.
-
-#### API secrets (`apis`)
-
-An API backend and Identity must hold the same API resource secret. The API
-component owns it: it declares and generates the secret with the existing
-per-component features, gives it to its own backend, and `api.yaml` registers
-it with the component that accepts `apis` (backlog 72):
-
-```yaml
-# components/orders/config.defaults.yaml
-SECRET_FILES:
-  orders-api-secret:
-  - path: credentials/api
-    generate: [value]
-SECRET_TEMPLATES:
-  orders-authentication:
-    Authentication__ApiSecret: '@@secret:orders-api-secret/value@@'
-
-# components/orders/api.yaml
-index: 0                         # position in the owner's ApiResources list
-secret: orders-api-secret/value  # this component's own SECRET_FILES key
-hash: sha256                     # or none
-```
-
-The owner's manifests read the Secret named in `accepts.apis`, for example
-`envFrom: [{secretRef: {name: identity-apis}}]`. The platform renders it with
-one key per registered API, `ApiResources__<index>__ApiSecrets__0__Value`. With
-`hash: sha256` the value is Base64(SHA-256(secret)), the form Duende compares
-when API resources come from configuration; with `none` it is the secret
-unchanged. The API keeps the plain value. Names, scopes and other API resource
-fields stay in the owner's own configuration at the same index; `index` is
-explicit because a list position chosen by the platform could give a secret to
-the wrong API.
-
-Refused before anything is written, in `validate`, dev `prepare` and
-production `install`: `api.yaml` without the role or the role without
-`api.yaml`; any other field or a value of the wrong type; a secret that is not
-this component's `SECRET_FILES` entry or a key it does not provide; two APIs
-with the same `index`; no component accepting `apis`; and an owner that
-declares the `accepts.apis` name itself in its config. Errors name files,
-components and indexes, never secret values; `validate` reads no secret
-contents, including registered values.
-
-The secret file is used byte for byte, exactly as direct `SECRET_FILES`
-delivery gives it to the API. It must be one line of text without a trailing
-newline, surrounding spaces, quotes, `;` or control characters, because a
-`SECRET_TEMPLATES` recipe would strip a trailing newline or refuse the rest,
-and the API and owner would then disagree. Generated secrets always qualify.
-`install` and `prepare` check this after generation and refuse before any
-registration, YAML or host command; write a provided secret with
-`printf '%s' "$secret" > <file>`, not `echo`.
-
-The registration is a private (0700) directory `apis/<id>/` in state:
-`index` (not secret; the only file staging and `validate` read) and `value`
-(0600), the owner's value: the hash, or the plain secret with `hash: none`. It
-is written after the API's secrets are generated. An owner that is installed
-separately has only that Secret replaced in its installed YAML (published
-atomically; added if missing), then restarts. If that YAML cannot be read,
-install stops with the pending record intact: restore the file from backup
-and run `./deploy.sh install` from the same bundle again.
-
-Rotating means replacing the API's secret file and installing the API again:
-the API restarts first, then its owner. An API with `upgrade: newer-only` is
-re-rendered only by a newer version, so rotate it with a new version; a
-same-version install keeps the installed registration, so the owner never
-receives a value its API does not yet run with. For the same reason an
-interrupted install can be finished only by a bundle that renders the
-component: retrying an interrupted `newer-only` upgrade with the older bundle
-is refused with the version to use. Removing `apis` in a new release or
-uninstalling the API removes its key from the owner's Secret.
+Only public certificates are accepted. The same id and base_path appear in
+three places: `client.yaml`, the app's own settings and `route.conf`. A
+mismatch would show only as an OIDC failure at login, so `validate`, `prepare`
+and `install` check it first: `route.conf` must have a `location` for
+`base_path`, and with `environment:` every container that sets a named variable
+must set it to the `client.yaml` value (and one must set it). These variables
+stay in the manifest's `env` (not in an `env/` file), because that is where the
+check reads them.
 
 Restarts follow the changes: no change restarts no owner, a route change the
-route owner, a client change the client owner, an API secret change the API
-owner. The selected component restarts first and owners after it, so a gateway
-publishes a route only once the service behind it is back. Unrelated components
-never restart.
+gateway, a client change identity, an API secret change identity. The selected
+component restarts first and the receivers after it, so a gateway publishes a
+route only once the service behind it is back. Unrelated components never
+restart.
+
+## Environment files: `env/<container>.yaml`
+
+A container's environment can live in one flat file named after the container
+(backlog 77):
+
+```yaml
+# components/orders/env/backend.yaml
+ASPNETCORE_HTTP_PORTS: 5000
+Authentication__Authority: '@@PUBLIC_ORIGIN@@/identity'
+ConnectionStrings__Default: 'Host=orders-postgres;Database=orders;Username=orders;Password=@@secret:orders-database-password@@'
+```
+
+Lines without a secret reference become the ConfigMap
+`<component>-<container>-env`; lines with one become the Secret
+`<component>-<container>-env-secret`. The platform adds `envFrom` for both to
+that container; nobody writes those names. `./deploy.sh validate` shows each
+file without values:
+
+```text
+[OK] orders/backend: env/backend.yaml -> 2 settings (ConfigMap orders-backend-env), 1 secret (Secret orders-backend-env-secret: orders-database-password)
+```
+
+Rules, each refused before anything is written with the file and the next step:
+
+- `<container>` must be exactly one container (regular or init) of the
+  component. A container with an `env/` file has no hand-written `envFrom`, and
+  a variable may not be both here and in the manifest's `env` (compared
+  ignoring case, as .NET does).
+- Keys: letters, digits, `_`, `-`, `.`, not starting with a digit; use `__`
+  instead of `:`. Values: text or integers; quote anything else. No empty file.
+- Placeholders: `@@NAME@@` (config), `@@secret:<id>/<key>@@`, the short
+  `@@secret:<id>@@` and `@@api-secret:<component>@@`.
+- Values follow the [Secret template](#secret-templates) text rules on both
+  kinds of lines: no surrounding spaces, quotes, `;`, control characters or
+  `@@` in a substituted value. A secret that does not fit uses `secretKeyRef`
+  in the manifest.
+- Variables the platform checks stay in the manifest's `env`: every
+  `POSTGRES_PASSWORD*` variable and the `client.yaml` `environment:` variables.
+
+The generated recipes exist only while validating and rendering; they are never
+written to `config.yaml`. `env/` ships in the bundle and its checksums.
+
+### Short secret declaration and reference
+
+```yaml
+# config.defaults.yaml
+SECRET_FILES:
+  orders-database-password: generate
+```
+
+is one generated value (32 letters and digits) at
+`credentials/orders-database-password/value` in the component's config folder,
+Secret key `value`. A container that mounts the Secret sees the file `value`,
+for example `POSTGRES_PASSWORD_FILE: /run/secrets/database/value`.
+`@@secret:<id>@@` means that generated value. It is allowed only for
+`<id>: generate` or a declaration with one source and one `generate` name;
+supplied secrets and several keys keep the long form `@@secret:<id>/<key>@@`. A
+retained source directory with other files is refused at rendering. The long
+list form of `SECRET_FILES` keeps working; a config layer replaces the whole map
+as before.
+
+### API secrets
+
+An API backend and Identity must hold the same secret. Both write the same
+placeholder; that is the whole declaration:
+
+```yaml
+# components/identity/env/app.yaml
+ApiResources__0__Name: orders-api
+ApiResources__0__Scopes__0: orders
+ApiResources__0__ApiSecrets__0__Value: '@@api-secret:orders@@'
+
+# components/orders/env/backend.yaml
+Authentication__ApiSecret: '@@api-secret:orders@@'
+```
+
+- A component is an API when its own `env/` files use
+  `@@api-secret:<its own id>@@`. It may not use another component's.
+- The platform generates the value once (32 letters and digits) at
+  `credentials/api-secret/value` in the API's config folder and keeps it byte
+  for byte. Both sides receive it unchanged; there is no hash setting.
+- Identity receives it on exactly one line per API, named
+  `ApiResources__<n>__ApiSecrets__0__Value` (Identity is Duende), each `<n>` for
+  one API, all in one `env/` file, with the placeholder as the whole value.
+  The platform injects the Secret `<identity>-apis` into that container; it
+  holds only the lines of installed APIs. No component declares that name.
+- When Identity is built, the mapping `{API: <n>}` is compiled into its
+  `bundle.yaml` (`api_secrets`). The installed, rendered Identity's mapping is
+  the only one: an API whose ID it does not list is refused ("install the
+  identity release that lists it first"), an Identity release that drops an
+  installed API is refused, and a `newer-only` Identity that would not be
+  rendered may not change its lines. A newer Identity may move an API to
+  another `<n>`; the values follow by API.
+- `validate` shows each link without values:
+
+  ```text
+  [OK] api-secret app3: generated at app3 credentials/api-secret/value; app3/backend Authentication__ApiSecret; identity/app ApiResources__0__ApiSecrets__0__Value; install identity first
+  ```
+
+Requirements on the application code, shown in the demo:
+
+- Identity hashes each API secret exactly once while loading it,
+  Base64(SHA-256(UTF-8(value))), which Duende compares. It leaves an API
+  resource without a secret inactive (that API is not installed yet) and stops
+  on an empty secret without printing it.
+- The API's health check must not need a successful introspection: the API
+  restarts before Identity when the secret changes.
+
+The registration is a private (0700) directory `apis/<id>/` in state holding
+`value` (0600). An Identity that is installed separately has only
+`<identity>-apis` replaced in its installed YAML (published atomically; added
+if missing), then restarts. If that YAML cannot be read, install stops with the
+pending record intact: restore the file from backup and run
+`./deploy.sh install` from the same bundle again.
+
+To reuse an existing value, write it to `credentials/api-secret/value` as the
+runtime account before the first install: mode 0600, one line, no trailing
+newline, not through shell history. Rotating means replacing that file and
+installing the API again: the API restarts first, then Identity. An API with
+`upgrade: newer-only` is re-rendered only by a newer version, so rotate it with
+a new version; a same-version install keeps the installed registration, so
+Identity never receives a value its API does not yet run with. Removing the
+placeholder in a new API release, or uninstalling the API, removes its line
+from `<identity>-apis`; Identity's name and scopes for it stay and the
+resource is inactive.
+
+## Converting a service
+
+1. Add the component to `bundles.yaml` (an empty entry is enough) and create
+   `components/<id>/VERSION` and `manifests/`.
+2. Put each container's settings in `env/<container>.yaml`. Keep `APP_ID`,
+   `BASE_PATH` and `POSTGRES_PASSWORD*` in the manifest's `env`.
+3. Declare generated secrets as `<id>-<name>: generate` and use
+   `@@secret:<id>-<name>@@`. A container that mounts the Secret sees the file
+   `value`.
+4. Add `route.conf` for a path behind the gateway, `client.yaml` for OIDC
+   sign-in, and `@@api-secret:<id>@@` on both sides for an API Identity must
+   authenticate (and the two code requirements above).
+5. An init container that needs the database waits for it first, then runs
+   idempotent steps. The database manifest has a lower number, but that only
+   orders submission, not readiness, and `pg_isready` does not prove that
+   credentials or migrations work:
+
+   ```yaml
+   metadata:
+     name: orders-web
+     annotations:
+       io.podman.annotations.init.container.type: always
+   spec:
+     initContainers:
+     - name: wait-for-database
+       image: localhost/demo-postgres:17.11       # the database image has pg_isready
+       imagePullPolicy: Never
+       command: ["sh", "-c", "for i in $(seq 1 60); do pg_isready -h orders-postgres -p 5432 -t 2 && exit 0; sleep 2; done; echo 'database did not answer' >&2; exit 1"]
+     - name: migrate
+       ...
+   ```
+
+6. Run `./deploy.sh validate` and read the derived lines, then
+   `dev/dev.sh up`. app3 is the converted example to copy.
 
 ## Secret templates
 
@@ -707,13 +814,11 @@ location /reports/ {
 }
 ```
 
-Add the entry to `bundles.yaml`:
+Add the entry to `bundles.yaml` (the gateway, `route.conf` and its
+dependency are derived):
 
 ```yaml
   reports:
-    requires: [platform]
-    public_from: platform
-    routes: platform
 ```
 
 No Python or shell file changes. `./deploy.sh prepare` and `dev/dev.sh up` start
@@ -731,8 +836,8 @@ A worker without a gateway needs only the manifest and `worker: {}`.
 1. Stop the dev product while the service is still rendered: `dev/dev.sh down`.
    This stops only what the last prepare rendered and keeps volumes.
 2. Remove its catalog entry and `components/<id>/`, and remove it from every
-   other entry's `requires`, `routes` or `clients`. A remaining reference fails
-   before any write and names the declaration.
+   other entry's `requires` (and identity's `@@api-secret:` line if it was an
+   API). A remaining reference fails before any write and names the declaration.
 3. `./deploy.sh validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
    `build/install.yaml`, the dev route/client imports and
    `dist/current-bundles.txt`. Older archives stay in `dist/` for hosts that

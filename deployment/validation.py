@@ -57,7 +57,8 @@ def validate_catalog():
     state = common.BUILD / "dev"
     known, settings = deploy.dev_settings()
     # Show what the catalog derived from gateway/identity and the files.
-    for line in catalog.derived_lines(catalog.load_catalog(common.ROOT)):
+    entries = catalog.load_catalog(common.ROOT)
+    for line in catalog.derived_lines(entries) + api_secret_lines(entries):
         log.info("[OK] " + line)
     findings = []
     for component, component_settings in settings.items():
@@ -89,6 +90,33 @@ def validate_catalog():
     except ERRORS as error:
         findings.append(("registrations", str(error)))
     return list(known), findings
+
+
+def api_secret_lines(entries):
+    """One line per API secret: where it is generated, used and received."""
+    lines = []
+    for owner, entry in entries.items():
+        for api, index in sorted(entry["api_secrets"].items()):
+            used = [
+                f"{api}/{container} {key}"
+                for container, key, _, _ in envfiles.api_secret_lines(
+                    common.ROOT / "components" / api
+                )
+            ]
+            received = [
+                f"{owner}/{container} {key}"
+                for container, key, _, ids in envfiles.api_secret_lines(
+                    common.ROOT / "components" / owner
+                )
+                if ids == [api]
+            ]
+            lines.append(
+                f"api-secret {api}: generated at {api} "
+                f"{envfiles.API_SOURCE_PATH}/value; "
+                + "; ".join(used + received)
+                + f"; install {owner} first"
+            )
+    return lines
 
 
 def validate_bundle():
