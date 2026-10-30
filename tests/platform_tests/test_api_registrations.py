@@ -51,7 +51,7 @@ def api_pod(name, env=(), env_from=()):
 def api_component(name, index, hash_name):
     """An API backend: its own generated secret, given to it and registered."""
     return {
-        "catalog": {"requires": ["accounts"], "apis": "accounts"},
+        "catalog": {"requires": ["accounts"]},
         "defaults": {
             "SECRET_FILES": {
                 name + "-api-secret": [
@@ -82,7 +82,8 @@ def api_component(name, index, hash_name):
 
 API_PRODUCT = {
     "accounts": {
-        "catalog": {"upgrade": "newer-only", "accepts": {"apis": "accounts-apis"}},
+        "role": "identity",
+        "catalog": {"upgrade": "newer-only"},
         "manifests": [api_pod("accounts-server", env_from=["accounts-apis"])],
     },
     "ledger": api_component("ledger", 0, "sha256"),
@@ -179,10 +180,6 @@ class ApiRegistrationTests(ProductFixture):
 
     def test_invalid_declarations_are_refused_before_dev_writes(self):
         reports = API_PRODUCT["reports"]
-        no_role = copy.deepcopy(reports)
-        no_role["catalog"].pop("apis")
-        no_file = copy.deepcopy(reports)
-        no_file.pop("api")
         undeclared = copy.deepcopy(reports)
         undeclared["api"]["secret"] = "reports-other/value"
         no_key = copy.deepcopy(reports)
@@ -197,21 +194,15 @@ class ApiRegistrationTests(ProductFixture):
         own_secret["defaults"] = {
             "SECRET_FILES": {"accounts-apis": [{"path": "x", "generate": ["v"]}]}
         }
-        not_accepted = copy.deepcopy(API_PRODUCT["accounts"])
-        not_accepted["catalog"]["accepts"] = {}
-        not_accepted["manifests"] = [api_pod("accounts-server")]
         duplicate = copy.deepcopy(reports)
         duplicate["api"]["index"] = 0
         for label, changes, pattern in (
-            ("api.yaml without role", {"reports": no_role}, "declare apis"),
-            ("role without api.yaml", {"reports": no_file}, "is missing for apis"),
             ("undeclared secret", {"reports": undeclared}, "needs SECRET_FILES"),
             ("missing key", {"reports": no_key}, "no key 'token'"),
             ("unknown hash", {"reports": unknown_hash}, "Invalid API registration"),
             ("boolean index", {"reports": boolean_index}, "Invalid API registration"),
             ("name field", {"reports": name_field}, "Invalid API registration"),
             ("owner declares it", {"accounts": own_secret}, "platform renders it"),
-            ("no owner", {"accounts": not_accepted}, "does not accept apis"),
             ("duplicate index", {"reports": duplicate}, "both use index 0"),
         ):
             with self.subTest(label):
@@ -295,7 +286,6 @@ class ApiRegistrationTests(ProductFixture):
 
         with self.subTest("a release without the role removes the registration"):
             plain = copy.deepcopy(API_PRODUCT["reports"])
-            plain["catalog"].pop("apis")
             plain.pop("api")
             (self.source / "components/reports/api.yaml").unlink()
             self.write_product(self.product({"reports": plain}), version="1.2.0")

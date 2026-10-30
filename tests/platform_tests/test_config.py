@@ -304,7 +304,9 @@ class ConfigTests(ConfigFixture):
             pod["spec"]["containers"][0]["envFrom"] = [
                 {"secretRef": {"name": component + "-generated"}}
             ]
-            pod["spec"].pop("volumes", None)  # This catalog declares no registrations.
+            # This catalog declares no registrations.
+            pod["spec"].pop("volumes", None)
+            pod["spec"]["containers"][0].pop("volumeMounts", None)
             manifest.write_text(yaml.safe_dump(pod))
         output = self.write("build/dev/app1/config.yaml", "invalid: [\n")
         private = self.write(

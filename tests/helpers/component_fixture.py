@@ -84,6 +84,9 @@ class ComponentFixture(DeployFixture):
                 {"name": role, "persistentVolumeClaim": {"claimName": volume}}
                 for role, volume in sorted(accepts.items())
             ]
+            spec["containers"][0]["volumeMounts"] = [
+                {"name": role, "mountPath": "/" + role} for role in sorted(accepts)
+            ]
         return self.write(
             "components/" + component + "/manifests/10-pod.yaml",
             yaml.safe_dump(document("Pod", name or component + "-worker", spec=spec)),

@@ -239,3 +239,33 @@ class ImportedVolumeMessageTests(DeployFixture):
             rendering.effective_documents(
                 {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
             )
+
+    def test_declared_but_unmounted_imported_volume_is_refused(self):
+        """Backlog 77, R3: a Pod volume for the PVC is not enough; mount it."""
+        container = {
+            "name": "web",
+            "image": "localhost/app:1",
+            "imagePullPolicy": "Never",
+        }
+        spec = {
+            "containers": [container],
+            "volumes": [
+                {"name": "routes", "persistentVolumeClaim": {"claimName": "gw-routes"}}
+            ],
+        }
+        self.manifest([document("Pod", "app", spec=spec)], "20-images.yaml")
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "receives registrations in volume gw-routes; mount it with volumeMounts",
+        ):
+            rendering.effective_documents(
+                {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+            )
+        # An init container's mount counts as well.
+        spec["initContainers"] = [
+            dict(container, name="init", volumeMounts=[{"name": "routes", "mountPath": "/r"}])
+        ]
+        self.manifest([document("Pod", "app", spec=spec)], "20-images.yaml")
+        rendering.effective_documents(
+            {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+        )

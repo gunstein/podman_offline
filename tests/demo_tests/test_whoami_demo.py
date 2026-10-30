@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+from deployment import catalog as deployment_catalog
 
 from helpers.certificate_fixture import CertificateFixture
 
@@ -176,7 +177,7 @@ class WhoamiSourceTests(unittest.TestCase):
             config["SECRET_TEMPLATES"]["app3-authentication"],
             {"Authentication__ApiSecret": "@@secret:app3-api-secret/value@@"},
         )
-        catalog = yaml.safe_load((ROOT / "bundles.yaml").read_text())["components"]
+        catalog = deployment_catalog.load_catalog(ROOT)
         self.assertEqual(catalog["app3"]["apis"], "identity")
         self.assertEqual(catalog["identity"]["accepts"]["apis"], "identity-apis")
         identity = yaml.safe_load(

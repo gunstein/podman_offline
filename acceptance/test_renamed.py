@@ -485,7 +485,9 @@ class ScenarioTests(unittest.TestCase):
         """The harness and the generator name the same product and service user."""
         self.assertEqual(runner.RENAMED_PRODUCT, renamed_product.PRODUCT)
         self.assertEqual(
-            renamed_product.rename_catalog({"components": {"app1": {}}})["product"],
+            renamed_product.rename_catalog(
+                {"gateway": "platform", "identity": "identity", "components": {"app1": {}}}
+            )["product"],
             runner.RENAMED_PRODUCT,
         )
         harness = runner.Run("product-name", "not-used")

@@ -1,33 +1,11 @@
 product: myproduct
+gateway: platform
+identity: identity
 components:
   platform:
     upgrade: newer-only
-    accepts:
-      routes: platform-routes
   identity:
-    requires:
-    - platform
     upgrade: newer-only
-    public_from: platform
-    routes: platform
-    accepts:
-      clients: identity-clients
   app1:
-    requires:
-    - platform
-    - identity
-    public_from: platform
-    routes: platform
-    clients: identity
   app2:
-    requires:
-    - platform
-    - identity
-    public_from: platform
-    routes: platform
-    clients: identity
   help:
-    requires:
-    - platform
-    public_from: platform
-    routes: platform

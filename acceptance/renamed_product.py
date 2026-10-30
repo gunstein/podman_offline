@@ -144,17 +144,15 @@ def rename_catalog(data):
         entry = dict(entry or {})
         if "requires" in entry:
             entry["requires"] = [rename(value) for value in entry["requires"]]
-        for key in ("public_from", "routes", "clients", "apis"):
-            if key in entry:
-                entry[key] = rename(entry[key])
-        if "accepts" in entry:
-            entry["accepts"] = {
-                role: rename(volume) for role, volume in entry["accepts"].items()
-            }
-        if rename(name) == "gateway":
+        if name == data["gateway"]:
             entry["shares"] = sorted(SHARED)
         entries[rename(name)] = entry
-    return {"product": PRODUCT, "components": entries}
+    return {
+        "product": PRODUCT,
+        "gateway": rename(data["gateway"]),
+        "identity": rename(data["identity"]),
+        "components": entries,
+    }
 
 
 def dump(path, data, multiple=False):

@@ -58,8 +58,10 @@ class RenamedProductTests(RenamedFixture):
         # Public settings are inherited from the declared gateway, as in production.
         orders = yaml.safe_load((dev / "orders/config.yaml").read_text())
         self.assertEqual(orders["PUBLIC_ORIGIN"], "https://shop.test:9443")
-        self.assertNotIn(
-            "PUBLIC_ORIGIN", yaml.safe_load((dev / "manual/config.yaml").read_text())
+        # Backlog 77: every component except the gateway takes them, manual too.
+        self.assertEqual(
+            yaml.safe_load((dev / "manual/config.yaml").read_text())["PUBLIC_ORIGIN"],
+            "https://shop.test:9443",
         )
 
     def test_offline_install_without_source_uses_declared_owners_and_order(self):

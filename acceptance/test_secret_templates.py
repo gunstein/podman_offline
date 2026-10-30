@@ -179,16 +179,8 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
                 yaml.safe_dump(
                     {
                         "product": "myproduct",
-                        "components": {
-                            "identity": {
-                                "accepts": {
-                                    "clients": "identity-clients",
-                                    "apis": "identity-apis",
-                                }
-                            },
-                            "app3": {"requires": ["identity"], "apis": "identity"},
-                            "help": None,
-                        },
+                        "identity": "identity",
+                        "components": {"identity": None, "app3": None, "help": None},
                     }
                 )
             )
@@ -215,16 +207,10 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
                 add[3:],
                 ["add", "-A", "--"]
                 + list(identity_template_baseline.FILES)
-                + ["bundles.yaml", "components/app3/api.yaml"],
+                + ["components/app3/api.yaml"],
             )
             self.assertIn("commit", commit)
             # Identity 0.4.11 accepted no API registrations.
-            catalog = yaml.safe_load((root / "bundles.yaml").read_text())
-            self.assertEqual(
-                catalog["components"]["identity"]["accepts"],
-                {"clients": "identity-clients"},
-            )
-            self.assertNotIn("apis", catalog["components"]["app3"])
             self.assertFalse((root / "components/app3/api.yaml").exists())
             self.assertEqual(
                 (root / "apps/identity/DatabaseEnvironment.cs").read_bytes(),

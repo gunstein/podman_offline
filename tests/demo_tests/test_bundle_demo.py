@@ -20,8 +20,8 @@ class DemoBundleTests(BundleFixture):
         repo = Path(__file__).resolve().parents[2]
         self.write(
             "bundles.yaml",
-            "product: myproduct\ncomponents:\n  platform:\n"
-            "    upgrade: newer-only\n    accepts: {routes: platform-routes}\n",
+            "product: myproduct\ngateway: platform\ncomponents:\n  platform:\n"
+            "    upgrade: newer-only\n",
         )
         self.write(
             "config/common.defaults.yaml",

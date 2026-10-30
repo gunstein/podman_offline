@@ -122,11 +122,12 @@ def client(client_id, base_path):
 
 
 # A product with none of the demo component names. orders and inventory are
-# two independent apps with separate route and client owners; their OIDC
-# client IDs and base paths are application settings, not component IDs.
+# two independent apps; their OIDC client IDs and base paths are application
+# settings, not component IDs. "role" names the catalog's gateway/identity.
 RENAMED = {
     "gateway": {
-        "catalog": {"accepts": {"routes": "gateway-routes"}},
+        "role": "gateway",
+        "catalog": {},
         "defaults": {"PUBLIC_ORIGIN": "https://shop.test:9443", "HTTPS_PORT": 9443},
         "manifests": [
             pod(
@@ -139,12 +140,8 @@ RENAMED = {
         ],
     },
     "login-service": {
-        "catalog": {
-            "requires": ["gateway"],
-            "public_from": "gateway",
-            "routes": "gateway",
-            "accepts": {"clients": "login-service-clients"},
-        },
+        "role": "identity",
+        "catalog": {},
         "manifests": [
             pod(
                 "login-service-server",
@@ -156,12 +153,7 @@ RENAMED = {
         "route": route("login-service", "/login", "login-service-server:8080"),
     },
     "orders": {
-        "catalog": {
-            "requires": ["gateway", "login-service"],
-            "public_from": "gateway",
-            "routes": "gateway",
-            "clients": "login-service",
-        },
+        "catalog": {},
         "defaults": {
             "DB_USER": "orders",
             "SECRET_FILES": {
@@ -186,12 +178,7 @@ RENAMED = {
         "credentials": {"credentials/client/client.crt": PEM},
     },
     "inventory": {
-        "catalog": {
-            "requires": ["gateway", "login-service"],
-            "public_from": "gateway",
-            "routes": "gateway",
-            "clients": "login-service",
-        },
+        "catalog": {},
         "defaults": {
             "SECRET_FILES": {"inventory-client": [{"path": "credentials/client"}]}
         },
@@ -208,7 +195,7 @@ RENAMED = {
         "credentials": {"credentials/client/client.crt": PEM},
     },
     "manual": {
-        "catalog": {"requires": ["gateway"], "routes": "gateway"},
+        "catalog": {},
         "manifests": [pod("manual-web", "registry.example.test/team/manual:2")],
         "route": route("manual", "/manual", "manual-web:8080"),
     },
@@ -288,18 +275,30 @@ class ProductFixture(DeployFixture):
                     self.source / name,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
                 )
-        self.write_catalog({name: spec["catalog"] for name, spec in product.items()})
+        roles = {spec["role"]: name for name, spec in product.items() if "role" in spec}
+        self.write_catalog(
+            {name: spec["catalog"] for name, spec in product.items()}, **roles
+        )
         for name, spec in product.items():
             self.write_component(name, spec)
             (self.source / "components" / name / "VERSION").write_text(version + "\n")
         self.use_root(self.source)
 
-    def write_catalog(self, entries):
-        (self.source / "bundles.yaml").write_text(
-            yaml.safe_dump(
-                {"product": self.product_name, "components": entries}, sort_keys=False
-            )
-        )
+    def write_catalog(self, entries, gateway=None, identity=None):
+        """Write bundles.yaml in the source form.
+
+        Without gateway/identity arguments the current file's gateway and
+        identity are kept, so a test can edit only the component entries.
+        """
+        path = self.source / "bundles.yaml"
+        document = {"product": self.product_name}
+        roles = {"gateway": gateway, "identity": identity}
+        if gateway is None and identity is None and path.is_file():
+            current = yaml.safe_load(path.read_text())
+            roles = {key: current.get(key) for key in roles}
+        document.update({key: value for key, value in roles.items() if value})
+        document["components"] = entries
+        path.write_text(yaml.safe_dump(document, sort_keys=False))
 
     def write_component(self, name, spec):
         directory = self.source / "components" / name

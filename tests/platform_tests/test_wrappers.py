@@ -131,24 +131,17 @@ class WrapperTests(unittest.TestCase):
                 yaml.safe_dump(
                     {
                         "product": "myproduct",
+                        "gateway": "platform",
+                        "identity": "identity",
                         "components": {
-                            "platform": {
-                                "upgrade": "newer-only",
-                                "accepts": {"routes": "platform-routes"},
-                            },
+                            "platform": {"upgrade": "newer-only"},
                             "identity": {
                                 "requires": ["platform"],
                                 "upgrade": "newer-only",
-                                "public_from": "platform",
-                                "accepts": {"clients": "identity-clients"},
                             },
-                            "app1": {
-                                "requires": ["platform", "identity"],
-                                "public_from": "platform",
-                                # Dev prepare and install resolve the
-                                # route's state path (backlog 64 regression).
-                                "routes": "platform",
-                            },
+                            # Dev prepare and install resolve app1's route
+                            # state path (backlog 64 regression).
+                            "app1": {"requires": ["platform", "identity"]},
                         },
                     }
                 )
@@ -169,6 +162,11 @@ class WrapperTests(unittest.TestCase):
                                         "name": "worker",
                                         "image": "localhost/fixture:1",
                                         "imagePullPolicy": "Never",
+                                        "volumeMounts": [
+                                            {"name": "routes", "mountPath": "/routes"}
+                                        ]
+                                        if component == "platform"
+                                        else [],
                                     }
                                 ],
                                 "volumes": [
@@ -178,13 +176,11 @@ class WrapperTests(unittest.TestCase):
                                             "claimName": component + "-" + name
                                         },
                                     }
-                                    for name in (
-                                        ("routes",)
-                                        if component == "platform"
-                                        else ("clients",)
-                                    )
+                                    # No component has client.yaml, so identity
+                                    # receives no clients volume.
+                                    for name in ("routes",)
                                 ]
-                                if component in ("platform", "identity")
+                                if component == "platform"
                                 else [],
                             },
                         }

@@ -958,6 +958,33 @@ def check_component_config_names(config, component, path):
         )
 
 
+def check_imported_mounted(documents, imported, path):
+    """Each received registration volume must be mounted, not only declared.
+
+    check_links proves a Pod volume references the PVC; a volume that no
+    container mounts would pass that check while the registrations never
+    reach the application.
+    """
+    for name in sorted(imported):
+        mounted = False
+        for _, spec in pod_specs(documents):
+            volumes = {
+                volume.get("name")
+                for volume in spec.get("volumes", [])
+                if (volume.get("persistentVolumeClaim") or {}).get("claimName") == name
+            }
+            mounted = mounted or any(
+                mount.get("name") in volumes
+                for _, container in containers(spec)
+                for mount in container.get("volumeMounts", [])
+            )
+        if not mounted:
+            raise common.DeployError(
+                f"{path}: this component receives registrations in volume {name}; "
+                "mount it with volumeMounts in a container of the Pod that declares it"
+            )
+
+
 def effective_config(config, path, component):
     """Validate a component's config and add the derived PUBLIC_HOSTNAME; no writes."""
     validate_component_config(config, component, path)
@@ -1078,6 +1105,7 @@ def effective_documents(
         )
     except common.DeployError as error:
         raise common.DeployError(f"{path}: {error}") from None
+    check_imported_mounted(documents, imported, path)
     return documents
 
 

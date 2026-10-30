@@ -19,12 +19,15 @@ class CatalogTests(unittest.TestCase):
         self.root = Path(directory.name)
         (self.root / "VERSION").write_text("1.0.0\n")
 
-    def product(self, entries, files=()):
-        """Write a catalog and a manifest directory for every listed component."""
+    def product(self, entries, files=(), **roles):
+        """Write a catalog and a manifest directory for every listed component.
+
+        roles are the optional top-level gateway and identity names.
+        """
+        document = dict({"product": "myproduct"}, **roles)
+        document["components"] = entries
         (self.root / "bundles.yaml").write_text(
-            yaml.safe_dump(
-                {"product": "myproduct", "components": entries}, sort_keys=False
-            )
+            yaml.safe_dump(document, sort_keys=False)
         )
         for name in entries if isinstance(entries, dict) else ():
             manifests = self.root / "components" / str(name) / "manifests"
@@ -38,8 +41,8 @@ class CatalogTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture\n")
 
-    def refuse(self, pattern, entries, files=()):
-        self.product(entries, files)
+    def refuse(self, pattern, entries, files=(), **roles):
+        self.product(entries, files, **roles)
         with self.assertRaisesRegex(common.DeployError, pattern):
             catalog.source_descriptors(self.root)
 
@@ -76,7 +79,7 @@ class CatalogTests(unittest.TestCase):
             catalog.source_descriptors(self.root)["app"]["product"], "myproduct"
         )
         path.write_text("components:\n  app: {}\n")
-        with self.assertRaisesRegex(common.DeployError, "exactly product: <name>"):
+        with self.assertRaisesRegex(common.DeployError, "must contain product: <name>"):
             catalog.load_catalog(self.root)
         for name in ("hubbabubba", "my-shop", "a", "a" * 32):
             with self.subTest(name=name):
@@ -93,7 +96,9 @@ class CatalogTests(unittest.TestCase):
                     catalog.load_catalog(self.root)
 
     def test_shares_are_config_names_and_not_reserved(self):
-        self.product({"gate": {"shares": ["SHOP_REGION", "PUBLIC_ORIGIN"]}})
+        self.product(
+            {"gate": {"shares": ["SHOP_REGION", "PUBLIC_ORIGIN"]}}, gateway="gate"
+        )
         self.assertEqual(
             catalog.source_descriptors(self.root)["gate"]["shares"],
             ["SHOP_REGION", "PUBLIC_ORIGIN"],
@@ -109,7 +114,12 @@ class CatalogTests(unittest.TestCase):
             (["VOLUME_FILES"], "VOLUME_FILES is reserved"),
         ):
             with self.subTest(shares=shares):
-                self.refuse(pattern, {"gate": {"shares": shares}})
+                self.refuse(pattern, {"gate": {"shares": shares}}, gateway="gate")
+        self.refuse(
+            "components.app.shares: only the gateway \\(gate\\) may share",
+            {"gate": {}, "app": {"shares": ["SHOP_REGION"]}},
+            gateway="gate",
+        )
 
     def test_ids_that_extend_another_id_are_refused(self):
         """orders-data-db would be a resource name of both orders and orders-data."""
@@ -159,51 +169,118 @@ class CatalogTests(unittest.TestCase):
             ["zeta", "base", "app", "alpha"],
         )
 
-    def test_roles_need_a_declared_dependency_that_accepts_them(self):
-        self.refuse(
-            "routes: edge must also be listed in requires",
-            {"edge": {"accepts": {"routes": "edge-routes"}}, "app": {"routes": "edge"}},
-            ["components/app/route.conf"],
-        )
-        self.refuse(
-            "app registers routes with edge, but edge does not accept routes",
-            {"edge": {}, "app": {"requires": ["edge"], "routes": "edge"}},
-            ["components/app/route.conf"],
-        )
-        self.refuse(
-            "edge and edge2 both accept routes",
+    def test_gateway_and_identity_derive_the_explicit_entries(self):
+        """The normalized entries equal what the earlier explicit fields said."""
+        self.product(
             {
-                "edge": {"accepts": {"routes": "edge-routes"}},
-                "edge2": {"accepts": {"routes": "edge2-routes"}},
+                "edge": {"upgrade": "newer-only"},
+                "login": {},
+                "shop": {},
+                "worker": {},
+                "tool": {"requires": ["shop"]},
+            },
+            [
+                "components/login/route.conf",
+                "components/shop/route.conf",
+                "components/shop/client.yaml",
+            ],
+            gateway="edge",
+            identity="login",
+        )
+        entries = catalog.load_catalog(self.root)
+
+        def entry(**fields):
+            return dict(
+                {
+                    "requires": [],
+                    "upgrade": "always",
+                    "public_from": "edge",
+                    "shares": [],
+                    "routes": None,
+                    "clients": None,
+                    "apis": None,
+                    "accepts": {},
+                },
+                **fields,
+            )
+
+        self.assertEqual(
+            entries,
+            {
+                "edge": entry(
+                    upgrade="newer-only",
+                    public_from=None,
+                    accepts={"routes": "edge-routes"},
+                ),
+                "login": entry(
+                    requires=["edge"],
+                    routes="edge",
+                    accepts={"clients": "login-clients"},
+                ),
+                "shop": entry(requires=["edge", "login"], routes="edge", clients="login"),
+                # No registration file: no link to identity.
+                "worker": entry(requires=["edge"]),
+                # Written requires keep their order; derived ones are appended.
+                "tool": entry(requires=["shop", "edge"]),
             },
         )
-        self.refuse(
-            "clients needs public_from",
-            {
-                "login": {"accepts": {"clients": "login-clients"}},
-                "app": {"requires": ["login"], "clients": "login"},
-            },
-            ["components/app/client.yaml"],
+        self.assertEqual(
+            catalog.derived_lines(entries),
+            [
+                "edge: receives routes in edge-routes",
+                "login: receives clients in login-clients; public settings and "
+                "routes from edge; requires edge",
+                "shop: public settings and routes from edge; client.yaml -> login; "
+                "requires edge, login",
+                "worker: public settings from edge; requires edge",
+                "tool: public settings from edge; requires shop, edge",
+            ],
         )
-        self.refuse(
-            "accepts.routes must be a volume ID starting with edge-",
-            {"edge": {"accepts": {"routes": "routes"}}},
+        # Identity accepts clients only while some component has client.yaml.
+        (self.root / "components/shop/client.yaml").unlink()
+        self.assertEqual(catalog.load_catalog(self.root)["login"]["accepts"], {})
+        # Without a gateway nothing takes public settings (a worker-only product).
+        self.product({"worker": {}, "other": {}})
+        self.assertEqual(
+            {name: e["public_from"] for name, e in catalog.load_catalog(self.root).items()},
+            {"worker": None, "other": None},
         )
 
-    def test_role_files_must_match_declarations(self):
-        entries = {
-            "edge": {"accepts": {"routes": "edge-routes"}},
-            "app": {"requires": ["edge"], "routes": "edge"},
-        }
-        self.refuse("route.conf is missing for routes: edge", entries)
-        self.refuse(
-            "exists, so declare routes: <owner>",
-            {
-                "edge": {"accepts": {"routes": "edge-routes"}},
-                "app": {"requires": ["edge"]},
-            },
-            ["components/app/route.conf"],
+    def test_catalog_refusals_name_the_file_and_the_rule(self):
+        apps = {"edge": {}, "login": {}, "shop": {}}
+        both = {"gateway": "edge", "identity": "login"}
+        for label, entries, files, roles, pattern in (
+            ("unlisted gateway", apps, (), {"gateway": "proxy"},
+             "gateway: 'proxy' must be one of the listed components"),
+            ("unlisted identity", apps, (), {"identity": "auth"},
+             "identity: 'auth' must be one of the listed components"),
+            ("route without gateway", apps, ["components/shop/route.conf"], {},
+             "components/shop/route.conf needs a gateway"),
+            ("route on the gateway", apps, ["components/edge/route.conf"], both,
+             "the gateway serves routes itself"),
+            ("client without identity", apps, ["components/shop/client.yaml"],
+             {"gateway": "edge"}, "client.yaml needs identity: <id>"),
+            ("client without gateway", apps, ["components/shop/client.yaml"],
+             {"identity": "login"}, "needs the gateway's public origin"),
+            ("client on identity", apps, ["components/login/client.yaml"], both,
+             "identity does not register a client with itself"),
+            ("derived cycle", {"edge": {"requires": ["shop"]}, "shop": {}}, (),
+             {"gateway": "edge"}, "Dependency cycle: edge -> shop -> edge"),
+        ):
+            with self.subTest(label):
+                __import__("shutil").rmtree(str(self.root / "components"), True)
+                self.refuse(pattern, entries, files, **roles)
+        for key in catalog.REMOVED_KEYS:
+            with self.subTest(removed=key):
+                self.refuse(
+                    f"components.shop.{key} is no longer written: ",
+                    {"shop": {key: "edge"}},
+                )
+        (self.root / "bundles.yaml").write_text(
+            "product: myproduct\nproxy: edge\ncomponents:\n  edge: {}\n"
         )
+        with self.assertRaisesRegex(common.DeployError, "optionally gateway"):
+            catalog.load_catalog(self.root)
 
     def test_selected_directories_and_version_files_are_confined(self):
         self.product({"app": {}})

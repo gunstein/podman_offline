@@ -2,21 +2,21 @@
 # with its files in components/<id>/ and one offline bundle. Components that
 # are not listed here are not rendered, built, bundled or started.
 #
-# Each component owns components/<id>/VERSION (major.minor.patch).
-# Fields (all optional):
-#   requires:     component IDs that must be installed first
-#   upgrade:      always (default) reinstalls on every install;
-#                 newer-only keeps an equal installed version and refuses downgrades
-#   public_from:  dependency whose PUBLIC_ORIGIN, HTTPS_PORT and shares this component must match
-#   shares:       config names this component's public_from dependents take from it
-#                 (see docs/COMPONENTS.md, "Reserved configuration names")
-#   routes:       dependency that serves this component's route.conf
-#   clients:      dependency that registers this component's client.yaml
-#   apis:         dependency that receives this component's API secret (api.yaml)
-#   accepts:      roles this component serves, mapped to the volume ID that
-#                 receives the registrations: {routes: <id>, clients: <id>};
-#                 for apis the Secret the platform renders: {apis: <id>}
+# gateway:  the component that is the reverse proxy. Every other component
+#           takes its PUBLIC_ORIGIN, HTTPS_PORT and shares, and requires it;
+#           a component with route.conf registers it there (<gateway>-routes).
+# identity: the component that registers client.yaml files (<identity>-clients)
+#           and API secrets (<identity>-apis). A component with neither does
+#           not depend on it.
+# Per component (all optional):
+#   upgrade:  always (default) reinstalls on every install;
+#             newer-only keeps an equal installed version and refuses downgrades
+#   requires: other components that must be installed first, beyond the above
+#   shares:   on the gateway only: extra config names every other component
+#             takes from it (see docs/COMPONENTS.md, "Reserved configuration names")
+# `./deploy.sh validate` prints what was derived for each component.
 #
+# Each component owns components/<id>/VERSION (major.minor.patch).
 # product names the whole installation: the installation root
 # /var/lib/<product> and bootstrap file ~/.<product>/<product>.env of the
 # runtime account (prepare-host.sh --user), units <product>-<id>.service,
@@ -24,37 +24,15 @@
 # <product>-<id>-<version>-offline.tar.gz. Lowercase letters, digits and inner
 # hyphens, a letter first, at most 32 characters.
 product: myproduct
+gateway: platform
+identity: identity
 components:
   platform:
     upgrade: newer-only
-    accepts:
-      routes: platform-routes
   identity:
-    requires: [platform]
     upgrade: newer-only
-    public_from: platform
-    routes: platform
-    accepts:
-      clients: identity-clients
-      apis: identity-apis
   app1:
-    requires: [platform, identity]
-    public_from: platform
-    routes: platform
-    clients: identity
   app2:
-    requires: [platform, identity]
-    public_from: platform
-    routes: platform
-    clients: identity
   # .NET/TypeScript demo (backlog 71); not in the fixed acceptance matrix.
   app3:
-    requires: [platform, identity]
-    public_from: platform
-    routes: platform
-    clients: identity
-    apis: identity
   help:
-    requires: [platform]
-    public_from: platform
-    routes: platform

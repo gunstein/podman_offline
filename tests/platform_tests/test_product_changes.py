@@ -13,7 +13,7 @@ from deployment import common, deploy, registrations, validation
 from helpers.product_fixture import RENAMED, WORKER, ProductFixture, pod, route
 
 REPORTS = {
-    "catalog": {"requires": ["gateway"], "routes": "gateway"},
+    "catalog": {},
     "manifests": [pod("reports-web", "localhost/reports:1")],
     "route": route("reports", "/reports", "reports-web:8080"),
 }

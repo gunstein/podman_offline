@@ -2,9 +2,10 @@
 
 One schema describes a component everywhere:
 
-- Source: ``bundles.yaml`` lists every component of the product (the catalog).
-  ``source_descriptors`` compiles each entry with its version and dependency
-  ranges.
+- Source: ``bundles.yaml`` lists every component of the product (the catalog)
+  and names the gateway and Identity. ``derive_entries`` turns it and the
+  components' registration files into normalized entries; ``source_descriptors``
+  compiles each entry with its version and dependency ranges.
 - Bundle: ``bundle.yaml`` holds the single compiled descriptor of that bundle.
 - Target: ``metadata/<id>.json`` keeps the installed descriptor, so dependents
   and registration owners stay known without the source checkout.
@@ -37,7 +38,19 @@ UPGRADES = ("always", "newer-only")
 # docs/COMPONENTS.md, "Reserved configuration names".
 SETTING = re.compile(r"^[A-Z0-9_]+$")
 UNSHAREABLE = ("PUBLIC_HOSTNAME", "SECRET_FILES", "VOLUME_FILES", "SECRET_TEMPLATES")
-CATALOG_KEYS = (
+# The fields a bundles.yaml component entry may have. Everything else in a
+# normalized entry is derived from the gateway/identity names and the files.
+CATALOG_KEYS = ("requires", "upgrade", "shares")
+# Earlier explicit fields, refused with the rule that replaced them.
+REMOVED_KEYS = {
+    "public_from": "every component except the gateway takes the gateway's public settings",
+    "routes": "a component with route.conf registers it with the gateway",
+    "clients": "a component with client.yaml registers it with identity",
+    "apis": "an API component registers its secret with identity",
+    "accepts": "the gateway and identity receive registrations under fixed names",
+}
+# Normalized fields, as the rest of the code and compiled descriptors use them.
+ENTRY_KEYS = (
     "requires",
     "upgrade",
     "public_from",
@@ -117,14 +130,23 @@ def check_range(requirement):
 
 
 def catalog_document(root):
-    """Read bundles.yaml and check its top level: product and components."""
+    """Read bundles.yaml and check its top level.
+
+    product and components are required; gateway and identity are optional.
+    """
     path = root / "bundles.yaml"
     if not path.is_file():
         raise common.DeployError(f"Missing component catalog {path}")
     data = rendering.config_layer(path)  # Rejects duplicate keys with their line.
-    if set(data) != {"product", "components"}:
+    if not {"product", "components"} <= set(data) or set(data) - {
+        "product",
+        "components",
+        "gateway",
+        "identity",
+    }:
         raise common.DeployError(
-            f"{path} must contain exactly product: <name> and a components: map"
+            f"{path} must contain product: <name> and a components: map, "
+            "optionally gateway: <id> and identity: <id>"
         )
     check_product(data["product"], f"{path}: product")
     return path, data
@@ -150,27 +172,23 @@ def load_catalog(root):
     entries = data["components"]
     if not isinstance(entries, dict) or not entries:
         raise common.DeployError(f"{path}: components must be a nonempty map")
-    catalog = {}
     for name, entry in entries.items():
         where = f"{path}: components.{name}"
         check_id(name, where)
-        if entry is None:
-            entry = {}
-        if not isinstance(entry, dict) or set(entry) - set(CATALOG_KEYS):
+        entry = {} if entry is None else entry
+        if not isinstance(entry, dict):
+            raise common.DeployError(f"{where} must be a map or empty")
+        for key in entry:
+            if key in REMOVED_KEYS:
+                raise common.DeployError(
+                    f"{where}.{key} is no longer written: {REMOVED_KEYS[key]} "
+                    "(docs/COMPONENTS.md, The catalog)"
+                )
+        if set(entry) - set(CATALOG_KEYS):
             raise common.DeployError(
                 f"{where}: allowed fields are {', '.join(CATALOG_KEYS)}"
             )
-        catalog[name] = {
-            "requires": entry.get("requires", []),
-            "upgrade": entry.get("upgrade", "always"),
-            "public_from": entry.get("public_from"),
-            "shares": entry.get("shares", []),
-            "routes": entry.get("routes"),
-            "clients": entry.get("clients"),
-            "apis": entry.get("apis"),
-            "accepts": entry.get("accepts", {}),
-        }
-        requires = catalog[name]["requires"]
+        requires = entry.get("requires", [])
         if not isinstance(requires, list) or len(set(map(str, requires))) != len(
             requires
         ):
@@ -179,7 +197,10 @@ def load_catalog(root):
             check_id(dependency, f"{where}.requires")
             if dependency == name:
                 raise common.DeployError(f"{where}.requires must not name itself")
-        check_entry(name, catalog[name], where)
+    files = {name: registration_files(root / "components" / name) for name in entries}
+    catalog = derive_entries(path, data, files)
+    for name, entry in catalog.items():
+        check_entry(name, entry, f"{path}: components.{name}")
     for name, entry in catalog.items():
         for dependency in entry["requires"]:
             if dependency not in catalog:
@@ -191,6 +212,142 @@ def load_catalog(root):
     check_owners(catalog, str(path))
     dependency_order(catalog)  # Reject cycles before anything else uses the graph.
     return catalog
+
+
+def registration_files(directory):
+    """Which registration files a source component has; nothing else is read."""
+    return {
+        "route": (directory / ROLE_FILES["routes"]).is_file(),
+        "client": (directory / ROLE_FILES["clients"]).is_file(),
+        "api": (directory / ROLE_FILES["apis"]).is_file(),
+    }
+
+
+def derive_entries(path, document, files):
+    """Turn the catalog and each component's registration files into normalized entries.
+
+    Pure: no reads, writes or host commands. files maps each component to
+    registration_files(). The rules (docs/COMPONENT-SMALL-VARIANT.md, 2.3):
+
+    - The gateway receives routes in <gateway>-routes. Every other component
+      takes the gateway's public settings and requires it; a component with
+      route.conf registers it with the gateway.
+    - Identity receives clients in <identity>-clients and API secrets in
+      <identity>-apis, each only when some component uses it, so an Identity
+      without that role needs no unused volume or Secret.
+    - Written requires keep their order; derived dependencies (gateway, then
+      Identity) are appended.
+    """
+    components = document["components"]
+    roles = {}
+    for key in ("gateway", "identity"):
+        value = document.get(key)
+        if value is not None and value not in components:
+            raise common.DeployError(
+                f"{path}: {key}: {value!r} must be one of the listed components"
+            )
+        roles[key] = value
+    gateway, identity = roles["gateway"], roles["identity"]
+    uses_clients = any(found["client"] for found in files.values())
+    uses_apis = any(found["api"] for found in files.values())
+    entries = {}
+    for name, written in components.items():
+        written = written or {}
+        found = files[name]
+        where = f"{path}: components.{name}"
+        directory = f"components/{name}"
+        entry = {
+            "requires": list(written.get("requires", [])),
+            "upgrade": written.get("upgrade", "always"),
+            "public_from": None,
+            "shares": written.get("shares", []),
+            "routes": None,
+            "clients": None,
+            "apis": None,
+            "accepts": {},
+        }
+        if "shares" in written and name != gateway:
+            raise common.DeployError(
+                f"{where}.shares: only the gateway ({gateway or 'none set'}) may "
+                "share settings; move them to its entry"
+            )
+        if found["route"]:
+            if gateway is None:
+                raise common.DeployError(
+                    f"{directory}/route.conf needs a gateway: add gateway: <id> "
+                    f"to {path}"
+                )
+            if name == gateway:
+                raise common.DeployError(
+                    f"{directory}/route.conf: the gateway serves routes itself; "
+                    "remove the file"
+                )
+            entry["routes"] = gateway
+        if found["client"]:
+            if identity is None:
+                raise common.DeployError(
+                    f"{directory}/client.yaml needs identity: <id> in {path}"
+                )
+            if gateway is None or name == gateway:
+                raise common.DeployError(
+                    f"{directory}/client.yaml needs the gateway's public origin for "
+                    "its redirect URI: set gateway: <id>, and keep clients off "
+                    "the gateway itself"
+                )
+            if name == identity:
+                raise common.DeployError(
+                    f"{directory}/client.yaml: identity does not register a "
+                    "client with itself; remove the file"
+                )
+            entry["clients"] = identity
+        if found["api"]:
+            if identity is None or name == identity:
+                raise common.DeployError(
+                    f"{directory}: an API secret needs identity: <id> in {path}, "
+                    "and identity itself cannot be an API"
+                )
+            entry["apis"] = identity
+        if name == gateway:
+            entry["accepts"]["routes"] = gateway + "-routes"
+        elif gateway is not None:
+            entry["public_from"] = gateway
+        if name == identity:
+            if uses_clients:
+                entry["accepts"]["clients"] = identity + "-clients"
+            if uses_apis:
+                entry["accepts"]["apis"] = identity + "-apis"
+        derived = [entry["public_from"], entry["clients"], entry["apis"]]
+        for dependency in (gateway, identity):
+            if dependency is None or dependency not in derived:
+                continue
+            if dependency not in entry["requires"]:
+                entry["requires"].append(dependency)
+        entries[name] = entry
+    return entries
+
+
+def derived_lines(entries):
+    """One line per component saying what derive_entries decided, without values."""
+    lines = []
+    for name, entry in entries.items():
+        parts = []
+        received = [
+            f"{role} in {resource}" for role, resource in sorted(entry["accepts"].items())
+        ]
+        if received:
+            parts.append("receives " + ", ".join(received))
+        if entry["public_from"]:
+            # Routes always go to the gateway, which is also public_from.
+            what = "public settings and routes" if entry["routes"] else "public settings"
+            parts.append(f"{what} from {entry['public_from']}")
+        if entry["clients"]:
+            parts.append(f"client.yaml -> {entry['clients']}")
+        if entry["apis"]:
+            parts.append(f"API secret -> {entry['apis']}")
+        if entry["requires"]:
+            parts.append("requires " + ", ".join(entry["requires"]))
+        lines.append(f"{name}: " + ("; ".join(parts) or "no links"))
+    return lines
 
 
 def check_entry(name, entry, where):
@@ -369,7 +526,7 @@ def source_descriptors(root):
     product = catalog_document(root)[1]["product"]
     versions = {}
     for name, entry in catalog.items():
-        directory = component_directory(root, name)
+        component_directory(root, name)
         version_path = confined_file(
             root, "components/" + name + "/VERSION", "Component version"
         )
@@ -380,18 +537,6 @@ def source_descriptors(root):
             raise common.DeployError(
                 f"{version_path} must hold one major.minor.patch version"
             ) from None
-        for role, filename in ROLE_FILES.items():
-            declared = entry[role] is not None
-            present = (directory / filename).is_file()
-            if declared != present:
-                raise common.DeployError(
-                    f"components.{name}: {directory / filename} "
-                    + (
-                        f"is missing for {role}: {entry[role]}"
-                        if declared
-                        else f"exists, so declare {role}: <owner> in bundles.yaml"
-                    )
-                )
     descriptors = {}
     for name in dependency_order(catalog):
         entry = catalog[name]

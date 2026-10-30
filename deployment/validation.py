@@ -56,6 +56,9 @@ def validate_catalog():
     """
     state = common.BUILD / "dev"
     known, settings = deploy.dev_settings()
+    # Show what the catalog derived from gateway/identity and the files.
+    for line in catalog.derived_lines(catalog.load_catalog(common.ROOT)):
+        log.info("[OK] " + line)
     findings = []
     for component, component_settings in settings.items():
         path = state / component / "config.yaml"

@@ -112,6 +112,10 @@ class PlatformSafetyTests(ComponentFixture):
             },
             {"name": "template", "configMap": {"name": "platform-proxy-config"}},
         ]
+        pod["spec"]["containers"][0]["volumeMounts"] = [
+            {"name": "data", "mountPath": "/routes"},
+            {"name": "template", "mountPath": "/template"},
+        ]
         path.write_text(
             yaml.safe_dump_all(
                 [
