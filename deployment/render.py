@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from . import common, templates
+from . import common, envfiles, templates
 from .output import log
 
 
@@ -119,7 +119,31 @@ def validate_config(config, path):
                 f"DB_PORT in {path} must be text containing an integer 1-{common.MAX_PORT}"
             )
 
-    return config
+    return expand_secret_files(config, path)
+
+
+def expand_secret_files(config, path):
+    """Expand the short declaration `<id>: generate` to its long form.
+
+    It means one generated value at credentials/<id>/value, Secret key value.
+    Runs in validate_config, so every consumer sees only the long form.
+    """
+    mapping = config.get(common.SECRET_FILES)
+    if not isinstance(mapping, dict):
+        return config
+    expanded = {}
+    for name, sources in mapping.items():
+        if isinstance(sources, str):
+            if sources != "generate":
+                raise common.DeployError(
+                    f"{common.SECRET_FILES}.{name} in {path}: write '{name}: generate' "
+                    "or a list of file sources"
+                )
+            sources = [{"path": f"credentials/{name}", "generate": ["value"]}]
+        expanded[name] = sources
+    result = dict(config)
+    result[common.SECRET_FILES] = expanded
+    return result
 
 
 def load_config(path):
@@ -986,9 +1010,13 @@ def check_imported_mounted(documents, imported, path):
 
 
 def effective_config(config, path, component):
-    """Validate a component's config and add the derived PUBLIC_HOSTNAME; no writes."""
+    """Validate a component's config; add PUBLIC_HOSTNAME and env/ recipes; no writes.
+
+    The result is transient: validation and materialization use it, nobody
+    writes it to config.yaml.
+    """
     validate_component_config(config, component, path)
-    return with_derived(config, path)
+    return envfiles.with_recipes(with_derived(config, path), component)
 
 
 def declared_volume_names(config, path, imported):
@@ -1024,6 +1052,15 @@ def configmap_data(original, rendered, config):
             value = templates.config_text(text, config, where)
         result[str(key)] = str(value)
     return result
+
+
+def client_variables(component):
+    """Variable names client.yaml's environment: compares; they stay in manifest env."""
+    path = common.ROOT / "components" / component / "client.yaml"
+    if not path.is_file():
+        return ()
+    environment = (load_yaml(path) or {}).get("environment") or {}
+    return tuple(environment.values()) if isinstance(environment, dict) else ()
 
 
 def effective_documents(
@@ -1063,6 +1100,10 @@ def effective_documents(
             check_component_names(rendered, component, manifest)
         documents += rendered
         sources += [manifest] * len(rendered)
+    if component:
+        documents, sources = envfiles.apply(
+            documents, sources, config, component, path, client_variables(component)
+        )
 
     imported = set(imported)
     secrets, volumes = declared_volume_names(config, path, imported)

@@ -10,8 +10,6 @@ Never run this against an operator's working checkout.
 import subprocess
 from pathlib import Path
 
-import yaml
-
 BASELINE = "932c7f3a647a84fb5388144bc822f895cc40d959"
 VERSION = "0.4.11"
 FILES = (

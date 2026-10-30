@@ -263,7 +263,11 @@ class ImportedVolumeMessageTests(DeployFixture):
             )
         # An init container's mount counts as well.
         spec["initContainers"] = [
-            dict(container, name="init", volumeMounts=[{"name": "routes", "mountPath": "/r"}])
+            dict(
+                container,
+                name="init",
+                volumeMounts=[{"name": "routes", "mountPath": "/r"}],
+            )
         ]
         self.manifest([document("Pod", "app", spec=spec)], "20-images.yaml")
         rendering.effective_documents(

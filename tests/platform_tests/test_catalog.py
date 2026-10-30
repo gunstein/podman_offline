@@ -217,7 +217,9 @@ class CatalogTests(unittest.TestCase):
                     routes="edge",
                     accepts={"clients": "login-clients"},
                 ),
-                "shop": entry(requires=["edge", "login"], routes="edge", clients="login"),
+                "shop": entry(
+                    requires=["edge", "login"], routes="edge", clients="login"
+                ),
                 # No registration file: no link to identity.
                 "worker": entry(requires=["edge"]),
                 # Written requires keep their order; derived ones are appended.
@@ -228,10 +230,14 @@ class CatalogTests(unittest.TestCase):
             catalog.derived_lines(entries),
             [
                 "edge: receives routes in edge-routes",
-                "login: receives clients in login-clients; public settings and "
-                "routes from edge; requires edge",
-                "shop: public settings and routes from edge; client.yaml -> login; "
-                "requires edge, login",
+                (
+                    "login: receives clients in login-clients; public settings and "
+                    "routes from edge; requires edge"
+                ),
+                (
+                    "shop: public settings and routes from edge; client.yaml -> login; "
+                    "requires edge, login"
+                ),
                 "worker: public settings from edge; requires edge",
                 "tool: public settings from edge; requires shop, edge",
             ],
@@ -242,7 +248,10 @@ class CatalogTests(unittest.TestCase):
         # Without a gateway nothing takes public settings (a worker-only product).
         self.product({"worker": {}, "other": {}})
         self.assertEqual(
-            {name: e["public_from"] for name, e in catalog.load_catalog(self.root).items()},
+            {
+                name: e["public_from"]
+                for name, e in catalog.load_catalog(self.root).items()
+            },
             {"worker": None, "other": None},
         )
 
@@ -250,22 +259,62 @@ class CatalogTests(unittest.TestCase):
         apps = {"edge": {}, "login": {}, "shop": {}}
         both = {"gateway": "edge", "identity": "login"}
         for label, entries, files, roles, pattern in (
-            ("unlisted gateway", apps, (), {"gateway": "proxy"},
-             "gateway: 'proxy' must be one of the listed components"),
-            ("unlisted identity", apps, (), {"identity": "auth"},
-             "identity: 'auth' must be one of the listed components"),
-            ("route without gateway", apps, ["components/shop/route.conf"], {},
-             "components/shop/route.conf needs a gateway"),
-            ("route on the gateway", apps, ["components/edge/route.conf"], both,
-             "the gateway serves routes itself"),
-            ("client without identity", apps, ["components/shop/client.yaml"],
-             {"gateway": "edge"}, "client.yaml needs identity: <id>"),
-            ("client without gateway", apps, ["components/shop/client.yaml"],
-             {"identity": "login"}, "needs the gateway's public origin"),
-            ("client on identity", apps, ["components/login/client.yaml"], both,
-             "identity does not register a client with itself"),
-            ("derived cycle", {"edge": {"requires": ["shop"]}, "shop": {}}, (),
-             {"gateway": "edge"}, "Dependency cycle: edge -> shop -> edge"),
+            (
+                "unlisted gateway",
+                apps,
+                (),
+                {"gateway": "proxy"},
+                "gateway: 'proxy' must be one of the listed components",
+            ),
+            (
+                "unlisted identity",
+                apps,
+                (),
+                {"identity": "auth"},
+                "identity: 'auth' must be one of the listed components",
+            ),
+            (
+                "route without gateway",
+                apps,
+                ["components/shop/route.conf"],
+                {},
+                "components/shop/route.conf needs a gateway",
+            ),
+            (
+                "route on the gateway",
+                apps,
+                ["components/edge/route.conf"],
+                both,
+                "the gateway serves routes itself",
+            ),
+            (
+                "client without identity",
+                apps,
+                ["components/shop/client.yaml"],
+                {"gateway": "edge"},
+                "client.yaml needs identity: <id>",
+            ),
+            (
+                "client without gateway",
+                apps,
+                ["components/shop/client.yaml"],
+                {"identity": "login"},
+                "needs the gateway's public origin",
+            ),
+            (
+                "client on identity",
+                apps,
+                ["components/login/client.yaml"],
+                both,
+                "identity does not register a client with itself",
+            ),
+            (
+                "derived cycle",
+                {"edge": {"requires": ["shop"]}, "shop": {}},
+                (),
+                {"gateway": "edge"},
+                "Dependency cycle: edge -> shop -> edge",
+            ),
         ):
             with self.subTest(label):
                 __import__("shutil").rmtree(str(self.root / "components"), True)

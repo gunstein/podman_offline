@@ -486,7 +486,11 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(runner.RENAMED_PRODUCT, renamed_product.PRODUCT)
         self.assertEqual(
             renamed_product.rename_catalog(
-                {"gateway": "platform", "identity": "identity", "components": {"app1": {}}}
+                {
+                    "gateway": "platform",
+                    "identity": "identity",
+                    "components": {"app1": {}},
+                }
             )["product"],
             runner.RENAMED_PRODUCT,
         )

@@ -332,13 +332,16 @@ def derived_lines(entries):
     for name, entry in entries.items():
         parts = []
         received = [
-            f"{role} in {resource}" for role, resource in sorted(entry["accepts"].items())
+            f"{role} in {resource}"
+            for role, resource in sorted(entry["accepts"].items())
         ]
         if received:
             parts.append("receives " + ", ".join(received))
         if entry["public_from"]:
             # Routes always go to the gateway, which is also public_from.
-            what = "public settings and routes" if entry["routes"] else "public settings"
+            what = (
+                "public settings and routes" if entry["routes"] else "public settings"
+            )
             parts.append(f"{what} from {entry['public_from']}")
         if entry["clients"]:
             parts.append(f"client.yaml -> {entry['clients']}")

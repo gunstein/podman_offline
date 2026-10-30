@@ -318,6 +318,11 @@ class ProductFixture(DeployFixture):
             (directory / "client.yaml").write_text(yaml.safe_dump(spec["client"]))
         if "api" in spec:
             (directory / "api.yaml").write_text(yaml.safe_dump(spec["api"]))
+        for container, values in spec.get("env", {}).items():
+            (directory / "env").mkdir(exist_ok=True)
+            (directory / "env" / (container + ".yaml")).write_text(
+                yaml.safe_dump(values, sort_keys=False)
+            )
 
     def provide_credentials(self, product, base):
         """Externally prepared credentials; generic tools never create these."""
