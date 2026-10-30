@@ -83,6 +83,21 @@ commands work without a journal. `test_prepare_host.HostAuditTests` covers
 `prepare-host.sh`'s `logger` lines. `DeployFixture` points the audit socket at
 a missing path and resets logging after each test.
 
+# Generated localhost without host entries (backlog 76)
+
+`platform_tests/test_public_origin_hosts.py` executes the dev wrapper with a
+Podman stub to check command-scoped `CONTAINERS_CONF_OVERRIDE`, preserved
+caller config and absence of `--no-hosts`. It installs a checksummed policy
+from a relocated external-image bundle, verifies the unit's release-local
+path and literal systemd escaping, and refuses missing/symlinked policies and
+hostAliases before side effects. This proves selection/delivery, not Podman's
+actual hosts generation. The new localhost/loopback lab checks are in
+[PUBLIC-ORIGIN-HOSTS.md](../acceptance/PUBLIC-ORIGIN-HOSTS.md); historical
+`--no-hosts` passes cannot verify the replacement.
+
+Local correction inventory: 520 platform and 72 demo tests (592 total), with
+358 separate harness tests. Counts are not runtime evidence.
+
 # API secret registrations (backlog 72)
 
 `platform_tests/test_api_registrations.py` drives a product without demo names

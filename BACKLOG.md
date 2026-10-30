@@ -9,15 +9,20 @@ and verification. Item numbers are stable references, not execution priority.
 The recommended implementation sequence through item 1 is complete. Remaining
 items retain their individual scopes below; agree the next priority separately.
 
-## Current priority (updated 2026-10-29)
+## Current priority (updated 2026-10-30)
 
 [Item 76](#76-reach-the-public-origin-from-containers-when-the-host-maps-it-to-loopback)
 is the top priority, requested by the product owner on 2026-10-29: on a host
 whose `/etc/hosts` maps the public host name to `127.0.0.1` (a developer VDI),
 Podman copies that line into every container, so a backend cannot reach Duende
 through the public origin and rejects every token (`IDX10204`). Implemented
-with local tests (`--no-hosts` in dev and Quadlet); the real Podman check in
-[PUBLIC-ORIGIN-HOSTS.md](acceptance/PUBLIC-ORIGIN-HOSTS.md) is next.
+initially with `--no-hosts`: six scenarios passed **CLEAN PASS, 472/472**
+steps at `d5e5d70`, with 590 product tests OK in each of five runs. PROD
+loopback DNS, 302 sign-in and restoration passed, but three containers could
+not resolve localhost. The replacement now uses a release-local
+`base_hosts_file = "none"` / `no_hosts = false` override in dev and Quadlet,
+without editing user config. **New localhost/loopback lab verification is
+pending; item 76 is not closed.** [Evidence and shorter retest](acceptance/PUBLIC-ORIGIN-HOSTS.md).
 
 [Item 77](#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets)
 makes components intuitive for developers who do not read documentation.
@@ -531,23 +536,41 @@ authenticate the new files, no secret creation in package scripts).
 
 ## 76. Reach the public origin from containers when the host maps it to loopback
 
-Status: **implemented with local regression coverage (2026-10-29); real
-Podman/Quadlet verification pending** ([change, local evidence and lab check](acceptance/PUBLIC-ORIGIN-HOSTS.md)).
-Top priority, requested by the product owner. Found while converting the
-organisation's .NET backend on a developer VDI. Implemented: tasks 1 (`--no-hosts`
-in `dev/dev.sh` and `PodmanArgs=--no-hosts` in `quadlet/template.kube`,
-`hostAliases` refused by the shared Pod shape guard), 2 and 4 (COMPONENTS.md),
-and task 3 in the dev credential tooling only: `generate-certificates.sh
-platform <host>` refuses a retained web certificate for another name.
-`validate` does not read the web certificate (it reads no credential source).
-First lab attempt (2026-10-29, `5f4b499`): part 1 `--whoami` CLEAN PASS
-46/46 with `--no-hosts` in dev and installed units; part 2 stopped because the
-recipe expected an `/etc/hosts` that `--no-hosts` does not create for the
-`aspnet` image. The recipe is revised (missing file accepted, `localhost`
-recorded per container, `--hosts-file=none` support recorded); parts 2–4 remain.
-Open: whether `localhost` resolves without `/etc/hosts` in every shipped image,
-whether `--hosts-file=none` is available for `kube play`/Quadlet and preferable,
-the rest of the lab check, then an automated acceptance step.
+Status: **localhost correction implemented; fresh lab verification pending**
+(2026-10-30). The original `--no-hosts` implementation has real runtime
+evidence: `hosts76-whoami-5f4b499` CLEAN PASS 46/46, DEV manual checks,
+corrected PROD manual loopback DNS/302/restoration checks, and all six fixed
+scenarios at `d5e5d70` **CLEAN PASS, 472/472** (590 product tests OK in each
+of five runs). This evidence is recorded, not still pending.
+
+The remaining real finding is that `identity-server-app`,
+`identity-postgres-db` and `app3-whoami-backend` could not resolve localhost
+on PROD without `/etc/hosts`; all 12 DEV application containers could.
+The DNS-dependent explanation is a hypothesis, not a verified diagnosis.
+Numeric loopback probes and successful public-origin sign-in did not detect
+this difference, so the green matrix alone does not close the item.
+
+The product-owner-approved direction is now `quadlet/containers-hosts.conf`:
+`[containers] base_hosts_file = "none"` and `no_hosts = false`, selected by
+`CONTAINERS_CONF_OVERRIDE` only on dev `kube play` and through the installed
+Quadlet Service environment. Each unit references the immutable copy inside
+its own release, with no system/user `containers.conf` writes. The new
+internal `@@PODMAN_HOSTS_CONFIG@@` token supplies that path without exposing
+component config. `--no-hosts` is removed. The `hostAliases` guard remains a
+public-origin DNS policy; its error no longer claims a flag conflict.
+
+All six component patch versions advance because their immutable bundles
+include the changed deployment/template/policy files: platform 0.4.13,
+identity 0.4.14, app1/app2/help 0.4.12, app3 0.1.2. This also makes the
+`newer-only` platform/Identity render the new unit on upgrade. Images and
+fixed matrix counts/install orders are unchanged.
+
+[The report and current short lab recipe](acceptance/PUBLIC-ORIGIN-HOSTS.md)
+retain all earlier attempts and findings. **Do not reuse their passes as
+verification of this changed hosts mechanism.** Next: fresh DEV and PROD
+checks with the host loopback line, generated localhost entries and sign-in,
+then preferably one normal matrix run. The automated loopback acceptance
+step and the broader component work are separate follow-ups.
 
 ### How containers reach the public origin today
 
@@ -605,13 +628,13 @@ Two follow-up traps met in the same session:
 ### Tasks
 
 1. Choose the mechanism so that a host `/etc/hosts` entry for the public name
-   never reaches the containers, in dev and production alike. Preferred:
-   `podman kube play --no-hosts` in `dev/dev.sh` and `PodmanArgs=--no-hosts` in
-   `quadlet/template.kube`. Confirm on Podman 5.8.2 that the option exists for
-   `kube play`/Quadlet, that nothing in the shipped components depends on host
-   entries (for example `host.containers.internal`) and that Pod-local
-   `localhost` still works. If `--no-hosts` is unsuitable, compare a proxy
-   network alias plus `hostAliases`, and record why.
+   never reaches the containers, while localhost is generated independently
+   of the host's DNS, in dev and production alike. The original `--no-hosts`
+   passed public-origin checks but failed localhost in three PROD images.
+   Verify the replacement override on Podman 5.8.2 and generated Quadlet
+   services, including inherited settings, the override's installed path,
+   generated localhost entries and exclusion of the host loopback mapping.
+   Do not change normal user/system Podman configuration.
 2. Document the chain above in COMPONENTS.md next to the trust chain recipe:
    containers reach the public origin through the proxy's host name in the
    product network; `IP_ADDRESS` only publishes the host port.

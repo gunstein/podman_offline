@@ -723,7 +723,7 @@ def install_needed(descriptor):
 
 
 def quadlet_text(suffix, product, name):
-    """Render only internal unit/product names, using the shared token parser."""
+    """Render internal names and the release's hosts-policy path; no config values."""
     path = common.QUADLET_TEMPLATE.with_suffix(suffix)
     try:
         text = path.read_text(encoding="utf-8")
@@ -739,10 +739,22 @@ def quadlet_text(suffix, product, name):
             raise common.DeployError(
                 f"{path}: Secret placeholders are forbidden in Quadlet"
             )
+        if field == "PODMAN_HOSTS_CONFIG":
+            policy = path.parent / "containers-hosts.conf"
+            if policy.is_symlink() or not policy.is_file():
+                raise common.DeployError(f"{policy}: missing regular hosts-policy file")
+            # Environment= is quoted in the template. Escape its literal path,
+            # including systemd specifiers; it follows a relocated bundle.
+            value = str(policy.resolve())
+            if any(ord(char) < 32 for char in value):
+                raise common.DeployError(
+                    "Control character in Quadlet hosts-policy path"
+                )
+            return value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
         if field not in values:
             raise common.DeployError(
                 f"{path}: unknown Quadlet token @@{field}@@; "
-                "allowed: @@UNIT_NAME@@, @@PRODUCT_NAME@@"
+                "allowed: @@UNIT_NAME@@, @@PRODUCT_NAME@@, @@PODMAN_HOSTS_CONFIG@@"
             )
         return values[field]
 

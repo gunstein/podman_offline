@@ -1,256 +1,222 @@
-# Public origin from containers despite host `/etc/hosts` (backlog 76)
+# Public origin and deterministic localhost entries (backlog 76)
 
-Status: implemented with local regression coverage (2026-10-29). **No real
-Podman/systemd run of this change yet**; the lab check below is required before
-the behaviour is called verified.
+Status (2026-10-30): the previous `--no-hosts` implementation passed its
+functional loopback checks and all six matrix scenarios (**472/472**), but
+three PROD application containers could not resolve localhost. The replacement
+below has local regression coverage and **requires a fresh lab test**. Earlier
+results remain unchanged below and do not verify this new mechanism.
 
-## Change
+## Current change
 
-- `dev/dev.sh` runs `podman kube play --replace --no-hosts`.
-- `quadlet/template.kube` adds `PodmanArgs=--no-hosts` to every installed unit.
-- Pod `spec.hostAliases` is refused by the shared Pod shape guard
-  (`render.pod_specs`): validate, prepare, install and bundle building.
-- `dev/generate-certificates.sh platform <host>` (and therefore
-  `dev/demo-credentials.sh`) refuses a retained web certificate that does not
-  cover `<host>` and says to remove `web.crt`/`web.key`; it still never
-  rotates a certificate by itself.
-- Documentation: [COMPONENTS.md](../docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)
-  and the trust-chain `openssl -CAfile` check.
+- `quadlet/containers-hosts.conf` sets `[containers] base_hosts_file = "none"`
+  and `no_hosts = false`: ask Podman to generate localhost/container entries
+  without using the host's file as a base, even if normal config says otherwise.
+- `dev/dev.sh` selects that file through `CONTAINERS_CONF_OVERRIDE` only for
+  `podman kube play`. It no longer passes `--no-hosts`.
+- Quadlet's `[Service] Environment=` selects the copy in the current component's
+  immutable release. The internal `@@PODMAN_HOSTS_CONFIG@@` token supplies its
+  absolute, systemd-escaped path. Missing/symlinked policy files are refused
+  when templates are checked, before generation or host commands.
+- Bundles already copy/checksum the complete `quadlet/` directory. No runtime
+  dependency, shared mutable hosts config, or normal user/system Podman config
+  write is introduced. Component versions advance so immutable bundles and
+  `newer-only` installs receive the new units; images are unchanged.
+- `spec.hostAliases` remains refused to protect public-origin network DNS,
+  rather than because of the old flag conflict. Certificate-name checks are
+  unchanged. [Configuration contract](../docs/COMPONENTS.md#reaching-the-public-origin-from-a-container).
 
-## Local evidence
+Podman's [configuration documentation](https://github.com/containers/common/blob/main/docs/containers.conf.5.md#environment-variables)
+explains the last-loaded override. This is design support, not lab evidence
+for the Podman/Quadlet combination used here.
 
-`tests/platform_tests/test_public_origin_hosts.py`:
+## Local regression scope
 
-- the rendered shipped Quadlet template has `PodmanArgs=--no-hosts` in `[Kube]`;
-- the single `podman kube play` line in `dev/dev.sh` has `--no-hosts`;
-- `hostAliases` fails `validate` (exit 1, value not printed), `prepare` and
-  `bundle.build()` with no host command and no file change.
+`test_public_origin_hosts.py` executes the actual dev script with a recorded
+Podman stub, checking command-scoped override selection and retention of the
+caller's config. It builds/installs a relocated external-image bundle after
+removing the source, checks the bundled/checksummed policy and installed
+Environment path, refuses missing/symlinked policy before effects, and tests
+literal path escaping. The existing hostAliases validation/bundle guard still
+refuses values before writes. `test_quadlet_templates.py` covers the relocated
+unit lifecycle for both upgrade policies. These tests do not simulate Podman's
+hosts-file generation; the real checks below are still required.
 
-`tests/platform_tests/test_certificates.py`
-(`test_web_certificate_for_an_earlier_host_name_is_reported`): a certificate
-issued for `old.example.test` is refused for `new.example.test` without any
-write, accepted for its own name and `localhost`, and re-issued for the new
-name from the retained CA after the two files are removed.
+## Current short lab recipe: localhost correction
 
-These are unit/fixture results with mocked Podman. They do not show that Podman
-accepts `--no-hosts` for `kube play`/Quadlet or that the proxy name resolves.
+Use a clean commit containing this replacement, and record `git rev-parse
+HEAD`. **Do not reuse the old DEV/PROD installation for the new code.** The
+product owner requested the localhost and host-loopback checks, preferably
+with one normal fixed-matrix run; the earlier six-scenario matrix remains
+historical evidence for `--no-hosts`.
 
-## Origin of the change (operator-run, not a lab result)
+Use the controller's private `lab.env` for `SSH_USER`, DEV/PROD addresses,
+`PROD_HOST` and `HTTPS_PORT`; never print its contents. Reset only its configured
+disposable VMs. Record command exits and safe output. Stop at the first failed
+functional check, always completing hosts restoration. Do not repair code or
+config during verification. No secret values, private files, complete
+connection strings, redirect query parameters or unfiltered journals belong
+in the result. `NO-SHELL` from infra/service containers is an observation;
+`NO-LOCALHOST` from an application container is a failure of this correction.
 
-On a developer VDI (2026-10-29, Podman version not recorded) the host maps its
-own name, used in `PUBLIC_ORIGIN`, to `127.0.0.1`. In the backend container the
-name resolved to `127.0.0.1` and `openssl s_client` got `Connection refused`;
-the backend rejected tokens with `IDX10204`. With `--no-hosts` added by hand to
-`dev/dev.sh`, the name appeared in the network's aardvark-dns file with the
-proxy's internal address, the TLS connection succeeded (with item 70's chain
-and a re-issued web certificate) and sign-in plus GraphQL worked.
+### 1. Fresh focused setup (controller)
 
-## Lab recipe
-
-Revision 2 (2026-10-29), after the first run stopped in part 2: with
-`--no-hosts` Podman creates no `/etc/hosts`, so an image without its own file
-(`mcr.microsoft.com/dotnet/aspnet:8.0`) has none at all. That is the intended
-result (no host line reaches the container), not a failure. Step 3 now accepts
-a missing file, the `localhost` checks are recorded observations instead of stop
-conditions, and part 2 first records whether this Podman offers
-`--hosts-file=none` (a generated `/etc/hosts` with `localhost` but without the
-host's lines), which may be a better choice than `--no-hosts`.
-
-**Continuing after the first run:** only documentation changed after
-`5f4b499`, so part 1's CLEAN PASS (`hosts76-whoami-5f4b499`) still covers the
-code. Start again at part 2, from its beginning, in that run's DEV checkout;
-PROD still has that run's installation for part 3. If either VM was reset
-since, run part 1 again first.
-
-Four parts, in this order. Part 1 is the existing automated scenario; parts 2
-and 3 are manual and add the host loopback line that no scenario sets; part 4
-repeats the fixed matrix because every installed unit now carries
-`--no-hosts`. Stop at the first failure and record it.
-
-Values used below come from `~/.config/podman-offline-acceptance/lab.env` on the
-controller: `SSH_USER`, `DEV_IP`, `PROD_IP`, `PROD_HOST`, `HTTPS_PORT`. The
-product is `myproduct`, its runtime account `myproduct-ops`.
-
-### Part 1: whoami scenario (controller)
-
-From a clean checkout of the commit under test on the controller:
+This builds the bundles and installs platform, Identity and app3 with the new
+policy, providing the DEV checkout and smoke environment for the next checks:
 
 ```sh
-git rev-parse --short HEAD                # record it; must contain backlog 76
-run=hosts76-whoami-$(git rev-parse --short HEAD)
+git rev-parse HEAD
+test -z "$(git status --porcelain)"
+run=hosts76-localhost-whoami-$(git rev-parse --short HEAD)
 python3 acceptance/acceptance.py --run "$run" --whoami run
 ```
 
-Pass: `CLEAN PASS`, all steps. This shows that DEV `dev/dev.sh up` and the PROD
-Quadlet units start with `--no-hosts` and that app3 signs in through the public
-origin (`03-dev-whoami-e2e`, `08-whoami-e2e`), restarts and survives a reboot.
-It does **not** yet set a loopback line in `/etc/hosts`.
+Require CLEAN PASS. Record the exact commit and step counts. This exercises
+ordinary sign-in but does not set the host loopback entry.
 
-### Part 2: DEV with the public name mapped to loopback (DEV VM)
+### 2. DEV localhost and host-loopback check (DEV as SSH_USER)
 
-The run leaves its source checkout, images and smoke environment on DEV. Log
-in to DEV as `SSH_USER`:
+Replace the run placeholder below with step 1's ID. The subshell always stops
+dev and removes its temporary hosts entry, including after a failed check.
 
 ```sh
-run=<run ID from part 1>
-cd ~/podman-offline-acceptance/$run/src
-host=myproduct-proxy                      # config/dev.yaml: PUBLIC_ORIGIN host
-podman --version; getenforce
+(
+  set -euo pipefail
+  run=<run-ID-from-step-1>
+  cd ~/podman-offline-acceptance/$run/src
+  host=myproduct-proxy
+  restore() {
+    result=$?
+    trap - EXIT
+    ./dev/dev.sh down || result=1
+    sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts || result=1
+    if grep -q "^127\.0\.0\.1 $host\$" /etc/hosts; then
+      echo 'FAIL: temporary host entry remains'; result=1
+    else
+      echo 'restored: no host entry'
+    fi
+    exit "$result"
+  }
+  trap restore EXIT
+  podman --version; getenforce
+  sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
+  getent hosts "$host"                      # expect 127.0.0.1
+  ./dev/dev.sh up
 
-# 1. Map the public name to loopback on the host, as on a developer VDI.
-sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
-getent hosts "$host"                      # expect 127.0.0.1 (host view)
-
-# 2. Negative control: without --no-hosts a container would get that line.
-proxy_image=$(python3 -B -c 'import yaml; d=[x for x in yaml.safe_load_all(open("components/platform/manifests/80-proxy.yaml")) if x and x["kind"]=="Pod"][0]; print(d["spec"]["containers"][0]["image"])')
-podman network exists myproduct || podman network create myproduct
-podman run --rm --pull=never --network myproduct --entrypoint getent "$proxy_image" hosts "$host"   # expect 127.0.0.1
-
-# 2b. Record the hosts options this Podman offers (decision input, not a pass/fail step).
-podman kube play --help | grep -iE -- '--(no-hosts|hosts-file)' || echo 'kube play: no hosts options listed'
-podman run --help | grep -iE -- '--hosts-file' || echo 'run: no --hosts-file'
-podman run --rm --pull=never --network myproduct --hosts-file=none --entrypoint cat "$proxy_image" /etc/hosts \
-  || echo 'run --hosts-file=none not usable'
-# Wanted: localhost present, no "127.0.0.1 $host" line from the host.
-
-# 3. Start dev the normal way (dev/dev.sh passes --no-hosts).
-./dev/dev.sh up
-podman exec app3-whoami-backend sh -c "if [ -e /etc/hosts ]; then grep -c '$host' /etc/hosts || true; else echo 'no /etc/hosts'; fi"
-                                                                               # expect 0 or 'no /etc/hosts'
-podman exec app3-whoami-backend getent hosts "$host"                           # expect the proxy address below
-podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-# Observation (record, do not stop): does each container resolve "localhost"?
-for c in $(podman ps --format '{{.Names}}'); do
-  printf '%s hosts-file=%s localhost=' "$c" "$(podman exec "$c" sh -c '[ -e /etc/hosts ] && echo yes || echo no' 2>/dev/null || echo ?)"
-  podman exec "$c" sh -c 'command -v getent >/dev/null || { echo NO-GETENT; exit 0; }; getent hosts localhost || echo NO-LOCALHOST' 2>/dev/null || echo NO-SHELL
-done
-
-# 4. Sign-in through the public origin while the host maps it to loopback.
-SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
-
-# 5. hostAliases conflict (records Podman's behaviour behind the refusal).
-cat > /tmp/hostaliases-test.yaml <<'EOF'
-apiVersion: v1
-kind: Pod
-metadata: {name: hostaliases-test}
-spec:
-  hostAliases: [{ip: 192.0.2.10, hostnames: [alias.example.test]}]
-  containers:
-  - {name: c, image: PROXY_IMAGE, imagePullPolicy: Never, command: [sleep, "30"]}
-EOF
-sed -i "s|PROXY_IMAGE|$proxy_image|" /tmp/hostaliases-test.yaml
-podman kube play --no-hosts /tmp/hostaliases-test.yaml; echo "exit=$?"
-podman kube down /tmp/hostaliases-test.yaml 2>/dev/null; rm -f /tmp/hostaliases-test.yaml
-
-# 6. Restore.
-./dev/dev.sh down
-sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts
-getent hosts "$host" || echo 'restored: no host entry'
+  for c in identity-postgres-db identity-server-app app3-whoami-backend; do
+    printf '%s ' "$c"
+    podman exec "$c" sh -c 'test -f /etc/hosts && grep -E "^(127\.0\.0\.1|::1)[[:space:]]+localhost([[:space:]]|$)" /etc/hosts && getent hosts localhost'
+  done
+  count=$(podman exec app3-whoami-backend sh -c 'grep -F -c "$1" /etc/hosts || true' sh "$host")
+  printf 'backend public-name hosts entries: %s\n' "$count"
+  test "$count" = 0
+  resolved=$(podman exec app3-whoami-backend getent hosts "$host")
+  proxy=$(podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+  printf 'backend: %s\nproxy: %s\n' "$resolved" "$proxy"
+  test -n "$proxy"
+  test "${resolved%%[[:space:]]*}" = "$proxy"
+  SMOKE_RESTART_COMMAND='podman pod restart app3-whoami' .venv-smoke/bin/python dev/whoami-smoke-test.py
+)
 ```
 
-Pass: step 2 shows `127.0.0.1` (the line would have reached a container);
-step 3 shows `0` or `no /etc/hosts` for the backend and the name resolves to
-the proxy's address; step 4 prints its `PASS` lines. Record, without stopping:
-step 2b's output, the `localhost` line for every container (an address,
-`NO-LOCALHOST`, `NO-GETENT` or `NO-SHELL`) and step 5's exit status and message.
-A container that cannot resolve `localhost` is a finding for the
-`--hosts-file` decision, not a failure of this run.
+Require localhost entries in a real `/etc/hosts`, successful localhost lookup,
+zero public-name entries, proxy address equality and all smoke PASS lines.
+Record any other application/infra observations separately if collected;
+infra images without a shell/getent cannot supply resolution evidence.
 
-### Part 3: installed PROD with the public name mapped to loopback (PROD VM)
+### 3. Installed PROD localhost and host-loopback check (PROD as SSH_USER)
 
-The run leaves platform, identity and app3 installed on PROD. Log in to PROD as
-`SSH_USER`; the helpers run commands as the runtime account the same way the
-harness does.
-
-Revision 3 (2026-10-29): run systemctl directly in the runtime user's local
-manager context. `systemctl --user -M myproduct-ops@ cat` is unsupported on the
-lab host (`Cannot remotely cat units.`). Starting commands from the runtime
-user's home also avoids inheriting the SSH account's inaccessible working
-directory. Read each unit's effective `ExecStart` successfully before counting flags,
-so an inspection failure cannot be mistaken for a missing option. Do not count
-all of `systemctl cat`: the generated unit retains `PodmanArgs=--no-hosts`
-as well as the effective `ExecStart`, giving two text matches for one start
-flag.
+Fill in the two public values from `lab.env`. These are lab helpers, not a
+new customer operator procedure. Only the declared public override path and
+filtered unit facts are printed; do not dump the full service environment.
 
 ```sh
-host=<PROD_HOST>; port=<HTTPS_PORT>
-ops() { sudo -n -H -u myproduct-ops env XDG_RUNTIME_DIR=/run/user/$(id -u myproduct-ops) \
-        XDG_CONFIG_HOME=/var/lib/myproduct/config XDG_DATA_HOME=/var/lib/myproduct/storage \
-        bash -c 'cd "$HOME" || exit; exec "$@"' bash "$@"; }
-units() { ops systemctl --user "$@"; }
-podman --version; getenforce
+(
+  set -euo pipefail
+  host=<PROD_HOST>; port=<HTTPS_PORT>
+  ops() { sudo -n -H -u myproduct-ops env XDG_RUNTIME_DIR="/run/user/$(id -u myproduct-ops)" \
+          XDG_CONFIG_HOME=/var/lib/myproduct/config XDG_DATA_HOME=/var/lib/myproduct/storage \
+          bash -c 'cd "$HOME" || exit; exec "$@"' bash "$@"; }
+  units() { ops systemctl --user "$@"; }
+  restore() {
+    result=$?
+    trap - EXIT
+    sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts || result=1
+    units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service || result=1
+    if grep -q "^127\.0\.0\.1 $host\$" /etc/hosts; then
+      echo 'FAIL: temporary host entry remains'; result=1
+    else
+      echo 'restored: no host entry'
+    fi
+    exit "$result"
+  }
+  podman --version; getenforce
+  for u in platform identity app3; do
+    start=$(units show --property=ExecStart --value myproduct-$u.service)
+    if printf '%s\n' "$start" | grep -q -- '--no-hosts'; then
+      echo 'FAIL: obsolete --no-hosts option'; exit 1
+    fi
+    env_text=$(units show --property=Environment --value myproduct-$u.service)
+    printf '%s ' "$u"
+    printf '%s\n' "$env_text" | grep -o 'CONTAINERS_CONF_OVERRIDE=[^ ]*'
+  done
+  trap restore EXIT
+  sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
+  units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service
+  sleep 20
+  units is-active myproduct-platform.service myproduct-identity.service myproduct-app3.service
 
-# 1. The generated units run kube play with --no-hosts.
-for u in platform identity app3; do
-  start_command=$(units show --property=ExecStart --value myproduct-$u.service) || exit
-  printf '%s ' "$u"
-  printf '%s\n' "$start_command" | grep -c -- '--no-hosts' || exit
-done
+  for c in identity-postgres-db identity-server-app app3-whoami-backend; do
+    printf '%s ' "$c"
+    ops podman exec "$c" sh -c 'test -f /etc/hosts && grep -E "^(127\.0\.0\.1|::1)[[:space:]]+localhost([[:space:]]|$)" /etc/hosts && getent hosts localhost'
+  done
+  count=$(ops podman exec app3-whoami-backend sh -c 'grep -F -c "$1" /etc/hosts || true' sh "$host")
+  printf 'backend public-name hosts entries: %s\n' "$count"
+  test "$count" = 0
+  resolved=$(ops podman exec app3-whoami-backend getent hosts "$host")
+  proxy=$(ops podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+  printf 'backend: %s\nproxy: %s\n' "$resolved" "$proxy"
+  test -n "$proxy"
+  test "${resolved%%[[:space:]]*}" = "$proxy"
 
-# 2. Map the public name to loopback and recreate the containers.
-sudo sh -c "printf '127.0.0.1 %s\n' '$host' >> /etc/hosts"
-units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service
-sleep 20; units is-active myproduct-platform.service myproduct-identity.service myproduct-app3.service
-
-# 3. The backend sees the proxy, not the host's line.
-ops podman exec app3-whoami-backend sh -c "if [ -e /etc/hosts ]; then grep -c '$host' /etc/hosts || true; else echo 'no /etc/hosts'; fi"
-                                                                               # expect 0 or 'no /etc/hosts'
-ops podman exec app3-whoami-backend getent hosts "$host"                          # expect the proxy address below
-ops podman inspect platform-proxy-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-# Observation (record, do not stop), as in part 2.
-for c in $(ops podman ps --format '{{.Names}}'); do
-  printf '%s localhost=' "$c"
-  ops podman exec "$c" sh -c 'command -v getent >/dev/null || { echo NO-GETENT; exit 0; }; getent hosts localhost || echo NO-LOCALHOST' 2>/dev/null || echo NO-SHELL
-done
+  login=$(ops curl --noproxy '*' --cacert /var/lib/myproduct/state/PKI/private/ca.crt \
+    --resolve "$host:$port:<PROD_IP>" --silent --show-error --max-time 30 \
+    --output /dev/null --write-out '%{http_code} %{redirect_url}\n' \
+    "https://$host:$port/app3/auth/login")
+  status=${login%% *}; destination=${login#* }; destination=${destination%%\?*}
+  printf '%s %s [query withheld]\n' "$status" "$destination"
+  test "$status" = 302
+  test "$destination" = "https://$host:$port/identity/connect/authorize"
+  unset login
+)
 ```
 
-Still on PROD, while the line is present, start a sign-in the way the harness
-does (`whoami_login` in `remote.sh`). The backend needs the discovery document
-to answer, so `302` to the authorize endpoint means it reached Duende through
-the public origin; `500` was the chain-break result:
+Require a release-local override path for each unit, no `--no-hosts` start
+flag, all services active, all three former failures resolving localhost from
+generated files, zero inherited public-name entries, matching proxy address,
+302 to the public authorize endpoint and successful restoration. In particular,
+**do not accept another NO-LOCALHOST as an informational pass**.
 
-```sh
-ops curl --noproxy '*' --cacert /var/lib/myproduct/state/PKI/private/ca.crt \
-  --resolve "$host:$port:<PROD_IP>" --silent --show-error --max-time 30 \
-  --output /dev/null --write-out '%{http_code} %{redirect_url}\n' \
-  "https://$host:$port/app3/auth/login"        # expect 302 .../identity/connect/authorize?...
-```
+### 4. Recommended normal regression (controller)
 
-Then on PROD restore and confirm:
-
-```sh
-sudo sed -i "/^127\.0\.0\.1 $host\$/d" /etc/hosts
-units restart myproduct-platform.service myproduct-identity.service myproduct-app3.service
-```
-
-Pass: `1` for each unit in step 1, all units active, `0` or `no /etc/hosts`
-and the proxy's address in step 3, and `302` to the authorize endpoint while
-the line was present. Record the `localhost` observations as in part 2. Part 1's next run
-resets both VMs from their snapshots.
-
-### Part 4: fixed matrix (controller)
+After manual restoration, one normal scenario checks the changed unit path and
+offline bundle through lifecycle/upgrade/reboot. It resets the disposable VMs:
 
 ```sh
 rev=$(git rev-parse --short HEAD)
-python3 acceptance/acceptance.py --run hosts76-normal-$rev run
-python3 acceptance/acceptance.py --run hosts76-app2-$rev --first-app app2 run
-python3 acceptance/acceptance.py --run hosts76-identity-$rev --identity-only run
-python3 acceptance/acceptance.py --run hosts76-help-$rev --help-only run
-python3 acceptance/acceptance.py --run hosts76-platform-help-$rev --platform-help-only run
-python3 acceptance/acceptance.py --run hosts76-renamed-$rev --renamed-product run
+python3 acceptance/acceptance.py --run "hosts76-localhost-normal-$rev" run
 ```
 
-Pass: `CLEAN PASS` in all six. If time is short, run `normal` first; the other
-five follow before item 76 is called verified. These runs also give the first
-real-host evidence for items 73 and 74 at this commit.
+Require CLEAN PASS. Do not call the earlier 472/472 run verification of this
+new configuration. Record unit/product tests, isolated harness tests and real
+manual/harness-driven runtime results separately, with exact commits, modes,
+OS/Podman versions, localhost/hosts-file/DNS outputs, sign-in and restoration.
+Keep earlier result sections unchanged and record failures before repairs.
 
-### Record
+## Historical evidence: previous --no-hosts implementation
 
-Add a dated result section here with: tested commit, run IDs and verdicts,
-Podman version, SELinux mode, the outputs of parts 2 and 3 (addresses may be
-shortened, no credentials), the hostAliases result, and any shipped component
-that behaved differently without host entries. Update item 76's status and the
-review guide's gap row only from these results.
+The following sections report the original implementation, including its
+recipe failures and the PROD localhost findings. They remain historical
+results; no pass below closes the retest for the replacement above.
 
 ## Lab verification (2026-10-29): stopped in part 2
 
@@ -752,3 +718,89 @@ Quadlet start flags, credential-safe output and restoration, plus the
 lifecycle/isolation checks actually exercised by the matrix. No implementation
 refactor or new understandability assessment is claimed; no unassisted human
 operator trial occurred.
+
+## Localhost correction prepared (2026-10-30): new lab test required
+
+The product owner accepted the recorded matrix/functional results and requested
+a correction for the three PROD localhost failures. The implementation now
+uses the source/release-local `quadlet/containers-hosts.conf` override described
+at the top of this report. It removes `--no-hosts`, sets `base_hosts_file =
+"none"` and `no_hosts = false`, and leaves the normal user's config files
+untouched. The policy is selected only on dev `kube play` and in the installed
+service environment; each unit points inside its own immutable release.
+This is a code change: **none of the earlier lab passes verify it**.
+
+### Local checks for this correction
+
+- `python3 -B tests/run.py all`: **592 tests, OK**.
+- `python3 -B tests/run.py platform --isolate`: **520 tests, OK**, without
+  application source or shipped demo declarations.
+- `python3 -B -m unittest discover -s acceptance -p 'test_*.py'`:
+  **358 tests, OK**. This is harness-unit evidence, not runtime evidence.
+- Focused hosts-policy / Quadlet tests: **13 tests, OK**, including actual dev
+  shell execution with recorded Podman, a relocated/checksummed bundle,
+  untouched caller config, early policy refusal and literal path escaping.
+- Scoped Ruff lint/format and ShellCheck (`dev/dev.sh`) passed. Vermin reports
+  minimum Python **3.6**. Scoped Pyright reports **0 errors**, with 7 PyYAML
+  source-resolution warnings in this tool environment.
+- The repository-wide Ruff invocation still reports 12 existing issues in
+  unchanged `acceptance/init_secret_test.py`, `acceptance/test_init_secret.py`
+  and `tests/platform_tests/test_secret_templates.py`. Its broad format check
+  reports one unchanged file, `acceptance/test_acceptance.py`. These baseline
+  issues were not repaired as part of the hosts fix; changed Python files and
+  the deployment package pass their scoped lint/format checks. The full listed
+  ShellCheck set and Python-3.6 Vermin check passed.
+
+The initial sandboxed full-suite attempts could not create the existing GPG
+and fake journal Unix sockets; normal local test permissions resolved those
+infrastructure failures. The tracked-file renamed generator also requires the
+new public policy file in its inventory; after staging that file, the harness
+suite passed. The first default multiprocessing Vermin invocation was blocked
+by the sandbox's socket restriction; its single-process run passed. No lab VM
+or real Podman/systemd verification was performed for this correction.
+
+### Contracts and understandability review
+
+1. The catalog still owns product/component names and versions. The public
+   policy lives in `quadlet/`, is copied/checksummed with the existing bundle
+   content, and supplies no component-config or credential values.
+2. `quadlet_text` resolves only the fixed internal policy path, refuses a
+   missing/symlinked file and control characters, and escapes quotes,
+   backslashes and systemd percent specifiers. Existing shared template checks
+   reach it before generation/host calls; validate reads no secret bytes.
+3. Dev scopes the environment assignment to its existing start command. The
+   template renderer only computes text; existing lifecycle writers publish
+   units. No new mutable shared config, transaction layer or process-global
+   production setting was introduced.
+4. Image validation, pending/registration publication, unit writes,
+   restart/health, acknowledgement and completion order are unchanged. The
+   new Environment path is generated alongside the already-validated unit.
+5. Existing durable metadata/pending state still controls retry. The inspected
+   failure path is a missing policy during template checks: no generated
+   credentials, live writes or host calls occur; restoring the bundled public
+   file permits a fresh attempt. Relocation before install selects the new
+   release path, not a path back into a deleted source checkout.
+6. The policy has no demo names. Synthetic external-image/renamed fixtures
+   exercise it; the lab checks use the known demo names only to reproduce the
+   three observed failures. hostAliases refusal remains the explicit
+   public-origin DNS contract and no longer claims an obsolete flag conflict.
+
+Outcome: one internal path token and one small public file carry the policy;
+there is no component-object hierarchy or extra mutable configuration model.
+All six component patch versions advance so immutable delivery and
+`newer-only` updates select new unit files. This review establishes code-flow
+clarity, not empirical human understandability.
+
+The shorter recipe above was statically walked through: explicit controller,
+DEV/PROD accounts and fresh starting state; runtime helper cwd/XDG; read-only
+unit-property checks; secret-safe redirect output; hosts restoration on shell
+exit; and failure conditions for the affected localhost probes. This is an AI
+procedure assessment only; its new commands were syntax-checked but not run on
+the lab hosts. An unassisted human operator trial was not performed, and no
+customer-readiness claim is made.
+
+Next: run the fresh focused setup, DEV and PROD localhost/loopback/sign-in
+checks with restoration, then preferably one normal matrix scenario. Record
+the exact new commit and generated-policy paths/contents. Keep the historical
+472/472 result scoped to the old mechanism. Backlog 76 remains open until this
+new behavior is verified on real Podman/Quadlet.

@@ -865,10 +865,9 @@ def pod_specs(documents, source="manifests"):
                         "under spec.containers[] or spec.initContainers[]"
                     )
             if "hostAliases" in spec:
-                # Pods run with --no-hosts (backlog 76), which conflicts with hostAliases.
+                # Keep public-origin resolution authoritative in the network DNS.
                 raise common.DeployError(
-                    f"{source}: spec.hostAliases is not supported: pods run with "
-                    "--no-hosts so that host /etc/hosts lines stay out; containers "
+                    f"{source}: spec.hostAliases is not supported: containers "
                     "reach the public origin through the proxy's host name in the "
                     "product network"
                 )

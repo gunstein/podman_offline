@@ -203,10 +203,12 @@ class QuadletBundleTests(ProductFixture):
             "# (<product>-<component>, or the product for a standalone fixture).\n"
             "[Unit]\nDescription=cedar-processor\n\n[Kube]\nYaml=cedar-processor.yaml\n"
             "Network=cedar.network\n"
-            "# Keep host /etc/hosts entries out of the containers: the public host name must\n"
-            "# resolve to the proxy in the product network, not to a host loopback line.\n"
-            "PodmanArgs=--no-hosts\n"
-            "\n[Service]\nRestart=on-failure\nTimeoutStartSec=180\n"
+            "[Service]\n"
+            "# Generate localhost entries without copying the host's /etc/hosts.\n"
+            'Environment="CONTAINERS_CONF_OVERRIDE='
+            + str(releases["processor"] / "quadlet/containers-hosts.conf")
+            + '"\n'
+            "Restart=on-failure\nTimeoutStartSec=180\n"
             "\n[Install]\nWantedBy=default.target\n"
         )
         self.assertEqual(unit.read_text(), expected)

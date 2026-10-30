@@ -6,11 +6,9 @@ Description=@@UNIT_NAME@@
 [Kube]
 Yaml=@@UNIT_NAME@@.yaml
 Network=@@PRODUCT_NAME@@.network
-# Keep host /etc/hosts entries out of the containers: the public host name must
-# resolve to the proxy in the product network, not to a host loopback line.
-PodmanArgs=--no-hosts
-
 [Service]
+# Generate localhost entries without copying the host's /etc/hosts.
+Environment="CONTAINERS_CONF_OVERRIDE=@@PODMAN_HOSTS_CONFIG@@"
 Restart=on-failure
 TimeoutStartSec=180
 

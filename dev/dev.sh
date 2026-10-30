@@ -10,9 +10,10 @@ case "${1:-}" in
         # The shared network carries the product name from bundles.yaml.
         product=$(python3 -B -c 'from deployment import catalog, common; print(catalog.product_name(common.ROOT))')
         podman network exists "$product" || podman network create "$product"
-        # --no-hosts: a host /etc/hosts line for the public name (often 127.0.0.1)
-        # must not reach the containers; they resolve it to the proxy (backlog 76).
-        podman kube play --replace --no-hosts --network "$product" build/install.yaml
+        # Generate localhost entries without inheriting a host loopback mapping.
+        # Scope the override to this invocation; leave user Podman config intact.
+        CONTAINERS_CONF_OVERRIDE="$PWD/quadlet/containers-hosts.conf" \
+            podman kube play --replace --network "$product" build/install.yaml
         ;;
     down)
         # Stops what the last prepare rendered; run it before removing a component.

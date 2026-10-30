@@ -3,6 +3,18 @@
 Implemented on `fix/59-quadlet-placeholders` (2026-10-23). This is a consistency
 and early-validation change; it does not diagnose a runtime unit-generation bug.
 
+## Backlog 76 extension (2026-10-30)
+
+The hosts-policy correction adds internal `@@PODMAN_HOSTS_CONFIG@@`, selecting
+only the current source/release's regular `quadlet/containers-hosts.conf`.
+The renderer escapes quotes, backslashes and systemd percent specifiers in the
+Environment value and refuses missing/symlinked files before host effects.
+There is still no component-config or Secret lookup. Relocated bundle and dev
+invocation regression tests are in `test_public_origin_hosts.py`; new real
+Podman/Quadlet verification is pending in [the hosts-policy report](PUBLIC-ORIGIN-HOSTS.md).
+The earlier evidence below retains its original scope and is not a pass for
+this extension.
+
 ## Contract and implementation
 
 Both shipped templates now use `@@UNIT_NAME@@` / `@@PRODUCT_NAME@@`.

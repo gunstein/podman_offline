@@ -425,12 +425,35 @@ By default Podman copies the host's `/etc/hosts` into every container, and
 `/etc/hosts` is read before DNS. A host line such as
 `127.0.0.1 <public host name>` (common on developer VDIs, or added for a local
 browser) would then send each container to its own loopback. Pods therefore
-start with `--no-hosts`: `dev/dev.sh` passes it to `podman kube play`, and the
-Quadlet unit sets `PodmanArgs=--no-hosts`. Containers keep the image's own
-`/etc/hosts` (normally `localhost`) and resolve everything else through the
-network's DNS, which forwards unknown names to the host's resolvers. Pod
-`spec.hostAliases` conflicts with this and is refused by validation and bundle
-building.
+use `quadlet/containers-hosts.conf`, passed through the process environment
+variable `CONTAINERS_CONF_OVERRIDE`. It sets `[containers] base_hosts_file =
+"none"` and `no_hosts = false`: Podman generates localhost and container entries
+without copying the host's lines. This replaces `--no-hosts`, which left some
+images without `/etc/hosts` and made localhost depend on external DNS in the
+lab. Public host names still resolve through the product network's DNS.
+
+Dev selects the absolute source-tree path only for its `kube play` command.
+An installed unit's `[Service] Environment=` selects the immutable copy in
+that component's own release. The internal Quadlet token
+`@@PODMAN_HOSTS_CONFIG@@` resolves to that file, with systemd path escaping;
+it cannot come from component config. Bundles include the file in their
+checksums. Relocating a bundle before install resolves its new path; retain
+the installed release while its unit uses it, as required for release code.
+The normal system/user configuration is still loaded first. No user's
+`containers.conf` or config directory is edited. The project's invocation
+selects its own `CONTAINERS_CONF_OVERRIDE`; it does not merge an inherited
+extra-override file. Pod `spec.hostAliases` remains refused by the shared
+validation/bundle guard so aliases cannot override public-origin network DNS.
+
+Install new bundles for all affected components when updating an existing
+installation; upgrading only an app does not rewrite its owners' units. The
+platform and Identity patch versions advance so `newer-only` will not skip
+this change. No installed release is modified in place.
+
+The `--no-hosts` version passed the six-scenario matrix, but three PROD
+containers could not resolve localhost. That evidence and the outstanding
+retest for this replacement are recorded in
+[PUBLIC-ORIGIN-HOSTS.md](../acceptance/PUBLIC-ORIGIN-HOSTS.md).
 
 Symptom of a container that cannot reach the public origin: the backend
 rejects every token with `IDX10204` (no expected issuer, because the discovery
