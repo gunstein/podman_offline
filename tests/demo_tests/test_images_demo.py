@@ -42,7 +42,7 @@ class DemoImageHelperTests(ImageHelperFixture):
             shutil.copy2(ROOT / name, self.root / name)
         recipes = (
             ("help", "localhost/demo-help:0.2.0"),
-            ("identity", "localhost/demo-identity:0.2.3"),
+            ("identity", "localhost/demo-identity:0.2.4"),
             ("todo-backend", "localhost/demo-todo-backend:0.2.2"),
             ("todo-frontend", "localhost/demo-todo-frontend:0.2.0"),
             ("whoami-backend", "localhost/demo-whoami-backend:0.1.1"),

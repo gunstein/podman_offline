@@ -17,19 +17,23 @@ import json
 import re
 from pathlib import Path
 
-from . import common
+from . import common, envfiles
 from . import render as rendering
 
 # Directories and files the target state directory uses for shared state. A component with
 # one of these IDs would share a path with that state, so the IDs are reserved.
 RESERVED_IDS = ("installed", "metadata", "routes", "clients", "apis", "files")
 
-# Registration roles. A component that declares a role registers the matching
-# file with the component that accepts that role. routes and clients arrive in
-# an imported volume; apis in a Secret the owner names in accepts.
-ROLE_FILES = {"routes": "route.conf", "clients": "client.yaml", "apis": "api.yaml"}
+# Registration roles. routes and clients come from a file in the component
+# and arrive at their owner in an imported volume; an API secret comes from
+# the component's @@api-secret:<own id>@@ placeholder and arrives in a Secret
+# the platform renders for the owner (registrations.owner_secrets).
+ROLES = ("routes", "clients", "apis")
+ROLE_FILES = {"routes": "route.conf", "clients": "client.yaml"}
 # The role whose accepts value names a Secret instead of a volume.
 SECRET_ROLES = ("apis",)
+# The one Identity variable that receives an API secret (Identity is Duende).
+API_SECRET_KEY = re.compile(r"ApiResources__(0|[1-9][0-9]*)__ApiSecrets__0__Value\Z")
 
 UPGRADES = ("always", "newer-only")
 # Config names a component may share with its public_from dependents, beside
@@ -59,6 +63,7 @@ ENTRY_KEYS = (
     "clients",
     "apis",
     "accepts",
+    "api_secrets",
 )
 DESCRIPTOR_KEYS = (
     "name",
@@ -72,10 +77,12 @@ DESCRIPTOR_KEYS = (
     "clients",
     "apis",
     "accepts",
+    "api_secrets",
 )
 # Descriptor fields added after the first product-named releases, with the
-# value an older descriptor without them means.
-LATER_KEYS = {"shares": [], "apis": None}
+# value an older descriptor without them means. api_secrets is Identity's
+# {API component: <n> in ApiResources__<n>__ApiSecrets__0__Value}.
+LATER_KEYS = {"shares": [], "apis": None, "api_secrets": {}}
 
 
 def check_id(value, where):
@@ -215,12 +222,73 @@ def load_catalog(root):
 
 
 def registration_files(directory):
-    """Which registration files a source component has; nothing else is read."""
+    """Which registration files a source component has, and its API secret lines.
+
+    Reads only file existence and the env/ files' @@api-secret: placeholders;
+    never manifests.
+    """
     return {
         "route": (directory / ROLE_FILES["routes"]).is_file(),
         "client": (directory / ROLE_FILES["clients"]).is_file(),
-        "api": (directory / ROLE_FILES["apis"]).is_file(),
+        "api_lines": envfiles.api_secret_lines(directory),
     }
+
+
+def api_secret_mapping(identity, files):
+    """Check every @@api-secret: line and return Identity's {API: <n>}.
+
+    A component is an API when its own env/ files use @@api-secret:<own id>@@.
+    Identity receives each API's value on exactly one line
+    ApiResources__<n>__ApiSecrets__0__Value: '@@api-secret:<api>@@', all in one
+    container, each <n> for one API.
+    """
+    apis = sorted(
+        name
+        for name, found in files.items()
+        if name != identity and any(name in ids for *_, ids in found["api_lines"])
+    )
+    mapping, containers = {}, set()
+    for name, found in files.items():
+        for container, key, value, ids in found["api_lines"]:
+            where = f"components/{name}/env/{container}.yaml: {key}"
+            if name != identity:
+                if ids != [name]:
+                    raise common.DeployError(
+                        f"{where}: a component may use only its own API secret "
+                        f"(@@api-secret:{name}@@)"
+                    )
+                continue
+            match = API_SECRET_KEY.fullmatch(key)
+            if not match or len(ids) != 1 or value != f"@@api-secret:{ids[0]}@@":
+                raise common.DeployError(
+                    f"{where}: identity receives an API secret only as the whole "
+                    "value of ApiResources__<n>__ApiSecrets__0__Value"
+                )
+            api, index = ids[0], int(match[1])
+            if api not in apis:
+                raise common.DeployError(
+                    f"{where}: {api} is not a listed component that uses "
+                    f"@@api-secret:{api}@@ in its own env/ files"
+                )
+            if api in mapping or index in mapping.values():
+                raise common.DeployError(
+                    f"{where}: each API needs exactly one line and its own <n>"
+                )
+            mapping[api] = index
+            containers.add(container)
+    if len(containers) > 1:
+        raise common.DeployError(
+            f"components/{identity}: API secret lines must all be in one env/ file"
+        )
+    for api in apis:
+        if api not in mapping:
+            raise common.DeployError(
+                f"components/{api} uses @@api-secret:{api}@@, but identity has no "
+                f"line for it: add ApiResources__<n>__ApiSecrets__0__Value: "
+                f"'@@api-secret:{api}@@' to components/{identity or '<identity>'}"
+                "/env/<container>.yaml"
+            )
+    return mapping
 
 
 def derive_entries(path, document, files):
@@ -249,7 +317,7 @@ def derive_entries(path, document, files):
         roles[key] = value
     gateway, identity = roles["gateway"], roles["identity"]
     uses_clients = any(found["client"] for found in files.values())
-    uses_apis = any(found["api"] for found in files.values())
+    mapping = api_secret_mapping(identity, files)
     entries = {}
     for name, written in components.items():
         written = written or {}
@@ -265,6 +333,7 @@ def derive_entries(path, document, files):
             "clients": None,
             "apis": None,
             "accepts": {},
+            "api_secrets": {},
         }
         if "shares" in written and name != gateway:
             raise common.DeployError(
@@ -300,12 +369,7 @@ def derive_entries(path, document, files):
                     "client with itself; remove the file"
                 )
             entry["clients"] = identity
-        if found["api"]:
-            if identity is None or name == identity:
-                raise common.DeployError(
-                    f"{directory}: an API secret needs identity: <id> in {path}, "
-                    "and identity itself cannot be an API"
-                )
+        if name in mapping:
             entry["apis"] = identity
         if name == gateway:
             entry["accepts"]["routes"] = gateway + "-routes"
@@ -314,8 +378,9 @@ def derive_entries(path, document, files):
         if name == identity:
             if uses_clients:
                 entry["accepts"]["clients"] = identity + "-clients"
-            if uses_apis:
+            if mapping:
                 entry["accepts"]["apis"] = identity + "-apis"
+                entry["api_secrets"] = mapping
         derived = [entry["public_from"], entry["clients"], entry["apis"]]
         for dependency in (gateway, identity):
             if dependency is None or dependency not in derived:
@@ -360,7 +425,7 @@ def check_entry(name, entry, where):
             f"{where}.upgrade must be one of {', '.join(UPGRADES)}"
         )
     requires = entry["requires"]
-    for key in ("public_from",) + tuple(ROLE_FILES):
+    for key in ("public_from",) + ROLES:
         value = entry[key]
         if value is None:
             continue
@@ -386,7 +451,7 @@ def check_entry(name, entry, where):
                 f"{where}.shares: {setting} is reserved and cannot be shared"
             )
     accepts = entry["accepts"]
-    if not isinstance(accepts, dict) or set(accepts) - set(ROLE_FILES):
+    if not isinstance(accepts, dict) or set(accepts) - set(ROLES):
         raise common.DeployError(
             f"{where}.accepts must map routes, clients and/or apis to a resource "
             "name (a volume ID; a Secret name for apis)"
@@ -403,6 +468,19 @@ def check_entry(name, entry, where):
             )
     if len(set(accepts.values())) != len(accepts):
         raise common.DeployError(f"{where}.accepts needs a separate resource per role")
+    mapping = entry["api_secrets"]
+    if (
+        not isinstance(mapping, dict)
+        or (mapping and "apis" not in accepts)
+        or any(type(index) is not int or index < 0 for index in mapping.values())
+        or len(set(mapping.values())) != len(mapping)
+    ):
+        raise common.DeployError(
+            f"{where}.api_secrets must map each API to its own index, and only "
+            "on the component that accepts apis"
+        )
+    for api in mapping:
+        check_id(api, f"{where}.api_secrets")
 
 
 def check_id_prefixes(names, where):
@@ -425,7 +503,7 @@ def check_owners(descriptors, where):
     """Each role has at most one accepting component, which must accept it."""
     role_owners(descriptors, where)
     for name, entry in descriptors.items():
-        for role in ROLE_FILES:
+        for role in ROLES:
             owner = entry[role]
             # An owner outside this set is a missing dependency, reported by the
             # catalog's requires check or by install's dependency check.
@@ -455,7 +533,7 @@ def imported_secrets(descriptor):
 def role_owners(descriptors, where):
     """Return {role: owner or None}; two owners of one role are ambiguous."""
     owners = {}
-    for role in ROLE_FILES:
+    for role in ROLES:
         accepting = [
             name for name, entry in descriptors.items() if role in entry["accepts"]
         ]
@@ -558,6 +636,7 @@ def source_descriptors(root):
             "clients": entry["clients"],
             "apis": entry["apis"],
             "accepts": dict(entry["accepts"]),
+            "api_secrets": dict(entry["api_secrets"]),
         }
     return descriptors
 

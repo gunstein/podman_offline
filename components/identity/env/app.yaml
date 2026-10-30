@@ -1,0 +1,11 @@
+# Identity's environment (backlog 77). Lines without a secret become the
+# ConfigMap identity-app-env; the platform adds envFrom for it.
+PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
+HTTPS_PORT: '@@HTTPS_PORT@@'
+# One API resource per API component, as in the organisation's appsettings.json.
+# The secret line receives app3's generated API secret: the same placeholder
+# is in components/app3/env/backend.yaml. Identity hashes it itself when it
+# loads it; the line is left out until app3 is installed.
+ApiResources__0__Name: app3-api
+ApiResources__0__Scopes__0: app3
+ApiResources__0__ApiSecrets__0__Value: '@@api-secret:app3@@'

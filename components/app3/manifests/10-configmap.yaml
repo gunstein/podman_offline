@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app3-settings
-data:
-  PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
-  IDENTITY_INTERNAL_URL: '@@IDENTITY_INTERNAL_URL@@'
-  # Must match ApiResources__0__Name in identity-settings (backlog 72).
-  Authentication__ApiName: app3-api

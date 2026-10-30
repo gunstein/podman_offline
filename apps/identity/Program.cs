@@ -62,10 +62,10 @@ var registrations = JsonSerializer.Deserialize<string[]>(File.ReadAllText("/clie
 var clients = registrations.Select(path => LoadClient(Path.Combine("/clients", path))).ToArray();
 if (clients.Select(client => client.ClientId).Distinct().Count() != clients.Length)
     throw new InvalidOperationException("Duplicate OIDC client IDs");
-// API resources (backlog 72): names and scopes from identity-settings, each
-// secret from the platform-rendered identity-apis Secret at the same index.
-// api.yaml's hash: sha256 renders Base64(SHA-256), the form Duende compares.
-// A named API without a secret is not installed yet and stays inactive.
+// API resources (backlog 77): names and scopes from env/app.yaml; each secret
+// is the API's raw value from the platform-rendered identity-apis Secret
+// (@@api-secret:<api>@@). A named API without a secret is not installed yet
+// and stays inactive.
 var configuredApis = builder.Configuration.GetSection("ApiResources").Get<ApiResource[]>()
     ?? Array.Empty<ApiResource>();
 if (configuredApis.Any(api => string.IsNullOrEmpty(api.Name) || api.ApiSecrets.Count > 1))
@@ -73,6 +73,14 @@ if (configuredApis.Any(api => string.IsNullOrEmpty(api.Name) || api.ApiSecrets.C
 var apiResources = configuredApis.Where(api => api.ApiSecrets.Count == 1).ToArray();
 foreach (var api in configuredApis.Except(apiResources))
     Console.WriteLine($"API resource {api.Name} has no registered secret; inactive");
+// Duende compares Base64(SHA-256) of the presented secret: hash each raw value
+// once, in memory only. An empty value is a delivery error; never print it.
+foreach (var secret in apiResources.Select(api => (api, secret: api.ApiSecrets.Single())))
+{
+    if (string.IsNullOrWhiteSpace(secret.secret.Value))
+        throw new InvalidOperationException($"API resource {secret.api.Name} has an empty secret");
+    secret.secret.Value = secret.secret.Value.Sha256();
+}
 builder.Services.AddIdentityServer(options => {
     options.IssuerUri = origin + "/identity";
     options.KeyManagement.Enabled = false;

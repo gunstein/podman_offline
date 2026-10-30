@@ -1,15 +1,15 @@
-"""API secret registrations (backlog 72): the API owns its secret, its owner receives it.
+"""API secrets (backlogs 72 and 77): @@api-secret:<api>@@ on both sides.
 
-A product with none of the demo names: accounts accepts apis and reads
-ApiResources__<index>__ApiSecrets__0__Value from its registration Secret;
-ledger (sha256) and reports (plain) register their own generated secrets.
+A product with none of the demo names: accounts is identity and receives
+ApiResources__<n>__ApiSecrets__0__Value from the platform-rendered Secret
+accounts-apis; ledger and reports each use their own generated secret. Both
+sides get the raw value; Identity hashes it itself.
 """
 
 import base64
 import builtins
 import contextlib
 import copy
-import hashlib
 import io
 import json
 import os
@@ -48,51 +48,39 @@ def api_pod(name, env=(), env_from=()):
     }
 
 
-def api_component(name, index, hash_name):
-    """An API backend: its own generated secret, given to it and registered."""
+def api_component(name):
+    """An API backend: the platform generates its secret; env/ hands it over."""
     return {
         "catalog": {"requires": ["accounts"]},
-        "defaults": {
-            "SECRET_FILES": {
-                name + "-api-secret": [
-                    {"path": "credentials/api", "generate": ["value"]}
-                ]
-            },
-            "SECRET_TEMPLATES": {
-                name + "-authentication": {
-                    "Authentication__ApiSecret": "@@secret:"
-                    + name
-                    + "-api-secret/value@@"
-                }
-            },
-        },
-        "manifests": [
-            api_pod(
-                name + "-server",
-                env=[("Authentication__ApiSecret", name + "-authentication")],
-            )
-        ],
-        "api": {
-            "index": index,
-            "secret": name + "-api-secret/value",
-            "hash": hash_name,
+        "manifests": [api_pod(name + "-server")],
+        "env": {
+            "main": {
+                "Authentication__ApiName": name,
+                "Authentication__ApiSecret": "@@api-secret:" + name + "@@",
+            }
         },
     }
+
+
+def identity_lines(*apis):
+    """accounts' env/main.yaml: one API resource per API, its secret line last."""
+    lines = {}
+    for index, api in enumerate(apis):
+        lines[f"ApiResources__{index}__Name"] = api
+        lines[f"ApiResources__{index}__ApiSecrets__0__Value"] = f"@@api-secret:{api}@@"
+    return lines
 
 
 API_PRODUCT = {
     "accounts": {
         "role": "identity",
         "catalog": {"upgrade": "newer-only"},
-        "manifests": [api_pod("accounts-server", env_from=["accounts-apis"])],
+        "manifests": [api_pod("accounts-server")],
+        "env": {"main": identity_lines("ledger", "reports")},
     },
-    "ledger": api_component("ledger", 0, "sha256"),
-    "reports": api_component("reports", 1, "none"),
+    "ledger": api_component("ledger"),
+    "reports": api_component("reports"),
 }
-
-
-def sha256(value):
-    return base64.b64encode(hashlib.sha256(value.encode()).digest()).decode()
 
 
 def decoded(secret):
@@ -101,12 +89,20 @@ def decoded(secret):
 
 class ApiRegistrationTests(ProductFixture):
     def product(self, changes=None):
+        """API_PRODUCT with changes; identity lines follow the remaining APIs."""
         product = copy.deepcopy(API_PRODUCT)
         for name, spec in (changes or {}).items():
             if spec is None:
                 product.pop(name)
             else:
                 product[name] = spec
+        if "accounts" not in (changes or {}):
+            apis = [
+                name
+                for name in ("ledger", "reports")
+                if f"@@api-secret:{name}@@" in str(product.get(name, {}).get("env"))
+            ]
+            product["accounts"]["env"]["main"] = identity_lines(*apis)
         return product
 
     def secrets(self, path):
@@ -134,31 +130,31 @@ class ApiRegistrationTests(ProductFixture):
         self.write_product(self.product())
         output = self.quiet(deploy.prepare)
         dev = common.BUILD / "dev"
-        ledger = (dev / "ledger/credentials/api/value").read_text()
-        reports = (dev / "reports/credentials/api/value").read_text()
+        ledger = (dev / "ledger/credentials/api-secret/value").read_text()
+        reports = (dev / "reports/credentials/api-secret/value").read_text()
         secrets = self.secrets(common.BUILD / "install.yaml")
         self.assertEqual(
             secrets["accounts-apis"],
             {
-                "ApiResources__0__ApiSecrets__0__Value": sha256(ledger),
+                "ApiResources__0__ApiSecrets__0__Value": ledger,
                 "ApiResources__1__ApiSecrets__0__Value": reports,
             },
         )
         self.assertEqual(
-            secrets["ledger-authentication"], {"Authentication__ApiSecret": ledger}
+            secrets["ledger-main-env-secret"], {"Authentication__ApiSecret": ledger}
         )
         self.assertEqual(
-            secrets["reports-authentication"], {"Authentication__ApiSecret": reports}
+            secrets["reports-main-env-secret"], {"Authentication__ApiSecret": reports}
         )
-        # Direct SECRET_FILES delivery, the recipe and the owner see one value.
+        # The generated source, the recipe and the owner see one value.
         self.assertEqual(secrets["ledger-api-secret"], {"value": ledger})
         self.assertEqual(secrets["reports-api-secret"], {"value": reports})
         for path in [dev / "apis"] + list((dev / "apis").rglob("*")):
             self.assertEqual(path.stat().st_mode & 0o077, 0, path)
         self.assertEqual(
-            sorted(p.name for p in (dev / "apis/ledger").iterdir()), ["index", "value"]
+            sorted(p.name for p in (dev / "apis/ledger").iterdir()), ["value"]
         )
-        for value in (ledger, reports, sha256(ledger)):
+        for value in (ledger, reports):
             self.assertNotIn(value, output)
         # Prepare again: the same secrets, and validate agrees with prepare.
         self.quiet(deploy.prepare)
@@ -179,36 +175,88 @@ class ApiRegistrationTests(ProductFixture):
         self.assertFalse((common.BUILD / "dev/apis/reports").exists())
 
     def test_invalid_declarations_are_refused_before_dev_writes(self):
-        reports = API_PRODUCT["reports"]
-        undeclared = copy.deepcopy(reports)
-        undeclared["api"]["secret"] = "reports-other/value"
-        no_key = copy.deepcopy(reports)
-        no_key["api"]["secret"] = "reports-api-secret/token"
-        unknown_hash = copy.deepcopy(reports)
-        unknown_hash["api"]["hash"] = "md5"
-        boolean_index = copy.deepcopy(reports)
-        boolean_index["api"]["index"] = True
-        name_field = copy.deepcopy(reports)
-        name_field["api"]["name"] = "reports"
-        own_secret = copy.deepcopy(API_PRODUCT["accounts"])
-        own_secret["defaults"] = {
-            "SECRET_FILES": {"accounts-apis": [{"path": "x", "generate": ["v"]}]}
-        }
-        duplicate = copy.deepcopy(reports)
-        duplicate["api"]["index"] = 0
-        for label, changes, pattern in (
-            ("undeclared secret", {"reports": undeclared}, "needs SECRET_FILES"),
-            ("missing key", {"reports": no_key}, "no key 'token'"),
-            ("unknown hash", {"reports": unknown_hash}, "Invalid API registration"),
-            ("boolean index", {"reports": boolean_index}, "Invalid API registration"),
-            ("name field", {"reports": name_field}, "Invalid API registration"),
-            ("owner declares it", {"accounts": own_secret}, "platform renders it"),
-            ("duplicate index", {"reports": duplicate}, "both use index 0"),
+        def env(name, **values):
+            def change(product):
+                product[name]["env"]["main"].update(values)
+
+            return change
+
+        def identity(**values):
+            def change(product):
+                product["accounts"]["env"]["main"] = dict(
+                    identity_lines("ledger", "reports"), **values
+                )
+
+            return change
+
+        def owner_declares(product):
+            product["accounts"]["defaults"] = {
+                "SECRET_FILES": {"accounts-apis": [{"path": "x", "generate": ["v"]}]}
+            }
+
+        def own_source(product):
+            product["reports"]["defaults"] = {
+                "SECRET_FILES": {"reports-api-secret": "generate"}
+            }
+
+        def no_line(product):
+            product["accounts"]["env"]["main"] = identity_lines("ledger")
+
+        for label, change, pattern in (
+            (
+                "foreign use",
+                env("reports", Other="@@api-secret:ledger@@"),
+                "a component may use only its own API secret",
+            ),
+            (
+                "missing identity line",
+                no_line,
+                "uses @@api-secret:reports@@, but identity has no line for it",
+            ),
+            (
+                "wrong key",
+                identity(Other="@@api-secret:ledger@@"),
+                "only as the whole value of ApiResources__<n>__ApiSecrets__0__Value",
+            ),
+            (
+                "not the whole value",
+                identity(
+                    ApiResources__1__ApiSecrets__0__Value="x@@api-secret:reports@@"
+                ),
+                "only as the whole value",
+            ),
+            (
+                "two lines for one API",
+                identity(ApiResources__5__ApiSecrets__0__Value="@@api-secret:ledger@@"),
+                "each API needs exactly one line and its own <n>",
+            ),
+            (
+                "self reference",
+                identity(
+                    ApiResources__5__ApiSecrets__0__Value="@@api-secret:accounts@@"
+                ),
+                "accounts is not a listed component that uses",
+            ),
+            (
+                "unlisted API",
+                identity(
+                    ApiResources__5__ApiSecrets__0__Value="@@api-secret:billing@@"
+                ),
+                "billing is not a listed component",
+            ),
+            ("owner declares it", owner_declares, "platform renders it"),
+            (
+                "explicit source collides",
+                own_source,
+                "credentials/api-secret is the API secret the platform generates",
+            ),
         ):
             with self.subTest(label):
                 if self.source.exists():
                     shutil.rmtree(self.source)
-                self.write_product(self.product(changes))
+                product = self.product()
+                change(product)
+                self.write_product(product)
                 with self.assertRaisesRegex(common.DeployError, pattern):
                     self.quiet(deploy.prepare)
                 self.assertFalse(common.BUILD.exists())
@@ -227,7 +275,7 @@ class ApiRegistrationTests(ProductFixture):
         return self.secrets(catalog.component_paths("accounts")[2])["accounts-apis"]
 
     def value(self, name):
-        return (common.STATE / name / "credentials/api/value").read_text()
+        return (common.STATE / name / "credentials/api-secret/value").read_text()
 
     def test_install_rotation_removal_and_uninstall_update_the_owner(self):
         releases, restarts = self.install_all(self.product())
@@ -242,16 +290,17 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(
             self.owner_secret(),
             {
-                "ApiResources__0__ApiSecrets__0__Value": sha256(self.value("ledger")),
+                "ApiResources__0__ApiSecrets__0__Value": self.value("ledger"),
                 "ApiResources__1__ApiSecrets__0__Value": self.value("reports"),
             },
         )
         registration = common.STATE / "apis/ledger"
-        for path in (registration, registration / "index", registration / "value"):
+        for path in (registration, registration / "value"):
             self.assertEqual(path.stat().st_mode & 0o077, 0, path)
-        self.assertEqual((registration / "index").read_text(), "0")
+        self.assertEqual((registration / "value").read_text(), self.value("ledger"))
         self.assertEqual(
-            (registration / "value").read_text(), sha256(self.value("ledger"))
+            catalog.load_installed_metadata(common.STATE)["accounts"]["api_secrets"],
+            {"ledger": 0, "reports": 1},
         )
 
         with self.subTest("unchanged reinstall leaves the owner alone"):
@@ -265,7 +314,7 @@ class ApiRegistrationTests(ProductFixture):
             self.assertEqual(len(self.owner_secret()), 2)
 
         with self.subTest("a rotated secret restarts the API, then the owner"):
-            rotated = common.STATE / "ledger/credentials/api/value"
+            rotated = common.STATE / "ledger/credentials/api-secret/value"
             rotated.write_text("rotated-ledger-secret")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
@@ -273,21 +322,22 @@ class ApiRegistrationTests(ProductFixture):
             self.assertEqual(restarts, ["ledger", "accounts"])
             self.assertEqual(
                 self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
-                sha256("rotated-ledger-secret"),
+                "rotated-ledger-secret",
             )
             self.assertEqual(
                 self.secrets(catalog.component_paths("ledger")[2])[
-                    "ledger-authentication"
+                    "ledger-main-env-secret"
                 ],
                 {"Authentication__ApiSecret": "rotated-ledger-secret"},
             )
             self.assertNotIn("rotated-ledger-secret", output.getvalue())
-            self.assertNotIn(sha256("rotated-ledger-secret"), output.getvalue())
 
         with self.subTest("a release without the role removes the registration"):
+            # The installed accounts 1.1.0 keeps its line for reports; without a
+            # registration that resource is simply inactive.
             plain = copy.deepcopy(API_PRODUCT["reports"])
-            plain.pop("api")
-            (self.source / "components/reports/api.yaml").unlink()
+            del plain["env"]["main"]["Authentication__ApiSecret"]
+            shutil.rmtree(self.source)
             self.write_product(self.product({"reports": plain}), version="1.2.0")
             # Only reports is new; it requires the installed accounts version.
             (self.source / "components/accounts/VERSION").write_text("1.1.0\n")
@@ -312,26 +362,75 @@ class ApiRegistrationTests(ProductFixture):
         ledger["catalog"]["upgrade"] = "newer-only"
         releases, _ = self.install_all(self.product({"ledger": ledger}))
         before = self.owner_secret()
-        (common.STATE / "ledger/credentials/api/value").write_text("not-yet-active")
+        (common.STATE / "ledger/credentials/api-secret/value").write_text(
+            "not-yet-active"
+        )
         self.assertEqual(self.install(releases["ledger"]), [])
         self.assertEqual(self.owner_secret(), before)
         self.assertTrue((common.STATE / "apis/ledger/value").is_file())
 
-    def test_duplicate_index_is_refused_before_production_writes(self):
-        duplicate = copy.deepcopy(API_PRODUCT["reports"])
-        duplicate["api"]["index"] = 0
-        self.write_product(self.product({"reports": duplicate}))
+    def test_api_must_be_in_the_installed_identity_lines(self):
+        """An isolated API bundle needs an installed Identity that lists it."""
+        self.write_product(self.product({"reports": None}))
+        early = self.build_and_unpack()
+        self.install(early["accounts"])
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.releases)
+        self.write_product(self.product())
         releases = self.build_and_unpack()
-        self.install(releases["accounts"])
-        self.install(releases["ledger"])
         self.use_root(releases["reports"])
         deploy.init_config("reports")
         before = self.snapshot(common.STATE)
         self.process.reset_mock()
-        with self.assertRaisesRegex(common.DeployError, "ledger and reports both"):
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "the accounts release has no line for it; install the accounts release "
+            "that lists reports first",
+        ):
             deploy.install()
         self.assertEqual(self.snapshot(common.STATE), before)
         self.process.assert_not_called()
+
+    def test_identity_upgrade_keeps_installed_apis_and_may_move_lines(self):
+        self.install_all(self.product())
+        with self.subTest("a release that drops an installed API is refused"):
+            shutil.rmtree(self.source)
+            shutil.rmtree(self.releases)
+            self.write_product(self.product({"reports": None}), version="1.1.0")
+            dropped = self.build_and_unpack()
+            self.use_root(dropped["accounts"])
+            before = self.snapshot(common.STATE)
+            with self.assertRaisesRegex(
+                common.DeployError,
+                "no API secret line for installed reports; uninstall reports first",
+            ):
+                deploy.install()
+            self.assertEqual(self.snapshot(common.STATE), before)
+
+        moved = self.product()
+        moved["accounts"]["env"]["main"] = identity_lines("reports", "ledger")
+        with self.subTest("the same skipped version may not change its lines"):
+            shutil.rmtree(self.source)
+            shutil.rmtree(self.releases)
+            self.write_product(moved)
+            same = self.build_and_unpack()
+            self.use_root(same["accounts"])
+            with self.assertRaisesRegex(common.DeployError, "raise accounts's version"):
+                deploy.install()
+
+        with self.subTest("a newer release moves the lines; values follow by API"):
+            shutil.rmtree(self.source)
+            shutil.rmtree(self.releases)
+            self.write_product(moved, version="1.1.0")
+            newer = self.build_and_unpack()
+            self.assertEqual(self.install(newer["accounts"]), ["accounts"])
+            self.assertEqual(
+                self.owner_secret(),
+                {
+                    "ApiResources__0__ApiSecrets__0__Value": self.value("reports"),
+                    "ApiResources__1__ApiSecrets__0__Value": self.value("ledger"),
+                },
+            )
 
     def fail_on(self, *failing):
         """Make the recorded host command fail once for each listed argv."""
@@ -351,7 +450,7 @@ class ApiRegistrationTests(ProductFixture):
         releases, _ = self.install_all(self.product())
         output = catalog.component_paths("accounts")[2]
         before = output.read_bytes()
-        (common.STATE / "ledger/credentials/api/value").write_text("rotated")
+        (common.STATE / "ledger/credentials/api-secret/value").write_text("rotated")
         replace = os.replace
 
         def interrupted(source, target):
@@ -373,7 +472,7 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(self.restarts(), ["ledger", "accounts"])
         self.assertEqual(
             self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
-            sha256("rotated"),
+            "rotated",
         )
         self.assertFalse((common.STATE / "pending-operation.json").exists())
 
@@ -384,23 +483,23 @@ class ApiRegistrationTests(ProductFixture):
                 if doc["metadata"]["name"] != "accounts-apis"
             ]
             output.write_text(yaml.safe_dump_all(documents))
-            (common.STATE / "ledger/credentials/api/value").write_text("again")
+            (common.STATE / "ledger/credentials/api-secret/value").write_text("again")
             self.install(releases["ledger"])
             self.assertEqual(
                 self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
-                sha256("again"),
+                "again",
             )
 
         with self.subTest("an unreadable owner YAML names a pending-safe recovery"):
             output.write_text("- [unbalanced")
-            (common.STATE / "ledger/credentials/api/value").write_text("third")
+            (common.STATE / "ledger/credentials/api-secret/value").write_text("third")
             with self.assertRaisesRegex(
                 common.DeployError,
                 r"Restore that file from backup, then run ./deploy.sh install "
                 r"from this bundle again",
             ) as raised:
                 self.install(releases["ledger"])
-            self.assertNotIn(sha256("third"), str(raised.exception))
+            self.assertNotIn("third", str(raised.exception))
             self.assertTrue((common.STATE / "pending-operation.json").exists())
 
     def test_skipped_newer_only_retry_of_another_version_is_refused(self):
@@ -412,7 +511,7 @@ class ApiRegistrationTests(ProductFixture):
         for name in ("accounts", "reports"):
             (self.source / "components" / name / "VERSION").write_text("1.0.0\n")
         new = self.build_and_unpack()
-        (common.STATE / "ledger/credentials/api/value").write_text("upgraded")
+        (common.STATE / "ledger/credentials/api-secret/value").write_text("upgraded")
         self.fail_on(["systemctl", "--user", "restart", "myproduct-accounts.service"])
         with self.assertRaises(subprocess.CalledProcessError):
             self.install(new["ledger"])
@@ -433,10 +532,12 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(self.restarts(), ["ledger", "accounts"])
         self.assertEqual(
             self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
-            sha256("upgraded"),
+            "upgraded",
         )
         self.assertEqual(
-            self.secrets(catalog.component_paths("ledger")[2])["ledger-authentication"],
+            self.secrets(catalog.component_paths("ledger")[2])[
+                "ledger-main-env-secret"
+            ],
             {"Authentication__ApiSecret": "upgraded"},
         )
 
@@ -466,13 +567,10 @@ class ApiRegistrationTests(ProductFixture):
                     if path.startswith(str(common.STATE)) and path.endswith("/value")
                 ]
                 self.assertEqual(values, [])
-                self.assertTrue(
-                    any(path.endswith("apis/ledger/index") for path in opened)
-                )
 
     def test_secret_text_that_consumers_would_see_differently_is_refused(self):
         self.write_product(self.product())
-        retained = common.BUILD / "dev/reports/credentials/api/value"
+        retained = common.BUILD / "dev/reports/credentials/api-secret/value"
         retained.parent.mkdir(parents=True)
         retained.write_text("retained-secret\n")
         with self.assertRaisesRegex(
@@ -484,12 +582,16 @@ class ApiRegistrationTests(ProductFixture):
         self.assertFalse((common.BUILD / "dev/apis").exists())
 
         shutil.rmtree(common.BUILD)
-        releases, _ = self.install_all(self.product({"reports": None}))
-        self.write_product(self.product())
+        self.install_all(self.product({"reports": None}))
+        # accounts 1.1.0 adds the line for reports; then reports may install.
+        shutil.rmtree(self.source)
+        shutil.rmtree(self.releases)
+        self.write_product(self.product(), version="1.1.0")
         releases = self.build_and_unpack()
+        self.install(releases["accounts"])
         self.use_root(releases["reports"])
         deploy.init_config("reports")
-        retained = common.STATE / "reports/credentials/api/value"
+        retained = common.STATE / "reports/credentials/api-secret/value"
         retained.parent.mkdir(parents=True)
         retained.write_text("retained-secret\n")
         before = self.snapshot(common.STATE)
@@ -499,26 +601,16 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(self.snapshot(common.STATE), before)
         self.process.assert_not_called()
 
-    def test_api_descriptor_and_records_never_echo_values(self):
-        path = self.root / "api.yaml"
-        for metadata in (
-            {"index": -1, "secret": "a-b/value", "hash": "none"},
-            {"index": 0, "secret": "a-b", "hash": "none"},
-            {"index": 0, "secret": "a-b/value"},
-            [],
-        ):
-            with self.subTest(metadata=metadata):
-                path.write_text(yaml.safe_dump(metadata))
-                with self.assertRaisesRegex(common.DeployError, "Invalid API"):
-                    registrations.api_descriptor(path)
+    def test_registration_records_never_echo_values(self):
         record = self.root / "apis/ledger"
         record.mkdir(parents=True)
-        (record / "index").write_text("00")
+        (record / "index").write_text("0")
         (record / "value").write_text("do-not-show")
         with self.assertRaises(common.DeployError) as raised:
-            registrations.api_index(record)
+            registrations.check_api_registration(record)
         self.assertNotIn("do-not-show", str(raised.exception))
-        (record / "index").write_text("0")
+        (record / "index").unlink()
+        registrations.check_api_registration(record)
         (record / "value").write_bytes(b"\xff do-not-show")
         with self.assertRaises(common.DeployError) as raised:
             registrations.api_value(record / "value", "ledger")

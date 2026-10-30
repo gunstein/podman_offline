@@ -184,8 +184,15 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
                     }
                 )
             )
-            (root / "components/app3").mkdir(parents=True)
-            (root / "components/app3/api.yaml").write_text("index: 0\n")
+            for name, text in (
+                (
+                    "identity/env/app.yaml",
+                    "ApiResources__0__ApiSecrets__0__Value: '@@api-secret:app3@@'\n",
+                ),
+                ("app3/env/backend.yaml", "A: '1'\nSecret: '@@api-secret:app3@@'\n"),
+            ):
+                (root / "components" / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / "components" / name).write_text(text)
             with (
                 mock.patch.object(
                     subprocess,
@@ -207,11 +214,17 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
                 add[3:],
                 ["add", "-A", "--"]
                 + list(identity_template_baseline.FILES)
-                + ["components/app3/api.yaml"],
+                + [
+                    "components/identity/env/app.yaml",
+                    "components/app3/env/backend.yaml",
+                ],
             )
             self.assertIn("commit", commit)
-            # Identity 0.4.11 accepted no API registrations.
-            self.assertFalse((root / "components/app3/api.yaml").exists())
+            # Identity 0.4.11 had no env/ files and accepted no API secrets.
+            self.assertFalse((root / "components/identity/env").exists())
+            self.assertEqual(
+                (root / "components/app3/env/backend.yaml").read_text(), "A: '1'\n"
+            )
             self.assertEqual(
                 (root / "apps/identity/DatabaseEnvironment.cs").read_bytes(),
                 b"old fixture",

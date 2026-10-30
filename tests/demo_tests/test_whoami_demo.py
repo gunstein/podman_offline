@@ -163,47 +163,35 @@ class WhoamiSourceTests(unittest.TestCase):
         self.assertIn("proxy_set_header X-Forwarded-Proto https;", route)
 
     def test_api_registration_matches_identity_and_the_backend(self):
-        """Backlog 72: app3 registers its own secret at the index Identity names."""
-        api = yaml.safe_load((COMPONENT / "api.yaml").read_text())
-        self.assertEqual(
-            api, {"index": 0, "secret": "app3-api-secret/value", "hash": "sha256"}
+        """Backlog 77: the same @@api-secret:app3@@ on both sides, nothing else."""
+        backend_env = yaml.safe_load((COMPONENT / "env/backend.yaml").read_text())
+        identity_env = yaml.safe_load(
+            (ROOT / "components/identity/env/app.yaml").read_text()
         )
+        self.assertEqual(
+            backend_env["Authentication__ApiSecret"], "@@api-secret:app3@@"
+        )
+        self.assertEqual(
+            identity_env["ApiResources__0__ApiSecrets__0__Value"], "@@api-secret:app3@@"
+        )
+        self.assertEqual(
+            identity_env["ApiResources__0__Name"],
+            backend_env["Authentication__ApiName"],
+        )
+        self.assertEqual(identity_env["ApiResources__0__Scopes__0"], "app3")
+        self.assertFalse((COMPONENT / "api.yaml").exists())
         config = yaml.safe_load((COMPONENT / "config.defaults.yaml").read_text())
-        self.assertEqual(
-            config["SECRET_FILES"]["app3-api-secret"],
-            [{"path": "credentials/api", "generate": ["value"]}],
-        )
-        self.assertEqual(
-            config["SECRET_TEMPLATES"]["app3-authentication"],
-            {"Authentication__ApiSecret": "@@secret:app3-api-secret/value@@"},
-        )
+        self.assertNotIn("SECRET_TEMPLATES", config)
         catalog = deployment_catalog.load_catalog(ROOT)
         self.assertEqual(catalog["app3"]["apis"], "identity")
         self.assertEqual(catalog["identity"]["accepts"]["apis"], "identity-apis")
-        identity = yaml.safe_load(
-            (ROOT / "components/identity/manifests/10-configmap.yaml").read_text()
-        )["data"]
-        settings = yaml.safe_load(
-            (COMPONENT / "manifests/10-configmap.yaml").read_text()
-        )
-        index = str(api["index"])
-        self.assertEqual(
-            identity["ApiResources__" + index + "__Name"],
-            settings["data"]["Authentication__ApiName"],
-        )
-        self.assertEqual(identity["ApiResources__" + index + "__Scopes__0"], "app3")
+        self.assertEqual(catalog["identity"]["api_secrets"], {"app3": 0})
         _, backend = backend_container()
+        self.assertNotIn("envFrom", backend)
+        # Identity hashes the raw value itself (Duende compares hashes).
+        identity_program = (ROOT / "apps/identity/Program.cs").read_text()
         self.assertIn(
-            {
-                "name": "Authentication__ApiSecret",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "app3-authentication",
-                        "key": "Authentication__ApiSecret",
-                    }
-                },
-            },
-            backend["env"],
+            "secret.secret.Value = secret.secret.Value.Sha256();", identity_program
         )
         program = (BACKEND / "Program.cs").read_text()
         self.assertIn('Required("Authentication:ApiName")', program)

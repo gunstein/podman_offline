@@ -105,6 +105,28 @@ def rename_route(text):
     return text
 
 
+def rename_env(values):
+    """Rename secret references in one env/<container>.yaml (backlog 77).
+
+    An @@api-secret: line for a demo component left out of the renamed product
+    (app3) is dropped: Identity receives secrets only from listed APIs.
+    """
+    result = {}
+    for key, value in values.items():
+        if isinstance(value, str):
+            if any(
+                api not in NAMES for api in re.findall(r"@@api-secret:([^@]+)@@", value)
+            ):
+                continue
+            value = re.sub(
+                r"@@(api-secret|secret):([a-z0-9-]+)",
+                lambda match: f"@@{match[1]}:{rename(match[2])}",
+                value,
+            )
+        result[key] = value
+    return result
+
+
 def rename_defaults(config):
     """Rename prefixed file-source IDs and the database host."""
     result = dict(config)
@@ -206,6 +228,11 @@ def generate(source, target):
                     if document is not None
                 ]
             dump(destination / "manifests" / manifest.name, documents, multiple=True)
+        for env in sorted((origin / "env").glob("*.yaml")):
+            with env.open(encoding="utf-8") as stream:
+                values = rename_env(yaml.safe_load(stream))
+            (destination / "env").mkdir(exist_ok=True)
+            dump(destination / "env" / env.name, values)
         defaults = origin / "config.defaults.yaml"
         if defaults.exists():
             with defaults.open(encoding="utf-8") as stream:

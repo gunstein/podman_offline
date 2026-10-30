@@ -1,6 +1,0 @@
-# Registers app3's own API secret with Identity (backlog 72): index is the
-# position in Identity's ApiResources list (named in identity-settings).
-index: 0
-secret: app3-api-secret/value
-# Duende compares Base64(SHA-256) of the presented secret.
-hash: sha256

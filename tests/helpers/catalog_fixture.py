@@ -40,6 +40,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
         "clients": entry["clients"],
         "apis": entry["apis"],
         "accepts": dict(entry["accepts"]),
+        "api_secrets": dict(entry["api_secrets"]),
     }
     for role, filename in catalog.ROLE_FILES.items():
         if not (directory / filename).is_file():

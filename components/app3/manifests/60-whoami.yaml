@@ -20,20 +20,13 @@ spec:
       periodSeconds: 10
       timeoutSeconds: 5
       failureThreshold: 6
-    envFrom:
-    - configMapRef:
-        name: app3-settings
+    # Other settings and the API secret: components/app3/env/backend.yaml.
+    # These two stay here: the platform compares them with client.yaml.
     env:
     - name: APP_ID
       value: app3
     - name: BASE_PATH
       value: /app3
-    # The API secret Identity receives through app3's api.yaml (backlog 72).
-    - name: Authentication__ApiSecret
-      valueFrom:
-        secretKeyRef:
-          name: app3-authentication
-          key: Authentication__ApiSecret
     volumeMounts:
     - name: client
       mountPath: /run/secrets/client

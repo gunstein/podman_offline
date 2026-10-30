@@ -200,6 +200,7 @@ class CatalogTests(unittest.TestCase):
                     "clients": None,
                     "apis": None,
                     "accepts": {},
+                    "api_secrets": {},
                 },
                 **fields,
             )
@@ -393,6 +394,7 @@ class CatalogTests(unittest.TestCase):
                 "clients": None,
                 "apis": None,
                 "accepts": {},
+                "api_secrets": {},
             },
         )
         for descriptor in descriptors.values():

@@ -6,14 +6,14 @@ builds the registrations in a temporary directory, the pending record
 then are registrations written or deleted in the state directory (common.STATE).
 
 Route and client registrations are public. An API registration is a
-directory apis/<component>/ with index (the position in the owner's list, not
-secret) and value (what the owner checks the API's secret against, private
-like the API component's own secret files). Staging and validation read only
-index; value is read when the owner's Secret is rendered.
+directory apis/<component>/ with value: the API's generated secret, private
+like the API component's own secret files. Which owner variable receives it
+comes from the owner's descriptor (api_secrets), never from the registration.
+Staging and validation never read value; it is read when the owner's Secret
+is rendered.
 """
 
 import base64
-import hashlib
 import json
 import os
 import re
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, templates
+from . import catalog, common, envfiles, templates
 from . import render as rendering
 
 
@@ -44,13 +44,13 @@ def registration_stage(components, directory, known, state=None, configs=None):
     registrations then come only from the catalog, so existing ones are ignored.
 
     A selected component's API registration needs its secret value, which may
-    not be generated yet: staging checks api.yaml, its secret declaration and
-    the index, and api_updates adds the registration after generation. Staging
-    reads only the index of existing API registrations, never their values.
+    not be generated yet: staging checks that the owner's descriptor has a line
+    for the API, and api_updates adds the registration after generation.
+    Staging never reads registered values.
     """
     state = state or common.STATE
     owners = catalog.role_owners(known, "registration owners")
-    for name in catalog.ROLE_FILES:
+    for name in catalog.ROLES:
         source = state / name
         if source.is_symlink():
             raise common.DeployError(
@@ -77,9 +77,10 @@ def registration_stage(components, directory, known, state=None, configs=None):
             if name == "apis":
                 if path.name not in known:
                     raise common.DeployError(f"Unexpected API registration: {path}")
-                index = api_index(path)
+                check_api_registration(path)
                 if path.name not in components:
-                    stage_api_index(directory / name / path.name, index)
+                    # Its value stays where it is; owner_secrets reads it there.
+                    (directory / name / path.name).mkdir(mode=0o700)
                 continue
             if not path.is_dir() or path.name not in known:
                 raise common.DeployError(
@@ -96,7 +97,7 @@ def registration_stage(components, directory, known, state=None, configs=None):
                         f"Refuse symlinked public client file: {public}"
                     )
                 shutil.copy2(public, target / filename)
-    updates, removals, selected_apis = {}, set(), {}
+    updates, removals = {}, set()
     for component in components:
         for role, relative in (
             ("routes", "routes/" + component + ".conf"),
@@ -118,6 +119,15 @@ def registration_stage(components, directory, known, state=None, configs=None):
                 raise common.DeployError(
                     f"{source / filename} must exist exactly when {component} declares {role}"
                 )
+        api_owner = known[component]["apis"]
+        if api_owner is not None and component not in known.get(api_owner, {}).get(
+            "api_secrets", {}
+        ):
+            raise common.DeployError(
+                f"{component} uses @@api-secret:{component}@@, but the {api_owner} "
+                f"release has no line for it; install the {api_owner} release that "
+                f"lists {component} first"
+            )
         if not declared:
             continue
         config_path = catalog.state_paths(component, state)[0]
@@ -131,10 +141,6 @@ def registration_stage(components, directory, known, state=None, configs=None):
             updates.update(
                 client_registration(component, declared["clients"], config, config_path)
             )
-        if "apis" in declared:
-            selected_apis[component] = check_api_source(
-                component, declared["apis"], config, config_path
-            )["index"]
     for relative, data in updates.items():
         target = directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -162,10 +168,6 @@ def registration_stage(components, directory, known, state=None, configs=None):
         json.dumps([path.name + "/client.json" for path in client_dirs]),
         encoding="utf-8",
     )
-    indexes = dict(selected_apis)
-    for path in sorted((directory / "apis").iterdir()):
-        indexes[path.name] = api_index(path)
-    check_api_indexes(indexes)
     # Imports overwrite files without deleting old entries; only these current indexes are read.
     imports = {}
     if owners["routes"]:
@@ -174,7 +176,7 @@ def registration_stage(components, directory, known, state=None, configs=None):
         imports[known[owners["clients"]]["accepts"]["clients"]] = client_dirs + [index]
     if owners["apis"]:
         # A Secret, not a volume: owner_secrets renders it from the staged
-        # indexes, with values from staging or else from the state directory.
+        # API names, with values from staging or else from the state directory.
         imports[known[owners["apis"]]["accepts"]["apis"]] = [
             directory / "apis",
             state / "apis",
@@ -318,90 +320,16 @@ def client_registration(component, path, config, config_path):
     }
 
 
-API_KEYS = ("index", "secret", "hash")
-# How the owner stores an API secret: sha256 is Base64(SHA-256(value)), the
-# form Duende's shared-secret validator compares when secrets come from
-# configuration; none passes the value unchanged.
-API_HASHES = ("sha256", "none")
-API_SECRET = re.compile(r"([a-z0-9-]+)/([-._a-zA-Z0-9]+)\Z")
-
-
-def api_descriptor(path):
-    """Read and check api.yaml: index, secret (<Secret ID>/<key>) and hash."""
-    metadata = rendering.load_yaml(path)
+def check_api_registration(directory):
+    """An API registration is a directory holding only the file value."""
     if (
-        not isinstance(metadata, dict)
-        or set(metadata) != set(API_KEYS)
-        or type(metadata["index"]) is not int
-        or metadata["index"] < 0
-        or not isinstance(metadata["secret"], str)
-        or not API_SECRET.fullmatch(metadata["secret"])
-        or metadata["hash"] not in API_HASHES
+        directory.is_symlink()
+        or not directory.is_dir()
+        or [path.name for path in directory.iterdir()] != ["value"]
+        or (directory / "value").is_symlink()
+        or not (directory / "value").is_file()
     ):
-        raise common.DeployError(
-            f"Invalid API registration {path}; expected index (0 or more, the "
-            "position in the owner's ApiResources list), secret (<Secret ID>/<key> "
-            "from this component's SECRET_FILES) and hash ("
-            + " or ".join(API_HASHES)
-            + ")"
-        )
-    return metadata
-
-
-def check_api_source(component, path, config, config_path):
-    """The referenced key must come from this component's SECRET_FILES; no reads."""
-    metadata = api_descriptor(path)
-    group, key = metadata["secret"].split("/")
-    sources = rendering.file_group_sources(config, common.SECRET_FILES)
-    if group not in sources:
-        raise common.DeployError(
-            f"{path}: secret {metadata['secret']} needs {common.SECRET_FILES}."
-            f"{group} in {config_path}"
-        )
-    keys = rendering.secret_keys(config, config_path, [], component).get(group)
-    # None: a missing source, reported with its path by the file checks.
-    if keys is not None and key not in keys:
-        raise common.DeployError(
-            f"{path}: {common.SECRET_FILES}.{group} in {config_path} provides "
-            f"no key {key!r}"
-        )
-    return metadata
-
-
-def check_api_indexes(indexes):
-    """Two APIs at one index would overwrite each other's secret in the owner."""
-    for value in sorted(set(indexes.values())):
-        users = sorted(name for name, index in indexes.items() if index == value)
-        if len(users) > 1:
-            raise common.DeployError(
-                f"API registrations of {' and '.join(users)} both use index "
-                f"{value}; each API needs its own index (api.yaml)"
-            )
-
-
-API_FILES = ("index", "value")
-
-
-def api_index(directory):
-    """Read one API registration's index; its value file is checked by name only."""
-    if directory.is_symlink() or not directory.is_dir():
         raise common.DeployError(f"Invalid API registration: {directory}")
-    for path in directory.iterdir():
-        if path.name not in API_FILES or path.is_symlink() or not path.is_file():
-            raise common.DeployError(f"Invalid API registration: {directory}")
-    try:
-        text = (directory / "index").read_text(encoding="ascii")
-        if not re.fullmatch(r"(0|[1-9][0-9]*)", text):
-            raise ValueError("index")
-    except (OSError, ValueError, UnicodeError):
-        raise common.DeployError(f"Invalid API registration: {directory}") from None
-    return int(text)
-
-
-def stage_api_index(directory, index):
-    """Stage the index of one API registration; its value stays where it is."""
-    directory.mkdir(mode=0o700)
-    (directory / "index").write_text(str(index), encoding="ascii")
 
 
 def api_value(path, where):
@@ -415,27 +343,25 @@ def api_value(path, where):
     return value
 
 
-def api_registration(component, path, config, config_path):
-    """Build one private API registration from api.yaml and the generated secret.
+def api_registration(component, config, config_path):
+    """Build one private API registration from the API's generated secret.
 
-    Call after the component's secrets are generated. The secret file is used
-    byte for byte, as direct SECRET_FILES delivery gives it to the API; text a
-    SECRET_TEMPLATES recipe would change (a trailing newline) or refuse is
-    refused here, so every consumer sees the same value. The owner receives it
-    in the form hash names; the API component keeps its own plain value.
+    Call after the component's secrets are generated. The file is used byte
+    for byte, as the API's own env/ recipe gives it to the API; text a recipe
+    would change (a trailing newline) or refuse is refused here, so both sides
+    see the same value. Identity receives the raw value and hashes it itself.
     """
-    metadata = check_api_source(component, path, config, config_path)
-    group, key = metadata["secret"].split("/")
-    where = f"{path}: secret {metadata['secret']}"
+    group = envfiles.api_source(component)
+    where = f"@@api-secret:{component}@@ ({envfiles.API_SOURCE_PATH}/value)"
     items = rendering.load_file_group(
         {common.SECRET_FILES: {group: config[common.SECRET_FILES][group]}},
         common.SECRET_FILES,
         config_path.parent,
         component,
     )[group]
-    item = next((item for item in items if item.name == key), None)
+    item = next((item for item in items if item.name == "value"), None)
     if item is None:
-        raise common.DeployError(f"{where}: missing source file {key}")
+        raise common.DeployError(f"{where}: missing source file")
     try:
         secret = item.read_bytes().decode("utf-8")
     except (OSError, UnicodeError):
@@ -443,23 +369,14 @@ def api_registration(component, path, config, config_path):
     if not secret:
         raise common.DeployError(f"{where}: empty secret")
     try:
-        templates.check_text(secret, where, metadata["secret"])
+        templates.check_text(secret, where, "the API secret")
     except common.DeployError:
         raise common.DeployError(
             f"{where}: an API secret must be one line of text without a trailing "
             "newline, surrounding spaces, quotes, ; or control characters "
             f"({item})"
         ) from None
-    if metadata["hash"] == "sha256":
-        digest = hashlib.sha256(secret.encode("utf-8")).digest()
-        value = base64.b64encode(digest).decode("ascii")
-    else:
-        value = secret
-    prefix = "apis/" + component + "/"
-    return {
-        prefix + "index": str(metadata["index"]).encode("ascii"),
-        prefix + "value": value.encode("utf-8"),
-    }
+    return {"apis/" + component + "/value": secret.encode("utf-8")}
 
 
 def api_updates(components, known, imports, configs, state=None):
@@ -484,21 +401,16 @@ def api_updates(components, known, imports, configs, state=None):
         if component not in configs:
             installed = state / "apis" / component
             if installed.exists() or installed.is_symlink():
-                stage_api_index(staged, api_index(installed))
+                check_api_registration(installed)
+                staged.mkdir(mode=0o700)
             continue
         config, config_path = configs[component]
         rendering.generate_secrets(config, config_path.parent)
-        update = api_registration(
-            component,
-            common.ROOT / "components" / component / "api.yaml",
-            config,
-            config_path,
-        )
+        update = api_registration(component, config, config_path)
         staged.mkdir(mode=0o700)
-        for name in API_FILES:
-            rendering.write_private(
-                staged / name, str(update["apis/" + component + "/" + name], "utf-8")
-            )
+        rendering.write_private(
+            staged / "value", str(update["apis/" + component + "/value"], "utf-8")
+        )
         updates.update(update)
     return updates
 
@@ -506,13 +418,14 @@ def api_updates(components, known, imports, configs, state=None):
 def owner_secrets(component, imports, known):
     """Render the registration Secret this component accepts, or nothing.
 
-    One key per registered API: ApiResources__<index>__ApiSecrets__0__Value.
-    The value comes from staging (this install's API) or else the installed
-    registration.
+    One key per registered API: ApiResources__<n>__ApiSecrets__0__Value, with
+    <n> from this owner's descriptor (api_secrets). The value comes from
+    staging (this install's API) or else the installed registration.
     """
     name = known[component]["accepts"].get("apis")
     if name is None:
         return []
+    mapping = known[component]["api_secrets"]
     data = {}
     if name in imports:
         staged, installed = imports[name]
@@ -524,7 +437,13 @@ def owner_secrets(component, imports, known):
                     raise common.DeployError(
                         f"Refuse symlinked API registration: {value}"
                     )
-            key = f"ApiResources__{api_index(directory)}__ApiSecrets__0__Value"
+            if directory.name not in mapping:
+                raise common.DeployError(
+                    f"{component} has no line for the registered API "
+                    f"{directory.name}; uninstall {directory.name} or install a "
+                    f"{component} release that lists it"
+                )
+            key = f"ApiResources__{mapping[directory.name]}__ApiSecrets__0__Value"
             data[key] = base64.b64encode(
                 api_value(value, directory.name).encode("utf-8")
             ).decode("ascii")

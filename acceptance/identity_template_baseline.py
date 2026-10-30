@@ -15,6 +15,7 @@ VERSION = "0.4.11"
 FILES = (
     "components/identity/VERSION",
     "components/identity/config.defaults.yaml",
+    "components/identity/manifests/10-configmap.yaml",
     "components/identity/manifests/50-identity.yaml",
     "apps/identity/Program.cs",
     "apps/identity/DatabaseEnvironment.cs",
@@ -23,16 +24,26 @@ FILES = (
 
 
 def without_api_registrations(source):
-    """Identity 0.4.11 accepted no API registrations (backlog 72 came later).
+    """Identity 0.4.11 had no env/ files and accepted no API secrets.
 
-    Identity receives API secrets only while some component registers one, so
-    removing every api.yaml drops that role from the derived catalog.
-    Returns the changed paths.
+    Its settings come from the pinned 10-configmap.yaml, so Identity's env/
+    folder goes, and every remaining @@api-secret: line is dropped: Identity
+    then derives no API role (backlogs 72 and 77 came later). Returns the
+    changed paths.
     """
     changed = []
-    for api in sorted((source / "components").glob("*/api.yaml")):
-        api.unlink()
-        changed.append(str(api.relative_to(source)))
+    folder = source / "components/identity/env"
+    for path in sorted(folder.glob("*")):
+        path.unlink()
+        changed.append(str(path.relative_to(source)))
+    if folder.is_dir():
+        folder.rmdir()
+    for path in sorted((source / "components").glob("*/env/*.yaml")):
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        kept = [line for line in lines if "@@api-secret:" not in line]
+        if kept != lines:
+            path.write_text("".join(kept), encoding="utf-8")
+            changed.append(str(path.relative_to(source)))
     return changed
 
 

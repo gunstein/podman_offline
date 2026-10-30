@@ -131,6 +131,40 @@ def check_kept_shares(descriptor, installed):
         )
 
 
+def check_api_secret_lines(descriptor, installed, render):
+    """Identity's API secret lines decide where each installed API's value goes.
+
+    The installed, rendered Identity's api_secrets is the only mapping. A new
+    Identity release may move a line to another <n> (owner_secrets rebuilds the
+    Secret by API name), but it may not drop an installed API, and a release
+    that is not rendered (newer-only, same version) may not change the mapping
+    under the running Identity.
+    """
+    name = descriptor["name"]
+    apis = sorted(
+        other
+        for other, entry in installed.items()
+        if other != name and entry["apis"] == name
+    )
+    dropped = [api for api in apis if api not in descriptor["api_secrets"]]
+    if dropped:
+        raise common.DeployError(
+            f"This {name} release has no API secret line for installed "
+            f"{', '.join(dropped)}; uninstall {dropped[0]} first, or keep "
+            f"ApiResources__<n>__ApiSecrets__0__Value: '@@api-secret:{dropped[0]}@@'"
+        )
+    if (
+        not render
+        and name in installed
+        and installed[name]["api_secrets"] != descriptor["api_secrets"]
+    ):
+        raise common.DeployError(
+            f"This {name} {descriptor['version']} bundle changes its API secret "
+            f"lines but would not be rendered (upgrade: newer-only, same version); "
+            f"raise {name}'s version"
+        )
+
+
 POSTGRES_DATA = "/var/lib/postgresql/data"
 
 
@@ -424,7 +458,7 @@ def prepare_components():
     state = common.BUILD / "dev"
     known, settings_by_component = dev_settings()
     checked = check_dev_components(known, settings_by_component)
-    for name in catalog.ROLE_FILES:
+    for name in catalog.ROLES:
         if (state / name).is_symlink():
             raise common.DeployError(
                 f"Refuse symlinked dev registrations: {state / name}"
@@ -447,7 +481,7 @@ def prepare_components():
         # Dev registrations come only from the current catalog. Removing older
         # copies keeps a service removed from bundles.yaml out of the proxy and
         # Identity.
-        for name in catalog.ROLE_FILES:
+        for name in catalog.ROLES:
             shutil.rmtree(str(state / name), ignore_errors=True)
         # Owners render before the APIs they serve, so API secrets come first.
         updates.update(
@@ -1077,6 +1111,7 @@ def install_checks():
             f"finish that install. Run ./deploy.sh install from the {name} "
             f"{recorded} bundle (or a newer one)"
         )
+    check_api_secret_lines(descriptor, installed, render)
     rendering.validate_component_config(
         config, name, config_path, check_placeholders=render
     )
