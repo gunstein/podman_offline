@@ -277,14 +277,17 @@ restore core or merge Identity back into platform.
 Status: **planned; direction decided 2026-10-29; phase 0 design
 ([COMPONENT-ENV-DESIGN.md](docs/COMPONENT-ENV-DESIGN.md)) signed off by the
 product owner on 2026-10-29; the developer walkthrough was dropped by the
-product owner the same day; phase 1 is next, after item 76's matrix; not
-implemented.**
+product owner the same day; item 76 is complete; the specification's second
+independent check (2026-10-30, two blocking and five minor findings) is
+corrected in the specification; ready for implementation; not implemented.**
 
 **Scope decided 2026-10-29 (replaces phases 1–5 for now):** the simple catalog
 (`gateway:` and `identity:` plus a plain component list; routes, public
 settings, receivers and their dependencies derived from files, without
 reading manifests), API secrets written as `@@api-secret:<component>@@` on
-both sides instead of item 72's `api.yaml` (same mechanism underneath), `env/<container>.yaml`, the short secret reference
+both sides instead of item 72's `api.yaml` (same mechanism underneath; the
+installed Identity's descriptor holds the API-to-index mapping), `env/<container>.yaml`,
+the short `<id>: generate` declaration and secret reference
 and a checklist, specified in [COMPONENT-SMALL-VARIANT.md](docs/COMPONENT-SMALL-VARIANT.md)
 after an [independent review](docs/COMPONENT-SMALL-VARIANT-REVIEW.md). The
 product owner deliberately drops three rarely used product shapes (that
