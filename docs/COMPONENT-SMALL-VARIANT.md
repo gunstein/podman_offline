@@ -9,7 +9,8 @@ replaces section 3's `env/` files), one secret form (the short
 `<id>: generate` and `@@secret:<id>@@` are dropped) and API secrets declared
 by the API and named on Identity's line (replacing section 5's
 `@@api-secret:`). Rule: no name or path may appear that no file states. These
-changes have unit and harness coverage only; their lab run is outstanding.
+changes are verified on real Podman/systemd too (all seven scenarios CLEAN
+PASS on `318d394`, 2026-10-31).
 [Current contract](COMPONENTS.md#one-config-file-per-component-configdefaultsyaml). This
 document replaces the earlier proposal text in this file and is the scope of
 backlog 77 for now. Everything else in backlog 77 (example application,

@@ -7,8 +7,8 @@ on real Podman/systemd: all seven lab scenarios are CLEAN PASS (six on
 config file per component, one secret form, declared API secrets, and on
 2026-10-31 no `upgrade:`/`shares:`/`requires:`, `components` as a plain list
 and public settings read from the gateway)
-have product/unit and harness coverage only; **their lab run is outstanding**
-with the commands below.
+are verified on real Podman/systemd as well: all seven scenarios are CLEAN PASS
+on `318d394` (2026-10-31); see [lab results](#lab-results-2026-10-31).
 
 ## Change
 
@@ -105,6 +105,30 @@ What each part exercises for this change:
 Record unit/product tests, harness tests and real runs separately. Keep
 failures and their output before any repair.
 
+### Lab results (2026-10-31)
+
+The current form on `318d394` (one config file per component, declared API
+secrets, the plain component list, public settings read from the gateway),
+run from a clean detached checkout of `claude/friendly-mendel-8u3bqs`
+(`"clean": true` in every `EVIDENCE.md`). DEV and PROD: Oracle Linux Server
+9.8 (el9_8), Podman 5.8.2.
+
+| Run | Result | Passed steps |
+| --- | --- | --- |
+| `c77b-whoami-318d394` | CLEAN PASS | 46 |
+| `c77b-normal-318d394` | CLEAN PASS | 125 |
+| `c77b-app2-318d394` | CLEAN PASS | 125 |
+| `c77b-identity-318d394` | CLEAN PASS | 66 |
+| `c77b-help-318d394` | CLEAN PASS | 60 |
+| `c77b-platform-help-318d394` | CLEAN PASS | 39 |
+| `c77b-renamed-318d394` | CLEAN PASS | 57 |
+
+No step failed or was skipped. `--identity-only` confirmed that the pinned
+0.4.11 config declares `DB_*` and `identity-database-password` with key
+`password`, and the upgrade passed after the operator edit removed its
+`PUBLIC_ORIGIN`/`HTTPS_PORT` copies. No step expected "no restart" on a
+same-version reinstall.
+
 ### Lab results (2026-10-30)
 
 These cover the first implementation only (`0459e5a`/`6210670`), not the
@@ -140,10 +164,6 @@ the product code.
   `credentials/api-secret/value`, reinstall a newer app3) is not part of the automated scenarios.
 - An Identity that declares `<identity>-apis` itself while no API exists is not
   refused (with an API it is).
-- `--identity-only` assumes the pinned 0.4.11 config declares `DB_*` and
-  `identity-database-password` with key `password`: the earlier harness added a
-  recipe naming exactly these to that config and passed the lab, but the
-  pinned commit is not in this shallow clone, so it was not rechecked here.
 - A release that stops using a secret leaves its declaration in the operator's
   persistent `config.yaml`, which is then refused as unused (existing
   behaviour for every secret); the operator removes the entry.
@@ -152,7 +172,9 @@ the product code.
   other components' `config.yaml` files still hold `PUBLIC_ORIGIN` and
   `HTTPS_PORT`, which install now refuses ("remove it here"). Pre-customer
   installations may be discarded (review guide); a lab run across this change
-  must remove those two lines or start fresh. Not run.
+  must remove those two lines or start fresh. `--identity-only` does this for
+  the pinned Identity (CLEAN PASS on `318d394`); other pre-change
+  installations are not run.
 - Older releases reading metadata written by this one: `upgrade`/`shares` are
   still written, but `api_secrets` (since the first backlog 77 commit) is not
   in pre-77 readers' field list. Not run.

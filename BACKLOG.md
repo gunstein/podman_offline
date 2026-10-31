@@ -284,7 +284,8 @@ harness tests ([change, evidence and lab check](acceptance/COMPONENT-MODEL-77.md
 The first implementation is verified on real Podman/systemd 2026-10-30: six
 scenarios CLEAN PASS on `0459e5a`; `--renamed-product` CLEAN PASS on `6210670`
 after a harness fix. The product owner's later changes below (2026-10-30 and
-2026-10-31) have product/unit and harness tests; their lab run is outstanding.**
+2026-10-31) are verified as well: all seven scenarios CLEAN PASS on `318d394`
+(2026-10-31).**
 
 **Decision (product owner, 2026-10-30, after review of the first
 implementation):** config must be in as few files as possible and easy to
