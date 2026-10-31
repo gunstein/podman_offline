@@ -259,16 +259,15 @@ def check_database_volume_absent(claim, password):
 
 def check_dev_shared_settings(component, gateway):
     """Refuse a component's own public settings; they are read from the gateway."""
-    for name in ("config.defaults.yaml", "config.dev.yaml"):
-        path = common.ROOT / "components" / component / name
-        if path.exists() or path.is_symlink():
-            local = rendering.config_layer(path)
-            for key in catalog.PUBLIC_KEYS:
-                if key in local:
-                    raise common.DeployError(
-                        f"{path}: {key} is read from {gateway}'s config; "
-                        f"set it there, not in {component}"
-                    )
+    path = common.ROOT / "components" / component / "config.defaults.yaml"
+    if path.exists() or path.is_symlink():
+        local = rendering.config_layer(path)
+        for key in catalog.PUBLIC_KEYS:
+            if key in local:
+                raise common.DeployError(
+                    f"{path}: {key} is read from {gateway}'s config; "
+                    f"set it there, not in {component}"
+                )
 
 
 def dev_settings():

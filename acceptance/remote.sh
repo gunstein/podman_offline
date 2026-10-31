@@ -617,7 +617,9 @@ def check_layers(paths, mode, first, second, installed=()):
         docs.extend(doc for doc in yaml.safe_load_all(path.read_text()) if doc)
     maps = {doc["metadata"]["name"]: doc.get("data", {}) for doc in docs if doc.get("kind") == "ConfigMap"}
     pods = {doc["metadata"]["name"]: doc for doc in docs if doc.get("kind") == "Pod"}
-    expected = "component-dev" if mode == "dev" else "defaults"
+    # Since backlog 77 there is no per-component dev layer: dev and prod use the
+    # release default, and the sibling must not receive the setting.
+    expected = "defaults"
     for component in (first, second):
         pod = pods.get(component + "-todo")
         if pod is None:
@@ -683,8 +685,6 @@ import sys
 
 def check_rows(output, mode, expected):
     rows = ["reference|" + expected]
-    if mode == "dev":
-        rows.insert(0, "dev-sample|dev-only")
     if output.splitlines() != rows:
         raise RuntimeError("Missing, stale or unexpected demo seed rows")
     for row in rows:

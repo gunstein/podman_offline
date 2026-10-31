@@ -185,7 +185,8 @@ class ComponentFileTests(ProductFixture):
 
     def test_unsafe_declarations_fail_before_output_generation_or_host_commands(self):
         self.product()
-        config_path = self.source / "components/processor/config.dev.yaml"
+        config_path = self.source / "config/dev.yaml"
+        config_path.parent.mkdir(exist_ok=True)
         invalid = [
             {"component_file": value}
             for value in (
@@ -324,7 +325,8 @@ class ComponentFileTests(ProductFixture):
         private_alias = self.source / "build/dev/processor/credentials/alias"
         private_alias.parent.mkdir(parents=True)
         private_alias.symlink_to(self.files / "public.pem")
-        (self.source / "components/processor/config.dev.yaml").write_text(
+        (self.source / "config").mkdir(exist_ok=True)
+        (self.source / "config/dev.yaml").write_text(
             yaml.safe_dump(
                 {"SECRET_FILES": {"processor-private": [{"path": "credentials/alias"}]}}
             )
@@ -336,7 +338,8 @@ class ComponentFileTests(ProductFixture):
         self.product()
         external = self.root / "local-dev-seed.sql"
         external.write_text("sensitive-dev-fixture")
-        (self.source / "components/processor/config.dev.yaml").write_text(
+        (self.source / "config").mkdir(exist_ok=True)
+        (self.source / "config/dev.yaml").write_text(
             yaml.safe_dump(
                 {
                     "VOLUME_FILES": {

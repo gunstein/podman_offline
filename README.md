@@ -132,40 +132,26 @@ names](docs/COMPONENTS.md#reserved-configuration-names).
 
 | File | Role |
 | --- | --- |
-| `config/common.defaults.yaml` | Optional defaults for every component (the demo has none) |
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
-| `components/<component>/config.defaults.yaml` | Component-specific defaults, including secret and volume references |
-| `components/<component>/config.dev.yaml` | Optional shared component dev overrides, tracked in Git and excluded from bundles |
+| `components/<component>/config.defaults.yaml` | Component settings, secret and volume references, and `ENVIRONMENT` |
 | `/var/lib/myproduct/<component>/config.yaml` | Authoritative persistent production config |
 
-Initialization merges common defaults and then component defaults. Dev adds
-global `config/dev.yaml` and then `components/<component>/config.dev.yaml`, in that
-order. All layers use one merge rule at the top level.
-A later value replaces the entire earlier value, including `SECRET_FILES`,
-`VOLUME_FILES` maps (including their source lists and generate declarations); no recursive merge or list
-concatenation takes place. Duplicate YAML keys are rejected in each source file.
-Individual layers may be incomplete; the complete merged result is validated.
-Global dev overrides apply to all components; component dev overrides apply only
-to that component. Missing optional files mean no overrides; invalid existing
-files fail. Production initialization, validation and install never read either
-dev layer, even if a file is copied into a release by hand.
-`IP_ADDRESS` belongs to platform because only its proxy binds the host address.
+Dev merges the component defaults and then the developer's own
+`config/dev.yaml`, which applies to every component. A later value replaces the
+entire earlier value, including `SECRET_FILES` and `VOLUME_FILES` maps
+(including their source lists and generate declarations); no recursive merge or
+list concatenation takes place. Duplicate YAML keys are rejected in each source
+file. Missing `config/dev.yaml` means no overrides; an invalid one fails.
+Production initialization, validation and install never read it, even if a file
+is copied into a release by hand. `IP_ADDRESS` belongs to platform because only
+its proxy binds the host address. A component may not set the gateway's
+`PUBLIC_ORIGIN` or `HTTPS_PORT` in its own defaults; a global dev value reaches
+the gateway and, through it, every component.
 
-The component dev file contains shared, non-secret development settings. Since
-it wins over the ignored global dev file, changing a key it defines on one
-machine requires editing the tracked component file. Do not commit secrets or
-machine-specific absolute paths. Keep credentials in external/generated files.
-A component may not set the gateway's shared keys in its own component dev
-file, even to the same value: this fails naming the key, file and owner.
-Set these keys on the owner, whose effective settings are inherited afterwards.
-Shared keys always come from the owner's effective dev config, which includes the
-global `config/dev.yaml`, so a global value reaches the owner and every dependent
-identically. If the owner's own `config.dev.yaml` sets a shared key, that more
-specific value wins over the global one for all dependents alike (backlog 58).
-
-For a renamed component `orders`, a complete map override must repeat retained
-entries. For example, if `components/orders/config.defaults.yaml` contains:
+For a renamed component `orders`, a `config/dev.yaml` map override must repeat
+retained entries. For example, if `components/orders/config.defaults.yaml`
+contains:
 
 ```yaml
 VOLUME_FILES:
@@ -173,7 +159,7 @@ VOLUME_FILES:
   - path: seed/reference.sql
 ```
 
-then `components/orders/config.dev.yaml` can add a dev input with:
+then `config/dev.yaml` can add a dev input with:
 
 ```yaml
 VOLUME_FILES:
@@ -182,8 +168,8 @@ VOLUME_FILES:
   - path: seed/dev-sample.sql
 ```
 
-This replaces the entire `VOLUME_FILES` map; repeat any other required volume
-groups too. The same rule applies to `SECRET_FILES` and `SECRET_TEMPLATES`.
+This replaces the entire `VOLUME_FILES` map for every component; repeat any
+other required volume groups too. The same rule applies to `SECRET_FILES`.
 Relative sources resolve from `build/dev/orders/`, so these example files must
 exist under `build/dev/orders/seed/`, not beside the override file. Generated
 `build/dev/<component>/config.yaml` is output and is never another input layer.
@@ -321,7 +307,7 @@ prepare and use persistent config through install. Standalone fixtures retain
 their explicit prepare flow; in a release without `components/`, `./deploy.sh
 install` validates `manifests/` against `/var/lib/myproduct/state/config.yaml`, loads
 `images/images.tar` and runs one `myproduct.service` (see the
-`install_standalone` docstring for the order). Component prepare merges common defaults, component
+`install_standalone` docstring for the order). Component prepare merges the component
 defaults and optional `config/dev.yaml`.
 The local overrides apply to every rendered component. Generated config under
 `build/dev/<component>/` is output, never an input layer; credentials and data
@@ -380,8 +366,8 @@ One invocation creates one bundle per catalog component and lists them in
 for uninstalling a removed component. `./build-bundle.sh app1 help` builds only
 the named components, after validating the whole catalog, and leaves
 `dist/current-bundles.txt` unchanged. Only catalog components are scanned for
-images. Each bundle contains `config/common.defaults.yaml` (when present), its
-component's `config.defaults.yaml`, only its component,
+images. Each bundle contains its component's `config.defaults.yaml`, only its
+component,
 `deploy.sh`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
 an informational `VERSION` and its own
 `images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
@@ -643,7 +629,7 @@ For an organisation's `sts` migration container, shipped migrations can use the
 reference above while a sensitive dev-only seed stays outside `files/`:
 
 ```yaml
-# components/sts/config.dev.yaml (tracked settings; contains no secret values)
+# config/dev.yaml (local, untracked; contains no secret values)
 VOLUME_FILES:
   sts-migrations:
   - component_file: sql/010-reference.sql
@@ -1506,7 +1492,7 @@ strings appear only as base64 Secret data in the existing private install YAML.
 | app2 | app2-postgres | todo / todo | credentials/database/password | app2-database-password / password | app2-data | app2 Todo backend |
 
 The component directory is `/var/lib/myproduct/<component>` in production and
-`build/dev/<component>` in dev. No DB settings belong in common defaults.
+`build/dev/<component>` in dev. DB settings belong to each component's own defaults.
 The table documents default identities; manifests/config remain the source of
 truth. The two Todo users have the same name in **different clusters** and have
 independently generated credentials.

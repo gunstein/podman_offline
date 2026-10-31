@@ -39,10 +39,10 @@ retains it). It never selects paths, initializes config or queries systemd.
 paths without circular imports or a dependency framework.
 
 In source dev, `deploy.dev_settings()` walks the catalog in dependency order,
-refuses owner-shared keys in a dependent's `config.dev.yaml`, and calls
+refuses the gateway's public keys in another component's defaults, and calls
 `render.component_defaults(dev=True)`. Its sole merge implementation,
-`merge_config`, reads common defaults, component defaults, global dev overrides
-and component dev overrides in that order, then applies inherited owner values.
+`merge_config`, reads the component defaults and `config/dev.yaml` in that
+order, then applies the gateway's public values.
 Validate, prepare and demo credential preflight use this same flow. Bundle guards
 inspect each layer separately to protect private sources even when a later map
 replaces them; they do not construct a second effective config. Production

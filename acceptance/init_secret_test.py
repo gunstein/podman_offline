@@ -317,9 +317,7 @@ def run(probe_image=None):
             try:
                 for index in range(2):
                     host = "dev-" + str(index) + ".invalid"
-                    private_yaml(
-                        source / "components" / name / "config.dev.yaml", {"HOST": host}
-                    )
+                    private_yaml(source / "config/dev.yaml", {"HOST": host})
                     command([str(source / "deploy.sh"), "prepare"])
                     nonce = uuid.uuid4().hex
                     instrument(

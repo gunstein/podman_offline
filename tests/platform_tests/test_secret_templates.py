@@ -804,7 +804,8 @@ class InitSecretLifecycleTests(ProductFixture):
 
     def test_dev_override_and_isolated_release_retained_config(self):
         self.write_product(self.product())
-        local = self.source / "components/worker/config.dev.yaml"
+        local = self.source / "config/dev.yaml"
+        local.parent.mkdir(exist_ok=True)
         local.write_text("HOST: dev.invalid\n")
         password = self.source / "build/dev/worker/credentials/password"
         password.parent.mkdir(parents=True)

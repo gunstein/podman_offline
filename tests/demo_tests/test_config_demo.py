@@ -24,12 +24,6 @@ class DemoConfigTests(ConfigFixture):
             self.write(
                 "components/" + component + "/config.defaults.yaml", source.read_bytes()
             )
-            dev_source = source.with_name("config.dev.yaml")
-            if dev_source.exists():
-                self.write(
-                    "components/" + component + "/config.dev.yaml",
-                    dev_source.read_bytes(),
-                )
             if not (self.root / "components" / component / "VERSION").exists():
                 self.write("components/" + component + "/VERSION", "1.2.3\n")
             write_descriptor(self.root, component)
@@ -43,7 +37,7 @@ class DemoConfigTests(ConfigFixture):
             )
             if component == "app1":
                 self.assertEqual(production["DEMO_CONFIG_LAYER"], "defaults")
-                self.assertEqual(dev["DEMO_CONFIG_LAYER"], "component-dev")
+                self.assertEqual(dev["DEMO_CONFIG_LAYER"], "defaults")
             else:
                 self.assertNotIn("DEMO_CONFIG_LAYER", dev)
             for settings in (production, dev):

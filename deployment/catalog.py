@@ -671,12 +671,8 @@ FILE_GROUPS = (common.SECRET_FILES, common.VOLUME_FILES, common.SECRET_TEMPLATES
 
 def release_defaults(component):
     """The release's config.defaults.yaml for a component (without ENVIRONMENT)."""
-    paths = [
-        common.ROOT / "config/common.defaults.yaml",
-        common.ROOT / "components" / component / "config.defaults.yaml",
-    ]
-    paths = [path for path in paths if path.exists() or path.is_symlink()]
-    return rendering.merge_config(*paths) if paths else {}
+    path = common.ROOT / "components" / component / "config.defaults.yaml"
+    return rendering.merge_config(path) if path.exists() or path.is_symlink() else {}
 
 
 def operator_config(descriptor, path, state=None):

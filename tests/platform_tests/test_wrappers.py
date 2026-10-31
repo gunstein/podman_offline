@@ -123,10 +123,6 @@ class WrapperTests(unittest.TestCase):
             (source / "docs").mkdir()
             (source / "docs/PRODUCTION-INSTALL.md").write_text("# Operator guide\n")
             (source / "docs/PFX-CREDENTIALS.md").write_text("# PFX guide\n")
-            (source / "config").mkdir()
-            (source / "config/common.defaults.yaml").write_text(
-                "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
-            )
             (source / "bundles.yaml").write_text(
                 yaml.safe_dump(
                     {
@@ -143,7 +139,11 @@ class WrapperTests(unittest.TestCase):
                 folder = source / "components" / component
                 (folder / "manifests").mkdir(parents=True)
                 (folder / "VERSION").write_text("1.0.0\n")
-                (folder / "config.defaults.yaml").write_text("{}\n")
+                (folder / "config.defaults.yaml").write_text(
+                    "PUBLIC_ORIGIN: https://fixture.test:8443\nHTTPS_PORT: 8443\n"
+                    if component == "platform"
+                    else "{}\n"
+                )
                 (folder / "manifests/10-pod.yaml").write_text(
                     yaml.safe_dump(
                         {
@@ -303,7 +303,7 @@ class WrapperTests(unittest.TestCase):
             # Persistent settings override deliberately different release defaults.
             config = state / "app1/config.yaml"
             config_before = config.read_bytes()
-            (release / "config/common.defaults.yaml").write_text(
+            (release / "components/app1/config.defaults.yaml").write_text(
                 "PUBLIC_ORIGIN: https://changed.test:443\nHTTPS_PORT: 443\n"
             )
             run(release, "deploy.sh", "install")

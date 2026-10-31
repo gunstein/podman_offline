@@ -52,7 +52,7 @@ class ComponentDevHarnessTests(unittest.TestCase):
 
     def test_dev_prod_and_renamed_runtime_checks_read_only_the_marker(self):
         for first, second in (("app1", "app2"), ("orders", "inventory")):
-            for mode, expected in (("dev", "component-dev"), ("prod", "defaults")):
+            for mode, expected in (("dev", "defaults"), ("prod", "defaults")):
                 with (
                     self.subTest(first=first, mode=mode),
                     tempfile.TemporaryDirectory() as directory,
@@ -103,18 +103,18 @@ class ComponentDevHarnessTests(unittest.TestCase):
             "command-failure",
         ):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
-                path, docs = self.fixture(directory, "app1", "app2", "component-dev")
+                path, docs = self.fixture(directory, "app1", "app2", "defaults")
                 if case == "wrong-rendered":
-                    docs[0]["data"]["DEMO_CONFIG_LAYER"] = "defaults"
+                    docs[0]["data"]["DEMO_CONFIG_LAYER"] = "component-dev"
                 if case == "missing-marker":
                     docs[0]["data"] = {}
                 if case == "sibling-rendered":
-                    docs[2]["data"]["DEMO_CONFIG_LAYER"] = "component-dev"
+                    docs[2]["data"]["DEMO_CONFIG_LAYER"] = "defaults"
                 path.write_text(yaml.safe_dump_all(docs))
                 first = subprocess.CompletedProcess(
                     [],
                     125 if case == "command-failure" else 0,
-                    "private-fixture" if case == "wrong-runtime" else "component-dev\n",
+                    "private-fixture" if case == "wrong-runtime" else "defaults\n",
                     "private-stderr",
                 )
                 second = subprocess.CompletedProcess(

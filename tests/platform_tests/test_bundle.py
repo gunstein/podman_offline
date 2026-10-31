@@ -481,11 +481,9 @@ data: {image: ignored}
         """Reject symlink copies of generated dev secrets declared by every new source."""
         component = self.root / "components/app1"
         for source in (
-            "config/common.defaults.yaml",
             "components/app1/config.defaults.yaml",
             "components/app1/config.yaml",
             "config/dev.yaml",
-            "components/app1/config.dev.yaml",
             "build/dev/app1/config.yaml",
         ):
             with self.subTest(source=source):
@@ -562,7 +560,6 @@ data: {image: ignored}
                     self.assertNotIn(
                         "components/" + component + "/config.yaml", members
                     )
-                self.assertIn("config/common.defaults.yaml", members)
                 self.assertNotIn("config/dev.yaml", members)
                 self.assertFalse(
                     any(

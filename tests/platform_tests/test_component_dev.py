@@ -1,4 +1,4 @@
-"""Component dev layers with arbitrary components, external images and no apps/."""
+"""Dev config (component defaults, then config/dev.yaml) with arbitrary components."""
 
 import base64
 import copy
@@ -27,35 +27,26 @@ class ComponentDevTests(ProductFixture):
 
     def test_precedence_optional_layers_and_whole_map_replacement(self):
         self.write_product(WORKER)
-        common_config = self.layer("config/common.defaults.yaml", {"CHOICE": "common"})
         component = self.layer(
-            "components/worker/config.defaults.yaml", {"CHOICE": "component"}
+            "components/worker/config.defaults.yaml",
+            {"CHOICE": "component", "SECRET_FILES": {"worker-old": [{"path": "old"}]}},
         )
         global_dev = self.layer(
             "config/dev.yaml",
-            {"CHOICE": "global", "SECRET_FILES": {"worker-old": [{"path": "old"}]}},
-        )
-        local = self.layer(
-            "components/worker/config.dev.yaml",
             {
-                "CHOICE": "local",
+                "CHOICE": "global",
                 "SECRET_FILES": {
                     "worker-new": [{"path": "new", "generate": ["token"]}]
                 },
             },
         )
         config = deploy.dev_settings()[1]["worker"]
-        self.assertEqual(config["CHOICE"], "local")
+        self.assertEqual(config["CHOICE"], "global")
         self.assertEqual(
             config["SECRET_FILES"],
             {"worker-new": [{"path": "new", "generate": ["token"]}]},
         )
-        for path, expected in (
-            (local, "global"),
-            (global_dev, "component"),
-            (component, "common"),
-            (common_config, None),
-        ):
+        for path, expected in ((global_dev, "component"), (component, None)):
             path.unlink()
             self.assertEqual(deploy.dev_settings()[1]["worker"].get("CHOICE"), expected)
         self.assertFalse((self.source / "apps").exists())
@@ -76,7 +67,7 @@ class ComponentDevTests(ProductFixture):
         self.write_product(product)
         for name in product:
             self.layer(
-                "components/" + name + "/config.dev.yaml",
+                "components/" + name + "/config.defaults.yaml",
                 {
                     "SECRET_FILES": {name + "-input": [{"path": "inputs/message"}]},
                     "VOLUME_FILES": {name + "-files": [{"path": "inputs/message"}]},
@@ -118,7 +109,7 @@ class ComponentDevTests(ProductFixture):
 
     def test_invalid_local_layers_fail_in_validate_and_prepare_without_writes(self):
         self.write_product(WORKER)
-        path = self.layer("components/worker/config.dev.yaml", {})
+        path = self.layer("config/dev.yaml", {})
         for content in (
             "CHOICE: private-one\nCHOICE: private-two\n",
             "CHOICE: [private-value\n",
@@ -143,12 +134,11 @@ class ComponentDevTests(ProductFixture):
 
     def test_dependent_cannot_set_gateway_public_keys_even_with_equal_values(self):
         self.write_product(copy.deepcopy(RENAMED))
-        for name, key, value in (
-            ("config.dev.yaml", "PUBLIC_ORIGIN", "https://shop.test:9443"),
-            ("config.dev.yaml", "HTTPS_PORT", 9443),
-            ("config.defaults.yaml", "PUBLIC_ORIGIN", "https://shop.test:9443"),
+        for key, value in (
+            ("PUBLIC_ORIGIN", "https://shop.test:9443"),
+            ("HTTPS_PORT", 9443),
         ):
-            path = self.layer("components/orders/" + name, {key: value})
+            path = self.layer("components/orders/config.defaults.yaml", {key: value})
             before = self.snapshot()
             for action in (validation.validate, deploy.prepare):
                 with self.subTest(key=key, action=action.__name__):
@@ -165,7 +155,7 @@ class ComponentDevTests(ProductFixture):
     def test_owner_dev_settings_reach_dependents(self):
         self.write_product(copy.deepcopy(RENAMED))
         expected = {"PUBLIC_ORIGIN": "https://dev.test:9555", "HTTPS_PORT": 9555}
-        self.layer("components/gateway/config.dev.yaml", expected)
+        self.layer("config/dev.yaml", expected)
         known, settings = deploy.dev_settings()
         for name in (
             name
@@ -186,27 +176,23 @@ class ComponentDevTests(ProductFixture):
         external = self.root / "external-local-file"
         external.write_text("not-bundled")
         self.layer(
-            "components/worker/config.dev.yaml",
+            "config/dev.yaml",
             {
-                "CHOICE": "component-dev",
+                "CHOICE": "dev",
+                "LOCAL_FILE": str(external),
                 "SECRET_FILES": {"worker-private": [{"path": str(external)}]},
             },
         )
-        self.layer("config/dev.yaml", {"LOCAL_FILE": str(external)})
         release = self.build_and_unpack()["worker"]
-        self.assertFalse((release / "components/worker/config.dev.yaml").exists())
         self.assertFalse((release / "config/dev.yaml").exists())
         archive_path = next((self.source / "dist").glob("*-offline.tar.gz"))
         with tarfile.open(str(archive_path)) as archive:
             self.assertFalse(
                 any(
-                    name.endswith(("config.dev.yaml", "external-local-file"))
+                    name.endswith(("config/dev.yaml", "external-local-file"))
                     for name in archive.getnames()
                 )
             )
-        (release / "components/worker/config.dev.yaml").write_text(
-            "invalid: [private-value\n"
-        )
         (release / "config").mkdir(exist_ok=True)
         (release / "config/dev.yaml").write_text("invalid: [private-value\n")
         self.use_root(release)
@@ -221,18 +207,18 @@ class ComponentDevTests(ProductFixture):
         self.assertEqual(config_path.read_bytes(), before)
         installed = (common.QUADLET_DIR / "myproduct-worker.yaml").read_text()
         self.assertIn("production", installed)
-        self.assertNotIn("component-dev", installed)
+        self.assertNotIn("CHOICE: dev", installed)
 
     def test_changed_dev_layer_retains_password_and_existing_volume_guard(self):
         product = copy.deepcopy(RENAMED)
         self.write_product(product)
         self.provide_credentials(product, common.BUILD / "dev")
-        self.layer("components/orders/config.dev.yaml", {"CHOICE": "first"})
+        self.layer("config/dev.yaml", {"CHOICE": "first"})
         deploy.prepare()
         password = common.BUILD / "dev/orders/credentials/database/password"
         before = password.read_bytes(), password.stat().st_mtime_ns
         self.volumes.add("orders-data")
-        self.layer("components/orders/config.dev.yaml", {"CHOICE": "second"})
+        self.layer("config/dev.yaml", {"CHOICE": "second"})
         deploy.prepare()
         self.assertEqual((password.read_bytes(), password.stat().st_mtime_ns), before)
         self.assertEqual(

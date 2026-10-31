@@ -153,15 +153,11 @@ class GeneratorTests(unittest.TestCase):
         )
         self.assertEqual(defaults["DB_HOST"], "orders-postgres")
         self.assertIn("orders-database-password", defaults["SECRET_FILES"])
-        dev = yaml.safe_load(
-            (self.target / "components/orders/config.dev.yaml").read_text()
-        )
-        self.assertEqual(dev["DEMO_CONFIG_LAYER"], "component-dev")
+        self.assertFalse((self.target / "components/orders/config.dev.yaml").exists())
         self.assertEqual(
             defaults["VOLUME_FILES"]["orders-seed"],
             [{"component_file": "sql/010-reference.sql"}],
         )
-        self.assertEqual(len(dev["VOLUME_FILES"]["orders-seed"]), 2)
         self.assertEqual(
             (
                 self.target / "components/orders/files/sql/010-reference.sql"

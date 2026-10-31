@@ -143,20 +143,17 @@ sets them in its own config. No other setting is shared between components.
 
 ### Component dev configuration
 
-Source dev merges optional common defaults (`config/common.defaults.yaml`; the
-demo has none), component defaults, global
-`config/dev.yaml`, then `components/<id>/config.dev.yaml`. Values replace whole
-top-level values, including file/Secret maps and source lists. The component dev
-file is tracked shared configuration, contains no secret values, and wins over
-the ignored global dev file. It is excluded from bundles and never read by
-production `init-config`, `validate` or `install`.
+Source dev merges the component defaults, then the developer's local
+`config/dev.yaml` (untracked, for every component). Values replace whole
+top-level values, including file/Secret maps and source lists. It is excluded
+from bundles and never read by production `init-config`, `validate` or
+`install`.
 
 Every other component gets the gateway's effective dev `PUBLIC_ORIGIN` and
 `HTTPS_PORT`, as production reads them from the gateway's `config.yaml`. A
-component that sets either in its own `config.defaults.yaml` or
-`config.dev.yaml` is refused, rather than silently losing the value. The
-gateway's effective dev config includes global `config/dev.yaml`, so a global
-value reaches every component identically (backlog 58).
+component that sets either in its own `config.defaults.yaml` is refused. The
+gateway's effective dev config includes `config/dev.yaml`, so a global value
+reaches every component identically.
 
 Relative file sources still resolve from `build/dev/<id>/`; generated config
 there is output, never an input layer. See the [configuration examples and
@@ -182,7 +179,7 @@ content; external/generated credentials stay protected by the bundle guard.
 Validation inspects names/types without reading input bytes.
 
 For `sts`, use `component_file: sql/010-reference.sql` for shipped migrations in
-`config.defaults.yaml`. A `config.dev.yaml` map can repeat that reference and add
+`config.defaults.yaml`. A `config/dev.yaml` map can repeat that reference and add
 `path: ~/dev-inputs/sts/900-dev-users.sql` for a sensitive local dev seed outside
 `files/`. Production needs only the shipped input; the local path is neither
 packaged nor read there. All of `files/` ships, including dev-only files stored

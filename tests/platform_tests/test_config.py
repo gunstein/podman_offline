@@ -42,11 +42,7 @@ class ConfigTests(ConfigFixture):
         self.assertEqual(
             rendering.component_defaults("app1", dev=True)["CHOICE"], "local"
         )
-        for name in (
-            "config/common.defaults.yaml",
-            "components/app1/config.defaults.yaml",
-            "config/dev.yaml",
-        ):
+        for name in ("components/app1/config.defaults.yaml", "config/dev.yaml"):
             path = self.root / name
             before = path.read_bytes()
             path.write_text("CHOICE: one\nCHOICE: two\n")
@@ -72,6 +68,7 @@ class ConfigTests(ConfigFixture):
         shutil.rmtree(common.STATE / "platform")
         self.write(
             "components/platform/config.defaults.yaml",
+            "PUBLIC_ORIGIN: https://defaults.test:8443\nHTTPS_PORT: 8443\n"
             "SECRET_FILES:\n  platform-token:\n  - path: private\n    generate:\n    - token\n",
         )
         self.select("platform")

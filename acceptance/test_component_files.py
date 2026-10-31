@@ -17,7 +17,7 @@ class SeedContentTests(unittest.TestCase):
     def test_expected_rows_for_dev_prod_and_changed_release(self):
         check = guest_code("SEED_CONTENT")["check_rows"]
         for mode, value, rows in (
-            ("dev", "release-v1", "dev-sample|dev-only\nreference|release-v1\n"),
+            ("dev", "release-v1", "reference|release-v1\n"),
             ("prod", "release-v1", "reference|release-v1\n"),
             ("prod", "release-v2", "reference|release-v2\n"),
         ):

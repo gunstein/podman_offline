@@ -138,11 +138,9 @@ def generated_secret_guard(config_dirs=None):
             continue
         base = ROOT / "build/dev" / directory.name
         sources.append((directory / "config.defaults.yaml", base, directory.name))
-        sources.append((directory / "config.dev.yaml", base, directory.name))
         # A local complete config is private state, not a configuration layer.
         sources.append((directory / "config.yaml", directory, directory.name))
         sources.append((base / "config.yaml", base, directory.name))
-        sources.append((ROOT / "config/common.defaults.yaml", base, directory.name))
         sources.append((ROOT / "config/dev.yaml", base, directory.name))
     for path, base, component in sources:
         if path.exists():
@@ -277,12 +275,6 @@ def build_release(version, descriptor=None):
                 shutil.copytree(source, destination / entry, ignore=guard)
             else:
                 shutil.copy2(source, destination / entry)
-    if components and (ROOT / "config/common.defaults.yaml").exists():
-        (target / "config").mkdir()
-        guard(ROOT / "config", ["common.defaults.yaml"])
-        shutil.copy2(
-            ROOT / "config/common.defaults.yaml", target / "config/common.defaults.yaml"
-        )
     # The operator guide and the documents it links travel with every release
     # (backlog 64); the guide links nothing else except README.md.
     for document in RELEASE_DOCS if components else ():

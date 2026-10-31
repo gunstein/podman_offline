@@ -153,21 +153,15 @@ def merge_config(*paths, overrides=None):
 
 
 def component_defaults(component, overrides=None, dev=False):
-    """Build complete config from common, component and explicit local overrides.
+    """Build complete config from the component defaults and, in dev, config/dev.yaml.
 
     Each layer file is optional; a component without settings needs none.
+    config/dev.yaml is the developer's local, untracked override for every
+    component.
     """
-    paths = [
-        common.ROOT / "config/common.defaults.yaml",
-        common.ROOT / "components" / component / "config.defaults.yaml",
-    ]
+    paths = [common.ROOT / "components" / component / "config.defaults.yaml"]
     if dev:
-        paths.extend(
-            [
-                common.ROOT / "config/dev.yaml",
-                common.ROOT / "components" / component / "config.dev.yaml",
-            ]
-        )
+        paths.append(common.ROOT / "config/dev.yaml")
     paths = [path for path in paths if path.exists() or path.is_symlink()]
     config = merge_config(*paths, overrides=overrides)
     materialized = (

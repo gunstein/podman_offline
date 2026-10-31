@@ -1,7 +1,0 @@
-# Shared, non-secret dev settings; excluded from offline bundles.
-DEMO_CONFIG_LAYER: component-dev
-# Whole-map replacement: retain the shipped reference input as well.
-VOLUME_FILES:
-  app1-seed:
-  - component_file: sql/010-reference.sql
-  - component_file: sql-dev/900-dev-sample.sql
