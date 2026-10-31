@@ -28,12 +28,15 @@ class DemoRenderTests(DeployFixture):
                 shutil.copytree(
                     source_files, self.root / "components" / component / "files"
                 )
-            # ENVIRONMENT is read from the release's config.defaults.yaml.
+            # ENVIRONMENT is read from the release's config.defaults.yaml, and
+            # CLIENT_ID/CLIENT_BASE_PATH from client.yaml.
             (self.root / "components" / component).mkdir(parents=True, exist_ok=True)
-            shutil.copy2(
-                str(repo / "components" / component / "config.defaults.yaml"),
-                str(self.root / "components" / component / "config.defaults.yaml"),
-            )
+            for name in ("config.defaults.yaml", "client.yaml"):
+                if (repo / "components" / component / name).exists():
+                    shutil.copy2(
+                        str(repo / "components" / component / name),
+                        str(self.root / "components" / component / name),
+                    )
             config = rendering.merge_config(
                 repo / "components" / component / "config.defaults.yaml",
                 overrides=DEMO_PUBLIC,

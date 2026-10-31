@@ -68,7 +68,7 @@ class ProxyTests(unittest.TestCase):
         )
         self.assertEqual(pod["spec"]["hostname"], "myproduct-proxy")
         self.assertEqual(
-            app["envFrom"], [{"configMapRef": {"name": "platform-settings"}}]
+            app["envFrom"], [{"configMapRef": {"name": "platform-nginx-env"}}]
         )
         mounts = {mount["name"]: mount for mount in app["volumeMounts"]}
         for name, target in (

@@ -207,42 +207,6 @@ class EnvironmentTests(ProductFixture):
                     deploy.prepare()
                 self.assertFalse(common.BUILD.exists())
 
-    def test_client_variables_stay_in_the_manifest(self):
-        def client(shop):
-            shop["client"] = {
-                "id": "shop",
-                "base_path": "/shop",
-                "scopes": ["openid", "profile", "shop"],
-                "certificate": "credentials/client/client.crt",
-                "environment": {"id": "APP_ID", "base_path": "BASE_PATH"},
-            }
-            shop["env"]["main"]["APP_ID"] = "shop"
-
-        product = copy.deepcopy(SHOP)
-        client(product["shop"])
-        product["shop"]["route"] = "location /shop/ { return 204; }\n"
-        product["edge"] = {
-            "role": "gateway",
-            "manifests": [pod("edge-proxy", "localhost/edge:1", ["pvc:edge-routes"])],
-            "defaults": {"PUBLIC_ORIGIN": "https://shop.test", "HTTPS_PORT": 443},
-        }
-        product["login"] = {
-            "role": "identity",
-            "manifests": [
-                pod("login-server", "localhost/login:1", ["pvc:login-clients"])
-            ],
-        }
-        self.write_product(product)
-        with self.assertRaisesRegex(
-            common.DeployError, "APP_ID is compared with client.yaml; keep it"
-        ):
-            deploy.prepare()
-        # Review regression: a client.yaml that is not a map is a DeployError
-        # from the registration check, never a traceback.
-        (self.source / "components/shop/client.yaml").write_text("- not\n- a map\n")
-        with self.assertRaises(common.DeployError):
-            deploy.prepare()
-
     def test_values_are_the_written_text(self):
         def raw(shop):
             del shop["env"]

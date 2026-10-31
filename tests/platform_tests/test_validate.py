@@ -123,7 +123,8 @@ class SourceValidationTests(ProductFixture):
 
     def test_undefined_config_map(self):
         documents = copy.deepcopy(RENAMED["orders"]["manifests"])
-        container = documents[2]["spec"]["containers"][0]
+        # The database container: orders-web's main gets envFrom from ENVIRONMENT.
+        container = documents[1]["spec"]["containers"][0]
         container["envFrom"] = [{"configMapRef": {"name": "orders-settings"}}]
         self.write_orders(documents)
         self.validate("orders: .*ConfigMap 'orders-settings', but it does not exist")

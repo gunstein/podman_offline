@@ -7,3 +7,11 @@ IP_ADDRESS: 127.0.0.1
 SECRET_FILES:
   platform-web-tls:
   - path: credentials/web
+
+# The environment of each container. It comes with the release and is never
+# copied to config.yaml.
+ENVIRONMENT:
+  nginx:
+    PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
+    HTTPS_PORT: '@@HTTPS_PORT@@'
+    PUBLIC_ENDPOINT: 'https://@@PUBLIC_HOSTNAME@@:@@HTTPS_PORT@@'

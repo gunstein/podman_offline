@@ -112,6 +112,10 @@ def route(component, path, upstream):
     )
 
 
+# An app receives its client.yaml id and base_path through ENVIRONMENT.
+CLIENT_ENVIRONMENT = {"APP_ID": "@@CLIENT_ID@@", "BASE_PATH": "@@CLIENT_BASE_PATH@@"}
+
+
 def client(client_id, base_path):
     return {
         "id": client_id,
@@ -167,9 +171,9 @@ RENAMED = {
                 "orders-web",
                 "localhost/shop-app:1",
                 ["secret:orders-client", "secret:orders-database-password"],
-                {"APP_ID": "orders-web", "BASE_PATH": "/orders"},
             ),
         ],
+        "env": {"main": CLIENT_ENVIRONMENT},
         "route": route("orders", "/orders", "orders-web:8000"),
         "client": client("orders-web", "/orders"),
         "credentials": {"credentials/client/client.crt": PEM},
@@ -183,9 +187,9 @@ RENAMED = {
                 "inventory-web",
                 "localhost/shop-app:1",
                 ["secret:inventory-client"],
-                {"APP_ID": "inventory", "BASE_PATH": "/stock"},
             )
         ],
+        "env": {"main": CLIENT_ENVIRONMENT},
         "route": route("inventory", "/stock", "inventory-web:8000"),
         "client": client("inventory", "/stock"),
         "credentials": {"credentials/client/client.crt": PEM},

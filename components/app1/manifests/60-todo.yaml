@@ -71,9 +71,6 @@ spec:
       periodSeconds: 10
       timeoutSeconds: 5
       failureThreshold: 6
-    envFrom:
-    - configMapRef:
-        name: app1-settings
     env:
     - name: TODO_SCHEMA_MODE
       value: external
@@ -87,10 +84,6 @@ spec:
       value: '@@DB_NAME@@'
     - name: REQUESTS_CA_BUNDLE
       value: /certificates/ca.crt
-    - name: APP_ID
-      value: app1
-    - name: BASE_PATH
-      value: /app1
     volumeMounts:
     - name: certificates
       mountPath: /certificates

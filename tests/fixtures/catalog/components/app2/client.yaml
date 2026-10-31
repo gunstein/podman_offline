@@ -1,8 +1,5 @@
 base_path: /app2
 certificate: credentials/todo/todo-client.crt
-environment:
-  base_path: BASE_PATH
-  id: APP_ID
 id: app2
 scopes:
 - openid

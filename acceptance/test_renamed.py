@@ -131,12 +131,14 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual((stock["id"], stock["base_path"]), ("inventory", "/stock"))
         manifest = self.target / "components/orders/manifests/60-todo.yaml"
         pod = next(yaml.safe_load_all(manifest.read_text()))
-        env = {
-            item["name"]: item["value"]
-            for item in pod["spec"]["containers"][0]["env"]
-            if "value" in item
-        }
-        self.assertEqual((env["APP_ID"], env["BASE_PATH"]), ("orders-web", "/orders"))
+        # The app reads them from client.yaml through ENVIRONMENT.
+        backend = yaml.safe_load(
+            (self.target / "components/orders/config.defaults.yaml").read_text()
+        )["ENVIRONMENT"]["backend"]
+        self.assertEqual(
+            (backend["APP_ID"], backend["BASE_PATH"]),
+            ("@@CLIENT_ID@@", "@@CLIENT_BASE_PATH@@"),
+        )
         self.assertEqual(pod["spec"]["initContainers"][0]["name"], "prepare-database")
         route = (self.target / "components/inventory/route.conf").read_text()
         self.assertIn("location /stock/api/", route)

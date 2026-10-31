@@ -231,23 +231,26 @@ registrations do not stay active.
 `client.yaml` follows the protocol of the existing apps and Identity:
 
 ```yaml
-id: orders-web                 # the app's APP_ID; any valid ID, unique across clients
-base_path: /orders             # the app's BASE_PATH; redirect URI is origin + base_path + /auth/callback
+id: orders-web                 # any valid ID, unique across clients
+base_path: /orders             # redirect URI is origin + base_path + /auth/callback
 scopes: [openid, profile, orders-web]   # the app requests its client ID as a scope
 certificate: credentials/client/client.crt   # public certificate, relative to the config folder
-environment:                   # optional: the app's variables carrying id and base_path
-  id: APP_ID
-  base_path: BASE_PATH
 ```
 
-Only public certificates are accepted. The same id and base_path appear in
-three places: `client.yaml`, the app's own settings and `route.conf`. A
-mismatch would show only as an OIDC failure at login, so `validate`, `prepare`
-and `install` check it first: `route.conf` must have a `location` for
-`base_path`, and with `environment:` every container that sets a named variable
-must set it to the `client.yaml` value (and one must set it). These variables
-stay in the manifest's `env` (not in `ENVIRONMENT`), because that is where the
-check reads them.
+Only public certificates are accepted. The app receives the id and base path
+from this file through `ENVIRONMENT`, so they are written only here:
+
+```yaml
+ENVIRONMENT:
+  backend:
+    APP_ID: '@@CLIENT_ID@@'
+    BASE_PATH: '@@CLIENT_BASE_PATH@@'
+```
+
+`CLIENT_ID` and `CLIENT_BASE_PATH` exist only for a component with
+`client.yaml` and cannot be set in config. `route.conf` must have a `location`
+for `base_path`; `validate`, `prepare` and `install` check that first, because
+a mismatch would otherwise show only as an OIDC failure at login.
 
 Restarts follow the changes: no change restarts no owner, a route change the
 gateway, a client change identity, an API secret change identity. The selected
@@ -314,8 +317,8 @@ Rules, each refused before anything is written with the file and the next step:
 - Values follow the [Secret template](#secret-templates) text rules: no
   surrounding spaces, quotes, `;`, control characters or `@@` in a substituted
   value. A secret that does not fit uses `secretKeyRef` in the manifest.
-- Variables the platform checks stay in the manifest's `env`: every
-  `POSTGRES_PASSWORD*` variable and the `client.yaml` `environment:` variables.
+- Every `POSTGRES_PASSWORD*` variable stays in the manifest's `env`: the
+  platform's database check reads it there.
 
 ### API secrets
 
@@ -395,9 +398,9 @@ the resource is inactive.
 1. Add the component's ID to the list in `bundles.yaml` and create
    `components/<id>/VERSION` and `manifests/`.
 2. Write `components/<id>/config.defaults.yaml`: settings and `SECRET_FILES`
-   at the top, each container's variables under `ENVIRONMENT`. Keep
-   `POSTGRES_PASSWORD*` and the variables named in `client.yaml`
-   `environment:` in the manifest's `env`.
+   at the top, each container's variables under `ENVIRONMENT` (with
+   `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` for an app with `client.yaml`). Keep
+   `POSTGRES_PASSWORD*` in the manifest's `env`.
 3. Declare each secret in `SECRET_FILES` with its path (and `generate:` for a
    generated one) and use `@@secret:<id>/<key>@@`.
 4. Add `route.conf` for a path behind the gateway, `client.yaml` for OIDC

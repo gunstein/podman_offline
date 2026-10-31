@@ -313,7 +313,7 @@ def validate_component(
         config, config_path, manifests, component, imported, imported_secrets
     )
     database_bindings(config, config_path, documents)
-    registrations.check_client_identity(manifests.parent, documents)
+    registrations.check_client_route(manifests.parent)
     return documents
 
 

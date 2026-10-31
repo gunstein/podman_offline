@@ -15,3 +15,13 @@ SECRET_FILES:
   - path: credentials/todo
     generate:
     - session-key
+
+# The environment of each container. It comes with the release and is never
+# copied to config.yaml. APP_ID and BASE_PATH come from client.yaml.
+ENVIRONMENT:
+  backend:
+    APP_ID: '@@CLIENT_ID@@'
+    BASE_PATH: '@@CLIENT_BASE_PATH@@'
+    PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
+    HTTPS_PORT: '@@HTTPS_PORT@@'
+    DEMO_CONFIG_LAYER: '@@DEMO_CONFIG_LAYER@@'

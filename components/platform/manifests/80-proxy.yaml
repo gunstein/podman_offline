@@ -31,9 +31,6 @@ spec:
       periodSeconds: 10
       timeoutSeconds: 5
       failureThreshold: 6
-    envFrom:
-    - configMapRef:
-        name: platform-settings
     ports:
     - containerPort: '@@HTTPS_PORT@@'
       hostPort: '@@HTTPS_PORT@@'

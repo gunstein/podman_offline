@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app2-settings
-data:
-  PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
-  HTTPS_PORT: '@@HTTPS_PORT@@'

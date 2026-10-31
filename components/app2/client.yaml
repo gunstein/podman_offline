@@ -5,7 +5,3 @@ scopes:
 - profile
 - app2
 certificate: credentials/todo/todo-client.crt
-# The app's own variables for id and base_path; validate compares them.
-environment:
-  id: APP_ID
-  base_path: BASE_PATH

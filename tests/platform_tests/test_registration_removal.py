@@ -51,6 +51,12 @@ class RegistrationRemovalTests(ProductFixture):
             path = self.inventory / "components/inventory" / filename
             if path.exists():
                 path.unlink()
+            if role == "clients":
+                # Without client.yaml the app has no client id to receive.
+                defaults = self.inventory / "components/inventory/config.defaults.yaml"
+                config = yaml.safe_load(defaults.read_text())
+                del config["ENVIRONMENT"]
+                defaults.write_text(yaml.safe_dump(config))
         (self.inventory / "bundle.yaml").write_text(yaml.safe_dump(descriptor))
 
     def imported(self, owner, volume, member):

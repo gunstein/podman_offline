@@ -75,21 +75,6 @@ def rename_references(value):
     return result
 
 
-def rename_environment(document, component):
-    """Point the app at its own client ID and base path, and its database host."""
-    for spec in (document.get("spec") or {},):
-        for group in ("containers", "initContainers"):
-            for container in spec.get(group, []):
-                for variable in container.get("env", []):
-                    if variable.get("name") == "APP_ID" and component in CLIENT_IDS:
-                        variable["value"] = CLIENT_IDS[component]
-                    elif variable.get("name") == "BASE_PATH":
-                        variable["value"] = PATHS.get(
-                            variable["value"], variable["value"]
-                        )
-    return document
-
-
 def rename_route(text):
     """Rename upstream hosts, nginx variables and the mapped public paths."""
     for old, new in NAMES.items():
@@ -214,7 +199,7 @@ def generate(source, target):
         for manifest in sorted((origin / "manifests").glob("*.yaml")):
             with manifest.open(encoding="utf-8") as stream:
                 documents = [
-                    rename_environment(rename_references(document), old)
+                    rename_references(document)
                     for document in yaml.safe_load_all(stream)
                     if document is not None
                 ]

@@ -35,7 +35,9 @@ def broken_orders(case):
         container["imagePullPolicy"] = "IfNotPresent"
         return documents, "imagePullPolicy: Never"
     if case == "unreplaced placeholder":
-        container["env"].append({"name": "USER", "value": "x-@@DB_USER@@"})
+        container.setdefault("env", []).append(
+            {"name": "USER", "value": "x-@@DB_USER@@"}
+        )
         return documents, "Unreplaced"
     raise AssertionError(case)
 

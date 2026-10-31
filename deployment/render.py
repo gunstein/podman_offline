@@ -208,6 +208,11 @@ def validate_component_config(config, component, path):
             for doc in documents
             if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
         )
+    for name in environment.CLIENT_SETTINGS:
+        if name in config:
+            raise common.DeployError(
+                f"{name} in {path} is derived from client.yaml; remove it"
+            )
     # PUBLIC_HOSTNAME is always derived from PUBLIC_ORIGIN, so it cannot disagree.
     if "PUBLIC_HOSTNAME" in config:
         raise common.DeployError(
@@ -258,6 +263,24 @@ def with_derived(config, path):
         effective["PUBLIC_HOSTNAME"] = public_origin(
             config["PUBLIC_ORIGIN"], path
         ).hostname
+    return effective
+
+
+def with_client_settings(config, component):
+    """Copy config with CLIENT_ID and CLIENT_BASE_PATH from client.yaml, if any.
+
+    client.yaml is the one place for the OIDC client ID and base path; the app
+    receives them through ENVIRONMENT lines such as APP_ID: '@@CLIENT_ID@@'.
+    registrations.client_descriptor validates the file itself.
+    """
+    path = common.ROOT / "components" / component / "client.yaml"
+    data = load_yaml(path) if path.is_file() else None
+    if not isinstance(data, dict):
+        return config
+    effective = dict(config)
+    for name, key in environment.CLIENT_SETTINGS.items():
+        if isinstance(data.get(key), str):
+            effective[name] = data[key]
     return effective
 
 
@@ -1008,7 +1031,8 @@ def effective_config(config, path, component):
     writes it to config.yaml.
     """
     validate_component_config(config, component, path)
-    return environment.with_recipes(with_derived(config, path), component)
+    derived = with_client_settings(with_derived(config, path), component)
+    return environment.with_recipes(derived, component)
 
 
 def declared_volume_names(config, path, imported):
@@ -1044,17 +1068,6 @@ def configmap_data(original, rendered, config):
             value = templates.config_text(text, config, where)
         result[str(key)] = str(value)
     return result
-
-
-def client_variables(component):
-    """Variable names client.yaml's environment: compares; they stay in manifest env."""
-    path = common.ROOT / "components" / component / "client.yaml"
-    if not path.is_file():
-        return ()
-    data = load_yaml(path)
-    # A malformed client.yaml is reported by registrations.client_registration.
-    variables = data.get("environment") if isinstance(data, dict) else None
-    return tuple(variables.values()) if isinstance(variables, dict) else ()
 
 
 def named_containers(documents):
@@ -1110,7 +1123,6 @@ def effective_documents(
             config,
             component,
             named_containers(documents),
-            client_variables(component),
         )
 
     imported = set(imported)

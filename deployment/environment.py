@@ -41,6 +41,8 @@ WHOLE_SECRET = re.compile(r"@@secret:([a-z0-9-]+/[-._a-zA-Z0-9]+)@@\Z")
 # the PostgreSQL layout check (deploy.postgres_binding).
 DATABASE_PREFIX = "POSTGRES_PASSWORD"
 
+# Settings derived from client.yaml (render.with_client_settings).
+CLIENT_SETTINGS = {"CLIENT_ID": "id", "CLIENT_BASE_PATH": "base_path"}
 # One ENVIRONMENT line that names another component's secret.
 ForeignLine = collections.namedtuple("ForeignLine", "container key value secrets")
 
@@ -228,7 +230,7 @@ def with_recipes(config, component):
     return result
 
 
-def apply(documents, sources, config, component, containers, client_variables=()):
+def apply(documents, sources, config, component, containers):
     """Add the generated ConfigMaps and envFrom entries to the effective documents.
 
     config is the effective config (with derived settings and recipes);
@@ -266,11 +268,6 @@ def apply(documents, sources, config, component, containers, client_variables=()
                     f"{where}: {key} is also set in the manifest's env "
                     f"({manifest_names[key.lower()]}); keep it in one place"
                 )
-            if key in client_variables:
-                raise common.DeployError(
-                    f"{where}: {key} is compared with client.yaml; keep it in "
-                    "the manifest's env"
-                )
             if foreign_secrets(component, value):
                 if not API_SECRET_KEY.fullmatch(key):
                     raise common.DeployError(
@@ -281,6 +278,12 @@ def apply(documents, sources, config, component, containers, client_variables=()
                 continue
             if is_secret_line(value):
                 continue
+            for name in CLIENT_SETTINGS:
+                if f"@@{name}@@" in value and name not in config:
+                    raise common.DeployError(
+                        f"{where}: {key}: @@{name}@@ comes from client.yaml, which "
+                        f"components/{component} does not have"
+                    )
             text = templates.config_text(value, config, f"{where}: {key}")
             templates.check_text(text, f"{where}: {key}", "config")
             public[key] = text
