@@ -129,7 +129,6 @@ class QuadletBundleTests(ProductFixture):
         self.write_product(
             {
                 "processor": {
-                    "catalog": {},
                     "manifests": [job],
                     "defaults": {
                         "UNIT_NAME": "UntrustedUnit",
@@ -145,7 +144,6 @@ class QuadletBundleTests(ProductFixture):
                     },
                 },
                 "observer": {
-                    "catalog": {},
                     "manifests": [pod("observer-job", "localhost/observer:1")],
                 },
             }

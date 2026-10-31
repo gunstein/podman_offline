@@ -215,7 +215,6 @@ class AuditTests(ProductFixture):
 
     def product(self):
         worker = {
-            "catalog": {},
             "defaults": {
                 "SECRET_FILES": {
                     "worker-token": [

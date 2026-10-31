@@ -42,7 +42,6 @@ class ManifestStructureTests(ProductFixture):
         self.write_product(
             {
                 "processor": {
-                    "catalog": {},
                     "defaults": self.defaults,
                     "manifests": [self.job],
                 }

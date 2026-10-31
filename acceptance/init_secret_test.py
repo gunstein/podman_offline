@@ -110,7 +110,7 @@ def fixture(source, name, probe_image):
         )
     for entry in ("deploy.sh", "bundle.py", "README.md"):
         shutil.copy2(repo / entry, source / entry)
-    private_yaml(source / "bundles.yaml", {"product": name, "components": {name: {}}})
+    private_yaml(source / "bundles.yaml", {"product": name, "components": [name]})
     component = source / "components" / name
     component.mkdir(parents=True)
     (component / "VERSION").write_text("1.0.0\n")

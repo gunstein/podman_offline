@@ -11,7 +11,6 @@ import bundle
 import yaml
 
 from helpers.bundle_fixture import BundleFixture
-from helpers.catalog_fixture import DEMO
 
 
 class BundleTests(BundleFixture):
@@ -592,15 +591,12 @@ data: {image: ignored}
                     descriptor["version"],
                     {"platform": "1.0.0", "identity": "1.1.0"}.get(name, "1.2.3"),
                 )
+                # Without route or client files only the gateway is required.
                 self.assertEqual(
                     descriptor["requires"],
-                    {
-                        dependency: {
-                            "min": "1.1.0" if dependency == "identity" else "1.0.0",
-                            "before": "2.0.0",
-                        }
-                        for dependency in DEMO[name]["requires"]
-                    },
+                    {}
+                    if name == "platform"
+                    else {"platform": {"min": "1.0.0", "before": "2.0.0"}},
                 )
                 checksum = archive.extractfile(prefix + "checksums.sha256")
                 assert checksum is not None

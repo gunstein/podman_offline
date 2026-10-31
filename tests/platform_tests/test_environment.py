@@ -13,7 +13,6 @@ from helpers.product_fixture import ProductFixture, pod
 
 SHOP = {
     "shop": {
-        "catalog": {},
         "defaults": {
             "DB_USER": "shop",
             "SECRET_FILES": {
@@ -228,13 +227,11 @@ class EnvironmentTests(ProductFixture):
         product["shop"]["route"] = "location /shop/ { return 204; }\n"
         product["edge"] = {
             "role": "gateway",
-            "catalog": {},
             "manifests": [pod("edge-proxy", "localhost/edge:1", ["pvc:edge-routes"])],
             "defaults": {"PUBLIC_ORIGIN": "https://shop.test", "HTTPS_PORT": 443},
         }
         product["login"] = {
             "role": "identity",
-            "catalog": {},
             "manifests": [
                 pod("login-server", "localhost/login:1", ["pvc:login-clients"])
             ],

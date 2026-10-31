@@ -33,11 +33,9 @@ class StatusTests(ProductFixture):
         self.write_product(
             {
                 "a-worker": {
-                    "catalog": {"requires": ["z-hub"]},
                     "manifests": [pod("a-worker-job", "localhost/worker:1")],
                 },
                 "z-hub": {
-                    "catalog": {},
                     "manifests": [pod("z-hub-job", "localhost/hub:1")],
                 },
             }
@@ -118,18 +116,18 @@ class StatusTests(ProductFixture):
             report["components"],
             [
                 {
-                    "name": "z-hub",
-                    "version": "2.3.4",
-                    "recorded_version": "2.3.4",
-                    "unit": "cedar-z-hub.service",
-                    "complete": True,
-                    "state": "active",
-                },
-                {
                     "name": "a-worker",
                     "version": "4.5.6",
                     "recorded_version": "4.5.6",
                     "unit": "cedar-a-worker.service",
+                    "complete": True,
+                    "state": "active",
+                },
+                {
+                    "name": "z-hub",
+                    "version": "2.3.4",
+                    "recorded_version": "2.3.4",
+                    "unit": "cedar-z-hub.service",
                     "complete": True,
                     "state": "active",
                 },
@@ -138,8 +136,8 @@ class StatusTests(ProductFixture):
         self.assertEqual(
             [call.args[0] for call in self.process.call_args_list],
             [
-                ["systemctl", "--user", "is-active", "cedar-z-hub.service"],
                 ["systemctl", "--user", "is-active", "cedar-a-worker.service"],
+                ["systemctl", "--user", "is-active", "cedar-z-hub.service"],
             ],
         )
         code, text = self.invoke(json_output=False)
@@ -306,7 +304,6 @@ class StatusLifecycleTests(ProductFixture):
         self.write_product(
             {
                 "worker": {
-                    "catalog": {},
                     "defaults": {"MESSAGE": "original"},
                     "manifests": [
                         pod(

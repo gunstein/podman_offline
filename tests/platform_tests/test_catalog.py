@@ -19,17 +19,17 @@ class CatalogTests(unittest.TestCase):
         self.root = Path(directory.name)
         (self.root / "VERSION").write_text("1.0.0\n")
 
-    def product(self, entries, files=(), **roles):
+    def product(self, names, files=(), **roles):
         """Write a catalog and a manifest directory for every listed component.
 
         roles are the optional top-level gateway and identity names.
         """
         document = dict({"product": "myproduct"}, **roles)
-        document["components"] = entries
+        document["components"] = list(names)
         (self.root / "bundles.yaml").write_text(
             yaml.safe_dump(document, sort_keys=False)
         )
-        for name in entries if isinstance(entries, dict) else ():
+        for name in names:
             manifests = self.root / "components" / str(name) / "manifests"
             manifests.mkdir(parents=True, exist_ok=True)
             (manifests / "10.yaml").write_text(MANIFEST.replace("NAME", str(name)))
@@ -41,8 +41,8 @@ class CatalogTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture\n")
 
-    def refuse(self, pattern, entries, files=(), **roles):
-        self.product(entries, files, **roles)
+    def refuse(self, pattern, names, files=(), **roles):
+        self.product(names, files, **roles)
         with self.assertRaisesRegex(common.DeployError, pattern):
             catalog.source_descriptors(self.root)
 
@@ -78,20 +78,20 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(
             catalog.source_descriptors(self.root)["app"]["product"], "myproduct"
         )
-        path.write_text("components:\n  app: {}\n")
+        path.write_text("components: [app]\n")
         with self.assertRaisesRegex(common.DeployError, "must contain product: <name>"):
             catalog.load_catalog(self.root)
         for name in ("hubbabubba", "my-shop", "a", "a" * 32):
             with self.subTest(name=name):
                 path.write_text(
-                    yaml.safe_dump({"product": name, "components": {"app": {}}})
+                    yaml.safe_dump({"product": name, "components": ["app"]})
                 )
                 self.assertEqual(catalog.product_name(self.root), name)
         for name in ("MyShop", "1shop", "shop-", "my_shop", "a" * 33, 7, None):
             with self.subTest(name=name):
                 with self.assertRaisesRegex(common.DeployError, "invalid product name"):
                     path.write_text(
-                        yaml.safe_dump({"product": name, "components": {"app": {}}})
+                        yaml.safe_dump({"product": name, "components": ["app"]})
                     )
                     catalog.load_catalog(self.root)
 
@@ -107,44 +107,22 @@ class CatalogTests(unittest.TestCase):
             ["data-orders", "orders", "ordersdata"],
         )
 
-    def test_unknown_fields_values_and_duplicate_keys_are_refused(self):
-        self.refuse("allowed fields are", {"app": {"depends": ["x"]}})
-        for field in ("upgrade", "shares", "public_from"):
-            with self.subTest(field=field):
-                self.refuse(
-                    f"components.app.{field} is no longer written", {"app": {field: 1}}
-                )
-        self.refuse("requires must be a list", {"app": {"requires": "x"}})
-        self.refuse("components must be a nonempty map", {})
-        (self.root / "bundles.yaml").write_text(
-            "product: myproduct\ncomponents:\n  app: {}\n  app: {requires: []}\n"
-        )
-        with self.assertRaisesRegex(yaml.YAMLError, "duplicate key 'app'"):
+    def test_components_is_a_plain_list_of_ids(self):
+        path = self.root / "bundles.yaml"
+        self.product({"app": {}})
+        path.write_text("product: myproduct\ncomponents:\n  app:\n    requires: [db]\n")
+        with self.assertRaisesRegex(
+            common.DeployError, "components is a list of component IDs"
+        ):
             catalog.load_catalog(self.root)
+        self.refuse("components must be a nonempty list", [])
+        self.refuse("components lists an ID twice", ["app", "app"])
 
-    def test_dependency_errors_name_the_declaration(self):
-        self.refuse(
-            "components.app.requires names db, which is not in the catalog",
-            {"app": {"requires": ["db"]}},
-        )
-        self.refuse("must not name itself", {"app": {"requires": ["app"]}})
-        self.refuse(
-            "Dependency cycle: a -> b -> a",
-            {"a": {"requires": ["b"]}, "b": {"requires": ["a"]}},
-        )
-
-    def test_dependency_order_is_stable_for_unrelated_components(self):
-        self.product(
-            {
-                "zeta": {},
-                "app": {"requires": ["base"]},
-                "base": {},
-                "alpha": {},
-            }
-        )
+    def test_dependency_order_puts_the_gateway_first_then_the_list(self):
+        self.product(["zeta", "app", "base", "alpha"], gateway="base")
         self.assertEqual(
             list(catalog.source_descriptors(self.root)),
-            ["zeta", "base", "app", "alpha"],
+            ["base", "zeta", "app", "alpha"],
         )
 
     def test_gateway_and_identity_derive_the_explicit_entries(self):
@@ -155,7 +133,6 @@ class CatalogTests(unittest.TestCase):
                 "login": {},
                 "shop": {},
                 "worker": {},
-                "tool": {"requires": ["shop"]},
             },
             [
                 "components/login/route.conf",
@@ -198,8 +175,6 @@ class CatalogTests(unittest.TestCase):
                 ),
                 # No registration file: no link to identity.
                 "worker": entry(requires=["edge"]),
-                # Written requires keep their order; derived ones are appended.
-                "tool": entry(requires=["shop", "edge"]),
             },
         )
         self.assertEqual(
@@ -215,7 +190,6 @@ class CatalogTests(unittest.TestCase):
                     "requires edge, login"
                 ),
                 "worker: public settings from edge; requires edge",
-                "tool: public settings from edge; requires shop, edge",
             ],
         )
         # Identity accepts clients only while some component has client.yaml.
@@ -284,25 +258,12 @@ class CatalogTests(unittest.TestCase):
                 both,
                 "identity does not register a client with itself",
             ),
-            (
-                "derived cycle",
-                {"edge": {"requires": ["shop"]}, "shop": {}},
-                (),
-                {"gateway": "edge"},
-                "Dependency cycle: edge -> shop -> edge",
-            ),
         ):
             with self.subTest(label):
                 __import__("shutil").rmtree(str(self.root / "components"), True)
                 self.refuse(pattern, entries, files, **roles)
-        for key in catalog.REMOVED_KEYS:
-            with self.subTest(removed=key):
-                self.refuse(
-                    f"components.shop.{key} is no longer written: ",
-                    {"shop": {key: "edge"}},
-                )
         (self.root / "bundles.yaml").write_text(
-            "product: myproduct\nproxy: edge\ncomponents:\n  edge: {}\n"
+            "product: myproduct\nproxy: edge\ncomponents: [edge]\n"
         )
         with self.assertRaisesRegex(common.DeployError, "optionally gateway"):
             catalog.load_catalog(self.root)
@@ -310,9 +271,7 @@ class CatalogTests(unittest.TestCase):
     def test_selected_directories_and_version_files_are_confined(self):
         self.product({"app": {}})
         (self.root / "bundles.yaml").write_text(
-            yaml.safe_dump(
-                {"product": "myproduct", "components": {"app": {}, "gone": {}}}
-            )
+            yaml.safe_dump({"product": "myproduct", "components": ["app", "gone"]})
         )
         with self.assertRaisesRegex(
             common.DeployError,
@@ -339,7 +298,6 @@ class CatalogTests(unittest.TestCase):
         ):
             catalog.source_descriptors(self.root)
         version.write_text("1.0.0\n")
-        self.refuse("allowed fields", {"app": {"version_file": "VERSION"}})
         self.product({"app": {}})
         os.symlink(
             str(self.root / "components/app"), str(self.root / "components/alias")
@@ -347,12 +305,7 @@ class CatalogTests(unittest.TestCase):
         self.refuse("Missing component directory", {"alias": {}})
 
     def test_compiled_descriptor_has_versions_and_ranges(self):
-        self.product(
-            {
-                "base": {},
-                "app": {"requires": ["base"]},
-            }
-        )
+        self.product(["base", "app"], gateway="base")
         (self.root / "components/base/VERSION").write_text("0.4.2\n")
         descriptors = catalog.source_descriptors(self.root)
         self.assertEqual(
@@ -362,7 +315,7 @@ class CatalogTests(unittest.TestCase):
                 "product": "myproduct",
                 "version": "1.0.0",
                 "requires": {"base": {"min": "0.4.2", "before": "0.5.0"}},
-                "public_from": None,
+                "public_from": "base",
                 "routes": None,
                 "clients": None,
                 "apis": None,

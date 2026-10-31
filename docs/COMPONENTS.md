@@ -28,17 +28,11 @@ and without the release directories of other components.
 product: myproduct          # required; names the whole installation
 gateway: platform           # optional: the reverse proxy component
 identity: identity          # optional: the component that registers OIDC clients and API secrets
-components:
-  platform:
-  identity:
-  app1:                     # an empty entry is complete
-  reports:
-    requires: [app1]        # only dependencies the rules below do not create
+components: [platform, identity, app1, reports]   # component IDs only
 ```
 
-Per component only `requires` exists.
-Everything else is derived from `gateway:`, `identity:` and the component's
-files (backlog 77):
+A component has no fields in the catalog. Everything else is derived from
+`gateway:`, `identity:` and the component's files (backlog 77):
 
 | Rule | Result |
 | --- | --- |
@@ -50,10 +44,11 @@ files (backlog 77):
 | Identity | Receives clients in `<identity>-clients` only while some component has `client.yaml`, and API secrets in the platform-rendered Secret `<identity>-apis` only while some component is an API. |
 | A component with none of these files | Has no link to identity and does not depend on it. |
 
-Written `requires` keep their order; the derived dependencies (gateway, then
-identity) are appended. The earlier fields `public_from`, `routes`, `clients`,
-`apis` and `accepts` are refused with the rule that replaced them; there is only
-one way to write a catalog. `./deploy.sh validate` prints what was derived:
+Dependencies exist only through these rules: the gateway, then identity. The
+earlier map form with per-component fields (`requires`, `upgrade`, `shares`,
+`public_from`, `routes`, `clients`, `apis`, `accepts`) is refused; there is
+only one way to write a catalog. An explicit dependency between two
+applications is not supported now (product owner, 2026-10-31). `./deploy.sh validate` prints what was derived:
 
 ```text
 [OK] platform: receives routes in platform-routes
@@ -106,10 +101,10 @@ listed component whose directory is missing is an error, not a silent removal.
 
 ### Dependencies and order
 
-`requires` names components in the same catalog; unknown names, a component
-naming itself and cycles are refused. Components are processed in dependency
-order: dependencies first, otherwise in catalog order. Manifests inside a
-component keep their file order.
+Every component except the gateway depends on the gateway, and a component
+with `client.yaml` or an API secret depends on identity. Components are
+processed in dependency order: dependencies first, otherwise in catalog order.
+Manifests inside a component keep their file order.
 
 Each bundle records a version range for every dependency, computed from that
 dependency's version when the bundle is built: the same minor series while the
@@ -397,7 +392,7 @@ the resource is inactive.
 
 ## Converting a service
 
-1. Add the component to `bundles.yaml` (an empty entry is enough) and create
+1. Add the component's ID to the list in `bundles.yaml` and create
    `components/<id>/VERSION` and `manifests/`.
 2. Write `components/<id>/config.defaults.yaml`: settings and `SECRET_FILES`
    at the top, each container's variables under `ENVIRONMENT`. Keep
@@ -806,11 +801,11 @@ location /reports/ {
 }
 ```
 
-Add the entry to `bundles.yaml` (the gateway, `route.conf` and its
+Add its ID to the list in `bundles.yaml` (the gateway, `route.conf` and its
 dependency are derived):
 
 ```yaml
-  reports:
+components: [platform, identity, app1, app2, help, reports]
 ```
 
 No Python or shell file changes. `./deploy.sh prepare` and `dev/dev.sh up` start
@@ -821,15 +816,14 @@ and leaves the list unchanged. On the target: `./deploy.sh init-config reports`,
 prepare any credentials, then `./deploy.sh install` from that bundle. Installing
 it restarts `reports` and `platform`.
 
-A worker without a gateway needs only the manifest and `worker: {}`.
+A worker without a gateway needs only the manifest and its ID in the list.
 
 ## Example: remove a service
 
 1. Stop the dev product while the service is still rendered: `dev/dev.sh down`.
    This stops only what the last prepare rendered and keeps volumes.
-2. Remove its catalog entry and `components/<id>/`, and remove it from every
-   other entry's `requires` (and identity's `ApiResources__<n>__ApiSecrets__0__Value`
-   line if it was an API). A remaining reference fails before any write and names the declaration.
+2. Remove its ID from the catalog list and `components/<id>/` (and identity's
+   `ApiResources__<n>__ApiSecrets__0__Value` line if it was an API). A remaining reference fails before any write and names the declaration.
 3. `./deploy.sh validate`, `dev/dev.sh up` and `./build-bundle.sh`. The service is gone from
    `build/install.yaml`, the dev route/client imports and
    `dist/current-bundles.txt`. Older archives stay in `dist/` for hosts that

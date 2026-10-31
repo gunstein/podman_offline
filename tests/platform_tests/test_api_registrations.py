@@ -56,7 +56,6 @@ def secret(api):
 def api_component(name):
     """An API backend: it declares its generated secret; ENVIRONMENT hands it over."""
     return {
-        "catalog": {"requires": ["accounts"]},
         "manifests": [api_pod(name + "-server")],
         "defaults": {
             "SECRET_FILES": {
@@ -86,7 +85,6 @@ def identity_lines(*apis):
 API_PRODUCT = {
     "accounts": {
         "role": "identity",
-        "catalog": {},
         "manifests": [api_pod("accounts-server")],
         "env": {"main": identity_lines("ledger", "reports")},
     },

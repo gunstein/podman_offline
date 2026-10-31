@@ -31,7 +31,7 @@ class HostsPolicyTests(ProductFixture):
     def setUp(self):
         super().setUp()
         self.job = pod("processor-job", "localhost/worker:1")
-        self.write_product({"processor": {"catalog": {}, "manifests": [self.job]}})
+        self.write_product({"processor": {"manifests": [self.job]}})
         self.manifest_path = (
             self.source / "components/processor/manifests/10-resources.yaml"
         )

@@ -12,7 +12,7 @@ from unittest import mock
 import bundle
 import yaml
 
-from helpers.catalog_fixture import DEMO, DEMO_COMPONENTS
+from helpers.catalog_fixture import DEMO_COMPONENTS
 
 
 class BundleFixture(unittest.TestCase):
@@ -84,13 +84,17 @@ class BundleFixture(unittest.TestCase):
             return stream.read()
 
     def write_component_catalog(self):
-        """Write the demo graph without registrations: no route/client files."""
-        catalog = {
-            name: {"requires": DEMO[name]["requires"]} for name in DEMO_COMPONENTS
-        }
+        """Write the demo catalog without registrations: no route/client files."""
         self.write(
             "bundles.yaml",
-            yaml.safe_dump({"product": "myproduct", "components": catalog}),
+            yaml.safe_dump(
+                {
+                    "product": "myproduct",
+                    "gateway": "platform",
+                    "identity": "identity",
+                    "components": list(DEMO_COMPONENTS),
+                }
+            ),
         )
         self.write("components/platform/VERSION", "1.0.0\n")
         self.write("components/identity/VERSION", "1.1.0\n")

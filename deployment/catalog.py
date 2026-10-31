@@ -37,19 +37,8 @@ SECRET_ROLES = ("apis",)
 # Every component except the gateway reads these from the gateway's
 # config.yaml at install and validate; its own config.yaml does not hold them.
 PUBLIC_KEYS = ("PUBLIC_ORIGIN", "HTTPS_PORT")
-# The fields a bundles.yaml component entry may have. Everything else in a
-# normalized entry is derived from the gateway/identity names and the files.
-CATALOG_KEYS = ("requires",)
-# Earlier explicit fields, refused with the rule that replaced them.
-REMOVED_KEYS = {
-    "public_from": "every component except the gateway takes the gateway's public settings",
-    "routes": "a component with route.conf registers it with the gateway",
-    "clients": "a component with client.yaml registers it with identity",
-    "apis": "an API component registers its secret with identity",
-    "accepts": "the gateway and identity receive registrations under fixed names",
-    "upgrade": "every install renders the component again and a downgrade is refused",
-    "shares": "only PUBLIC_ORIGIN and HTTPS_PORT are shared, read from the gateway",
-}
+# bundles.yaml lists component IDs only; a normalized entry is derived from
+# the gateway/identity names and the component files (derive_entries).
 # Normalized fields, as the rest of the code and compiled descriptors use them.
 ENTRY_KEYS = (
     "requires",
@@ -149,7 +138,7 @@ def catalog_document(root):
         "identity",
     }:
         raise common.DeployError(
-            f"{path} must contain product: <name> and a components: map, "
+            f"{path} must contain product: <name> and a components: list, "
             "optionally gateway: <id> and identity: <id>"
         )
     check_product(data["product"], f"{path}: product")
@@ -174,44 +163,22 @@ def load_catalog(root):
     """Read bundles.yaml and validate the graph before any file or host action."""
     path, data = catalog_document(root)
     entries = data["components"]
-    if not isinstance(entries, dict) or not entries:
-        raise common.DeployError(f"{path}: components must be a nonempty map")
-    for name, entry in entries.items():
-        where = f"{path}: components.{name}"
-        check_id(name, where)
-        entry = {} if entry is None else entry
-        if not isinstance(entry, dict):
-            raise common.DeployError(f"{where} must be a map or empty")
-        for key in entry:
-            if key in REMOVED_KEYS:
-                raise common.DeployError(
-                    f"{where}.{key} is no longer written: {REMOVED_KEYS[key]} "
-                    "(docs/COMPONENTS.md, The catalog)"
-                )
-        if set(entry) - set(CATALOG_KEYS):
-            raise common.DeployError(
-                f"{where}: allowed fields are {', '.join(CATALOG_KEYS)}"
-            )
-        requires = entry.get("requires", [])
-        if not isinstance(requires, list) or len(set(map(str, requires))) != len(
-            requires
-        ):
-            raise common.DeployError(f"{where}.requires must be a list without repeats")
-        for dependency in requires:
-            check_id(dependency, f"{where}.requires")
-            if dependency == name:
-                raise common.DeployError(f"{where}.requires must not name itself")
+    if isinstance(entries, dict):
+        raise common.DeployError(
+            f"{path}: components is a list of component IDs, for example "
+            "components: [platform, identity, app1]; per-component fields "
+            "(requires, upgrade, shares, routes, ...) are no longer written"
+        )
+    if not isinstance(entries, list) or not entries:
+        raise common.DeployError(f"{path}: components must be a nonempty list")
+    for name in entries:
+        check_id(name, f"{path}: components")
+    if len(set(entries)) != len(entries):
+        raise common.DeployError(f"{path}: components lists an ID twice")
     files = {name: registration_files(root / "components" / name) for name in entries}
     catalog = derive_entries(path, data, files)
     for name, entry in catalog.items():
         check_entry(name, entry, f"{path}: components.{name}")
-    for name, entry in catalog.items():
-        for dependency in entry["requires"]:
-            if dependency not in catalog:
-                raise common.DeployError(
-                    f"{path}: components.{name}.requires names {dependency}, "
-                    "which is not in the catalog"
-                )
     check_id_prefixes(catalog, str(path))
     check_owners(catalog, str(path))
     dependency_order(catalog)  # Reject cycles before anything else uses the graph.
@@ -308,8 +275,7 @@ def derive_entries(path, document, files):
     - Identity receives clients in <identity>-clients and API secrets in
       <identity>-apis, each only when some component uses it, so an Identity
       without that role needs no unused volume or Secret.
-    - Written requires keep their order; derived dependencies (gateway, then
-      Identity) are appended.
+    - Dependencies come only from these rules: the gateway, then Identity.
     """
     components = document["components"]
     roles = {}
@@ -324,12 +290,11 @@ def derive_entries(path, document, files):
     uses_clients = any(found["client"] for found in files.values())
     mapping = api_secret_mapping(identity, files)
     entries = {}
-    for name, written in components.items():
-        written = written or {}
+    for name in components:
         found = files[name]
         directory = f"components/{name}"
         entry = {
-            "requires": list(written.get("requires", [])),
+            "requires": [],
             "public_from": None,
             "routes": None,
             "clients": None,
@@ -379,11 +344,11 @@ def derive_entries(path, document, files):
                 entry["accepts"]["apis"] = environment.owner_secret_name(name)
                 entry["api_secrets"] = mapping
         derived = [entry["public_from"], entry["clients"], entry["apis"]]
-        for dependency in (gateway, identity):
-            if dependency is None or dependency not in derived:
-                continue
-            if dependency not in entry["requires"]:
-                entry["requires"].append(dependency)
+        entry["requires"] = [
+            dependency
+            for dependency in (gateway, identity)
+            if dependency is not None and dependency in derived
+        ]
         entries[name] = entry
     return entries
 

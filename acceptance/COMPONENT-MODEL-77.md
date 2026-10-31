@@ -5,14 +5,16 @@ on real Podman/systemd: all seven lab scenarios are CLEAN PASS (six on
 `0459e5a`, the renamed product on `6210670` after a harness fix); see
 [lab results](#lab-results-2026-10-30). The product owner's later changes (one
 config file per component, one secret form, declared API secrets, and on
-2026-10-31 no `upgrade:`/`shares:` with public settings read from the gateway)
+2026-10-31 no `upgrade:`/`shares:`/`requires:`, `components` as a plain list
+and public settings read from the gateway)
 have product/unit and harness coverage only; **their lab run is outstanding**
 with the commands below.
 
 ## Change
 
-- `bundles.yaml` names `gateway:` and `identity:`; entries keep only
-  `requires` (2026-10-31: `upgrade` and `shares` removed). `catalog.derive_entries`
+- `bundles.yaml` names `gateway:` and `identity:` and lists the component
+  IDs (`components: [platform, identity, ...]`); no component has fields
+  (2026-10-31: `upgrade`, `shares` and `requires` removed). `catalog.derive_entries`
   derives the normalized entries from them and the component files; compiled
   descriptors keep the earlier normalized form plus Identity's `api_secrets`.
 - One config file per component (product owner, 2026-10-30): `ENVIRONMENT` in

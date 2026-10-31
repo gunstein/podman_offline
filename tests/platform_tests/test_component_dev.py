@@ -65,7 +65,6 @@ class ComponentDevTests(ProductFixture):
         product = {}
         for name in ("processor", "notifier"):
             product[name] = {
-                "catalog": {},
                 "manifests": [
                     pod(
                         name + "-job",

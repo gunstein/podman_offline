@@ -1,18 +1,15 @@
-# Source catalog: the components of this product. Each entry is one component
-# with its files in components/<id>/ and one offline bundle. Components that
-# are not listed here are not rendered, built, bundled or started.
+# The components of this product, in install order. Each is components/<id>/
+# with a VERSION file (major.minor.patch) and becomes one offline bundle;
+# components not listed here are not rendered, built, bundled or started.
 #
 # gateway:  the reverse proxy. Every other component reads PUBLIC_ORIGIN and
 #           HTTPS_PORT from its config.yaml and requires it; a component with
 #           route.conf registers it there.
 # identity: signs users in: it registers client.yaml files and checks API
-#           secrets. A component with neither does not depend on it.
-# A component entry is empty, or names extra dependencies:
-#   requires: [other-component]
+#           secrets, and a component with either requires it.
 # Every install renders the component again; a downgrade is refused.
 # `./deploy.sh validate` prints what was derived for each component.
 #
-# Each component owns components/<id>/VERSION (major.minor.patch).
 # product names the whole installation: the installation root
 # /var/lib/<product> and bootstrap file ~/.<product>/<product>.env of the
 # runtime account (prepare-host.sh --user), units <product>-<id>.service,
@@ -22,11 +19,5 @@
 product: myproduct
 gateway: platform
 identity: identity
-components:
-  platform:
-  identity:
-  app1:
-  app2:
-  # .NET/TypeScript demo (backlog 71); not in the fixed acceptance matrix.
-  app3:
-  help:
+# app3 is the .NET/TypeScript demo (backlog 71), not in the fixed acceptance matrix.
+components: [platform, identity, app1, app2, app3, help]

@@ -283,7 +283,7 @@ class ConfigTests(ConfigFixture):
             yaml.safe_dump(
                 {
                     "product": "myproduct",
-                    "components": {name: {} for name in DEMO_COMPONENTS},
+                    "components": list(DEMO_COMPONENTS),
                 }
             ),
         )

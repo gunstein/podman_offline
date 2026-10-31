@@ -127,7 +127,6 @@ def client(client_id, base_path):
 RENAMED = {
     "gateway": {
         "role": "gateway",
-        "catalog": {},
         "defaults": {"PUBLIC_ORIGIN": "https://shop.test:9443", "HTTPS_PORT": 9443},
         "manifests": [
             pod(
@@ -141,7 +140,6 @@ RENAMED = {
     },
     "login-service": {
         "role": "identity",
-        "catalog": {},
         "manifests": [
             pod(
                 "login-service-server",
@@ -153,7 +151,6 @@ RENAMED = {
         "route": route("login-service", "/login", "login-service-server:8080"),
     },
     "orders": {
-        "catalog": {},
         "defaults": {
             "DB_USER": "orders",
             "SECRET_FILES": {
@@ -178,7 +175,6 @@ RENAMED = {
         "credentials": {"credentials/client/client.crt": PEM},
     },
     "inventory": {
-        "catalog": {},
         "defaults": {
             "SECRET_FILES": {"inventory-client": [{"path": "credentials/client"}]}
         },
@@ -195,7 +191,6 @@ RENAMED = {
         "credentials": {"credentials/client/client.crt": PEM},
     },
     "manual": {
-        "catalog": {},
         "manifests": [pod("manual-web", "registry.example.test/team/manual:2")],
         "route": route("manual", "/manual", "manual-web:8080"),
     },
@@ -205,7 +200,6 @@ RENAMED = {
 # config files or apps directory.
 WORKER = {
     "worker": {
-        "catalog": {},
         "manifests": [pod("worker-job", "registry.example.test/team/worker:1")],
     }
 }
@@ -276,19 +270,17 @@ class ProductFixture(DeployFixture):
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
                 )
         roles = {spec["role"]: name for name, spec in product.items() if "role" in spec}
-        self.write_catalog(
-            {name: spec["catalog"] for name, spec in product.items()}, **roles
-        )
+        self.write_catalog(list(product), **roles)
         for name, spec in product.items():
             self.write_component(name, spec)
             (self.source / "components" / name / "VERSION").write_text(version + "\n")
         self.use_root(self.source)
 
-    def write_catalog(self, entries, gateway=None, identity=None):
-        """Write bundles.yaml in the source form.
+    def write_catalog(self, names, gateway=None, identity=None):
+        """Write bundles.yaml in the source form: a list of component IDs.
 
         Without gateway/identity arguments the current file's gateway and
-        identity are kept, so a test can edit only the component entries.
+        identity are kept, so a test can edit only the component list.
         """
         path = self.source / "bundles.yaml"
         document = {"product": self.product_name}
@@ -297,7 +289,7 @@ class ProductFixture(DeployFixture):
             current = yaml.safe_load(path.read_text())
             roles = {key: current.get(key) for key in roles}
         document.update({key: value for key, value in roles.items() if value})
-        document["components"] = entries
+        document["components"] = list(names)
         path.write_text(yaml.safe_dump(document, sort_keys=False))
 
     def write_component(self, name, spec):

@@ -302,6 +302,9 @@ Every install renders the component again and only a downgrade is refused
 and read from there; other components hold no copies.
 `config/common.defaults.yaml` is gone from the demo (its values are platform's
 defaults). Implemented the same day ([change](acceptance/COMPONENT-MODEL-77.md)).
+Also on 2026-10-31: `requires` is removed and `components` is a plain list of
+IDs; only what is needed now is implemented, and an explicit dependency
+between two applications can be added back when a product needs it.
 
 **Simplification candidates (assessment 2026-10-30, not decided):** each
 config type was checked for whether it can go.
@@ -310,7 +313,7 @@ config type was checked for whether it can go.
 | --- | --- |
 | `bundles.yaml` `product`, `gateway`, `identity`, component list | Keep: each is one decision no file can derive. |
 | `upgrade:` | Removed 2026-10-31: refuse downgrades, every install re-applies config. |
-| `requires:` | Keep for the rare extra dependency; everything else is derived. |
+| `requires:` | Removed 2026-10-31: not needed now; `components` is a plain list. |
 | `shares:` and copied `PUBLIC_ORIGIN`/`HTTPS_PORT` | Removed 2026-10-31: the two public settings are read from the gateway's `config.yaml`. |
 | Hand-written settings ConfigMaps (app1, app2, platform `10-configmap.yaml`) | Can go: move to `ENVIRONMENT`, so settings have one form. No decision needed. |
 | `SECRET_TEMPLATES` | Can leave the authoring model: no component writes it any more; `ENVIRONMENT` covers environment variables. The remaining case is a templated secret *file* (for example `bootstrap.sql`). Needs a decision whether that case is needed. |

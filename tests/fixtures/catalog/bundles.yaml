@@ -1,9 +1,4 @@
 product: myproduct
 gateway: platform
 identity: identity
-components:
-  platform:
-  identity:
-  app1:
-  app2:
-  help:
+components: [platform, identity, app1, app2, help]

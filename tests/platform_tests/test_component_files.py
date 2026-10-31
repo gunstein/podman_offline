@@ -21,7 +21,6 @@ class ComponentFileTests(ProductFixture):
         self.write_product(
             {
                 "processor": {
-                    "catalog": {},
                     "defaults": {
                         "VOLUME_FILES": {
                             "processor-seed": [{"component_file": "sql/reference.sql"}]

@@ -13,7 +13,6 @@ from deployment import catalog, common, deploy, registrations, validation
 from helpers.product_fixture import RENAMED, WORKER, ProductFixture, pod, route
 
 REPORTS = {
-    "catalog": {},
     "manifests": [pod("reports-web", "localhost/reports:1")],
     "route": route("reports", "/reports", "reports-web:8080"),
 }
@@ -269,14 +268,12 @@ class ServiceChangeTests(ProductFixture):
         return yaml.safe_load((self.source / "bundles.yaml").read_text())["components"]
 
     def add_reports(self):
-        entries = self.catalog_entries()
-        entries["reports"] = REPORTS["catalog"]
-        self.write_catalog(entries)
+        self.write_catalog(self.catalog_entries() + ["reports"])
         self.write_component("reports", REPORTS)
 
     def remove_reports(self):
         entries = self.catalog_entries()
-        del entries["reports"]
+        entries.remove("reports")
         self.write_catalog(entries)
         shutil.rmtree(str(self.source / "components/reports"))
 
@@ -316,23 +313,14 @@ class ServiceChangeTests(ProductFixture):
             (self.source / "build/bundle/myproduct-reports-1.0.0").exists()
         )
 
-    def test_dangling_dependency_and_missing_directory_fail_before_writes(self):
+    def test_missing_directory_fails_before_writes(self):
         self.add_reports()
         deploy.prepare()
         output = common.BUILD / "install.yaml"
         before = output.read_bytes(), output.stat().st_mtime_ns
         self.remove_reports()
-        entries = self.catalog_entries()
-        entries["manual"]["requires"] = ["gateway", "reports"]
-        self.write_catalog(entries)
+        self.write_catalog(self.catalog_entries() + ["reports"])
         self.process.reset_mock()
-        with self.assertRaisesRegex(
-            common.DeployError, "components.manual.requires names reports"
-        ):
-            deploy.prepare()
-        entries["manual"]["requires"] = ["gateway"]
-        entries["reports"] = REPORTS["catalog"]
-        self.write_catalog(entries)
         with self.assertRaisesRegex(
             common.DeployError, "Missing component directory .*reports"
         ):

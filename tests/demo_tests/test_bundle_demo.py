@@ -21,7 +21,7 @@ class DemoBundleTests(BundleFixture):
         repo = Path(__file__).resolve().parents[2]
         self.write(
             "bundles.yaml",
-            "product: myproduct\ngateway: platform\ncomponents:\n  platform:\n",
+            "product: myproduct\ngateway: platform\ncomponents: [platform]\n",
         )
         shutil.copytree(repo / "components/platform", self.root / "components/platform")
         self.write("components/platform/VERSION", "1.2.4\n")
@@ -59,7 +59,7 @@ class DemoBundleTests(BundleFixture):
     def test_actual_app1_bundle_includes_init_image_once_and_retains_init_command(self):
         repo = Path(__file__).resolve().parents[2]
         # Only the app1 manifests matter here, so the catalog has no registrations.
-        self.write("bundles.yaml", "product: myproduct\ncomponents:\n  app1: {}\n")
+        self.write("bundles.yaml", "product: myproduct\ncomponents: [app1]\n")
         # Without a gateway, app1's own defaults carry the public settings.
         self.write("config/common.defaults.yaml", yaml.safe_dump(DEMO_PUBLIC))
         shutil.copytree(repo / "components/app1", self.root / "components/app1")

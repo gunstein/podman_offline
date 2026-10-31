@@ -65,7 +65,6 @@ class TrustChainTests(ProductFixture):
         self.defaults = {"SECRET_FILES": {SECRET: [{"path": "cert"}]}}
         self.product = {
             COMPONENT: {
-                "catalog": {},
                 "defaults": self.defaults,
                 "manifests": [backend()],
             }

@@ -1107,7 +1107,7 @@ import yaml
 
 with open("bundles.yaml") as stream:
     catalog = yaml.safe_load(stream)
-del catalog["components"]["manual"]
+catalog["components"].remove("manual")
 with open("bundles.yaml", "w") as stream:
     yaml.safe_dump(catalog, stream, sort_keys=False)
 REMOVE_MANUAL

@@ -133,13 +133,9 @@ class WrapperTests(unittest.TestCase):
                         "product": "myproduct",
                         "gateway": "platform",
                         "identity": "identity",
-                        "components": {
-                            "platform": {},
-                            "identity": {"requires": ["platform"]},
-                            # Dev prepare and install resolve app1's route
-                            # state path (backlog 64 regression).
-                            "app1": {"requires": ["platform", "identity"]},
-                        },
+                        # Dev prepare and install resolve app1's route state
+                        # path (backlog 64 regression).
+                        "components": ["platform", "identity", "app1"],
                     }
                 )
             )

@@ -162,17 +162,11 @@ def rename_client(descriptor, component):
 
 
 def rename_catalog(data):
-    entries = {}
-    for name, entry in data["components"].items():
-        entry = dict(entry or {})
-        if "requires" in entry:
-            entry["requires"] = [rename(value) for value in entry["requires"]]
-        entries[rename(name)] = entry
     return {
         "product": PRODUCT,
         "gateway": rename(data["gateway"]),
         "identity": rename(data["identity"]),
-        "components": entries,
+        "components": [rename(name) for name in data["components"]],
     }
 
 
@@ -208,9 +202,7 @@ def generate(source, target):
     shutil.rmtree(str(target / "components"))
     with (source / "bundles.yaml").open(encoding="utf-8") as stream:
         catalog = yaml.safe_load(stream)
-    catalog["components"] = {
-        name: entry for name, entry in catalog["components"].items() if name in NAMES
-    }
+    catalog["components"] = [name for name in catalog["components"] if name in NAMES]
     dump(target / "bundles.yaml", rename_catalog(catalog))
     for old in catalog["components"]:
         new = rename(old)
