@@ -716,13 +716,20 @@ def check_report_login(component, password_file, expected):
                             universal_newlines=True, check=False, timeout=15)
     if result.returncode or result.stdout.strip() != "1":
         raise RuntimeError("Report login: role todo_report does not exist (the mounted SQL did not run)")
-    script = 'PGPASSWORD="$(cat)"; export PGPASSWORD; exec psql -X -A -t -h 127.0.0.1 -U todo_report -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT value FROM demo_seed WHERE name = \'reference\'"'
+    # The postgres image trusts 127.0.0.1 and ::1 (initdb's default), so a login
+    # there accepts any password. Connect to the container's own address, where
+    # the image's last pg_hba.conf line requires scram-sha-256.
+    script = ('address=$(hostname -i | tr " " "\\n" | grep -v -e "^127\\." -e "^::1$" | head -n 1); '
+              '[ -n "$address" ] || exit 97; '
+              'PGPASSWORD="$(cat)"; export PGPASSWORD; exec psql -X -A -t -h "$address" -U todo_report -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT value FROM demo_seed WHERE name = \'reference\'"')
     for value, accepted in ((password, True), ("wrong-" + password, False)):
         result = subprocess.run(["podman", "exec", "-i", component + "-postgres-db", "sh", "-ec", script],
                                 input=value, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 universal_newlines=True, check=False, timeout=15)
         if password in result.stdout + result.stderr:
             raise RuntimeError("Report login: output contains the password")
+        if result.returncode == 97:
+            raise RuntimeError("Report login: the database container has no non-loopback address")
         if accepted and result.returncode:
             raise RuntimeError("Report login: the generated password was refused (exit "
                                + str(result.returncode) + ")")

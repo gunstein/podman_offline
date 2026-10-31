@@ -3,6 +3,7 @@
 import contextlib
 import copy
 import io
+import os
 import subprocess
 import tempfile
 import types
@@ -84,6 +85,44 @@ class ReportLoginTests(unittest.TestCase):
             # The password goes on stdin, never in argv.
             self.assertNotIn("GeneratedReportPassword", " ".join(arguments))
         self.assertIn("MOUNTS SQL file created todo_report", output)
+
+    def test_login_avoids_the_images_trusted_loopback(self):
+        """The postgres image trusts 127.0.0.1/::1; only the own address checks passwords."""
+        calls, _ = self.check([(0, "release-v1\n", ""), (2, "", "auth failed")])
+        script = calls[0][0][-1]
+        with tempfile.TemporaryDirectory() as directory:
+            for name, body in (
+                ("hostname", 'echo "$ADDRESSES"'),
+                ("psql", 'echo "$*"'),
+            ):
+                stub = Path(directory) / name
+                stub.write_text("#!/bin/sh\n" + body + "\n")
+                stub.chmod(0o755)
+            for addresses, code, host in (
+                ("127.0.0.1 ::1 10.89.0.5", 0, "-h 10.89.0.5 "),
+                ("10.89.0.5", 0, "-h 10.89.0.5 "),
+                ("127.0.0.1 ::1", 97, None),
+            ):
+                with self.subTest(addresses=addresses):
+                    result = subprocess.run(
+                        ["sh", "-ec", script],
+                        input="GeneratedReportPassword",
+                        env=dict(
+                            os.environ,
+                            PATH=directory + os.pathsep + os.environ["PATH"],
+                            ADDRESSES=addresses,
+                            POSTGRES_DB="todo",
+                        ),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, code, result.stderr)
+                    if host:
+                        self.assertIn(host, result.stdout)
+                    self.assertNotIn("127.0.0.1", result.stdout)
+        with self.assertRaisesRegex(RuntimeError, "no non-loopback address"):
+            self.check([(97, "", "")])
 
     def test_each_failure_names_its_cause_without_values(self):
         ok, refused = (0, "release-v1\n", ""), (2, "", "")

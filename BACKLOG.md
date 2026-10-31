@@ -89,7 +89,13 @@ Remaining in this item:
 - `MOUNTS` demo: app1's seed SQL `020-report-role.sql` creates `todo_report`
   with the generated `app1-report-password`; `seed_content` in the acceptance
   run logs in with it (and is refused with a wrong password), in dev and prod
-  and in the renamed product. No real run yet.
+  and in the renamed product. The first real run, `whoami-ff53717`
+  (2026-10-31), was NOT CLEAN at
+  `03-dev-up`: "a wrong password was accepted". A harness defect: the check
+  logged in over `127.0.0.1`, which the postgres image's `pg_hba.conf` trusts
+  (initdb's default), so no password was checked. The check now connects to the
+  container's own address (`scram-sha-256`); verified against a local
+  `postgres:17.11` container, lab rerun outstanding.
 - Not started from the original scope: CA trust profiles, an example
   application for the organisation's SPA/.NET architecture.
 

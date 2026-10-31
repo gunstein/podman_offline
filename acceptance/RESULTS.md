@@ -43,6 +43,12 @@ written once, no shared or per-component dev config file, `MOUNTS`, no
 standalone mode or `examples/`, no authored `SECRET_TEMPLATES`) have unit and
 harness tests only. The matrix no longer has the `03-example-*` steps; its
 seed checks now also log in as `todo_report`, created by app1's `MOUNTS` SQL file.
+The first real run, `whoami-ff53717` (2026-10-31), was NOT CLEAN at
+`03-dev-up`: "a wrong password was accepted". A harness defect: the check
+logged in over `127.0.0.1`, which the postgres image's `pg_hba.conf` trusts
+(initdb's default), so no password was checked. The check now connects to the
+container's own address (`scram-sha-256`); verified against a local
+`postgres:17.11` container, lab rerun outstanding..
 
 ## Other scenarios
 
