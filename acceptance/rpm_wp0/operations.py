@@ -30,7 +30,7 @@ DELIVERED = "myproduct-tools-2.0-1.noarch.rpm"
 TRANSCRIPT = []
 
 # Observe daemon completion without opening its LMDB lock file. A normal LMDB
-# reader is unsafe in the baseline's fanotify context; see RPM-WP0-TRUST-REFRESH.md.
+# reader is unsafe in the baseline's fanotify context; see acceptance/RPM-WP0-TRUST-REFRESH.md in the git history.
 TRUST_CURSOR = None
 TRUST_SERVICE = None
 JOURNAL = [

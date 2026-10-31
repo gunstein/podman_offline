@@ -251,7 +251,7 @@ def derive_entries(path, document, files):
     """Turn the catalog and each component's registration files into normalized entries.
 
     Pure: no reads, writes or host commands. files maps each component to
-    registration_files(). The rules (docs/COMPONENT-SMALL-VARIANT.md, 2.3):
+    registration_files(). The rules (docs/COMPONENTS.md, "The catalog"):
 
     - The gateway receives routes in <gateway>-routes. Every other component
       takes the gateway's public settings and requires it; a component with

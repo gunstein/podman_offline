@@ -6,7 +6,7 @@ OL9 and unassisted human verification remain outstanding. See
 constraints; current operator commands live in the production manual.
 Read [item 65](../BACKLOG.md#65-one-command-host-preparation-and-a-short-operator-guide),
 the [review guide](REVIEW_GUIDE.md), and the
-[manual installation report](../acceptance/PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)
+[manual installation report](../acceptance/RESULTS.md)
 before implementing. This document resolves the choices left open in the item.
 
 ## Outcome and scope

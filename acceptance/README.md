@@ -12,8 +12,8 @@ python3 acceptance/acceptance.py --run whoami-1 --whoami run
 ```
 
 Focused lab results, exact tested commits, the six conversion points and the
-public versus internal comparison are in [WHOAMI-DOTNET.md](WHOAMI-DOTNET.md).
-The [remaining fixed-matrix results](API-SECRETS-MATRIX-20261029.md) record five
+public versus internal comparison are in [latest results](RESULTS.md).
+The [remaining fixed-matrix results](RESULTS.md) record five
 CLEAN PASS scenarios at `0ece0c1`, including renamed and the corrected Identity
 baseline; those runs do not include the focused app3 scenario.
 
@@ -33,7 +33,7 @@ on disposable PROD, after app installation. It checks incomplete status with the
 old container still active, then verifies the new public config value inside the
 replacement container. Normal and renamed scenarios are supported. Protected
 release code and trust rules are unchanged; original config is restored through
-install. See [probe commands, negative control and verification limits](STATUS.md).
+install. See [probe commands, negative control and verification limits](RESULTS.md).
 The existing matrix without this flag does not exercise this failure path.
 
 # Protected releases (backlog 54)
@@ -41,7 +41,7 @@ The existing matrix without this flag does not exercise this failure path.
 Production lab steps use the shared authenticated root helper and protected
 `/opt/<product>/releases` layout. All six scenarios now include a separate-UID
 `07-release-safety` probe; current-change OL9 verification is pending. Read
-[bootstrap, failure/retry contracts, local evidence and matrix commands](PROTECTED-RELEASES.md).
+[bootstrap, failure/retry contracts, local evidence and matrix commands](RESULTS.md).
 
 # Secret-derived init environment (backlog 61)
 
@@ -51,9 +51,9 @@ ordinary-container control, direct kube replacement and relocated-release Quadle
 rerender/restart. Assertions require fresh execution and the exact nonempty value;
 a healthy main container cannot hide a failed or skipped init. No database or
 private organisation image is required. See [the offline scenario and safe
-operator diagnostic procedure](INIT-SECRET.md). Normal and renamed lab runs at
+operator diagnostic procedure](RESULTS.md). Normal and renamed lab runs at
 `52f28e4` both passed the real probe, including replacement and relocated Quadlet
-rerender/restart; see [recorded evidence and limits](INIT-SECRET.md#completed-real-lab-verification-2026-10-22).
+rerender/restart; see [recorded evidence and limits](RESULTS.md).
 Local product and harness tests remain separate from that runtime evidence.
 
 # Portable component files (backlog 57)
@@ -75,7 +75,7 @@ changed-application-image work is still separate and should extend that builder.
 after an earlier step commits, refuses consumer startup, then repairs/reimports
 and replays while checking retained Todo rows and no duplicate seed rows. Stubbed
 harness tests protect those assertions; the actual lab run is outstanding.
-See [COMPONENT-FILES.md](COMPONENT-FILES.md) for verification and runnable commands.
+See [latest results](RESULTS.md) for verification and runnable commands.
 
 # Component dev overrides (backlog 56)
 
@@ -87,7 +87,7 @@ and require its absence in the sibling backend. Production `healthy()` verifies
 The renamed generator carries and renames component dev maps as declarations.
 Owner/help-only scenarios require no app marker. No full environment is printed.
 
-See [COMPONENT-DEV.md](COMPONENT-DEV.md) for checks, runnable lab commands and
+See [latest results](RESULTS.md) for checks, runnable lab commands and
 outstanding runtime verification. Stubbed harness results are not Podman evidence.
 
 # Secret templates and ConfigMap inline values (backlog 41)
@@ -97,7 +97,7 @@ builders change only the selected component's file (including renamed products);
 unpacked bundles keep an informational root `VERSION`. After backlog 40, rerun
 the full six-scenario lab matrix: older lab results do not verify this change.
 
-[SECRET-TEMPLATES.md](SECRET-TEMPLATES.md) records local verification and the
+[latest results](RESULTS.md) records local verification and the
 pending lab commands. `database-runtime` now starts with a disposable direct
 `kube play` and Quadlet env/file/update probe. Renamed-product runs execute the
 same probe before generating `shop`, and validate renamed template references.
@@ -140,7 +140,7 @@ archives. `remote.sh` takes the product name as its 13th argument (exported as
 run installs under `/var/lib/shop` with `shop-*` units and archives. Since
 backlog 64 the runtime account is a separate ordinary login account,
 `<product>-ops` (`myproduct-ops`, `shop-ops`), with home `/home/<account>`;
-see [production layout verification](PRODUCTION-LAYOUT.md).
+see [production layout verification](RESULTS.md).
 
 ---
 
@@ -149,7 +149,7 @@ see [production layout verification](PRODUCTION-LAYOUT.md).
 `--renamed-product` now also builds a newer inventory release without route and
 client on DEV, installs it on PROD and checks that `/stock` returns 404, the
 inventory client is gone and orders still works, before the existing inventory
-uninstall. See [verification](MANIFEST-VALIDATION.md).
+uninstall. See [verification](RESULTS.md).
 
 ---
 
@@ -160,14 +160,14 @@ manual from the demo with `acceptance/renamed_product.py` (YAML and runtime
 settings only) and runs dev, bundling, source removal of manual, offline
 install, login/CRUD, restart, redeploy and scoped uninstall. The demo's dev
 start now calls `dev/demo-credentials.sh` before `dev/dev.sh up`. Not yet run
-in the lab; see [verification](DECLARATIVE-COMPONENTS.md) for the commands.
+in the lab; see [verification](RESULTS.md) for the commands.
 
 ---
 
 # App1 database init (0.4.8)
 
 The schema probe compatibility fix and current verification are recorded in
-[SCHEMA-PROBE-FIX.md](SCHEMA-PROBE-FIX.md). Historical failures and reports are
+[latest results](RESULTS.md). Historical failures and reports are
 preserved; use that report for the new focused and full-run evidence.
 
 App1 now uses an actual schema init container. The existing `database-runtime`
@@ -176,8 +176,8 @@ inserting a row. Fresh app1-first/app2-first and platform/help-only scenarios
 remain applicable. A fresh app1-first run with the probe fix now passes real
 init/replay, retained data, the full lifecycle and target audit. App2-first and
 focused platform/help-only were not rerun for this fix. See
-[init verification](APP1-INIT.md) for the original implementation report and
-[probe verification](SCHEMA-PROBE-FIX.md) for current results and limits.
+[init verification](RESULTS.md) for the original implementation report and
+[probe verification](RESULTS.md) for current results and limits.
 
 ---
 
@@ -186,7 +186,7 @@ focused platform/help-only were not rerun for this fix. See
 Platform uses stock nginx and a mounted public ConfigMap template. Existing
 fresh app1-first/app2-first and platform/help-only scenarios remain applicable.
 The local harness is verified, but real nginx/Podman/HTTPS/DNS and target policy
-checks still require the authorized lab. See [proxy verification](NGINX-YAML.md)
+checks still require the authorized lab. See [proxy verification](RESULTS.md)
 for scope, local results and the remaining matrix. Older evidence below does
 not verify this release.
 
@@ -197,7 +197,7 @@ not verify this release.
 Current SECRET_FILES/VOLUME_FILES IDs contain lists of `{path: ...}` sources
 with optional `generate: [filename]`. Generation and delivery share one
 source declaration; there is no separate generation field or old-format fallback.
-See [file-source verification](FILE-SOURCES.md) for local checks and target gaps.
+See [file-source verification](RESULTS.md) for local checks and target gaps.
 Earlier schema/counts below are historical, not the active config contract.
 
 ---
@@ -208,7 +208,7 @@ Current deploy/dev/certificate preparation no longer scans for former core or
 combined platform/Identity state. No migration or cleanup is introduced. The
 active runner's old-layout refusal scenario is removed; current fresh install,
 upgrade, retry and scoped uninstall checks remain. See
-[cleanup verification](LEGACY-CHECK-CLEANUP.md) for scope, retained historical
+[cleanup verification](RESULTS.md) for scope, retained historical
 fixtures and local results. Historical sections below do not describe current
 old-layout refusal behavior.
 
@@ -219,7 +219,7 @@ old-layout refusal behavior.
 Apps now deliver session/client credentials through backend-only read-only
 Secrets with requested file mode `0400`; the unused Identity API-secret is
 removed. Source files, generation and retry preservation remain unchanged.
-See [credential delivery verification](CREDENTIAL-DELIVERY.md)
+See [credential delivery verification](RESULTS.md)
 for local coverage and required fresh target checks. Earlier reports below are
 historical evidence, not verification of this change.
 
@@ -243,7 +243,7 @@ python3 acceptance/acceptance.py --run package-help --platform-help-only run
 
 Each run resets the configured disposable VMs. Directory trust remains unverified
 on a target until those runs pass; local transport stubs are not evidence of real
-fapolicyd behavior. See [DEPLOY-REFACTOR.md](DEPLOY-REFACTOR.md) for results and
+fapolicyd behavior. See [latest results](RESULTS.md) for results and
 limits. Older sections below describe earlier release layouts and evidence.
 
 ---
@@ -253,7 +253,7 @@ limits. Older sections below describe earlier release layouts and evidence.
 Fresh installations use `credentials/` below each component's state directory,
 including `build/dev/<component>/credentials/` in dev. The older sections below
 retain their historical paths and evidence. No credentials are migrated and no
-fallback path is provided. See [CREDENTIAL-PATHS.md](CREDENTIAL-PATHS.md) for current
+fallback path is provided. See [latest results](RESULTS.md) for current
 verification results and pending fresh-install lab commands.
 
 ---
@@ -274,7 +274,7 @@ app-only, help-only and platform-only checks and adds an actual Identity-only
 image/content upgrade. `--identity-only` focuses on that upgrade with both apps;
 `--platform-help-only` installs no Identity and checks HTTPS help through the proxy.
 Only the changed component's archive/checksum is transferred during its upgrade.
-See [IDENTITY-SPLIT.md](IDENTITY-SPLIT.md) for evidence and remaining lab work.
+See [latest results](RESULTS.md) for evidence and remaining lab work.
 
 The former platform/core documentation below is historical. Current bundles are
 platform, identity, app1, app2 and help; current credentials belong under identity.
@@ -301,13 +301,13 @@ Platform version requirements and installed dependency metadata are enforced.
 
 The former core-layout refusal scenario is retired from the current runner.
 Its implementation and instructions are retained in git at `b95df9c`, and the
-original results remain in [PLATFORM-RENAME.md](PLATFORM-RENAME.md). Those results
+original results remain in [latest results](RESULTS.md). Those results
 are historical evidence, not expected behavior of the current release.
 
 The historical successful 0.2.0-to-0.2.1 upgrade remains at commit `511099e`:
 run `--upgrade-020` from a checkout of that commit, before running a resettable
 platform scenario. The current CLI does not offer that flag; unknown options fail before lab setup.
-See [PLATFORM-RENAME.md](PLATFORM-RENAME.md) for scope, local checks and lab gaps.
+See [latest results](RESULTS.md) for scope, local checks and lab gaps.
 
 The documentation below is retained verbatim as historical core-layout guidance
 and evidence through 0.2.1; its bundle/filename assumptions do not describe 0.3.0.
@@ -534,7 +534,7 @@ update can be retried without extracting again. An add status of 1 (nothing new
 after duplicate removal) is accepted only if update succeeds and the live trust
 check confirms every package file. Other add errors stop immediately; incomplete
 live trust still fails. This separate helper fix addresses the retry limitation
-recorded in DEPLOY-REFACTOR.md; it does not change deploy's lifecycle retry state.
+recorded in DEPLOY-REFACTOR.md (git history); it does not change deploy's lifecycle retry state.
 
 ```sh
 python3 -m unittest discover -s acceptance -p 'test_*.py'
@@ -575,7 +575,7 @@ These are malicious tests for the runner's resettable lab, not a production
 recovery command. The probe requires SELinux Enforcing and will not substitute
 mocked labels or silently skip a missing prerequisite. Real lab results
 (clean matrix `t11` at `3a54714`), commands and evidence boundaries are in
-[PREPARE-HOST.md](PREPARE-HOST.md).
+[latest results](RESULTS.md).
 
 ## Registry source acceptance
 
@@ -650,7 +650,7 @@ container's `UpperDir` under `/var/lib/<product>/storage`.
 `09-home-unchanged` and `10-home-unchanged` compare the login home's name/type/size/mode
 inventory with the one recorded after bootstrap.
 The storage dry run is logged separately and every line must be classified with [the rules and
-the run-6 table](SELINUX-DIAGNOSIS.md). Unknown lines give FAIL.
+the run-6 table](RESULTS.md). Unknown lines give FAIL.
 No AVC/USER_AVC/FANOTIFY since the start is allowed. No labels are repaired in
 the check steps, and no restorecon without -n, -F or chcon is used there.
 The preparation excludes storage from recursive relabeling, also when repeated;
@@ -890,7 +890,7 @@ after those checks. Product tests additionally exercise both app orders with
 newer/older core and exact expected service restarts.
 
 Current config/lifecycle results and their exact verification limits are recorded
-in [CONFIG-VERIFICATION.md](CONFIG-VERIFICATION.md).
+in [latest results](RESULTS.md).
 
 
 ## PostgreSQL runtime verification
@@ -928,7 +928,7 @@ See the root README for manual DB config additions before upgrading existing
 0.2.0 installs. Passwords and database volumes must be restored together. Rotating
 a file alone does not change a PostgreSQL role password; rotation is out of scope.
 
-Actual database results and limitations: [DATABASE-VERIFICATION.md](DATABASE-VERIFICATION.md).
+Actual database results and limitations: [latest results](RESULTS.md).
 
 
 ## Focused historical 0.2.0 upgrade
@@ -944,7 +944,7 @@ only the documented manual config additions. It reuses existing logs, readiness,
 transfer, credential, audit and cleanup mechanisms. It does not rerun the full
 reboot/crash/hang matrix. Use a new run ID every time.
 
-See [test baseline and run details](TEST-BASELINE.md) for exact checks, revisions,
+See [test baseline and run details](RESULTS.md) for exact checks, revisions,
 local results and remaining verification. The local harness now has 148 tests;
 passing them is not evidence of a real historical upgrade. That scenario has not
 yet been run on the lab VMs.

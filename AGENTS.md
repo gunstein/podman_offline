@@ -16,7 +16,8 @@ scoped: unrelated known gaps belong in the backlog, not incidental refactoring.
 In the final report identify contracts checked, actual test results, verification
 gaps and the understandability review outcome. Separate product/unit tests,
 acceptance-harness tests and real Podman/systemd verification. Never substitute
-historical lab results for verification of the current change.
+older lab results for verification of the current change. `acceptance/RESULTS.md`
+holds only the latest real results; older evidence stays in the git history.
 
 Keep the guide's contracts and known-gap references current when behavior changes.
 Add meaningful regression coverage for fixed gaps; documentation alone is not a

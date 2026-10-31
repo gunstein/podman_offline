@@ -10,7 +10,7 @@
 # RPM-GPG-KEY-<product>. Each RPM installs its release unchanged under
 # /var/lib/<product>/releases/<product>-<component>-<version>/, where the
 # product expects published releases; fapolicyd trusts the files through the
-# RPM database. Not a product feature; see acceptance/RPM-PROTOTYPE.md.
+# RPM database. Not a product feature; see acceptance/RPM-PROTOTYPE.md in the git history.
 set -euo pipefail
 
 usage() {

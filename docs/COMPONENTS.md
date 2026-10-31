@@ -561,7 +561,7 @@ containers could not resolve localhost. The replacement passed focused whoami
 localhost and loopback checks. DEV restart requires the explicit policy above;
 `dev/dev.sh restart` supplies it.
 The failed first attempt and the successful scope are recorded in
-[PUBLIC-ORIGIN-HOSTS.md](../acceptance/PUBLIC-ORIGIN-HOSTS.md).
+[latest results](../acceptance/RESULTS.md).
 
 Symptom of a container that cannot reach the public origin: the backend
 rejects every token with `IDX10204` (no expected issuer, because the discovery
@@ -583,7 +583,7 @@ single files in the system certificate directory; .NET on Linux reads every
 file there, and `subPath` adds the files without hiding the image's own CAs.
 The chain holds public certificates only and signs nothing. Demo `app3`
 (backlog 71) uses this pattern; its
-[verification](../acceptance/WHOAMI-DOTNET.md#public-https-versus-internal-calls)
+[verification](../acceptance/RESULTS.md)
 also records the internal alternative and what it needs.
 
 Component config (the Secret name must start with the component ID; the
@@ -645,7 +645,7 @@ install -m 0644 /var/lib/myproduct/state/PKI/private/ca.crt /var/lib/myproduct/s
 backend must call Duende with the host name in `web.crt` (the one in
 `PUBLIC_ORIGIN`). `subPath` with a Secret volume under `podman kube play` is
 verified separately on the lab host; see
-[trust chain verification](../acceptance/TRUST-CHAIN.md).
+[trust chain verification](../acceptance/RESULTS.md).
 
 Checking the chain from inside the backend container: `openssl s_client` does
 not find a CA mounted under `/etc/ssl/certs` by an ordinary file name (it uses

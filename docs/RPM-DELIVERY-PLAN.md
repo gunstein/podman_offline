@@ -8,16 +8,16 @@ new snapshots (revision 3.2, `a404e91`). Revision 3.3 declares the WP0
 journal/daemon trust observations as an automation adaptation and records
 WP0 verification status after the bounded-investigation merge (`3dc304e`).
 Not implemented. **WP0 matrix passed** (all 24 case/profile runs at
-`3222efb`, 2026-10-25, [report](../acceptance/RPM-WP0-LAB-20261025-FULL.md));
+`3222efb`, 2026-10-25, [report](../acceptance/RESULTS.md));
 statements marked "confirm in WP0" below were hypotheses before that run. WP1
 starts only after the product owner's go/no-go and the two open phase 1
 decisions in [item 69](../BACKLOG.md#phasing-decision-product-owner-2026-10-26)
 (status 2026-10-27: both open). Read
 [item 69](../BACKLOG.md#69-paper-first-installation-for-closed-networks)
 ("Chosen direction"), the
-[RPM prototype results](../acceptance/RPM-PROTOTYPE.md#results-2026-10-25)
+[RPM prototype results](../acceptance/RESULTS.md)
 (historical: one manual run, default policy, network on), the
-[paper-first lab results](../acceptance/PAPER-FIRST-LAB.md), the
+[paper-first lab results](../acceptance/RESULTS.md), the
 [item 66 plan](INSTALL-SET-PLAN.md), the [review guide](REVIEW_GUIDE.md)
 (sections 1, 6 and 7) and the current [production manual](PRODUCTION-INSTALL.md).
 
@@ -38,7 +38,7 @@ for the rules phase 1 must follow so that phase 2 is not made harder.
 | Immutable versions, retirement, runtime command, credentials, failure and retry | 1, adjusted where they assume a verified signature |
 
 WP0 status: the complete A–H matrix passed on 2026-10-25
-([report](../acceptance/RPM-WP0-LAB-20261025-FULL.md)); the status section
+([report](../acceptance/RESULTS.md)); the status section
 further down predates that run.
 
 ## Outcome and scope
@@ -456,7 +456,7 @@ within the product-owner decisions passes; any weakening needs a new
 product-owner decision before the plan changes.
 
 History: the first attempt (recorded in
-[RPM-WP0.md](../acceptance/RPM-WP0.md), historical evidence) created a
+[latest results](../acceptance/RESULTS.md), historical evidence) created a
 separate P2 snapshot on the ZFS-backed PROD disk, which blocked further
 rollback to `clean-agent` and stopped WP0 before any probe. That design is
 replaced below. The product owner removed that snapshot and restored the lab.
@@ -594,7 +594,7 @@ medium handling and reading are left to the AI walkthrough and item 68).
 
 The paper command lines stay unchanged; the runner adds observations before
 and after every DNF `install`/`reinstall`, including the paper repair line.
-Details and rationale: [refresh correction](../acceptance/RPM-WP0-TRUST-REFRESH.md);
+Details and rationale: [refresh correction](../acceptance/RESULTS.md);
 implementation: `capture_trust_cursor`, `completed_refresh` and `wait_trust`
 in `acceptance/rpm_wp0/operations.py`; local tests:
 `acceptance/test_rpm_wp0_trust.py`.
@@ -651,13 +651,13 @@ for the trust poll of `<product>-admin` (WP2).
 ### WP0 verification status (2026-10-25)
 
 Superseded by the full matrix pass at `3222efb` the same day
-([report](../acceptance/RPM-WP0-LAB-20261025-FULL.md)); the list below is the
+([report](../acceptance/RESULTS.md)); the list below is the
 status before that run and is kept as history.
 
 - The runner is merged (`3dc304e`) as a bounded WP0 investigation. This is
   neither a completed WP0 nor clearance for WP1.
 - Selected cases E, A and C3/R4 passed on P1 and P2 at `47b14ca`
-  ([report](../acceptance/RPM-WP0-LAB-20261025-SELECTED05.md)). Review later
+  ([report](../acceptance/RESULTS.md)). Review later
   found that both R4 cursors were taken during an earlier refresh, so these
   runs do not verify the corrected gate above.
 - The corrected gate is locally tested and independently reviewed, but not

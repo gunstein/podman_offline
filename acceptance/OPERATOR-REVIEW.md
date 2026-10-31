@@ -188,7 +188,7 @@ must be repeated against the actual implemented/manual revision.
 Tracked explicitly by [backlog item 68](../BACKLOG.md#68-human-operator-trial-on-a-fresh-vm).
 
 No qualifying unassisted trial was performed for this change. The
-[2026-10-23 assisted manual run](PRODUCTION-LAYOUT.md#manual-run-as-produser-over-ssh-2026-10-23)
+[2026-10-23 assisted manual run](RESULTS.md)
 was useful evidence of difficulty and runtime behavior; it required step-by-step
 help and does not count as a pass of the new human criterion. No completion time,
 error count or participant experience is inferred from that record.

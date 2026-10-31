@@ -109,7 +109,7 @@ Deploy and certificate preparation do not scan for those historical paths,
 markers or volume names. They neither migrate nor clean up unrelated state.
 Normal upgrades in the current model retain config, credentials and data;
 current dependency/version checks, database preflight and retry validation remain
-in force. See [layout cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md).
+in force. See [layout cleanup verification](acceptance/RESULTS.md).
 
 Every `bundle.yaml` is the compiled descriptor of its component and declares
 exact dependencies with inclusive `min` and exclusive `before` ranges, for
@@ -118,7 +118,7 @@ example `{platform: {min: 0.4.11, before: 0.5.0}, identity: {min: 0.4.11, before
 1.x and later, the declared major series. The installed descriptor is retained
 privately under `metadata/`, independently of old release directories. Incoming dependencies and every installed dependent's range must
 allow a shared upgrade. Missing, malformed or incompatible metadata refuses
-before mutation. See [Identity verification](acceptance/IDENTITY-SPLIT.md) for
+before mutation. See [Identity verification](acceptance/RESULTS.md) for
 coverage, local evidence and pending lab commands.
 
 ## Configuration and initialization
@@ -298,7 +298,7 @@ Place them inside the intended `spec.containers[]` or `spec.initContainers[]`
 entry. Both YAML sequence indentation styles work. This is a focused structural
 guard, not full Kubernetes schema validation; other Pod fields and arbitrary
 ConfigMap/Secret keys and annotations remain supported. Bundle building uses
-the same guard before image operations. See [verification](acceptance/MANIFEST-STRUCTURE.md).
+the same guard before image operations. See [verification](acceptance/RESULTS.md).
 The same guard refuses Pod `spec.hostAliases` so aliases cannot bypass public-origin
 network DNS (backlog 76; [how containers reach the public origin](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
 
@@ -409,7 +409,7 @@ markers fail with template-path diagnostics. Literal braces, shell `${...}` and
 systemd `%` specifiers are preserved. Both templates are checked by validate and
 the lifecycle before generation, output or host commands; install checks them
 before querying the user manager, also on a repeated same-version install.
-See [verification](acceptance/QUADLET-TEMPLATES.md).
+See [verification](acceptance/RESULTS.md).
 
 ### Signed bundles
 
@@ -459,7 +459,7 @@ routes stay separate public registrations. Variable upstreams and runtime DNS
 allow platform/help without Identity or apps, and later app additions without
 hardcoded backend addresses. The renderer still replaces only whole `@@...@@`
 values; nginx variable substitution is explicitly limited at container startup.
-See [proxy verification](acceptance/NGINX-YAML.md) for local checks and pending
+See [proxy verification](acceptance/RESULTS.md) for local checks and pending
 real-container/lab verification.
 
 ## Config, secrets and persistence
@@ -472,7 +472,7 @@ keys and certificates, whether generated locally or supplied externally.
 `/var/lib/myproduct/<component>/credentials/`. Shared `PKI/private` stays in place.
 Release 0.4.1 uses this layout for fresh state only, with no path migration,
 aliases or fallback. Container mounts, Secret/PVC names and image tags are unchanged.
-See [credential-path verification](acceptance/CREDENTIAL-PATHS.md) for results
+See [credential-path verification](acceptance/RESULTS.md) for results
 and remaining historical references.
 
 `PUBLIC_ORIGIN` must be an HTTPS origin with no credentials, path, query or fragment.
@@ -685,7 +685,7 @@ Each file runs with `ON_ERROR_STOP` and `--single-transaction`: a SQL error stop
 startup and rolls back that whole file, while files that already completed stay
 committed. Restart/retry replays the sorted SQL list. This example
 provides no migration history or automatic rollback. See
-[verification](acceptance/COMPONENT-FILES.md).
+[verification](acceptance/RESULTS.md).
 
 ### From source YAML to container configuration
 
@@ -878,7 +878,7 @@ Persistent source files remain private and are not rotated at restart, upgrade
 or retry. Rendered YAML contains base64-encoded credentials and is written with
 mode `0600`; base64 is not encryption. A Secret does not promise encrypted or
 memory-only Podman storage. Actual file ownership, modes and mount isolation
-remain subject to [target verification](acceptance/CREDENTIAL-DELIVERY.md).
+remain subject to [target verification](acceptance/RESULTS.md).
 
 ### Certificate and private-key flow
 
@@ -1025,7 +1025,7 @@ installs as an existing login account whose home only holds
 This section is the reference behind it. The full automated OL9 matrix passed
 CLEAN and a manual ssh run without sudo worked, but only with extensive help;
 simpler host preparation is backlog 65. See
-[verification](acceptance/PRODUCTION-LAYOUT.md).
+[verification](acceptance/RESULTS.md).
 
 Prerequisite for `journalctl --user` as the runtime account: a persistent
 journal. A fresh OL9 host has no `/var/log/journal`; create it once with
@@ -1126,7 +1126,7 @@ Earlier valid steps can remain after failure; retry after correcting the unsafe
 condition. If the service account is suspected compromised, inspect its
 directories under `/var/lib/<product>` before rerunning host preparation. This limits host-preparation authority; it is
 not recovery from a compromised account. The current change's OL9 Enforcing and
-fapolicyd checks are still pending; see [verification](acceptance/PREPARE-HOST.md).
+fapolicyd checks are still pending; see [verification](acceptance/RESULTS.md).
 
 Use these helpers for subsequent commands:
 
@@ -1268,7 +1268,7 @@ JSON contains `product`, `components` and `pending` (null or
 `{operation, component, owners}`). Each component has `name`, `version` (null
 without a completion marker), `recorded_version`, `unit`, `state` and `complete`.
 Malformed/foreign-product state is refused with an error; arbitrary subprocess
-diagnostics are never emitted as a unit state. See [verification](acceptance/STATUS.md).
+diagnostics are never emitted as a unit state. See [verification](acceptance/RESULTS.md).
 
 ## Upgrade and uninstall
 
@@ -1302,7 +1302,7 @@ A changed deletion flag, invalid record or symlinked state is refused. Do not
 delete/edit the pending file to bypass the check. Run one lifecycle command at a
 time; the record is retry metadata, not a concurrency lock or rollback mechanism.
 It cannot reconstruct unknown partial operations performed by older installers.
-See [retry verification](acceptance/RETRY-SAFETY.md) for coverage and limits.
+See [retry verification](acceptance/RESULTS.md) for coverage and limits.
 
 Help can be upgraded alone: transfer only the new help archive/checksum, verify
 and trust its deployment package in the help trust file, install, verify healthy services
@@ -1466,7 +1466,7 @@ App2 still creates its own Todo table from backend startup. Both apps use
 app's offline archive, covering both app1 init and backend. No packages or images
 are fetched on the target. Other images, component dependencies, data ownership
 and platform/Identity services are unchanged. See
-[init verification](acceptance/APP1-INIT.md) for local evidence and pending lab checks.
+[init verification](acceptance/RESULTS.md) for local evidence and pending lab checks.
 
 ## PostgreSQL configuration and credentials
 

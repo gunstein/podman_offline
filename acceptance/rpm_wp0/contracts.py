@@ -3,7 +3,8 @@
 import re
 import time
 
-# Independently pinned from RPM-PROTOTYPE.md's recorded paper lab fingerprint.
+# Independently pinned from the recorded paper lab fingerprint (git history:
+# acceptance/RPM-PROTOTYPE.md).
 APPROVED_FINGERPRINT = "425584C83A44FFC9F7E5E1A4E2021B0CC1DD70E3"
 # Explicitly approved by the product owner after plan revision 3.2.
 TRUST_TIMEOUT = 30

@@ -93,7 +93,7 @@ from a relocated external-image bundle, verifies the unit's release-local
 path and literal systemd escaping, and refuses missing/symlinked policies and
 hostAliases before side effects. This proves selection/delivery, not Podman's
 actual hosts generation. The new localhost/loopback lab checks are in
-[PUBLIC-ORIGIN-HOSTS.md](../acceptance/PUBLIC-ORIGIN-HOSTS.md); historical
+[latest results](../acceptance/RESULTS.md); historical
 `--no-hosts` passes cannot verify the replacement.
 
 Local correction inventory: 520 platform and 72 demo tests (592 total), with
@@ -148,7 +148,7 @@ the environment's CA, clientAuth), that `client.yaml`, `SECRET_FILES`, demo
 provisioning, the Pod mounts and `Program.cs` name the same files, the
 callback/forwarded-header/client-assertion setup and ports, and the two-stage
 frontend build with pinned TypeScript. These are source assertions; real
-sign-in is `dev/whoami-smoke-test.py` ([results](../acceptance/WHOAMI-DOTNET.md)).
+sign-in is `dev/whoami-smoke-test.py` ([results](../acceptance/RESULTS.md)).
 The acceptance-harness test `acceptance/test_whoami.py` covers the opt-in
 `--whoami` scenario's step order, flag rules and PROD shell steps with stubs.
 
@@ -173,7 +173,7 @@ the filesystem function on trees owned by the current test identity.
 The separate acceptance probe records and checks real dropped identities,
 groups, capabilities and SELinux context, then tests malicious outside targets
 and repeat preparation on the resettable lab. See
-[verification and outstanding lab gates](../acceptance/PREPARE-HOST.md).
+[verification and outstanding lab gates](../acceptance/RESULTS.md).
 
 # Production layout outside the login home (backlog 64)
 
@@ -185,7 +185,7 @@ file. Other lifecycle tests replace `layout.select` and use the fixture home as
 `common.STATE`; `test_wrappers.py` runs the real selection in fresh processes
 against a miniature `/var/lib/<product>` and checks the login home, Podman's
 `XDG_*` per command and the guide shipped in releases. Real Podman/systemd
-behavior is in [the verification report](../acceptance/PRODUCTION-LAYOUT.md).
+behavior is in [the verification report](../acceptance/RESULTS.md).
 
 # Component dev configuration (backlog 56)
 
@@ -199,7 +199,7 @@ missing password with an existing database volume and retry after restoration.
 The test module is included automatically in `--export` and `--isolate`.
 `test_config_demo.py` checks the demo's production/dev marker values; acceptance
 harness tests check running-value assertions, sibling isolation and renamed
-declarations with Podman stubbed. See [verification](../acceptance/COMPONENT-DEV.md)
+declarations with Podman stubbed. See [verification](../acceptance/RESULTS.md)
 for actual results and the outstanding real runtime checks.
 
 # Portable bundled files (backlog 57)
@@ -218,7 +218,7 @@ Demo tests cover the actual two-init-container manifest and the sorted shell
 command's successful/failed exit and redaction with `psql` stubbed. Harness tests
 exercise real isolated Git upgrade builds, strict seed rows and the disposable
 SQL failure/repair/replay wiring with Podman stubbed. See
-[COMPONENT-FILES.md](../acceptance/COMPONENT-FILES.md) for results and lab commands.
+[latest results](../acceptance/RESULTS.md) for results and lab commands.
 
 # Configurable CA coverage (backlog 45a)
 
@@ -262,7 +262,7 @@ still protect password retention and the existing-volume guard.
 The acceptance harness tests exercise the disposable env/file/restart probe,
 Identity's ready-string positive/negative/missing cases, explicit upgrade config
 addition and output redaction. These stub runtime commands and are not proof of
-Podman or systemd behavior. See [lab verification](../acceptance/SECRET-TEMPLATES.md).
+Podman or systemd behavior. See [lab verification](../acceptance/RESULTS.md).
 
 ---
 
@@ -300,7 +300,7 @@ failing checks; and refuses other `POSTGRES_PASSWORD*` forms (F2).
 `test_registration_removal.py` drops inventory's route, client or both, checks
 exact owner restarts and imported indexes, injects failures after the deletion
 and finishes them in a fresh process, and uninstalls afterwards. See
-[verification](../acceptance/MANIFEST-VALIDATION.md).
+[verification](../acceptance/RESULTS.md).
 
 After the independent review, `test_validation_order.py` also requires that an
 invalid `client.yaml` stops install and dev prepare before any write or host
@@ -322,7 +322,7 @@ Components come from `bundles.yaml`; see [components](../docs/COMPONENTS.md).
 and `test_product_changes.py` a minimal worker plus adding/removing a service
 by YAML only. `catalog_fixture.py` compiles demo descriptors from the real
 catalog; `product_fixture.py` writes other products. See
-[verification](../acceptance/DECLARATIVE-COMPONENTS.md) for results and gaps.
+[verification](../acceptance/RESULTS.md) for results and gaps.
 
 ---
 
@@ -333,7 +333,7 @@ Secret; its backend verifies the schema and app2 retains backend creation.
 Tests cover real manifest order/credentials, bounded waiting and hard alarm,
 sanitized failures, backend dispatch, repeated SQL/data preservation through a
 documented SQLite adapter, and offline image inclusion. See
-[init verification](../acceptance/APP1-INIT.md) for results and runtime limits.
+[init verification](../acceptance/RESULTS.md) for results and runtime limits.
 
 ---
 
@@ -343,7 +343,7 @@ Platform uses stock nginx and a mounted public ConfigMap template. New tests
 exercise real YAML rendering and shell/envsubst startup, unchanged app builds,
 registry pulls, offline archive checksums and scoped/retry-safe ConfigMap volume
 deletion. Podman/systemd transport and nginx itself are stubbed; see
-[proxy verification](../acceptance/NGINX-YAML.md) for results and target gaps.
+[proxy verification](../acceptance/RESULTS.md) for results and target gaps.
 
 ---
 
@@ -352,7 +352,7 @@ deletion. Podman/systemd transport and nginx itself are stubbed; see
 Current SECRET_FILES/VOLUME_FILES IDs contain lists of `{path: ...}` sources
 with optional `generate: [filename]`. Generation and delivery share one
 source declaration; there is no separate generation field or old-format fallback.
-See [file-source verification](../acceptance/FILE-SOURCES.md) for local checks and target gaps.
+See [file-source verification](../acceptance/RESULTS.md) for local checks and target gaps.
 Earlier schema/counts below are historical, not the active config contract.
 
 ---
@@ -365,7 +365,7 @@ preparation works even when a stubbed Podman command would fail. The real dev
 preflight still checks exactly the three current database volumes. Existing
 DB preflight, safe paths, dependency/version checks, fresh-process retry,
 credential preservation, bundle protections and scoped uninstall tests remain.
-See [cleanup verification](../acceptance/LEGACY-CHECK-CLEANUP.md) for results.
+See [cleanup verification](../acceptance/RESULTS.md) for results.
 
 ---
 
@@ -374,7 +374,7 @@ See [cleanup verification](../acceptance/LEGACY-CHECK-CLEANUP.md) for results.
 Apps now deliver session/client credentials through backend-only read-only
 Secrets with requested file mode `0400`; the unused Identity API-secret is
 removed. Source files, generation and retry preservation remain unchanged.
-See [credential delivery verification](../acceptance/CREDENTIAL-DELIVERY.md)
+See [credential delivery verification](../acceptance/RESULTS.md)
 for local coverage and required fresh target checks. Earlier reports below are
 historical evidence, not verification of this change.
 
@@ -400,7 +400,7 @@ real module inclusion/checksums, private-file aliases, bytecode exclusion and
 source/unpacked wrappers from outside their directories without a bytecode env
 setting. Acceptance-harness tests check recursive directory trust completeness,
 old entry removal, exact sibling trust and cleanup ordering. See
-[DEPLOY-REFACTOR.md](../acceptance/DEPLOY-REFACTOR.md) for current evidence.
+[latest results](../acceptance/RESULTS.md) for current evidence.
 Older commands/counts below are historical; use the commands above for this layout.
 
 ---
@@ -413,7 +413,7 @@ run unchanged; only environment checks and Podman/systemd transport are stubbed.
 It covers failed/crashed installs, partially written registrations, failed owner
 checks/imports, resumable uninstalls, partial volume deletion and invalid/conflicting
 retry state. Existing four-way route/client restart tests remain in place.
-See [RETRY-SAFETY.md](../acceptance/RETRY-SAFETY.md) for results and limitations.
+See [latest results](../acceptance/RESULTS.md) for results and limitations.
 
 ---
 
@@ -424,7 +424,7 @@ for all five components in dev/production; generation, database preflight,
 registration, preservation and archive tests use the same paths. Bundle tests
 also reject externally delivered credentials and symlink aliases while retaining
 the declaration-based secret checks for arbitrary paths. See
-[CREDENTIAL-PATHS.md](../acceptance/CREDENTIAL-PATHS.md) for current results;
+[latest results](../acceptance/RESULTS.md) for current results;
 older counts and lab evidence below remain historical.
 
 ---
@@ -435,7 +435,7 @@ Five separate bundles implement the fixed platform/Identity/app/help dependency
 graph. `test_identity.py` covers independent versions, exact route/client restart
 ownership, help without Identity and scoped
 Identity deletion. Bundle tests inspect real archives and checksums. See
-[IDENTITY-SPLIT.md](../acceptance/IDENTITY-SPLIT.md) for current results and lab gaps.
+[latest results](../acceptance/RESULTS.md) for current results and lab gaps.
 Host code and product tests retain Python 3.6 compatibility. Commands below remain
 valid; earlier baseline counts and runtime evidence are historical.
 
@@ -447,7 +447,7 @@ The active component is `platform`, shipped in its own offline bundle. The curre
 suite covers separate installation/dependencies, renamed resources, preserved
 sibling state, equal/newer/older platform versions and scoped deletion. Historical
 layout checks were removed in 0.4.5; current database/credential guards remain.
-See [PLATFORM-RENAME.md](../acceptance/PLATFORM-RENAME.md) for the full mapping,
+See [latest results](../acceptance/RESULTS.md) for the full mapping,
 checks and lab commands. Host code and product tests retain Python 3.6 syntax/APIs.
 
 The coverage notes and runtime evidence below are retained from the earlier core
@@ -646,13 +646,13 @@ authentication and sanitized missing/invalid parameter/password failures. `datab
 Identity and both Todo applications before lifecycle tests, after reboot and after
 upgrade. Each Todo must connect with its own secret before a sibling-secret attempt
 is allowed. Negative checks change only transient client input, never stored
-passwords. See [database verification](../acceptance/DATABASE-VERIFICATION.md) for real-run
+passwords. See [database verification](../acceptance/RESULTS.md) for real-run
 results and limits. Harness tests separately check private stdin, safe evidence and sequencing.
 
 
 ## Baseline before structural changes
 
-See [TEST-BASELINE.md](../acceptance/TEST-BASELINE.md) for the recorded main
+See [latest results](../acceptance/RESULTS.md) for the recorded main
 baseline, existing coverage, additional install failure/legacy config/wrapper
 regressions, verification results and the historical-upgrade gate. The current
 local suite has 185 tests. Wrapper tests use actual scripts and real bundles but
@@ -670,13 +670,13 @@ init-config/install/retry with retained config/passwords. These are product test
 with host commands stubbed. `acceptance/test_init_secret.py` separately checks the
 runtime probe's negative assertions and orchestration. Separate normal and renamed
 real Podman/systemd runs passed at `52f28e4`; see
-[the evidence, scenario and operator diagnostics](../acceptance/INIT-SECRET.md).
+[the evidence, scenario and operator diagnostics](../acceptance/RESULTS.md).
 
 
 
 Backlog 54 adds `platform_tests.test_release`: real archive/publication and trust-file
 regressions without root/Podman/daemon requirements. Tests model root ownership;
 actual separate-UID enforcement belongs to the runnable
-[protected-release lab probe](../acceptance/PROTECTED-RELEASES.md). Component and
+[protected-release lab probe](../acceptance/RESULTS.md). Component and
 standalone lifecycle tests deny release writes while allowing persistent-home
 outputs. Historical signing/host prerequisite failures must still be reported.

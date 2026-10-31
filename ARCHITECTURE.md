@@ -172,7 +172,7 @@ Uninstall records its validated own volume inventory, deletion choice, stop
 checkpoint and unfinished owners (`uninstall_plan()`) before destructive work. It can resume after
 YAML, markers or data are gone. The private `pending-operation.json` persists
 across process runs; conflicts are refused rather than guessed away. See
-[retry safety](acceptance/RETRY-SAFETY.md). Run one lifecycle command at a time.
+[retry safety](acceptance/RESULTS.md). Run one lifecycle command at a time.
 
 Source dev preparation uses the same defaults, registration indexes and renderer
 against `build/dev/<component>`. `prepare_standalone()` and
@@ -327,7 +327,7 @@ after that milestone must provide migration preserving customer data/credentials
 SELinux relabeling is supported: xattrs/ctime are excluded from the protected
 metadata bindings; root remains trusted. Historical pinned-release
 helpers and reports retain their original layouts. Current-change OL9 verification
-is pending; see [protected release verification](acceptance/PROTECTED-RELEASES.md).
+is pending; see [protected release verification](acceptance/RESULTS.md).
 
 ## Production paths outside the login home (backlog 64)
 
@@ -400,7 +400,7 @@ Identity no longer generates or delivers the unused API-secret environment
 value. Its API scopes, signing credentials, users and database are unchanged.
 There are no new images, automatic migration, credential cleanup or rotation.
 Real Podman permissions/isolation remain unverified; see
-[credential delivery verification](acceptance/CREDENTIAL-DELIVERY.md).
+[credential delivery verification](acceptance/RESULTS.md).
 
 ## Explicit signing PFX provisioning (backlog 44)
 
@@ -443,7 +443,7 @@ Certificate preparation no longer requires Podman just to check obsolete volumes
 
 The active acceptance runner no longer offers historical migration/refusal
 scenarios. Pinned 0.2.0 fixtures and verification reports remain unchanged;
-[cleanup verification](acceptance/LEGACY-CHECK-CLEANUP.md) lists the retained
+[cleanup verification](acceptance/RESULTS.md) lists the retained
 historical references and current checks.
 
 ## File sources and generation (0.4.6)
@@ -473,7 +473,7 @@ the generic lifecycle and its durable retry state do not change.
 No config migration/fallback or eager credential creation is introduced.
 Persistent config precedence, mounts/names, images and the current component
 architecture remain unchanged. See
-[file-source verification](acceptance/FILE-SOURCES.md) for results and limits.
+[file-source verification](acceptance/RESULTS.md) for results and limits.
 
 ## Derived Secret values (0.4.12 Identity)
 
@@ -538,7 +538,7 @@ selected component; environment-only ConfigMaps add no volume to that list.
 The validated names are saved in the existing uninstall pending record before
 any destructive steps, so retry still works after the rendered YAML is removed.
 Ordinary uninstall retains these volumes along with the component's other data.
-See [proxy verification](acceptance/NGINX-YAML.md) for scope, source review and
+See [proxy verification](acceptance/RESULTS.md) for scope, source review and
 checks; real nginx/Podman/SELinux behavior still requires the lab.
 
 ## App1 schema initialization (0.4.8)
@@ -556,4 +556,4 @@ app/help release VERSION becomes 0.4.8. Platform/Identity versions stay 0.4.7.
 No host lifecycle/render/build code, credentials, volumes or dependency rules
 change. The existing database-runtime lab action also exercises real init and
 replay with a retained row in its disposable database. See
-[init verification](acceptance/APP1-INIT.md) for local tests and runtime gaps.
+[init verification](acceptance/RESULTS.md) for local tests and runtime gaps.

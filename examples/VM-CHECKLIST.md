@@ -61,7 +61,7 @@ are in the [acceptance test](../acceptance/README.md).
    Check the actual types against selinux.matchpathcon, as step 07 does.
    Run `sudo restorecon -n -v -R -e /var/lib/myproduct/.local/share/containers/storage /var/lib/myproduct`;
    the output outside storage must be empty. Log a separate dry run of storage and
-   classify every line according to [the rules](../acceptance/SELINUX-DIAGNOSIS.md).
+   classify every line according to [the rules](../acceptance/RESULTS.md).
    Unknown lines and AVC/USER_AVC/FANOTIFY since the test start give FAIL.
    Never run restorecon -R or -F on populated storage.
    Record the actual labels; do not turn off security mechanisms on denials.
