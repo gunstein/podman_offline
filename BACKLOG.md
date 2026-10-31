@@ -66,7 +66,8 @@ What a component author writes now ([contract](docs/COMPONENTS.md)):
   Dependencies, routes, clients and API secrets are derived from the files.
 - One `config.defaults.yaml` per component: settings, `SECRET_FILES` (with
   path) and `ENVIRONMENT` (each container's variables, shipped with the
-  release). One secret form, `@@secret:<id>/<key>@@`; an API declares its own
+  release), and `MOUNTS` for files with secrets (templates under `files/`,
+  mounted read-only from a generated Secret). One secret form, `@@secret:<id>/<key>@@`; an API declares its own
   secret and Identity's `ApiResources__<n>__ApiSecrets__0__Value` line names it.
   `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` come from `client.yaml`.
 - `PUBLIC_ORIGIN`/`HTTPS_PORT` only in the gateway's `config.yaml`. Every
@@ -84,7 +85,10 @@ Remaining in this item:
   `examples/`) and `SECRET_TEMPLATES` as something authors write (also removes
   templated secret files). About 100 tests use them and must move to a product
   fixture with `ENVIRONMENT`.
-- Not started from the original scope: `mounts/`, CA trust profiles, an example
+- `MOUNTS` has unit tests only; no demo component uses it, so it has no real
+  Podman run. The generated mount has the same shape as app3's verified
+  trust-chain mount (Secret items with `subPath`, read-only).
+- Not started from the original scope: CA trust profiles, an example
   application for the organisation's SPA/.NET architecture.
 
 ## 73. Parse command lines with argparse subcommands

@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from . import common, environment, templates
+from . import common, environment, mounts, templates
 from .output import log
 
 
@@ -85,9 +85,9 @@ def validate_config(config, path):
                 f"{path}: use generate on a file source; GENERATED_SECRETS is not supported"
             )
 
-        if key == common.ENVIRONMENT:
+        if key in (common.ENVIRONMENT, common.MOUNTS):
             raise common.DeployError(
-                f"{path}: ENVIRONMENT belongs only in the release's "
+                f"{path}: {key} belongs only in the release's "
                 "components/<id>/config.defaults.yaml; remove it here"
             )
 
@@ -136,8 +136,9 @@ def load_config(path):
 def merge_config(*paths, overrides=None):
     """Merge mappings at the top level, in order, then validate the result.
 
-    ENVIRONMENT belongs to the release (deployment/environment.py), so it is
-    left out of the merged config and never reaches the operator's config.yaml.
+    ENVIRONMENT and MOUNTS belong to the release (deployment/environment.py,
+    deployment/mounts.py), so they are left out of the merged config and never
+    reach the operator's config.yaml.
     """
     config = {}
     for path in paths:
@@ -147,6 +148,7 @@ def merge_config(*paths, overrides=None):
             and path.parent.parent.name == "components"
         ):
             layer.pop(common.ENVIRONMENT, None)
+            layer.pop(common.MOUNTS, None)
         config.update(layer)
     config.update(overrides or {})
     return validate_config(config, paths[-1] if paths else "config")
@@ -827,9 +829,9 @@ def check_links(docs, from_config, sources=None, recipe_references=()):
     for key, where in sorted(from_config.items()):
         if key not in used:
             raise common.DeployError(
-                f"{where} is not used by any manifest or ENVIRONMENT. Check that "
-                "the id matches secretName/claimName in a manifest or "
-                "@@secret:<id>/<key>@@ in ENVIRONMENT"
+                f"{where} is not used by any manifest, ENVIRONMENT or MOUNTS file. "
+                "Check that the id matches secretName/claimName in a manifest or "
+                "@@secret:<id>/<key>@@ in ENVIRONMENT or a MOUNTS file"
             )
 
 
@@ -1019,14 +1021,15 @@ def check_imported_mounted(documents, imported, path):
 
 
 def effective_config(config, path, component):
-    """Validate a component's config; add PUBLIC_HOSTNAME and ENVIRONMENT recipes; no writes.
+    """Validate a component's config; add PUBLIC_HOSTNAME and ENVIRONMENT/MOUNTS recipes; no writes.
 
     The result is transient: validation and materialization use it, nobody
     writes it to config.yaml.
     """
     validate_component_config(config, component, path)
     derived = with_client_settings(with_derived(config, path), component)
-    return environment.with_recipes(derived, component)
+    with_environment = environment.with_recipes(derived, component)
+    return mounts.with_recipes(with_environment, component)
 
 
 def declared_volume_names(config, path, imported):
@@ -1065,11 +1068,11 @@ def configmap_data(original, rendered, config):
 
 
 def named_containers(documents):
-    """Map each container name (regular or init) to the container dicts with it."""
+    """Map each container name (regular or init) to its (pod spec, container) pairs."""
     found = {}
     for _, spec in pod_specs(documents):
         for _, container in containers(spec):
-            found.setdefault(container.get("name"), []).append(container)
+            found.setdefault(container.get("name"), []).append((spec, container))
     return found
 
 
@@ -1118,6 +1121,7 @@ def effective_documents(
             component,
             named_containers(documents),
         )
+        mounts.apply(documents, component, named_containers(documents))
 
     imported = set(imported)
     secrets, volumes = declared_volume_names(config, path, imported)

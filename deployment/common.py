@@ -40,6 +40,8 @@ SECRET_FILES = "SECRET_FILES"
 SECRET_TEMPLATES = "SECRET_TEMPLATES"
 # Each container's environment; only in the release's config.defaults.yaml.
 ENVIRONMENT = "ENVIRONMENT"
+# Files mounted into each container; only in the release's config.defaults.yaml.
+MOUNTS = "MOUNTS"
 VOLUME_FILES = "VOLUME_FILES"
 
 IMPORT_SOURCE = "volume.podman.io/import-source"

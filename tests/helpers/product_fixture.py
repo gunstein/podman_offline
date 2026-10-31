@@ -307,6 +307,12 @@ class ProductFixture(DeployFixture):
         defaults = dict(spec.get("defaults", {}))
         if "env" in spec:
             defaults["ENVIRONMENT"] = spec["env"]
+        if "mounts" in spec:
+            defaults["MOUNTS"] = spec["mounts"]
+        for relative, text in spec.get("files", {}).items():
+            path = directory / "files" / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
         if defaults:
             (directory / "config.defaults.yaml").write_text(
                 yaml.safe_dump(defaults, sort_keys=False)

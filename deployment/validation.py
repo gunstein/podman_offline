@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, deploy, environment, registrations
+from . import catalog, common, deploy, environment, mounts, registrations
 from . import render as rendering
 from .output import log
 
@@ -76,7 +76,9 @@ def validate_catalog():
             )
             check_images(documents)
             check_sources(config, path, documents, imported, component)
-            for line in environment.summary(component, config):
+            for line in environment.summary(component, config) + mounts.summary(
+                component, config
+            ):
                 log.info("[OK] " + line)
         except ERRORS as error:
             findings.append((component, str(error)))
@@ -136,7 +138,9 @@ def validate_bundle():
         )
         deploy.install_preconditions({name: (effective, documents)})
         check_sources(effective, config_path, documents, imported, name)
-        for line in environment.summary(name, effective):
+        for line in environment.summary(name, effective) + mounts.summary(
+            name, effective
+        ):
             log.info("[OK] " + line)
     except ERRORS as error:
         findings.append((name, str(error)))

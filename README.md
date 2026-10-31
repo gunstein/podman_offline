@@ -134,7 +134,7 @@ names](docs/COMPONENTS.md#reserved-configuration-names).
 | --- | --- |
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
-| `components/<component>/config.defaults.yaml` | Component settings, secret and volume references, and `ENVIRONMENT` |
+| `components/<component>/config.defaults.yaml` | Component settings, secret and volume references, `ENVIRONMENT` and `MOUNTS` |
 | `/var/lib/myproduct/<component>/config.yaml` | Authoritative persistent production config |
 
 Dev merges the component defaults and then the developer's own
@@ -1429,7 +1429,7 @@ changes. For a new demo-style app also consider:
 | Config | `components/<id>/config.defaults.yaml` for initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |
-| Settings | One `config.defaults.yaml`: settings and `SECRET_FILES` at the top, each container's variables under `ENVIRONMENT` ([checklist](docs/COMPONENTS.md#converting-a-service)). |
+| Settings | One `config.defaults.yaml`: settings and `SECRET_FILES` at the top, each container's variables under `ENVIRONMENT`, files with secrets under `MOUNTS` ([checklist](docs/COMPONENTS.md#converting-a-service)). |
 | Proxy/OIDC | `route.conf` and `client.yaml` in the component; the catalog derives the rest. |
 | API secret | The API declares the secret in `SECRET_FILES`; both sides name it as `@@secret:<id>/<key>@@` ([API secrets](docs/COMPONENTS.md#api-secrets)). |
 | Credentials | Prepare them yourself, or extend the demo provisioning script deliberately. |

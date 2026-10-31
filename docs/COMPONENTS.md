@@ -206,7 +206,7 @@ redirect URIs, so they cannot be renamed:
 | `HTTPS_PORT` | Validated as a port 1-65535; set and read like `PUBLIC_ORIGIN` |
 | `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error |
 | `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES` | File-source and Secret-template declarations, not placeholder values |
-| `ENVIRONMENT` | Each container's environment; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
+| `ENVIRONMENT`, `MOUNTS` | Each container's environment and mounted files; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
 | Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@` in its own component |
 
 A `PUBLIC_` prefix has no meaning of its own. `catalog.PUBLIC_KEYS` holds the
@@ -317,6 +317,47 @@ Rules, each refused before anything is written with the file and the next step:
 - Every `POSTGRES_PASSWORD*` variable stays in the manifest's `env`: the
   platform's database check reads it there.
 
+### Files with secrets: `MOUNTS`
+
+A container that needs a file with a password in it (for example SQL that
+creates a role) gets it from `MOUNTS`. The file is a template under
+`components/<id>/files/`, shipped with the release:
+
+```yaml
+# components/orders/config.defaults.yaml
+# Files mounted into each container. They come with the release; @@...@@ is
+# filled in at install. Never copied to config.yaml.
+MOUNTS:
+  migrate:
+    /sql/10-roles.sql: sql/10-roles.sql      # path in the container: file under files/
+```
+
+```sql
+-- components/orders/files/sql/10-roles.sql
+ALTER ROLE @@DB_USER@@ PASSWORD '@@secret:orders-database-password/password@@';
+```
+
+- The placeholders are those of `ENVIRONMENT`: a setting or this component's
+  own declared secret, with the same text rules for the substituted value.
+  The rest of the file is copied as written.
+- A container's files go into the Secret `<component>-<container>-files`. The
+  platform adds the volume `<container>-files` to the Pod and mounts each file
+  read-only at its path; nobody writes those names. `validate` shows:
+
+  ```text
+  [OK] orders/migrate: MOUNTS -> /sql/10-roles.sql (Secret orders-migrate-files: orders-database-password)
+  ```
+
+- Refused before anything is written: a container that is not exactly one
+  container of the component, a path that is not absolute, a file outside
+  `files/` or missing, two files with the same file name in one container, a
+  path the manifest already mounts, a Pod volume already named
+  `<container>-files`, unknown settings, undeclared or another component's
+  secrets.
+- `init-config` does not copy `MOUNTS`, and the operator's `config.yaml` may
+  not contain it. A file the operator owns, or a directory tree, is a
+  `VOLUME_FILES` or `SECRET_FILES` source instead.
+
 ### API secrets
 
 An API backend and Identity must hold the same secret. The API declares it
@@ -396,8 +437,9 @@ the resource is inactive.
    `components/<id>/VERSION` and `manifests/`.
 2. Write `components/<id>/config.defaults.yaml`: settings and `SECRET_FILES`
    at the top, each container's variables under `ENVIRONMENT` (with
-   `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` for an app with `client.yaml`). Keep
-   `POSTGRES_PASSWORD*` in the manifest's `env`.
+   `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` for an app with `client.yaml`), and
+   files with passwords under `MOUNTS`. Keep `POSTGRES_PASSWORD*` in the
+   manifest's `env`.
 3. Declare each secret in `SECRET_FILES` with its path (and `generate:` for a
    generated one) and use `@@secret:<id>/<key>@@`.
 4. Add `route.conf` for a path behind the gateway, `client.yaml` for OIDC

@@ -99,13 +99,11 @@ def read(component):
     return read_defaults(defaults_path(component))
 
 
-def read_defaults(path):
-    """read() for an explicit config.defaults.yaml (the catalog may read another root)."""
-    if not path.is_file():
-        return {}
+def load(path):
+    """The whole config.defaults.yaml with every value as written text."""
     try:
         with path.open(encoding="utf-8") as stream:
-            document = yaml.load(stream, Loader=TextLoader)
+            return yaml.load(stream, Loader=TextLoader)
     except UnicodeDecodeError:
         raise common.DeployError(f"{path} is not valid UTF-8") from None
     except yaml.YAMLError as error:
@@ -117,6 +115,13 @@ def read_defaults(path):
             f"{path}{line}: {detail}; write NAME: 'value' and quote values "
             "that start with @@"
         ) from None
+
+
+def read_defaults(path):
+    """read() for an explicit config.defaults.yaml (the catalog may read another root)."""
+    if not path.is_file():
+        return {}
+    document = load(path)
     if not isinstance(document, dict) or common.ENVIRONMENT not in document:
         return {}
     containers = document[common.ENVIRONMENT]
@@ -234,7 +239,7 @@ def apply(documents, sources, config, component, containers):
     """Add the generated ConfigMaps and envFrom entries to the effective documents.
 
     config is the effective config (with derived settings and recipes);
-    containers maps each container name to the matching container dicts.
+    containers maps each container name to its (pod spec, container) pairs.
     Returns the new documents and sources lists.
     """
     environments = read(component)
@@ -251,7 +256,7 @@ def apply(documents, sources, config, component, containers):
                 f"{where}: the component must have exactly one container named "
                 f"{container_name}; it has {len(matches)}"
             )
-        container = matches[0]
+        _, container = matches[0]
         if container.get("envFrom"):
             raise common.DeployError(
                 f"{where}: container {container_name} also has envFrom; use "
