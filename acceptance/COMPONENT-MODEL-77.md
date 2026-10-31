@@ -92,8 +92,10 @@ What each part exercises for this change:
   config except platform's, and Identity's injected `envFrom` with an empty
   `identity-apis` (app3 is not installed).
 - `--identity-only`: the pinned old Identity baseline (its own ConfigMap, no
-  `ENVIRONMENT`) upgrading to the `ENVIRONMENT` Identity without any operator
-  config addition (the harness adds none when the release has no recipe).
+  `ENVIRONMENT`) upgrading to the `ENVIRONMENT` Identity. The harness's
+  explicit operator edit before the upgrade adds no recipe and removes the
+  `PUBLIC_ORIGIN`/`HTTPS_PORT` copies the old release wrote; credentials and
+  data volumes must stay unchanged.
 - platform/help and help-only: products without Identity links.
 - `--renamed-product`: the renamed generator's catalog (`gateway:`/`identity:`
   renamed), renamed `ENVIRONMENT` without Identity's app3 line, and the

@@ -284,10 +284,40 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertTrue(json.loads(snapshot.read_text())["template_config_added"])
 
-            # A release whose connection string is in ENVIRONMENT needs no addition.
-            path.write_text(yaml.safe_dump(config))
-            unchanged = path.read_bytes()
+            # A release whose connection string is in ENVIRONMENT needs no
+            # addition; copied public settings from an older release are removed.
+            path.write_text(
+                yaml.safe_dump(
+                    dict(config, PUBLIC_ORIGIN="https://old.test:8443", HTTPS_PORT=8443)
+                )
+            )
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "files": {
+                            "config.yaml": {
+                                "hash": hashlib.sha256(path.read_bytes()).hexdigest(),
+                                "mode": 384,
+                            }
+                        }
+                    }
+                )
+            )
             defaults.write_text(yaml.safe_dump({"DB_HOST": "new-default"}))
+            with (
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
+                ),
+                mock.patch("sys.argv", ["guest", str(release)]),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                exec(compile(code, "IDENTITY_TEMPLATE_CONFIG", "exec"), namespace)  # noqa: S102 - fixed repository heredoc
+            self.assertEqual(yaml.safe_load(path.read_text()), config)
+            self.assertEqual(password.read_bytes(), b"retained-password\n\n")
+            recorded = json.loads(snapshot.read_text())["files"]["config.yaml"]["hash"]
+            self.assertEqual(recorded, hashlib.sha256(path.read_bytes()).hexdigest())
+            # Nothing to edit: the file stays byte for byte.
+            unchanged = path.read_bytes()
             with (
                 mock.patch.dict(
                     os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}

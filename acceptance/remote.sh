@@ -1355,22 +1355,29 @@ root = Path(os.environ["PRODUCT_STATE"])
 path = root / "identity/config.yaml"
 config = yaml.safe_load(path.read_text())
 defaults = yaml.safe_load((Path(sys.argv[1]) / "components/identity/config.defaults.yaml").read_text())
-# Since backlog 77 the connection string is in Identity's ENVIRONMENT, so the
-# upgrade needs no config addition; only a release with a recipe gets one.
-if "SECRET_TEMPLATES" not in config and "SECRET_TEMPLATES" in defaults:
+# Explicit operator edits for an Identity installed from an older release:
+# add a recipe the new release still declares (none since backlog 77, whose
+# connection string is in ENVIRONMENT), and remove the public settings older
+# releases copied, which the new release reads from platform's config.yaml.
+public = [key for key in ("PUBLIC_ORIGIN", "HTTPS_PORT") if key in config]
+add_recipe = "SECRET_TEMPLATES" not in config and "SECRET_TEMPLATES" in defaults
+if public or add_recipe:
     snapshot = root / "identity-lifecycle.json"
     before = json.loads(snapshot.read_text())
     if hashlib.sha256(path.read_bytes()).hexdigest() != before["files"]["config.yaml"]["hash"]:
-        raise SystemExit("FAIL: Identity config changed before explicit template addition")
-    config["SECRET_TEMPLATES"] = defaults["SECRET_TEMPLATES"]
+        raise SystemExit("FAIL: Identity config changed before the explicit operator edit")
+    if add_recipe:
+        config["SECRET_TEMPLATES"] = defaults["SECRET_TEMPLATES"]
+        before["template_config_added"] = True
+    for key in public:
+        del config[key]
     fd = os.open(str(path), os.O_WRONLY | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as stream:
         os.fchmod(stream.fileno(), 0o600)
         yaml.safe_dump(config, stream, sort_keys=False)
     before["files"]["config.yaml"]["hash"] = hashlib.sha256(path.read_bytes()).hexdigest()
-    before["template_config_added"] = True
     snapshot.write_text(json.dumps(before))
-    print("PASS: explicitly added template declaration; existing config settings retained")
+    print("PASS: explicit operator config edit for the new Identity release; other settings retained")
 IDENTITY_TEMPLATE_CONFIG
     fi
     validate_release
