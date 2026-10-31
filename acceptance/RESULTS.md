@@ -24,22 +24,23 @@ python3 acceptance/acceptance.py --run "platform-help-$rev" --platform-help-only
 python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 ```
 
-| Scenario | Latest run | Commit | Result | Steps |
-| --- | --- | --- | --- | --- |
-| `--whoami` | `c77b-whoami-318d394` | `318d394` | CLEAN PASS | 46 |
-| normal | `c77b-normal-318d394` | `318d394` | CLEAN PASS | 125 |
-| `--first-app app2` | `c77b-app2-318d394` | `318d394` | CLEAN PASS | 125 |
-| `--identity-only` | `c77b-identity-318d394` | `318d394` | CLEAN PASS | 66 |
-| `--help-only` | `c77b-help-318d394` | `318d394` | CLEAN PASS | 60 |
-| `--platform-help-only` | `c77b-platform-help-318d394` | `318d394` | CLEAN PASS | 39 |
-| `--renamed-product` | `c77b-renamed-318d394` | `318d394` | CLEAN PASS | 57 |
+| Scenario | Latest run | Commit | Result |
+| --- | --- | --- | --- |
+| `--whoami` | `c77c-whoami-7f22375` | `7f22375` | CLEAN PASS |
+| normal | `c77c-normal-7f22375` | `7f22375` | CLEAN PASS |
+| `--first-app app2` | `c77c-app2-7f22375` | `7f22375` | CLEAN PASS |
+| `--identity-only` | `c77c-identity-7f22375` | `7f22375` | CLEAN PASS |
+| `--help-only` | `c77c-help-7f22375` | `7f22375` | CLEAN PASS |
+| `--platform-help-only` | `c77c-platform-help-7f22375` | `7f22375` | CLEAN PASS |
+| `--renamed-product` | `c77c-renamed-7f22375` | `7f22375` | CLEAN PASS |
 
-DEV and PROD: Oracle Linux Server 9.8 (el9_8), Podman 5.8.2.
+Reported by the product owner on 2026-10-31: all seven runs were CLEAN PASS.
+Step counts and `EVIDENCE.md` were lost when the lab disk filled up and the
+run directories were deleted, so only the result is recorded.
 
-The `c77c-*` runs on `7f22375` have finished but are not recorded here yet.
-Commits after `318d394` (no legacy handling, release defaults for missing
-config names, demo settings in `ENVIRONMENT`, client id and path written once,
-no shared or per-component dev config file) have unit and harness tests only.
+Commits after `7f22375` (demo settings in `ENVIRONMENT`, client id and path
+written once, no shared or per-component dev config file, and later changes)
+have unit and harness tests only.
 
 ## Other scenarios
 
