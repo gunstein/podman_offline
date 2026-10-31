@@ -48,7 +48,7 @@ The first real run, `whoami-ff53717` (2026-10-31), was NOT CLEAN at
 logged in over `127.0.0.1`, which the postgres image's `pg_hba.conf` trusts
 (initdb's default), so no password was checked. The check now connects to the
 container's own address (`scram-sha-256`); verified against a local
-`postgres:17.11` container, lab rerun outstanding..
+`postgres:17.11` container, lab rerun outstanding.
 
 ## Other scenarios
 
