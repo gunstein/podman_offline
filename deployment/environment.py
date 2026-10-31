@@ -99,11 +99,6 @@ def read(component):
 
 def read_defaults(path):
     """read() for an explicit config.defaults.yaml (the catalog may read another root)."""
-    if (path.parent / "env").exists():
-        raise common.DeployError(
-            f"{path.parent / 'env'} is no longer read: move each env/<container>.yaml "
-            f"under ENVIRONMENT: <container>: in {path}, then remove env/"
-        )
     if not path.is_file():
         return {}
     try:

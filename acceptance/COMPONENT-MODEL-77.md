@@ -9,6 +9,11 @@ config file per component, one secret form, declared API secrets, and on
 and public settings read from the gateway)
 are verified on real Podman/systemd as well: all seven scenarios are CLEAN PASS
 on `318d394` (2026-10-31); see [lab results](#lab-results-2026-10-31).
+After that run (product owner, 2026-10-31): no code for earlier formats or
+layouts, `--identity-only` upgrades an Identity built from the current code,
+and settings or secret IDs missing from the operator's config come from the
+release defaults. These have unit and harness tests; **their lab run is
+outstanding** with the commands below.
 
 ## Change
 
@@ -91,11 +96,9 @@ What each part exercises for this change:
   Identity upgrades that always render, no `PUBLIC_ORIGIN` in any component
   config except platform's, and Identity's injected `envFrom` with an empty
   `identity-apis` (app3 is not installed).
-- `--identity-only`: the pinned old Identity baseline (its own ConfigMap, no
-  `ENVIRONMENT`) upgrading to the `ENVIRONMENT` Identity. The harness's
-  explicit operator edit before the upgrade adds no recipe and removes the
-  `PUBLIC_ORIGIN`/`HTTPS_PORT` copies the old release wrote; credentials and
-  data volumes must stay unchanged.
+- `--identity-only`: an Identity built from the current code upgraded to a
+  newer build of the same code, with no operator config edit; credentials,
+  config and data volumes must stay unchanged.
 - platform/help and help-only: products without Identity links.
 - `--renamed-product`: the renamed generator's catalog (`gateway:`/`identity:`
   renamed), renamed `ENVIRONMENT` without Identity's app3 line, and the
@@ -167,15 +170,7 @@ the product code.
 - A release that stops using a secret leaves its declaration in the operator's
   persistent `config.yaml`, which is then refused as unused (existing
   behaviour for every secret); the operator removes the entry.
-- Upgrades in the lab start from releases built before this change: their
-  installed metadata carries `upgrade`/`shares` (read and ignored) and their
-  other components' `config.yaml` files still hold `PUBLIC_ORIGIN` and
-  `HTTPS_PORT`, which install now refuses ("remove it here"). Pre-customer
-  installations may be discarded (review guide); a lab run across this change
-  must remove those two lines or start fresh. `--identity-only` does this for
-  the pinned Identity (CLEAN PASS on `318d394`); other pre-change
-  installations are not run.
-- Older releases reading metadata written by this one: `upgrade`/`shares` are
-  still written, but `api_secrets` (since the first backlog 77 commit) is not
-  in pre-77 readers' field list. Not run.
+- There are no customer installations: installations from releases before
+  this change are not supported (no migration, no detection); the lab starts
+  from fresh VMs.
 - No unassisted human trial of the conversion checklist.

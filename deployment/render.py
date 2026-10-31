@@ -181,7 +181,7 @@ def validate_component_config(config, component, path):
     """Validate whole-value and ConfigMap inline inputs before initialization writes.
 
     Shared public settings are required by the component's declared contract
-    (catalog.with_gateway_settings), not here.
+    (catalog.operator_config), not here.
     """
     required = set()
     configmaps = []

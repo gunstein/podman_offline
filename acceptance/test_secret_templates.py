@@ -2,7 +2,6 @@
 
 import base64
 import contextlib
-import hashlib
 import io
 import json
 import os
@@ -14,7 +13,6 @@ from pathlib import Path
 from unittest import mock
 
 import database_test
-import identity_template_baseline
 import secret_templates_test as probe
 import yaml
 from test_acceptance import shell_code
@@ -169,165 +167,6 @@ class SecretProbeHarnessTests(unittest.TestCase):
 
 
 class TemplateUpgradeHarnessTests(unittest.TestCase):
-    def test_pinned_baseline_is_read_from_git_before_any_writes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in identity_template_baseline.FILES:
-                (root / name).parent.mkdir(parents=True, exist_ok=True)
-            # The current catalog: Identity accepts apis and app3 registers one.
-            (root / "bundles.yaml").write_text(
-                yaml.safe_dump(
-                    {
-                        "product": "myproduct",
-                        "identity": "identity",
-                        "components": {"identity": None, "app3": None, "help": None},
-                    }
-                )
-            )
-            reference = "'@@secret:app3-api-secret/value@@'"
-            app3 = f"ENVIRONMENT:\n  backend:\n    Secret: {reference}\n"
-            for name, text in (
-                (
-                    "identity/config.defaults.yaml",
-                    (
-                        "ENVIRONMENT:\n  app:\n"
-                        f"    ApiResources__0__ApiSecrets__0__Value: {reference}\n"
-                    ),
-                ),
-                ("app3/config.defaults.yaml", app3),
-            ):
-                (root / "components" / name).parent.mkdir(parents=True, exist_ok=True)
-                (root / "components" / name).write_text(text)
-            with (
-                mock.patch.object(
-                    subprocess,
-                    "run",
-                    return_value=types.SimpleNamespace(
-                        returncode=0, stdout=b"old fixture"
-                    ),
-                ) as run,
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                identity_template_baseline.prepare(root)
-            files = len(identity_template_baseline.FILES)
-            self.assertEqual(run.call_count, files + 2)
-            self.assertTrue(
-                all(call.args[0][3] == "show" for call in run.call_args_list[:files])
-            )
-            add, commit = (call.args[0] for call in run.call_args_list[files:])
-            self.assertEqual(
-                add[3:],
-                ["add", "-A", "--"] + list(identity_template_baseline.FILES),
-            )
-            self.assertIn("commit", commit)
-            # Identity 0.4.11's pinned defaults name no API secret; app3 keeps
-            # using its own secret.
-            self.assertEqual(
-                (root / "components/identity/config.defaults.yaml").read_bytes(),
-                b"old fixture",
-            )
-            self.assertEqual(
-                (root / "components/app3/config.defaults.yaml").read_text(), app3
-            )
-            self.assertEqual(
-                (root / "apps/identity/DatabaseEnvironment.cs").read_bytes(),
-                b"old fixture",
-            )
-
-    def test_explicit_config_addition_preserves_password_and_existing_settings(self):
-        code = shell_code(REMOTE, heredoc="IDENTITY_TEMPLATE_CONFIG")
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path = root / "identity/config.yaml"
-            path.parent.mkdir()
-            config = {
-                "DB_HOST": "existing-host",
-                "DB_PORT": "5544",
-                "SECRET_FILES": {"identity-password": [{"path": "password"}]},
-            }
-            path.write_text(yaml.safe_dump(config))
-            password = root / "identity/password"
-            password.write_bytes(b"retained-password\n\n")
-            snapshot = root / "identity-lifecycle.json"
-            snapshot.write_text(
-                json.dumps(
-                    {
-                        "files": {
-                            "config.yaml": {
-                                "hash": hashlib.sha256(path.read_bytes()).hexdigest(),
-                                "mode": 384,
-                            }
-                        }
-                    }
-                )
-            )
-            recipe = {"identity-database": {"connection": "@@DB_HOST@@"}}
-            release = root / "release"
-            defaults = release / "components/identity/config.defaults.yaml"
-            defaults.parent.mkdir(parents=True)
-            defaults.write_text(
-                yaml.safe_dump({"DB_HOST": "new-default", "SECRET_TEMPLATES": recipe})
-            )
-            namespace = {"__name__": "fixture"}
-            with (
-                mock.patch.dict(
-                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
-                ),
-                mock.patch("sys.argv", ["guest", str(release)]),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                exec(compile(code, "IDENTITY_TEMPLATE_CONFIG", "exec"), namespace)  # noqa: S102 - fixed repository heredoc
-            self.assertEqual(
-                yaml.safe_load(path.read_text()), dict(config, SECRET_TEMPLATES=recipe)
-            )
-            self.assertEqual(password.read_bytes(), b"retained-password\n\n")
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertTrue(json.loads(snapshot.read_text())["template_config_added"])
-
-            # A release whose connection string is in ENVIRONMENT needs no
-            # addition; copied public settings from an older release are removed.
-            path.write_text(
-                yaml.safe_dump(
-                    dict(config, PUBLIC_ORIGIN="https://old.test:8443", HTTPS_PORT=8443)
-                )
-            )
-            snapshot.write_text(
-                json.dumps(
-                    {
-                        "files": {
-                            "config.yaml": {
-                                "hash": hashlib.sha256(path.read_bytes()).hexdigest(),
-                                "mode": 384,
-                            }
-                        }
-                    }
-                )
-            )
-            defaults.write_text(yaml.safe_dump({"DB_HOST": "new-default"}))
-            with (
-                mock.patch.dict(
-                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
-                ),
-                mock.patch("sys.argv", ["guest", str(release)]),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                exec(compile(code, "IDENTITY_TEMPLATE_CONFIG", "exec"), namespace)  # noqa: S102 - fixed repository heredoc
-            self.assertEqual(yaml.safe_load(path.read_text()), config)
-            self.assertEqual(password.read_bytes(), b"retained-password\n\n")
-            recorded = json.loads(snapshot.read_text())["files"]["config.yaml"]["hash"]
-            self.assertEqual(recorded, hashlib.sha256(path.read_bytes()).hexdigest())
-            # Nothing to edit: the file stays byte for byte.
-            unchanged = path.read_bytes()
-            with (
-                mock.patch.dict(
-                    os.environ, {"PRODUCT_STATE": str(root), "PRODUCT_ROOT": str(root)}
-                ),
-                mock.patch("sys.argv", ["guest", str(release)]),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                exec(compile(code, "IDENTITY_TEMPLATE_CONFIG", "exec"), namespace)  # noqa: S102 - fixed repository heredoc
-            self.assertEqual(path.read_bytes(), unchanged)
-
     def test_install_diagnostics_are_checked_before_being_printed(self):
         code = shell_code(REMOTE, heredoc="PRIVATE_INSTALL")
         with tempfile.TemporaryDirectory() as directory:

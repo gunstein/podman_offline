@@ -102,14 +102,11 @@ pending lab commands. `database-runtime` now starts with a disposable direct
 `kube play` and Quadlet env/file/update probe. Renamed-product runs execute the
 same probe before generating `shop`, and validate renamed template references.
 
-`--identity-only` now starts Identity from the pinned old in-app builder release
-0.4.11, then upgrades to the current template implementation. Before the upgrade,
-the test explicitly adds only `SECRET_TEMPLATES` to persistent config, modelling
-the documented operator step. It retains old settings and all credential bytes;
-normal deploy still never merges new defaults. Database volumes, users, health,
-login and sibling checks remain required. Only this focused scenario skips the
-new-image disposable Identity checks while the old image is its baseline; after
-upgrade it verifies the new installed image using `--database-check`.
+`--identity-only` installs Identity built from the current code, then upgrades
+it to a newer build of the same code without any config edit. Credential bytes,
+config, database volumes, users, health, login and sibling checks remain
+required; after the upgrade it verifies the new installed image using
+`--database-check`.
 
 The platform ConfigMap also composes `PUBLIC_ENDPOINT` from the public hostname
 and HTTPS port. Every successful `healthy()` check requires this value to match

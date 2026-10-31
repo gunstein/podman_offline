@@ -893,7 +893,7 @@ def write_installed_metadata(descriptor):
     """
     write_install_record(
         catalog.metadata_path(common.STATE, descriptor["name"]),
-        json.dumps(catalog.descriptor_document(descriptor), sort_keys=True) + "\n",
+        json.dumps(descriptor, sort_keys=True) + "\n",
     )
 
 
@@ -986,9 +986,12 @@ def install_checks():
         raise common.DeployError(
             f"Missing {config_path}; run ./deploy.sh init-config {name} first"
         )
-    config = catalog.with_gateway_settings(
-        descriptor, rendering.load_config(config_path), config_path
-    )
+    config, from_release = catalog.operator_config(descriptor, config_path)
+    if from_release:
+        log.info(
+            f"[OK] {name}: from the release defaults (not in {config_path}): "
+            + ", ".join(from_release)
+        )
     check_not_downgrade(descriptor)
     check_api_secret_lines(descriptor, installed)
     rendering.validate_component_config(config, name, config_path)

@@ -230,15 +230,13 @@ its config file is missing, restore that authoritative file from a private
 backup first. A help bundle cannot install platform or run without installed
 platform.
 
-Production install and upgrade read only persistent component config. Release
-defaults are never merged into it, and config is never overwritten or extended
-automatically. Existing complete files continue to work unchanged. If a new
-release needs an absent key, install fails before image operations with the
-persistent file path and key name, without its value. Before retrying, back up
-that file privately and explicitly add the required key using `sudoedit -u "$product_name"`; consult
-the release’s defaults and notes for its type and meaning. Add shared changes
-consistently to platform and dependents. Defaults are examples for this manual step,
-not an automatic migration mechanism. Explicit edits take effect when that
+Production install and upgrade read the persistent component config. The
+operator's values always win; a setting, or a `SECRET_FILES`/`VOLUME_FILES`/
+`SECRET_TEMPLATES` ID, that the persistent file lacks is taken from the new
+release's `config.defaults.yaml` (a new generated secret is then generated).
+The file itself is never written; install and validate print which names came
+from the release. A key that neither has fails before image operations with the
+file path and key name, without its value. Explicit edits take effect when that
 component is rendered during installation. An equal-platform app/help install keeps
 installed platform YAML/Quadlet; use a controlled newer-platform release to apply changes
 that require rendering platform again. Public route/client imports are updated
@@ -792,8 +790,8 @@ Read these diagrams from creation, through persistent host files and container
 delivery, to application use. Paths starting with `credentials/` are relative to
 the component's persistent directory: `/var/lib/myproduct/<component>/` in prod
 or `build/dev/<component>/` in dev. Code paths are relative to the repository root.
-Production uses the existing component `config.yaml`; release defaults are used
-when initializing that file, not merged again during installation.
+Production uses the existing component `config.yaml`; release defaults fill
+only the names it lacks and are never written into it.
 
 Original credentials have persistent source files, including passwords and
 session keys. Derived connection strings are recreated from those sources and

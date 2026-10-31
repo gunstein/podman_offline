@@ -306,6 +306,11 @@ defaults). Implemented the same day ([change](acceptance/COMPONENT-MODEL-77.md))
 Also on 2026-10-31: `requires` is removed and `components` is a plain list of
 IDs; only what is needed now is implemented, and an explicit dependency
 between two applications can be added back when a product needs it.
+After the c77b CLEAN PASS (product owner, 2026-10-31): no code reads or
+detects earlier formats or layouts (there are no customer installations);
+`--identity-only` upgrades an Identity built from the current code; and a
+setting or secret ID missing from the operator's `config.yaml` comes from the
+release's `config.defaults.yaml` without writing the file. Lab run outstanding.
 
 **Simplification candidates (assessment 2026-10-30, not decided):** each
 config type was checked for whether it can go.

@@ -156,8 +156,8 @@ class DatabaseTests(DeployFixture):
         self.assertEqual(self.process.call_count, 1)
         self.assertFalse(self.password.exists())
 
-    def test_legacy_config_missing_db_additions_stops_before_commands_or_writes(self):
-        """Each README-required DB key is mandatory even when new defaults supply it."""
+    def test_missing_db_settings_come_from_the_release_without_writes(self):
+        """A DB key the operator's config lacks is the release default; nothing is written."""
         self.write("components/app1/VERSION", "0.2.1\n")
         self.install_dependencies()
         self.write("components/identity/VERSION", "0.4.1\n")
@@ -187,8 +187,8 @@ class DatabaseTests(DeployFixture):
                     }
                     write_descriptor(self.root, component, self.range)
                     self.process.reset_mock()
-                    with self.assertRaisesRegex(common.DeployError, "Missing " + key):
-                        deploy.install_components()
+                    effective = deploy.install_checks()[2]
+                    self.assertEqual(effective[key], config[key])
                     self.process.assert_not_called()
                     self.assertEqual(
                         before,

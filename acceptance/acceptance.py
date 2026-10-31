@@ -23,7 +23,6 @@ from pve import Proxmox, env_file
 ROOT = Path(__file__).resolve().parent.parent
 RUNS = Path.home() / "podman-offline-acceptance-runs"
 # Identity's persistent config, changed only by the explicit template addition.
-IDENTITY_CONFIG_CHANGE = ("identity/config.yaml",)
 # product: in bundles.yaml; acceptance/renamed_product.py declares RENAMED_PRODUCT.
 DEMO_PRODUCT = "myproduct"
 # What app3 on PROD may hold after each --whoami fault-injection phase.
@@ -700,12 +699,7 @@ class Run:
             "10-identity-siblings-after",
             lambda: self.guest("PROD", "identity-siblings-after", bundle="identity"),
         )
-        # The explicit SECRET_TEMPLATES addition in identity-upgrade may change only
-        # Identity's config; identity-after verified the result on PROD.
-        self.step(
-            "10-identity-persistent",
-            lambda: self.persistent_state("after", IDENTITY_CONFIG_CHANGE),
-        )
+        self.step("10-identity-persistent", lambda: self.persistent_state("after"))
         self.step("10-identity-e2e", lambda: self.guest("DEV", "prod-e2e"))
         self.step("10-identity-markers", lambda: self.guest("DEV", "markers-check"))
         self.step("10-identity-database", lambda: self.guest("PROD", "database-auth"))
@@ -862,16 +856,6 @@ class Run:
         if self.whoami:
             self.execute_whoami()
             return
-        if self.identity_only:
-            self.step("03-unit", lambda: self.guest("DEV", "unit"))
-            self.step(
-                "03-identity-template-baseline",
-                lambda: self.guest("DEV", "identity-template-baseline"),
-            )
-            self.meta["identity_version"] = "0.4.11"
-            self.meta["identity_template_baseline"] = (
-                "932c7f3a647a84fb5388144bc822f895cc40d959"
-            )
         actions = [
             "unit",
             "build-images",
@@ -883,8 +867,6 @@ class Run:
             "registry-test",
             "examples-setup",
         ]
-        if self.identity_only:
-            actions.remove("unit")
         actions += [
             "example-" + name
             for name in (

@@ -50,6 +50,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
         "public_from": entry["public_from"],
         "routes": entry["routes"],
         "clients": entry["clients"],
+        "apis": entry["apis"],
         "accepts": dict(entry["accepts"]),
         "api_secrets": dict(entry["api_secrets"]),
     }

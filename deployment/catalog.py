@@ -10,8 +10,7 @@ One schema describes a component everywhere:
 - Target: ``metadata/<id>.json`` keeps the installed descriptor, so dependents
   and registration owners stay known without the source checkout.
 
-A descriptor is a plain dict with exactly the keys in ``DESCRIPTOR_KEYS``;
-the written files add ``OLDER_READER_KEYS`` (``descriptor_document``).
+A descriptor is a plain dict with exactly the keys in ``DESCRIPTOR_KEYS``.
 """
 
 import json
@@ -49,6 +48,8 @@ ENTRY_KEYS = (
     "accepts",
     "api_secrets",
 )
+# api_secrets is Identity's {API component: {"index": <n> in
+# ApiResources__<n>__ApiSecrets__0__Value, "secret": "<SECRET_FILES ID>/<key>"}}.
 DESCRIPTOR_KEYS = (
     "name",
     "product",
@@ -61,14 +62,6 @@ DESCRIPTOR_KEYS = (
     "accepts",
     "api_secrets",
 )
-# Descriptor fields added after the first product-named releases, with the
-# value an older descriptor without them means. api_secrets is Identity's
-# {API component: {"index": <n> in ApiResources__<n>__ApiSecrets__0__Value,
-# "secret": "<SECRET_FILES ID>/<key>" of the API}}.
-LATER_KEYS = {"apis": None, "api_secrets": {}}
-# Fields older releases read from installed metadata (backlog 77 removed them).
-# This release writes them with these fixed values and ignores them on read.
-OLDER_READER_KEYS = {"upgrade": "always", "shares": []}
 
 
 def check_id(value, where):
@@ -163,14 +156,11 @@ def load_catalog(root):
     """Read bundles.yaml and validate the graph before any file or host action."""
     path, data = catalog_document(root)
     entries = data["components"]
-    if isinstance(entries, dict):
-        raise common.DeployError(
-            f"{path}: components is a list of component IDs, for example "
-            "components: [platform, identity, app1]; per-component fields "
-            "(requires, upgrade, shares, routes, ...) are no longer written"
-        )
     if not isinstance(entries, list) or not entries:
-        raise common.DeployError(f"{path}: components must be a nonempty list")
+        raise common.DeployError(
+            f"{path}: components must be a nonempty list of component IDs, for "
+            "example components: [platform, identity, app1]"
+        )
     for name in entries:
         check_id(name, f"{path}: components")
     if len(set(entries)) != len(entries):
@@ -190,12 +180,6 @@ def registration_files(directory):
 
     Reads only file existence and ENVIRONMENT; never manifests or settings.
     """
-    if (directory / "api.yaml").exists():
-        raise common.DeployError(
-            f"{directory / 'api.yaml'} is no longer read: declare the API's secret "
-            "in its SECRET_FILES and name it on identity's "
-            "ApiResources__<n>__ApiSecrets__0__Value line, then remove api.yaml"
-        )
     return {
         "route": (directory / ROLE_FILES["routes"]).is_file(),
         "client": (directory / ROLE_FILES["clients"]).is_file(),
@@ -597,30 +581,12 @@ def source_descriptors(root):
     return descriptors
 
 
-def descriptor_document(descriptor):
-    """The descriptor as bundle.yaml and installed metadata store it."""
-    return dict(descriptor, **OLDER_READER_KEYS)
-
-
 def check_descriptor(data, where):
-    """Validate one compiled descriptor read from bundle.yaml or installed metadata.
-
-    apis and api_secrets came after the first product-named releases; a
-    descriptor without them registers no API (LATER_KEYS). The fields only
-    older releases read (OLDER_READER_KEYS) are accepted and dropped. Every
-    other field is required.
-    """
-    if isinstance(data, dict):
-        data = dict(data)
-        for key, value in list(LATER_KEYS.items()) + list(OLDER_READER_KEYS.items()):
-            data.setdefault(key, value)
-    fields = set(DESCRIPTOR_KEYS) | set(OLDER_READER_KEYS)
-    if not isinstance(data, dict) or set(data) != fields:
+    """Validate one compiled descriptor read from bundle.yaml or installed metadata."""
+    if not isinstance(data, dict) or set(data) != set(DESCRIPTOR_KEYS):
         raise common.DeployError(
-            f"{where}: expected exactly the fields {', '.join(sorted(fields))}"
+            f"{where}: expected exactly the fields {', '.join(DESCRIPTOR_KEYS)}"
         )
-    for key in OLDER_READER_KEYS:
-        del data[key]
     check_id(data["name"], f"{where}: name")
     check_product(data["product"], f"{where}: product")
     version_number(data["version"])
@@ -699,12 +665,31 @@ def gateway_settings(gateway, state=None):
     return public_settings(rendering.load_config(path), path)
 
 
-def with_gateway_settings(descriptor, config, path, state=None):
-    """Return a component's config plus its gateway's public settings; no writes.
+# Maps whose IDs are completed one by one from the release defaults.
+FILE_GROUPS = (common.SECRET_FILES, common.VOLUME_FILES, common.SECRET_TEMPLATES)
 
-    The operator sets PUBLIC_ORIGIN and HTTPS_PORT once, in the gateway's
-    config.yaml; another component's config.yaml may not set them.
+
+def release_defaults(component):
+    """The release's config.defaults.yaml for a component (without ENVIRONMENT)."""
+    paths = [
+        common.ROOT / "config/common.defaults.yaml",
+        common.ROOT / "components" / component / "config.defaults.yaml",
+    ]
+    paths = [path for path in paths if path.exists() or path.is_symlink()]
+    return rendering.merge_config(*paths) if paths else {}
+
+
+def operator_config(descriptor, path, state=None):
+    """Return (config, names taken from the release) for an installed component.
+
+    The operator's config.yaml wins. A setting it does not have, or a
+    SECRET_FILES/VOLUME_FILES/SECRET_TEMPLATES ID it does not list, comes from
+    the release's config.defaults.yaml, so a new release can add one without
+    an operator edit; nothing is written. PUBLIC_ORIGIN and HTTPS_PORT come
+    from the gateway's config.yaml; another component's config.yaml may not
+    set them. No writes.
     """
+    config = rendering.load_config(path)
     gateway = descriptor["public_from"]
     if gateway is not None:
         for key in PUBLIC_KEYS:
@@ -713,7 +698,21 @@ def with_gateway_settings(descriptor, config, path, state=None):
                     f"{key} in {path} is read from {gateway}'s config.yaml; "
                     "remove it here"
                 )
-    return dict(config, **gateway_settings(gateway, state))
+    defaults = release_defaults(descriptor["name"])
+    added = []
+    for key, value in defaults.items():
+        if gateway is not None and key in PUBLIC_KEYS:
+            continue
+        if key not in config:
+            config[key] = value
+            added.append(key)
+        elif key in FILE_GROUPS and isinstance(config[key], dict):
+            for name, entry in value.items():
+                if name not in config[key]:
+                    config[key] = dict(config[key], **{name: entry})
+                    added.append(f"{key}.{name}")
+    config.update(gateway_settings(gateway, state))
+    return config, added
 
 
 def component_paths(component):
@@ -733,10 +732,6 @@ def installed_version(state, name):
     """Return the completed install's version, or None while not installed."""
     marker = state / "installed" / name
     return marker.read_text().strip() if marker.is_file() else None
-
-
-class PreProductMetadata(Exception):
-    """Installed metadata from before product names; there is no migration."""
 
 
 def load_installed_metadata(state):
@@ -760,21 +755,9 @@ def load_installed_metadata(state):
             if path.is_symlink() or not path.is_file():
                 raise ValueError("regular file required")
             check_id(name, str(path))
-            data = json.loads(path.read_text())
-            # Releases before product names wrote upgrade but no product or shares.
-            before_product = (set(DESCRIPTOR_KEYS) | {"upgrade"}) - {"product"}
-            if isinstance(data, dict) and set(data) == before_product - set(LATER_KEYS):
-                raise PreProductMetadata()
-            descriptor = check_descriptor(data, str(path))
+            descriptor = check_descriptor(json.loads(path.read_text()), str(path))
             if descriptor["name"] != name:
                 raise ValueError("name")
-        except PreProductMetadata:
-            raise common.DeployError(
-                f"{path} was written by a release before product names "
-                "(0.4.10 or older), and there is no migration. Remove that installation "
-                "with its own releases, or install on a new service user "
-                "(README: Product name)"
-            ) from None
         except (OSError, ValueError, common.DeployError):
             raise common.DeployError(f"Invalid installed metadata {path}") from None
         descriptors[name] = descriptor

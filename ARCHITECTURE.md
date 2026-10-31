@@ -283,8 +283,9 @@ sequenceDiagram
 Component config and `credentials/`, imported archives, registration directories,
 installed metadata and markers and retry metadata belong to `/var/lib/<product>/state`;
 Quadlets to `config/` and Podman data to `storage/` beside it (backlog 64). Shared CA/network ownership is unchanged. Release code, defaults, manifests
-and images are disposable; production never merges new defaults over existing
-config or credentials.
+and images are disposable; production never writes release defaults into
+existing config or credentials, and uses them only for names the config lacks
+(`catalog.operator_config`).
 
 Each offline bundle ships the complete `deployment/` package with checksums and
 only its own resources/images. Bytecode and private state, including aliases to

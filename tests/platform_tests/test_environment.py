@@ -206,10 +206,6 @@ class EnvironmentTests(ProductFixture):
                 with self.assertRaisesRegex(common.DeployError, pattern):
                     deploy.prepare()
                 self.assertFalse(common.BUILD.exists())
-        self.product()
-        (self.source / "components/shop/env").mkdir()
-        with self.assertRaisesRegex(common.DeployError, "env is no longer read"):
-            deploy.prepare()
 
     def test_client_variables_stay_in_the_manifest(self):
         def client(shop):

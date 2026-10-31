@@ -66,9 +66,8 @@ class IdentityHarnessTests(unittest.TestCase):
         )
         self.assertEqual(build.kwargs["bundle"], "identity")
         self.assertEqual(build.args[2], "0.4.1")
-        self.harness.persistent_state.assert_called_once_with(
-            "after", ("identity/config.yaml",)
-        )
+        # The upgrade changes no persistent config: nothing is allowed to differ.
+        self.harness.persistent_state.assert_called_once_with("after")
 
     def test_identity_failure_stops_without_retiring_old_trust(self):
         for failure in ("identity-after", "prod-e2e", "markers-check", "database-auth"):

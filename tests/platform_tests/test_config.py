@@ -163,28 +163,52 @@ class ConfigTests(ConfigFixture):
             deploy.init_config("app1")
         self.assertFalse((common.STATE / "app1/config.yaml").exists())
 
-    def test_production_defaults_changes_do_not_change_effective_config(self):
-        """Install never reads new defaults or rewrites either persistent file."""
+    def test_operator_values_win_and_missing_ones_come_from_the_release(self):
+        """Install never writes config; release defaults only fill missing names."""
         paths = [
             common.STATE / name / "config.yaml"
             for name in ("platform", "identity", "app1")
         ]
+        self.write("home/app1/config.yaml", "CHOICE: operator\n")
         before = {p: p.read_bytes() for p in paths}
-        deploy.install()
-        self.write("config/common.defaults.yaml", "not valid YAML: [\n")
-        self.write("components/app1/config.defaults.yaml", "HTTPS_PORT: 1\n")
+        # A public setting in another component's defaults is never used.
+        self.write(
+            "components/app1/config.defaults.yaml",
+            "CHOICE: release\nNEW_SETTING: release-default\nHTTPS_PORT: 1\n",
+        )
+        config = deploy.install_checks()[2]
+        self.assertEqual(config["CHOICE"], "operator")
+        self.assertEqual(config["NEW_SETTING"], "release-default")
+        self.assertEqual(config["HTTPS_PORT"], 8443)
+        self.assertIn("from the release defaults (not in", self.stdout.getvalue())
+        self.assertIn("NEW_SETTING", self.stdout.getvalue())
         deploy.install()
         self.assertEqual({p: p.read_bytes() for p in paths}, before)
-        self.assertEqual(rendering.load_config(paths[0])["HTTPS_PORT"], 8443)
+
+    def test_a_new_release_secret_id_is_added_by_id(self):
+        """The operator's SECRET_FILES map keeps its entries and gains new IDs."""
+        self.write(
+            "home/app1/config.yaml",
+            "SECRET_FILES:\n  app1-existing:\n  - path: operator/path\n",
+        )
+        self.write(
+            "components/app1/config.defaults.yaml",
+            "SECRET_FILES:\n  app1-existing:\n  - path: release/path\n"
+            "  app1-new:\n  - path: credentials/new\n    generate: [value]\n",
+        )
+        sources = deploy.install_checks()[2]["SECRET_FILES"]
+        self.assertEqual(sources["app1-existing"], [{"path": "operator/path"}])
+        self.assertEqual(
+            sources["app1-new"], [{"path": "credentials/new", "generate": ["value"]}]
+        )
+        self.assertIn("SECRET_FILES.app1-new", self.stdout.getvalue())
+        self.assertNotIn("SECRET_FILES.app1-existing", self.stdout.getvalue())
 
     def test_new_required_placeholder_fails_before_secrets_images_or_writes(self):
-        """Report config path and key, without silently adding a new release default."""
+        """A placeholder neither the operator nor the release sets names the file."""
         path = self.write(
             "components/app1/manifests/20-settings.yaml",
             "kind: ConfigMap\nmetadata: {name: app1-settings}\ndata: {value: '@@NEW_REQUIRED@@'}\n",
-        )
-        self.write(
-            "components/app1/config.defaults.yaml", "NEW_REQUIRED: sensitive-default\n"
         )
         self.write(
             "home/platform/config.yaml",
@@ -192,9 +216,8 @@ class ConfigTests(ConfigFixture):
         )
         with self.assertRaisesRegex(
             common.DeployError, "NEW_REQUIRED.*app1/config.yaml"
-        ) as failure:
+        ):
             deploy.install()
-        self.assertNotIn("sensitive-default", str(failure.exception))
         self.assertFalse((common.STATE / "platform/private/token").exists())
         self.assertFalse((common.STATE / "installed/app1").exists())
         self.process.assert_not_called()

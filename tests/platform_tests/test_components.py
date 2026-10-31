@@ -176,7 +176,10 @@ class ComponentTests(ComponentFixture):
             restarts, [["systemctl", "--user", "restart", "myproduct-app1.service"]]
         )
 
-        # Once platform is selected for upgrade, a newly required key must be added manually.
+        # A newer platform release with a new setting takes its default from the
+        # release; the operator's config.yaml is not written.
+        config = catalog.component_paths("platform")[0]
+        kept = config.read_bytes()
         self.write("components/platform/VERSION", "1.1.0\n")
         self.select("platform")
         self.write(
@@ -184,14 +187,11 @@ class ComponentTests(ComponentFixture):
             "NEW_PLATFORM_SETTING: incoming-default\n",
         )
         self.process.reset_mock()
-        with self.assertRaisesRegex(
-            common.DeployError, "NEW_PLATFORM_SETTING.*platform/config.yaml"
-        ):
-            deploy.install()
-        self.process.assert_not_called()
-        self.assertEqual(
-            (platform_yaml.read_bytes(), platform_yaml.stat().st_mtime_ns), before
-        )
+        deploy.install()
+        self.assertEqual(config.read_bytes(), kept)
+        self.assertIn("from the release defaults (not in", self.stdout.getvalue())
+        # The manifest's @@NEW_PLATFORM_SETTING@@ got the release default.
+        self.assertIn("hostname: incoming-default", platform_yaml.read_text())
 
     def test_prefix_ambiguous_component_ids_are_refused_before_any_change(self):
         """An installed app1-tools and an incoming app1 would share resource names."""

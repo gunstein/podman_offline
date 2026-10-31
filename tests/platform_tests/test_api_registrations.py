@@ -224,9 +224,6 @@ class ApiRegistrationTests(ProductFixture):
             environment = product["accounts"]["env"]
             environment["side"] = {line: environment["main"].pop(line)}
 
-        def old_file(product):
-            product["reports"]["api"] = {"index": 1}
-
         def undeclared(product):
             del product["reports"]["defaults"]
             del product["reports"]["env"]["main"]["Authentication__ApiSecret"]
@@ -271,11 +268,6 @@ class ApiRegistrationTests(ProductFixture):
                 "no listed component owns billing-api-secret",
             ),
             ("owner declares it", owner_declares, "platform renders it"),
-            (
-                "old api.yaml",
-                old_file,
-                "api.yaml is no longer read: declare the API's secret",
-            ),
             (
                 "API does not declare the named secret",
                 undeclared,

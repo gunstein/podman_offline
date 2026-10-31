@@ -307,6 +307,8 @@ class BundleAgreementTests(ProductFixture):
         documents = [document("ConfigMap", "orders-settings", data={})]
         (self.orders / MANIFEST).write_text(yaml.safe_dump_all(documents))
         self.edit_config(lambda c: c.update(SECRET_FILES={}))
+        # The release declares no secrets either, so none comes from it.
+        (self.orders / "components/orders/config.defaults.yaml").write_text("{}\n")
         self.both("No images found in the manifests")
 
     def test_generated_secret_name_is_refused_before_generation(self):

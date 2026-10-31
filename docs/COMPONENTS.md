@@ -490,9 +490,9 @@ reading credentials. Secret bytes are checked only during materialization after
 database preflight and permitted generation. Derived values have no separate
 persistent source: config plus the original password file are authoritative.
 Every install recomputes values; a systemd restart uses the last installed YAML.
-Existing installations must explicitly add the new declaration to their persistent
-config before upgrading to a manifest that references it; `init-config` retains
-existing config rather than merging new defaults.
+A new release can add a setting or a `SECRET_FILES` ID in its
+`config.defaults.yaml`: an existing installation whose `config.yaml` lacks it
+uses the release's value, without writing the file; the operator's values win.
 
 The output is an Opaque Secret in the existing 0600 install YAML. Base64 is not
 encryption; protect YAML, source files, Podman storage and backups. Environment

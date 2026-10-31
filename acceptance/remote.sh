@@ -995,7 +995,6 @@ host-path-safety)
                 --installed-user "$service_user" --product "$product_name" --port "$port"
     fi
     ;;
-identity-template-baseline) cd "$src"; python3 acceptance/identity_template_baseline.py;;
 build-images) cd "$src"; ./dev/build-images.sh;;
 database-runtime)
     cd "$src"
@@ -1340,46 +1339,6 @@ HELP_BUILD
     ;;
 help-upgrade|platform-upgrade|identity-upgrade)
     prepare_release
-    if [[ $bundle == identity ]]; then
-        # Explicit operator config addition for the old in-app -> template scenario.
-        # Production deploy never merges new defaults into authoritative config.
-        as_product python3 - "$product" <<'IDENTITY_TEMPLATE_CONFIG'
-import hashlib
-import json
-import os
-from pathlib import Path
-import sys
-import yaml
-
-root = Path(os.environ["PRODUCT_STATE"])
-path = root / "identity/config.yaml"
-config = yaml.safe_load(path.read_text())
-defaults = yaml.safe_load((Path(sys.argv[1]) / "components/identity/config.defaults.yaml").read_text())
-# Explicit operator edits for an Identity installed from an older release:
-# add a recipe the new release still declares (none since backlog 77, whose
-# connection string is in ENVIRONMENT), and remove the public settings older
-# releases copied, which the new release reads from platform's config.yaml.
-public = [key for key in ("PUBLIC_ORIGIN", "HTTPS_PORT") if key in config]
-add_recipe = "SECRET_TEMPLATES" not in config and "SECRET_TEMPLATES" in defaults
-if public or add_recipe:
-    snapshot = root / "identity-lifecycle.json"
-    before = json.loads(snapshot.read_text())
-    if hashlib.sha256(path.read_bytes()).hexdigest() != before["files"]["config.yaml"]["hash"]:
-        raise SystemExit("FAIL: Identity config changed before the explicit operator edit")
-    if add_recipe:
-        config["SECRET_TEMPLATES"] = defaults["SECRET_TEMPLATES"]
-        before["template_config_added"] = True
-    for key in public:
-        del config[key]
-    fd = os.open(str(path), os.O_WRONLY | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as stream:
-        os.fchmod(stream.fileno(), 0o600)
-        yaml.safe_dump(config, stream, sort_keys=False)
-    before["files"]["config.yaml"]["hash"] = hashlib.sha256(path.read_bytes()).hexdigest()
-    snapshot.write_text(json.dumps(before))
-    print("PASS: explicit operator config edit for the new Identity release; other settings retained")
-IDENTITY_TEMPLATE_CONFIG
-    fi
     validate_release
     install_checked
     healthy

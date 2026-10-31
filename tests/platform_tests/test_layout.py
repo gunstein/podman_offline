@@ -195,15 +195,6 @@ class RootTests(LayoutFixture):
             layout.select(PRODUCT)
         self.assertUnselected()
 
-    def test_product_quadlets_in_the_login_home_are_refused(self):
-        quadlets = self.home / ".config/containers/systemd"
-        quadlets.mkdir(parents=True)
-        (quadlets / "unrelated.kube").write_text("")
-        layout.select(PRODUCT)
-        (quadlets / "orders-gateway.kube").write_text("")
-        with self.assertRaisesRegex(common.DeployError, "does not migrate"):
-            layout.select(PRODUCT)
-
 
 class UserManagerTests(LayoutFixture):
     def manager(self, stdout, returncode=0):

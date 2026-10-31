@@ -80,7 +80,6 @@ def initialize(product):
     """Explicit, no-clobber bootstrap creation after administrator preparation."""
     root = expected_root(product)
     check_root(root)
-    check_home_unused(product)
     path = bootstrap_path(product)
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     with_dir = os.open(str(common.HOME), flags)
@@ -281,26 +280,6 @@ def check_root(root):
         check_private(root / name)
 
 
-def check_home_unused(product):
-    """Refuse product Quadlets in the login home instead of running two installations.
-
-    Only new installations under the root are supported; nothing is migrated.
-    """
-    quadlets = common.HOME / ".config/containers/systemd"
-    found = (
-        sorted(quadlets.glob(product + ".network"))
-        + sorted(quadlets.glob(product + "-*.kube"))
-        if quadlets.is_dir()
-        else []
-    )
-    if found:
-        raise common.DeployError(
-            f"Found {found[0]} from an installation in the login home. This release "
-            "installs only new installations under the installation root and does "
-            "not migrate; remove the old installation first"
-        )
-
-
 def environment(root):
     return {name: str(root / directory) for name, directory in DIRECTORIES.items()}
 
@@ -314,7 +293,6 @@ def select(product):
     path = bootstrap_path(product)
     root = install_root(product, read_bootstrap(path), path)
     check_root(root)
-    check_home_unused(product)
     common.STATE = root / "state"
     common.FILES_DIR = common.STATE / "files"
     common.QUADLET_DIR = root / DIRECTORIES["XDG_CONFIG_HOME"] / "containers/systemd"

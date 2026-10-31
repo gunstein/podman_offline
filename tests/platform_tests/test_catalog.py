@@ -112,10 +112,10 @@ class CatalogTests(unittest.TestCase):
         self.product({"app": {}})
         path.write_text("product: myproduct\ncomponents:\n  app:\n    requires: [db]\n")
         with self.assertRaisesRegex(
-            common.DeployError, "components is a list of component IDs"
+            common.DeployError, "components must be a nonempty list of component IDs"
         ):
             catalog.load_catalog(self.root)
-        self.refuse("components must be a nonempty list", [])
+        self.refuse("components must be a nonempty list of component IDs", [])
         self.refuse("components lists an ID twice", ["app", "app"])
 
     def test_dependency_order_puts_the_gateway_first_then_the_list(self):
@@ -324,18 +324,13 @@ class CatalogTests(unittest.TestCase):
             },
         )
         for descriptor in descriptors.values():
-            document = catalog.descriptor_document(descriptor)
-            # Written files keep the fields older releases read; reading drops them.
-            self.assertEqual((document["upgrade"], document["shares"]), ("always", []))
-            self.assertEqual(catalog.check_descriptor(document, "fixture"), descriptor)
-        # Bundles built before apis existed register no API; still readable, and
-        # an older release's upgrade and shares values are ignored.
-        older = dict(
-            {k: v for k, v in descriptors["app"].items() if k != "apis"},
-            upgrade="newer-only",
-            shares=["SHOP_REGION"],
-        )
-        self.assertEqual(catalog.check_descriptor(older, "fixture"), descriptors["app"])
+            self.assertEqual(
+                catalog.check_descriptor(descriptor, "fixture"), descriptor
+            )
+        # Every field is required; there is no older form.
+        missing = {k: v for k, v in descriptors["app"].items() if k != "apis"}
+        with self.assertRaisesRegex(common.DeployError, "expected exactly the fields"):
+            catalog.check_descriptor(missing, "fixture")
         for change, pattern in (
             ({"components": ["app"]}, "expected exactly the fields"),
             ({"version": "1.0"}, "three numeric parts"),
@@ -349,30 +344,6 @@ class CatalogTests(unittest.TestCase):
                     catalog.check_descriptor(
                         dict(descriptors["app"], **change), "fixture"
                     )
-
-    def test_metadata_from_before_product_names_is_named_not_corrupt(self):
-        """0.4.10 metadata has no product; say so instead of 'invalid'."""
-        home = self.root / "home"
-        (home / "metadata").mkdir(parents=True)
-        old = {
-            "name": "app",
-            "version": "1.0.0",
-            "requires": {},
-            "upgrade": "always",
-            "public_from": None,
-            "routes": None,
-            "clients": None,
-            "accepts": {},
-        }
-        (home / "metadata/app.json").write_text(json.dumps(old))
-        with self.assertRaisesRegex(
-            common.DeployError,
-            "app.json was written by a release before product names.*no migration",
-        ):
-            catalog.load_installed_metadata(home)
-        (home / "metadata/app.json").write_text(json.dumps(dict(old, extra=1)))
-        with self.assertRaisesRegex(common.DeployError, "Invalid installed metadata"):
-            catalog.load_installed_metadata(home)
 
     def test_installed_metadata_is_read_strictly(self):
         home = self.root / "home"
@@ -388,11 +359,12 @@ class CatalogTests(unittest.TestCase):
             "product": "myproduct",
             "version": "1.0.0",
             "requires": {"base": {"min": "1.0.0", "before": "2.0.0"}},
-            "upgrade": "always",
             "public_from": None,
             "routes": None,
             "clients": None,
+            "apis": None,
             "accepts": {},
+            "api_secrets": {},
         }
         (home / "metadata/app.json").write_text(json.dumps(descriptor))
         installed = catalog.load_installed_metadata(home)

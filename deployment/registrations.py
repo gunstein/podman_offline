@@ -125,9 +125,7 @@ def registration_stage(components, directory, known, state=None, configs=None):
             continue
         config_path = catalog.state_paths(component, state)[0]
         if configs is None:
-            config = catalog.with_gateway_settings(
-                known[component], rendering.load_config(config_path), config_path, state
-            )
+            config = catalog.operator_config(known[component], config_path, state)[0]
         else:
             config = configs[component]
         if api_line is not None:
