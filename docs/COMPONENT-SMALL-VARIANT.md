@@ -1,8 +1,8 @@
 # Backlog 77: the simple catalog and `env/` files (decided specification)
 
 Status: **decided by the product owner on 2026-10-29; implemented on
-2026-10-30 ([evidence and lab check](../acceptance/COMPONENT-MODEL-77.md));
-real Podman/systemd verification pending.** This
+2026-10-30 and verified on real Podman/systemd the same day
+([evidence and lab results](../acceptance/COMPONENT-MODEL-77.md)).** This
 document replaces the earlier proposal text in this file and is the scope of
 backlog 77 for now. Everything else in backlog 77 (example application,
 `mounts/`, CA profiles, shared secrets, read-through public values) stays
