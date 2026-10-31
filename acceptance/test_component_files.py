@@ -4,8 +4,10 @@ import contextlib
 import copy
 import io
 import subprocess
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import database_test
@@ -39,6 +41,56 @@ class SeedContentTests(unittest.TestCase):
             with self.subTest(rows=rows), self.assertRaises(RuntimeError) as failure:
                 check(rows, "prod", "release-v2")
             self.assertNotIn("private-row-value", str(failure.exception))
+
+
+class ReportLoginTests(unittest.TestCase):
+    """MOUNTS demo: the login made by the rendered seed SQL file (backlog 77)."""
+
+    def check(self, results):
+        """Run check_report_login with stubbed psql results; return the calls."""
+        login = guest_code("SEED_CONTENT")["check_report_login"]
+        calls = []
+
+        def run(arguments, **kwargs):
+            calls.append((arguments, kwargs["input"]))
+            returncode, stdout, stderr = results[len(calls) - 1]
+            return types.SimpleNamespace(
+                returncode=returncode, stdout=stdout, stderr=stderr
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            password = Path(directory) / "password"
+            password.write_text("GeneratedReportPassword\n")
+            with (
+                mock.patch.object(subprocess, "run", side_effect=run),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                login("app1", password, "release-v1")
+        return calls, output.getvalue()
+
+    def test_right_password_logs_in_and_wrong_password_is_rejected(self):
+        calls, output = self.check([(0, "release-v1\n", ""), (2, "", "auth failed")])
+        self.assertEqual(
+            [value for _, value in calls],
+            ["GeneratedReportPassword", "wrong-GeneratedReportPassword"],
+        )
+        for arguments, _ in calls:
+            self.assertEqual(arguments[:4], ["podman", "exec", "-i", "app1-postgres-db"])
+            self.assertIn("-U todo_report", arguments[-1])
+            # The password goes on stdin, never in argv.
+            self.assertNotIn("GeneratedReportPassword", " ".join(arguments))
+        self.assertIn("MOUNTS SQL file created todo_report", output)
+
+    def test_failed_login_accepted_wrong_password_and_leaks_fail(self):
+        for results in (
+            [(2, "", ""), (2, "", "")],
+            [(0, "release-v1\n", ""), (0, "release-v1\n", "")],
+            [(0, "stale\n", ""), (2, "", "")],
+            [(0, "release-v1\n", "GeneratedReportPassword"), (2, "", "")],
+        ):
+            with self.subTest(results=results), self.assertRaises(RuntimeError) as failure:
+                self.check(results)
+            self.assertNotIn("GeneratedReportPassword", str(failure.exception))
 
 
 class SeedRetryHarnessTests(unittest.TestCase):

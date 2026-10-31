@@ -41,7 +41,8 @@ run directories were deleted, so only the result is recorded.
 Commits after `7f22375` (demo settings in `ENVIRONMENT`, client id and path
 written once, no shared or per-component dev config file, `MOUNTS`, no
 standalone mode or `examples/`, no authored `SECRET_TEMPLATES`) have unit and
-harness tests only. The matrix no longer has the `03-example-*` steps.
+harness tests only. The matrix no longer has the `03-example-*` steps; its
+seed checks now also log in as `todo_report`, created by app1's `MOUNTS` SQL file.
 
 ## Other scenarios
 

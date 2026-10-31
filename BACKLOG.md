@@ -86,9 +86,10 @@ installations). The design history is in git.
 
 Remaining in this item:
 
-- `MOUNTS` has unit tests only; no demo component uses it, so it has no real
-  Podman run. The generated mount has the same shape as app3's verified
-  trust-chain mount (Secret items with `subPath`, read-only).
+- `MOUNTS` demo: app1's seed SQL `020-report-role.sql` creates `todo_report`
+  with the generated `app1-report-password`; `seed_content` in the acceptance
+  run logs in with it (and is refused with a wrong password), in dev and prod
+  and in the renamed product. No real run yet.
 - Not started from the original scope: CA trust profiles, an example
   application for the organisation's SPA/.NET architecture.
 

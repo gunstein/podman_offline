@@ -31,15 +31,20 @@ spec:
     - sh
     - -ec
     # Fold to one command scalar for Podman's YAML round trip.
+    # /seed: public SQL (VOLUME_FILES); /seed-secret: SQL with a password
+    # filled in at install (MOUNTS in config.defaults.yaml).
     - >-
       export LC_ALL=C PGCONNECT_TIMEOUT=5;
       export PGPASSWORD="$(cat /run/secrets/database/password)";
+      run_sql() {
+      psql --no-psqlrc --host "$DB_HOST" --port "$DB_PORT" --username "$DB_USER"
+      --dbname "$DB_NAME" --set=ON_ERROR_STOP=1 --single-transaction --file "$1" >/dev/null 2>&1 || {
+      echo 'Demo seed SQL failed (details withheld)' >&2; exit 1; }; };
       for sql in /seed/*.sql; do
       test -f "$sql" || { echo 'Missing demo seed input' >&2; exit 1; };
-      psql --no-psqlrc --host "$DB_HOST" --port "$DB_PORT" --username "$DB_USER"
-      --dbname "$DB_NAME" --set=ON_ERROR_STOP=1 --single-transaction --file "$sql" >/dev/null 2>&1 || {
-      echo 'Demo seed SQL failed (details withheld)' >&2; exit 1; };
-      done
+      run_sql "$sql";
+      done;
+      if test -d /seed-secret; then for sql in /seed-secret/*.sql; do run_sql "$sql"; done; fi
     env:
     - name: DB_HOST
       value: '@@DB_HOST@@'

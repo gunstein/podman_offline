@@ -1,5 +1,6 @@
 """Isolated renderer/installer tests; no Podman, systemd, root or network."""
 
+import base64
 import shutil
 from pathlib import Path
 
@@ -81,8 +82,16 @@ class DemoRenderTests(DeployFixture):
             docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]
         self.assertEqual(kinds.count("Pod"), 9)
-        # app3's API secret and recipe, and Identity's registration Secret (72).
-        self.assertEqual(kinds.count("Secret"), 14)
+        # app3's API secret and recipe, Identity's registration Secret (72), and
+        # app1's report password with the MOUNTS file Secret built from it.
+        self.assertEqual(kinds.count("Secret"), 16)
+        sql = next(
+            doc for doc in docs if doc["metadata"]["name"] == "app1-seed-database-files"
+        )
+        text = base64.b64decode(sql["data"]["020-report-role.sql"]).decode()
+        self.assertIn("GRANT CONNECT ON DATABASE todo TO todo_report;", text)
+        self.assertIn("ALTER ROLE todo_report PASSWORD '", text)
+        self.assertNotIn("@@", text)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 8)
         self.assertEqual(kinds.count("ConfigMap"), 6)
         self.assertEqual(len(rendering.find_images(docs)), 8)

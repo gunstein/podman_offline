@@ -87,6 +87,13 @@ def rename_route(text):
     return text
 
 
+def rename_secrets(text):
+    """Rename the component prefix of every @@secret:<id>/<key>@@ reference."""
+    return re.sub(
+        r"@@secret:([a-z0-9-]+)/", lambda match: f"@@secret:{rename(match[1])}/", text
+    )
+
+
 def rename_env(values):
     """Rename secret references in one ENVIRONMENT container (backlog 77).
 
@@ -197,6 +204,14 @@ def generate(source, target):
             with defaults.open(encoding="utf-8") as stream:
                 values = rename_defaults(yaml.safe_load(stream))
             dump(destination / defaults.name, values)
+            # MOUNTS templates name the component's secrets as well.
+            for mounts in (values.get("MOUNTS") or {}).values():
+                for relative in mounts.values():
+                    path = destination / "files" / relative
+                    path.write_text(
+                        rename_secrets(path.read_text(encoding="utf-8")),
+                        encoding="utf-8",
+                    )
         if (origin / "route.conf").exists():
             (destination / "route.conf").write_text(
                 rename_route((origin / "route.conf").read_text(encoding="utf-8")),

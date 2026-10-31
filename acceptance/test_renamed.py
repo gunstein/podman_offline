@@ -105,6 +105,16 @@ class GeneratorTests(unittest.TestCase):
         self.assertTrue(names)
         self.assertFalse([name for name in names if OLD_PREFIX.match(str(name))])
 
+    def test_mounts_file_names_the_renamed_secret(self):
+        defaults = yaml.safe_load(
+            (self.target / "components/orders/config.defaults.yaml").read_text()
+        )
+        self.assertIn("orders-report-password", defaults["SECRET_FILES"])
+        source = defaults["MOUNTS"]["seed-database"]["/seed-secret/020-report-role.sql"]
+        text = (self.target / "components/orders/files" / source).read_text()
+        self.assertIn("@@secret:orders-report-password/password@@", text)
+        self.assertNotIn("app1", text)
+
     def test_images_and_generic_files_are_unchanged(self):
         self.assertEqual(images(self.target), images(ROOT, renamed_product.NAMES))
         for name in ("deployment", "dev", "scripts", "quadlet", "apps"):

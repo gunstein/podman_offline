@@ -354,6 +354,9 @@ ALTER ROLE @@DB_USER@@ PASSWORD '@@secret:orders-database-password/password@@';
   path the manifest already mounts, a Pod volume already named
   `<container>-files`, unknown settings, undeclared or another component's
   secrets.
+- The demo: app1's `seed-database` init container gets
+  `/seed-secret/020-report-role.sql`, which creates the login `todo_report`
+  with the generated `app1-report-password`; the acceptance run logs in with it.
 - `init-config` does not copy `MOUNTS`, and the operator's `config.yaml` may
   not contain it. A file the operator owns, or a directory tree, is a
   `VOLUME_FILES` or `SECRET_FILES` source instead.

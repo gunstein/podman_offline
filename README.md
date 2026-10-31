@@ -673,8 +673,10 @@ user (the release directories may be anywhere accessible):
 
 The app1 demo runs a read-only seed PVC in `seed-database` after
 `prepare-database`, using the existing Postgres image and password Secret.
-Idempotent SQL upserts a public `reference` marker; dev adds a harmless
-`dev-sample`. Both files ship, but fresh production delivers only `reference`.
+Idempotent SQL upserts a public `reference` marker. A second file,
+`/seed-secret/020-report-role.sql`, is a `MOUNTS` template: install fills in
+`DB_NAME` and the generated `app1-report-password`, and the SQL creates the
+read-only login `todo_report` with it.
 Each file runs with `ON_ERROR_STOP` and `--single-transaction`: a SQL error stops
 startup and rolls back that whole file, while files that already completed stay
 committed. Restart/retry replays the sorted SQL list. This example

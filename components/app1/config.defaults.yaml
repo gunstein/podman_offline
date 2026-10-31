@@ -15,6 +15,10 @@ SECRET_FILES:
   - path: credentials/todo
     generate:
     - session-key
+  app1-report-password:
+  - path: credentials/report
+    generate:
+    - password
 
 # The environment of each container. It comes with the release and is never
 # copied to config.yaml. APP_ID and BASE_PATH come from client.yaml.
@@ -25,3 +29,9 @@ ENVIRONMENT:
     PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
     HTTPS_PORT: '@@HTTPS_PORT@@'
     DEMO_CONFIG_LAYER: '@@DEMO_CONFIG_LAYER@@'
+
+# Files mounted into each container. They come with the release; @@...@@ is
+# filled in at install. Never copied to config.yaml.
+MOUNTS:
+  seed-database:
+    /seed-secret/020-report-role.sql: sql/020-report-role.sql

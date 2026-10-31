@@ -30,6 +30,13 @@ class CredentialDeliveryTests(DeployFixture):
                 shutil.copytree(
                     source_files, self.root / "components" / component / "files"
                 )
+            # ENVIRONMENT and MOUNTS come from the release's own defaults file.
+            (self.root / "components" / component).mkdir(parents=True, exist_ok=True)
+            for name in ("config.defaults.yaml", "client.yaml"):
+                shutil.copy2(
+                    REPO / "components" / component / name,
+                    self.root / "components" / component / name,
+                )
             config = self.defaults(component)
             prefix = "home/" + component + "/"
             path = self.write(prefix + "config.yaml", yaml.safe_dump(config), 0o600)

@@ -107,6 +107,11 @@ class RetryFixture(ComponentFixture):
             shutil.copytree(
                 repo / "components/app1/files", self.root / "components/app1/files"
             )
+        # ENVIRONMENT and MOUNTS come from the release's own defaults file.
+        shutil.copy2(
+            repo / "components/app1/config.defaults.yaml",
+            self.root / "components/app1/config.defaults.yaml",
+        )
         # app1 reads PUBLIC_ORIGIN and HTTPS_PORT from platform's config.yaml.
         config = rendering.merge_config(repo / "components/app1/config.defaults.yaml")
         self.write("home/app1/config.yaml", yaml.safe_dump(config), 0o600)
@@ -114,8 +119,15 @@ class RetryFixture(ComponentFixture):
             self.write(
                 "home/app1/credentials/todo/" + name, b"private-" + name.encode(), 0o600
             )
-        self.before = self.protected()
+        provided = self.protected()
         self.attempt()
+        # The first install only adds generated secrets (app1-report-password);
+        # what was provided stays byte for byte.
+        self.before = self.protected()
+        self.assertEqual(
+            {name: value for name, value in self.before.items() if name in provided},
+            provided,
+        )
 
     def changed(self):
         self.write("components/app1/route.conf", "location /app1/ { return 202; }\n")

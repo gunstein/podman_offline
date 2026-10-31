@@ -691,6 +691,25 @@ def check_rows(output, mode, expected):
         print("SEED " + row)
 
 
+def check_report_login(component, password_file, expected):
+    """MOUNTS: the seed SQL file, rendered with the generated password, made the login.
+
+    The password goes to psql on stdin, never in argv; a wrong password must fail,
+    so the login proves the substituted value, not a trust rule.
+    """
+    password = password_file.read_bytes().decode("utf-8").rstrip("\n")
+    script = 'PGPASSWORD="$(cat)"; export PGPASSWORD; exec psql -X -A -t -h 127.0.0.1 -U todo_report -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT value FROM demo_seed WHERE name = \'reference\'"'
+    for value, accepted in ((password, True), ("wrong-" + password, False)):
+        result = subprocess.run(["podman", "exec", "-i", component + "-postgres-db", "sh", "-ec", script],
+                                input=value, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, check=False, timeout=15)
+        if password in result.stdout + result.stderr:
+            raise RuntimeError("Report login output contains the password")
+        if (result.returncode == 0) != accepted or (accepted and result.stdout.strip() != expected):
+            raise RuntimeError("Report login from the MOUNTS SQL file failed")
+    print("PASS: MOUNTS SQL file created todo_report with the generated password (" + component + ")")
+
+
 def main():
     mode, forced = sys.argv[1:]
     component = "orders" if os.environ["PRODUCT_NAME"] == "shop" else "app1"
@@ -719,6 +738,8 @@ def main():
         raise RuntimeError("Demo seed query failed")
     check_rows(result.stdout, mode, values[0])
     print("PASS: current release seed rows (" + mode + ")")
+    state = Path(os.environ["PRODUCT_STATE"]) if mode == "prod" else Path("build/dev")
+    check_report_login(component, state / component / "credentials/report/password", values[0])
 
 
 if __name__ == "__main__":
