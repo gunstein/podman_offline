@@ -280,8 +280,9 @@ product owner on 2026-10-29; the developer walkthrough was dropped by the
 product owner the same day; item 76 is complete; the specification's second
 independent check (2026-10-30, two blocking and five minor findings) is
 corrected in the specification. Implemented 2026-10-30 with product/unit and
-harness tests ([change, evidence and lab check](acceptance/COMPONENT-MODEL-77.md));
-real Podman/systemd verification pending.**
+harness tests ([change, evidence and lab check](acceptance/COMPONENT-MODEL-77.md)).
+Lab 2026-10-30 on `0459e5a`: six scenarios CLEAN PASS; `--renamed-product`
+NOT CLEAN on a harness defect (fixed); its rerun is pending.**
 
 **Scope decided 2026-10-29 (replaces phases 1–5 for now):** the simple catalog
 (`gateway:` and `identity:` plus a plain component list; routes, public

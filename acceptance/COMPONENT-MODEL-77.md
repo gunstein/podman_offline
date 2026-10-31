@@ -1,8 +1,10 @@
 # Simple catalog, `env/` files and API secrets (backlog 77)
 
 Status: implemented with product/unit and acceptance-harness test coverage
-(2026-10-30). **No real Podman/systemd run of this change yet**; the lab
-check below is required before the behaviour is called verified.
+(2026-10-30). Six of the seven lab scenarios are CLEAN PASS on `0459e5a`;
+**the renamed-product scenario is NOT CLEAN** (a harness defect, now fixed)
+and must pass on a rerun before the behaviour is called verified. See
+[lab results](#lab-results-on-0459e5a-2026-10-30).
 
 ## Change
 
@@ -72,9 +74,34 @@ What each part exercises for this change:
 Record unit/product tests, harness tests and real runs separately. Keep
 failures and their output before any repair.
 
+### Lab results on `0459e5a` (2026-10-30)
+
+Real Podman/systemd runs; OS and Podman details are in each run's
+`EVIDENCE.md`.
+
+| Run | Result | Passed steps |
+| --- | --- | --- |
+| `c77-whoami-0459e5a` | CLEAN PASS | 46 |
+| `c77-normal-0459e5a` | CLEAN PASS | 125 |
+| `c77-app2-0459e5a` | CLEAN PASS | 125 |
+| `c77-identity-0459e5a` | CLEAN PASS | 66 |
+| `c77-help-0459e5a` | CLEAN PASS | 60 |
+| `c77-platform-help-0459e5a` | CLEAN PASS | 39 |
+| `c77-renamed-0459e5a` | **NOT CLEAN** | 46, then FAIL at `10-inventory-drop-registrations` |
+
+The renamed failure is a harness defect: the `renamed-inventory-drop` action
+still removed `routes` and `clients` from the inventory catalog entry, which
+phase 1 had replaced with `route.conf`/`client.yaml`, and stopped with
+`KeyError: 'routes'` before building. All product steps before it passed.
+The action now only removes the two files and bumps the version;
+`test_inventory_drop_action_removes_derived_route_and_client` runs it against
+the generated tree with only the build stubbed. The renamed scenario must be
+rerun on the fix before it counts as verified.
+
 ## Verification gaps
 
-- No real Podman/systemd/Duende run of this change; a manual API secret
+- The renamed-product scenario has not yet passed on real Podman/systemd
+  (see the lab results). A manual API secret
   rotation on PROD (replace `credentials/api-secret/value`, reinstall a newer
   app3) is not part of the automated scenarios.
 - An Identity that declares `<identity>-apis` itself while no API exists is not

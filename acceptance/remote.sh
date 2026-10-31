@@ -1129,19 +1129,12 @@ REMOVE_MANUAL
     echo 'PASS: manual removed from dev and new bundles; its earlier archive is retained'
     ;;
 renamed-inventory-drop)
-    # A newer inventory release that no longer declares a route or a client.
+    # A newer inventory release without a route or a client. The catalog derives
+    # both from route.conf and client.yaml (backlog 77), so removing them is enough.
     cd "$renamed"
     python3 - <<'DROP_REGISTRATIONS'
 import pathlib
-import yaml
 
-with open("bundles.yaml") as stream:
-    catalog = yaml.safe_load(stream)
-entry = catalog["components"]["inventory"]
-entry.pop("routes")
-entry.pop("clients")
-with open("bundles.yaml", "w") as stream:
-    yaml.safe_dump(catalog, stream, sort_keys=False)
 major, minor, patch = pathlib.Path("components/inventory/VERSION").read_text().strip().split(".")
 pathlib.Path("components/inventory/VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\n")
 DROP_REGISTRATIONS

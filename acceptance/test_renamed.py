@@ -209,6 +209,44 @@ class GeneratorTests(unittest.TestCase):
         self.assertTrue(expected)
         self.assertEqual(expected, inventory(self.target))
 
+    def test_inventory_drop_action_removes_derived_route_and_client(self):
+        """The lab action edits the generated tree; only the build is stubbed."""
+        build = self.target / "build-bundle.sh"
+        build.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p dist && cd dist\n"
+            'name="shop-$1-$(cat ../components/$1/VERSION)-offline.tar.gz"\n'
+            'touch "$name" && sha256sum "$name" > "$name.sha256"\n'
+        )
+        before = catalog.source_descriptors(self.target)["inventory"]
+        self.assertEqual(
+            (before["routes"], before["clients"]), ("gateway", "login-service")
+        )
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "set -euo pipefail\n"
+                + shell_code(REMOTE, action="renamed-inventory-drop"),
+            ],
+            env=dict(os.environ, renamed=str(self.target), product_name="shop"),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = catalog.source_descriptors(self.target)
+        major, minor, patch = before["version"].split(".")
+        version = ".".join((major, minor, str(int(patch) + 1)))
+        self.assertEqual(
+            result.stdout, "shop-inventory-" + version + "-offline.tar.gz\n"
+        )
+        self.assertEqual(after["inventory"]["version"], version)
+        self.assertEqual(
+            (after["inventory"]["routes"], after["inventory"]["clients"]), (None, None)
+        )
+        self.assertNotIn("login-service", after["inventory"]["requires"])
+        self.assertEqual(after["orders"]["clients"], "login-service")
+
     def test_existing_target_is_never_overwritten(self):
         with self.assertRaisesRegex(SystemExit, "already exists"):
             renamed_product.generate(ROOT, self.target)
