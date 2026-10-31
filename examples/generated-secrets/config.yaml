@@ -1,6 +1,0 @@
-HTTPS_PORT: 18080
-SECRET_FILES:
-  example-run-generated:
-  - path: credentials/app
-    generate:
-    - API_TOKEN

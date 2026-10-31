@@ -296,8 +296,6 @@ def select(product):
     common.STATE = root / "state"
     common.FILES_DIR = common.STATE / "files"
     common.QUADLET_DIR = root / DIRECTORIES["XDG_CONFIG_HOME"] / "containers/systemd"
-    common.QUADLET_TARGET = common.QUADLET_DIR / (common.STANDALONE_PRODUCT + ".kube")
-    common.QUADLET_YAML = common.QUADLET_DIR / (common.STANDALONE_PRODUCT + ".yaml")
     os.environ.update(environment(root))
     return root
 

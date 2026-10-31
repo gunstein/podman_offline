@@ -40,13 +40,14 @@ class BundleFixture(unittest.TestCase):
         self.process = self.stack.enter_context(
             mock.patch.object(subprocess, "run", side_effect=self.save)
         )
+        # A one-component product: bundles.yaml lists only app.
         for name, text in {
-            "VERSION": "1.2.3\n",
+            "bundles.yaml": "product: myproduct\ncomponents: [app]\n",
+            "components/app/VERSION": "1.2.3\n",
             "deploy.sh": '#!/bin/sh\nexec python3 -B -m deployment "$@"\n',
             "deployment/__init__.py": "",
             "deployment/__main__.py": "print('test fixture')\n",
             "README.md": "Test fixture only\n",
-            "config.defaults.yaml": "HTTPS_PORT: 8443\n",
             "dev/generate-certificates.sh": "#!/bin/sh\nexit 0\n",
             "scripts/prepare-host.sh": "#!/bin/sh\nexit 0\n",
             "dev/dev.sh": "#!/bin/sh\nexit 0\n",
@@ -54,7 +55,7 @@ class BundleFixture(unittest.TestCase):
             "dev/smoke-test.py": "print('dev only')\n",
             "quadlet/template.kube": "[Kube]\nYaml=@@UNIT_NAME@@.yaml\n",
             "quadlet/template.network": "[Network]\nNetworkName=@@PRODUCT_NAME@@\n",
-            "manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
+            "components/app/manifests/app.yaml": "kind: Pod\nspec:\n  initContainers:\n  - image: localhost/init:1\n  containers:\n  - name: app\n    image: localhost/app:1\n    imagePullPolicy: Never\n",
         }.items():
             self.write(name, text)
 
@@ -77,7 +78,7 @@ class BundleFixture(unittest.TestCase):
         Path(args[4]).write_bytes(("stub images " + " ".join(args[5:])).encode("utf-8"))
 
     def archive_bytes(self, archive, name):
-        stream = archive.extractfile("myproduct-1.2.3/" + name)
+        stream = archive.extractfile("myproduct-app-1.2.3/" + name)
         self.assertIsNotNone(stream)
         assert stream is not None
         with stream:

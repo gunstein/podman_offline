@@ -115,10 +115,12 @@ class InitSecretHarnessTests(unittest.TestCase):
             probe.render_release(source, path, output, "renamed-worker")
             docs = list(yaml.safe_load_all(output.read_text()))
             secret = next(
-                d for d in docs if d["metadata"]["name"] == "renamed-worker-settings"
+                d
+                for d in docs
+                if d["metadata"]["name"] == "renamed-worker-init-env-secret"
             )
             self.assertEqual(
-                base64.b64decode(secret["data"]["connection-string"]),
+                base64.b64decode(secret["data"]["APP_CONNECTIONSTRING"]),
                 b"Host=retained.invalid;Password=SyntheticPassword",
             )
             manifest = root / "runtime.yaml"
@@ -141,10 +143,14 @@ class InitSecretHarnessTests(unittest.TestCase):
                 ],
                 "always",
             )
-            for group in ("initContainers", "containers"):
-                env = pod["spec"][group][0]["env"]
-                self.assertIn("secretKeyRef", env[0]["valueFrom"])
-                self.assertNotIn("value", env[0])
+            for group, role in (("initContainers", "init"), ("containers", "control")):
+                container = pod["spec"][group][0]
+                self.assertEqual(
+                    container["envFrom"],
+                    [{"secretRef": {"name": "renamed-worker-" + role + "-env-secret"}}],
+                )
+                env = container["env"]
+                self.assertNotIn("APP_CONNECTIONSTRING", [e["name"] for e in env])
                 self.assertEqual(env[-2]["value"], "fresh")
             self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
             self.assertFalse((source / "apps").exists())
@@ -173,7 +179,7 @@ class InitSecretHarnessTests(unittest.TestCase):
             self.assertIn(
                 ["podman", "kube", "down", str(Path(directory) / "private.yaml")], calls
             )
-            for suffix in ("-password", "-settings", "-expected"):
+            for suffix in probe.SECRET_SUFFIXES:
                 self.assertIn(["podman", "volume", "rm", "fixture" + suffix], calls)
             self.assertFalse(any("-a" in call or "--all" in call for call in calls))
 
@@ -215,10 +221,12 @@ class InitSecretHarnessTests(unittest.TestCase):
                     pod = next(d for d in docs if d["kind"] == "Pod")
                     name = pod["metadata"]["name"][: -len("-job")]
                     secret = next(
-                        d for d in docs if d["metadata"]["name"] == name + "-settings"
+                        d
+                        for d in docs
+                        if d["metadata"]["name"] == name + "-init-env-secret"
                     )
                     value = base64.b64decode(
-                        secret["data"]["connection-string"]
+                        secret["data"]["APP_CONNECTIONSTRING"]
                     ).decode()
                     oracle = next(
                         d for d in docs if d["metadata"]["name"] == name + "-expected"

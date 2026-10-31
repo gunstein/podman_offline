@@ -45,8 +45,6 @@ class LayoutFixture(unittest.TestCase):
             "HOME": self.home,
             "STATE": None,
             "QUADLET_DIR": None,
-            "QUADLET_TARGET": None,
-            "QUADLET_YAML": None,
             "FILES_DIR": None,
         }.items():
             self.stack.enter_context(mock.patch.object(common, name, value))

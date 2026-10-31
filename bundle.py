@@ -1,7 +1,6 @@
 """Build the offline bundles: dist/<product>-<component>-<version>-offline.tar.gz (+ .sha256).
 
-<product> is bundles.yaml's product name; a standalone manifest fixture builds
-dist/myproduct-<version>-offline.tar.gz (common.STANDALONE_PRODUCT).
+<product> is bundles.yaml's product name.
 """
 
 import hashlib
@@ -64,13 +63,12 @@ def owner_root(info):
 def manifest_images(manifests=None):
     """Find images in the given manifests, or in every catalog component.
 
-    Without bundles.yaml the standalone manifests/ fixture is used. Directories
-    under components/ that the catalog does not list are never read.
+    Directories under components/ that the catalog does not list are never read.
     """
     documents = []
     if manifests:
         paths = sorted(manifests.glob("*.yaml"))
-    elif (ROOT / "bundles.yaml").exists():
+    else:
         try:
             names = catalog.source_descriptors(ROOT)
         except common.DeployError as error:
@@ -82,8 +80,6 @@ def manifest_images(manifests=None):
                 (ROOT / "components" / name / "manifests").glob("*.yaml")
             )
         ]
-    else:
-        paths = sorted((ROOT / "manifests").glob("*.yaml"))
     try:
         for path in paths:
             path_documents = rendering.load_yaml_all(path)
@@ -125,14 +121,6 @@ def generated_secret_guard(config_dirs=None):
                 (ROOT / "build/dev" / directory.name / "credentials").resolve()
             )
     sources = []
-    # Standalone manifest fixtures keep explicit root-level config; products do not.
-    if not (ROOT / "components").is_dir():
-        sources.extend(
-            [
-                (ROOT / "config.yaml", ROOT, None),
-                (ROOT / "config.defaults.yaml", ROOT, None),
-            ]
-        )
     for directory in directories:
         if directory == ROOT:
             continue
@@ -196,109 +184,59 @@ def generated_secret_guard(config_dirs=None):
 def guarded_directories():
     """Directories whose private files must never enter any archive.
 
-    A product guards every catalog component, not only the bundled one; a
-    standalone fixture guards any component directory that happens to exist.
+    A product guards every catalog component, not only the bundled one.
     """
-    if (ROOT / "bundles.yaml").exists():
-        names = list(catalog.load_catalog(ROOT))
-        return [ROOT] + [ROOT / "components" / name for name in names]
-    return [ROOT] + sorted((ROOT / "components").glob("*"))
+    names = list(catalog.load_catalog(ROOT))
+    return [ROOT] + [ROOT / "components" / name for name in names]
 
 
-def build_release(version, descriptor=None):
-    """Package one compiled component descriptor or a standalone manifest fixture."""
-    components = [str(descriptor["name"])] if descriptor else []
-    name = (
-        f"{descriptor['product']}-{components[0]}-{version}"
-        if descriptor
-        else f"{common.STANDALONE_PRODUCT}-{version}"
-    )
+def build_release(version, descriptor):
+    """Package one compiled component descriptor."""
+    component = str(descriptor["name"])
+    name = f"{descriptor['product']}-{component}-{version}"
     target = STAGE / name
 
-    directories = [ROOT / "components" / component for component in components]
-    images = (
-        sorted(
-            {
-                image
-                for directory in directories
-                for image in manifest_images(directory / "manifests")
-            }
-        )
-        if directories
-        else manifest_images()
-    )
+    directory = ROOT / "components" / component
+    images = manifest_images(directory / "manifests")
     guard = generated_secret_guard(guarded_directories())
-    guard(
-        ROOT,
-        [
-            "deploy.sh",
-            "deployment",
-            "VERSION",
-            "README.md",
-            "config.defaults.yaml",
-            "manifests",
-            "scripts",
-            "quadlet",
-            "files",
-        ],
-    )
+    guard(ROOT, ["deploy.sh", "deployment", "README.md", "scripts", "quadlet"])
 
     target.mkdir(parents=True)
-
-    for filename in ["deploy.sh", "README.md"] + (
-        ["VERSION", "config.defaults.yaml"] if not components else []
-    ):
+    for filename in ("deploy.sh", "README.md"):
         shutil.copy2(ROOT / filename, target / filename)
-
     shutil.copytree(ROOT / "deployment", target / "deployment", ignore=guard)
+    # Informational copy of the descriptor's version for operators.
+    (target / "VERSION").write_text(version + "\n", encoding="utf-8")
 
-    if components:
-        # Informational copy of the descriptor's version for operators.
-        (target / "VERSION").write_text(version + "\n", encoding="utf-8")
-
-    for component, directory in zip(components, directories):
-        (target / "components").mkdir(exist_ok=True)
-        destination = target / "components" / component
-        destination.mkdir()
-        for entry in (
-            "manifests",
-            "config.defaults.yaml",
-            "route.conf",
-            "client.yaml",
-            "files",
-        ):
-            source = directory / entry
-            if not source.exists():
-                continue
-            guard(directory, [entry])
-            if source.is_dir():
-                shutil.copytree(source, destination / entry, ignore=guard)
-            else:
-                shutil.copy2(source, destination / entry)
+    destination = target / "components" / component
+    destination.mkdir(parents=True)
+    for entry in (
+        "manifests",
+        "config.defaults.yaml",
+        "route.conf",
+        "client.yaml",
+        "files",
+    ):
+        source = directory / entry
+        if not source.exists():
+            continue
+        guard(directory, [entry])
+        if source.is_dir():
+            shutil.copytree(source, destination / entry, ignore=guard)
+        else:
+            shutil.copy2(source, destination / entry)
     # The operator guide and the documents it links travel with every release
     # (backlog 64); the guide links nothing else except README.md.
-    for document in RELEASE_DOCS if components else ():
+    for document in RELEASE_DOCS:
         if (ROOT / document).is_file():
             (target / "docs").mkdir(exist_ok=True)
             shutil.copy2(ROOT / document, target / document)
-    if components:
-        # The compiled descriptor lets the target work without bundles.yaml.
-        (target / "bundle.yaml").write_text(
-            yaml.safe_dump(descriptor, sort_keys=False), encoding="utf-8"
-        )
-    for dirname in (
-        ["scripts", "quadlet"] if components else ["manifests", "scripts", "quadlet"]
-    ):
+    # The compiled descriptor lets the target work without bundles.yaml.
+    (target / "bundle.yaml").write_text(
+        yaml.safe_dump(descriptor, sort_keys=False), encoding="utf-8"
+    )
+    for dirname in ("scripts", "quadlet"):
         shutil.copytree(ROOT / dirname, target / dirname, ignore=guard)
-
-    # Optional files/ ships product files for SECRET_FILES and VOLUME_FILES.
-    if (ROOT / "files").is_dir():
-        shutil.copytree(ROOT / "files", target / "files", ignore=guard)
-
-    if not components:
-        (target / "credentials").mkdir(mode=0o700)
-        (target / "credentials").chmod(0o700)
-        (target / "build").mkdir()
 
     (target / "deploy.sh").chmod(0o755)
     for script in (target / "scripts").glob("*.sh"):
@@ -371,21 +309,14 @@ def sign(archive):
 
 
 def build(selected=()):
-    """Build one bundle per catalog component, or one standalone manifest fixture.
+    """Build one bundle per catalog component.
 
     selected names catalog components to build; the whole catalog is still
     validated. A partial build leaves dist/current-bundles.txt unchanged,
     because that list names the complete current product.
     """
     if not (ROOT / "bundles.yaml").exists():
-        if selected:
-            raise BundleError("Component names need a catalog (bundles.yaml)")
-        manifest_images()
-        guard = generated_secret_guard(guarded_directories())
-        guard(ROOT, ["files", "manifests", "scripts", "quadlet"])
-        shutil.rmtree(STAGE, ignore_errors=True)
-        build_release((ROOT / "VERSION").read_text(encoding="utf-8").strip())
-        return
+        raise BundleError(f"Missing {ROOT / 'bundles.yaml'}")
     # Validate the whole catalog and its selected images before any output.
     descriptors = catalog.source_descriptors(ROOT)
     unknown = sorted(set(selected) - set(descriptors))
@@ -395,7 +326,7 @@ def build(selected=()):
         )
     manifest_images()
     guard = generated_secret_guard(guarded_directories())
-    guard(ROOT, ["files", "manifests", "scripts", "quadlet"])
+    guard(ROOT, ["scripts", "quadlet"])
     shutil.rmtree(STAGE, ignore_errors=True)
     current = [
         build_release(descriptor["version"], descriptor)

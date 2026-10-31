@@ -152,8 +152,8 @@ printf 'HOST-PHASE: preflight\n' >&2
 [[ $EUID == 0 ]] || die "Run sudo bash scripts/prepare-host.sh --port <1024-65535> --user <existing account>"
 # Arguments: --port <1024-65535> --user <existing account>.
 usage="Use --port <integer 1024-65535> --user <existing login account>"
-# The product name is compiled into this bundle (product: in bundles.yaml); a
-# standalone fixture has none and uses myproduct. It names the installation
+# The product name is compiled into this bundle (product: in bundles.yaml);
+# without bundle.yaml (a source checkout) it is myproduct. It names the installation
 # root; the account is chosen explicitly and need not match it.
 release=$(cd "$(dirname "$0")/.." && pwd)
 product=myproduct

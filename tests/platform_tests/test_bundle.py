@@ -9,6 +9,7 @@ from unittest import mock
 
 import bundle
 import yaml
+from deployment import common
 
 from helpers.bundle_fixture import BundleFixture
 
@@ -20,7 +21,7 @@ class BundleTests(BundleFixture):
             (bundle.ROOT / "scripts" / name).write_bytes((source / name).read_bytes())
         bundle.build()
         with tarfile.open(
-            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+            str(bundle.DIST / "myproduct-app-1.2.3-offline.tar.gz")
         ) as archive:
             checksums = self.archive_bytes(archive, "checksums.sha256").decode()
             for name in ("prepare-host.sh",):
@@ -33,7 +34,7 @@ class BundleTests(BundleFixture):
 
     def test_build_contents_modes_ownership_and_all_checksums(self):
         bundle.build()
-        path = bundle.DIST / "myproduct-1.2.3-offline.tar.gz"
+        path = bundle.DIST / "myproduct-app-1.2.3-offline.tar.gz"
         self.assertTrue(path.exists())
         self.assertEqual(
             self.process.call_args_list,
@@ -44,7 +45,7 @@ class BundleTests(BundleFixture):
                         "save",
                         "-m",
                         "-o",
-                        str(bundle.STAGE / "myproduct-1.2.3/images/images.tar"),
+                        str(bundle.STAGE / "myproduct-app-1.2.3/images/images.tar"),
                         "localhost/app:1",
                         "localhost/init:1",
                     ],
@@ -53,7 +54,7 @@ class BundleTests(BundleFixture):
             ],
         )
         with tarfile.open(str(path)) as archive:
-            prefix = "myproduct-1.2.3/"
+            prefix = "myproduct-app-1.2.3/"
             regular = {
                 m.name[len(prefix) :] for m in archive.getmembers() if m.isfile()
             }
@@ -67,17 +68,17 @@ class BundleTests(BundleFixture):
                 regular,
                 {
                     "VERSION",
+                    "bundle.yaml",
                     "deploy.sh",
                     "deployment/__init__.py",
                     "deployment/__main__.py",
                     "README.md",
-                    "config.defaults.yaml",
                     "scripts/prepare-host.sh",
                     "quadlet/template.kube",
                     "quadlet/template.network",
                     "images/images.tar",
                     "images/images.txt",
-                    "manifests/app.yaml",
+                    "components/app/manifests/app.yaml",
                     "checksums.sha256",
                 },
             )
@@ -92,8 +93,6 @@ class BundleTests(BundleFixture):
                 )
             for name in ("deploy.sh", "scripts/prepare-host.sh"):
                 self.assertEqual(archive.getmember(prefix + name).mode, 0o755)
-            self.assertEqual(archive.getmember(prefix + "credentials").mode, 0o700)
-            self.assertTrue(archive.getmember(prefix + "build").isdir())
             seen = set()
             for line in (
                 self.archive_bytes(archive, "checksums.sha256")
@@ -121,12 +120,12 @@ class BundleTests(BundleFixture):
         self.write("deployment/stray.pyo", "bytecode excluded")
         bundle.build()
         with tarfile.open(
-            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+            str(bundle.DIST / "myproduct-app-1.2.3-offline.tar.gz")
         ) as archive:
             names = {member.name for member in archive.getmembers()}
             for path in source.glob("*.py"):
-                self.assertIn("myproduct-1.2.3/deployment/" + path.name, names)
-            self.assertNotIn("myproduct-1.2.3/deploy.py", names)
+                self.assertIn("myproduct-app-1.2.3/deployment/" + path.name, names)
+            self.assertNotIn("myproduct-app-1.2.3/deploy.py", names)
             self.assertFalse(
                 any(
                     "__pycache__" in name or name.endswith((".pyc", ".pyo"))
@@ -136,10 +135,10 @@ class BundleTests(BundleFixture):
 
     def test_package_symlink_cannot_bundle_declared_private_state(self):
         self.write(
-            "config.yaml",
+            "components/app/config.yaml",
             "SECRET_FILES:\n  generated-files:\n  - path: private\n    generate:\n    - token\n",
         )
-        private = self.write("private/token", "private-fixture")
+        private = self.write("components/app/private/token", "private-fixture")
         (self.root / "deployment/alias.py").symlink_to(private)
         with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
             bundle.build()
@@ -149,11 +148,11 @@ class BundleTests(BundleFixture):
         self,
     ):
         private = self.write("outside-credentials/key", "private-fixture")
-        self.write("files/public", "public-fixture")
-        alias = self.root / "files/alias"
+        self.write("components/app/files/public", "public-fixture")
+        alias = self.root / "components/app/files/alias"
         for source in (private, private.parent):
             self.write(
-                "config.yaml",
+                "components/app/config.yaml",
                 yaml.safe_dump({"SECRET_FILES": {"private": [{"path": str(source)}]}}),
             )
             alias.symlink_to(source, target_is_directory=source.is_dir())
@@ -164,7 +163,7 @@ class BundleTests(BundleFixture):
 
     def test_generated_volume_file_alias_stays_out_of_offline_archive(self):
         self.write(
-            "config.yaml",
+            "components/app/config.yaml",
             yaml.safe_dump(
                 {
                     "VOLUME_FILES": {
@@ -173,37 +172,41 @@ class BundleTests(BundleFixture):
                 }
             ),
         )
-        private = self.write("private/key", "private-fixture")
-        self.write("files/public", "public-fixture")
-        (self.root / "files/alias").symlink_to(private)
+        private = self.write("components/app/private/key", "private-fixture")
+        self.write("components/app/files/public", "public-fixture")
+        (self.root / "components/app/files/alias").symlink_to(private)
         with self.assertRaisesRegex(bundle.BundleError, "secret"):
             bundle.build()
         self.process.assert_not_called()
 
     def test_optional_files_tree_is_included(self):
-        self.write("files/templates/nested/example.txt", "example\n")
+        self.write("components/app/files/templates/nested/example.txt", "example\n")
         bundle.build()
         with tarfile.open(
-            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+            str(bundle.DIST / "myproduct-app-1.2.3-offline.tar.gz")
         ) as archive:
             self.assertEqual(
-                self.archive_bytes(archive, "files/templates/nested/example.txt"),
+                self.archive_bytes(
+                    archive, "components/app/files/templates/nested/example.txt"
+                ),
                 b"example\n",
             )
             self.assertIn(
-                b"files/templates/nested/example.txt",
+                b"components/app/files/templates/nested/example.txt",
                 self.archive_bytes(archive, "checksums.sha256"),
             )
 
     def test_generated_secret_under_shipped_files_is_rejected(self):
         """Refuse a bundle that would copy a declared generated secret."""
-        for config in ("config.yaml", "config.defaults.yaml"):
+        for config in ("components/app/config.yaml",):
             with self.subTest(config=config):
                 self.write(
                     config,
                     "SECRET_FILES:\n  generated-files:\n  - path: files/private\n    generate:\n    - token\n",
                 )
-                self.write("files/private/token", "synthetic-private-value")
+                self.write(
+                    "components/app/files/private/token", "synthetic-private-value"
+                )
                 with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
                     bundle.build()
                 self.process.assert_not_called()
@@ -213,14 +216,14 @@ class BundleTests(BundleFixture):
     def test_shipped_symlink_cannot_copy_a_generated_secret(self):
         """Reject a files alias pointing at a private generated file or directory."""
         self.write(
-            "config.yaml",
+            "components/app/config.yaml",
             "SECRET_FILES:\n  generated-files:\n  - path: private\n    generate:\n    - token\n",
         )
-        secret = self.write("private/token", "synthetic-private-value")
-        (self.root / "files").mkdir()
+        secret = self.write("components/app/private/token", "synthetic-private-value")
+        (self.root / "components/app/files").mkdir()
         for target in (secret, secret.parent):
             with self.subTest(target=target.name):
-                alias = self.root / "files/alias"
+                alias = self.root / "components/app/files/alias"
                 alias.symlink_to(target, target_is_directory=target.is_dir())
                 with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
                     bundle.build()
@@ -230,11 +233,11 @@ class BundleTests(BundleFixture):
 
     def test_private_credentials_and_symlink_aliases_cannot_enter_archives(self):
         """Externally delivered keys are private without any generation declaration."""
-        component = self.root / "components/app1"
+        component = self.root / "components/app"
         for base in (
             "credentials",
-            "components/app1/credentials",
-            "build/dev/app1/credentials",
+            "components/app/credentials",
+            "build/dev/app/credentials",
         ):
             key = self.write(
                 base + "/todo/client.key", "externally-delivered-private-key"
@@ -244,13 +247,13 @@ class BundleTests(BundleFixture):
                 with self.subTest(base=base, source=source.name):
                     with self.assertRaisesRegex(bundle.BundleError, "credentials"):
                         guard(source.parent, [source.name])
-                    alias = self.root / "files/alias"
+                    alias = self.root / "components/app/files/alias"
                     alias.parent.mkdir(exist_ok=True)
                     alias.symlink_to(source, target_is_directory=source.is_dir())
                     with self.assertRaisesRegex(bundle.BundleError, "credentials"):
                         guard(alias.parent, [alias.name])
                     alias.unlink()
-        alias = self.root / "files/alias"
+        alias = self.root / "components/app/files/alias"
         alias.symlink_to(key.parent, target_is_directory=True)
         with self.assertRaisesRegex(bundle.BundleError, "credentials"):
             bundle.build()
@@ -259,7 +262,7 @@ class BundleTests(BundleFixture):
 
     def test_multiple_files_documents_flow_maps_and_init_containers(self):
         self.write(
-            "manifests/second.yaml",
+            "components/app/manifests/second.yaml",
             """# Empty document
 ---
 kind: Pod
@@ -292,7 +295,7 @@ data: {image: ignored}
         for kind in ("Deployment", "List", None):
             with self.subTest(kind=kind):
                 self.write(
-                    "manifests/bad.yaml",
+                    "components/app/manifests/bad.yaml",
                     yaml.safe_dump(
                         {
                             "kind": kind,
@@ -315,7 +318,7 @@ data: {image: ignored}
     def test_invalid_image_fails_before_stage_is_removed_or_podman_runs(self):
         old = self.write("build/bundle/keep", "previous build")
         self.write(
-            "manifests/bad.yaml",
+            "components/app/manifests/bad.yaml",
             "kind: Pod\nspec:\n  initContainers:\n  - image: team/app:1\n",
         )
         with self.assertRaisesRegex(bundle.BundleError, "team/app:1.*fully qualified"):
@@ -334,7 +337,7 @@ data: {image: ignored}
         ):
             with self.subTest(image=image):
                 self.write(
-                    "manifests/app.yaml",
+                    "components/app/manifests/app.yaml",
                     yaml.safe_dump(
                         {"kind": "Pod", "spec": {"containers": [{"image": image}]}}
                     ),
@@ -347,16 +350,18 @@ data: {image: ignored}
         self.process.assert_not_called()
 
     def test_no_images_or_no_manifests(self):
-        manifest = self.write("manifests/app.yaml", "---\nkind: ConfigMap\n")
+        manifest = self.write(
+            "components/app/manifests/app.yaml", "---\nkind: ConfigMap\n"
+        )
         with self.assertRaisesRegex(bundle.BundleError, "No images"):
             bundle.build()
         manifest.unlink()
-        with self.assertRaisesRegex(bundle.BundleError, "No images"):
+        with self.assertRaisesRegex(common.DeployError, "at least one"):
             bundle.build()
         self.process.assert_not_called()
 
     def test_invalid_yaml_returns_error_without_podman(self):
-        self.write("manifests/app.yaml", "spec: [")
+        self.write("components/app/manifests/app.yaml", "spec: [")
         self.assertEqual(bundle.main([]), 1)
         self.assertIn("ERROR:", self.errors.getvalue())
         self.assertNotIn("Traceback", self.errors.getvalue())
@@ -364,7 +369,7 @@ data: {image: ignored}
 
     def test_duplicate_manifest_keys_fail_before_build(self):
         self.write(
-            "manifests/app.yaml",
+            "components/app/manifests/app.yaml",
             "spec:\n  containers:\n  - image: localhost/first:1\n"
             "    image: localhost/second:1\n",
         )
@@ -412,7 +417,7 @@ data: {image: ignored}
     def test_registry_pull_precedes_save_and_archive_checksums_verify(self):
         """Bundle a registry image with its exact full name after a successful pull."""
         self.write(
-            "manifests/remote.yaml",
+            "components/app/manifests/remote.yaml",
             "kind: Pod\nspec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
         )
         bundle.build()
@@ -434,7 +439,7 @@ data: {image: ignored}
             ],
         )
         with tarfile.open(
-            str(bundle.DIST / "myproduct-1.2.3-offline.tar.gz")
+            str(bundle.DIST / "myproduct-app-1.2.3-offline.tar.gz")
         ) as archive:
             self.assertIn(
                 b"registry.example.test/app:2\n",
@@ -458,7 +463,7 @@ data: {image: ignored}
     def test_failed_pull_reports_only_image_and_login_hint_without_save_or_build(self):
         """Suppress registry diagnostic credentials and refuse cached/build fallback."""
         self.write(
-            "manifests/remote.yaml",
+            "components/app/manifests/remote.yaml",
             "kind: Pod\nspec: {containers: [{image: 'registry.example.test/app:2'}]}\n",
         )
         self.process.side_effect = subprocess.CalledProcessError(

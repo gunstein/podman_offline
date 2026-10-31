@@ -1,7 +1,10 @@
 """Scoped text substitution for Secret recipes, ConfigMap data and Quadlet names.
 
-Validation only needs names and config, not credential bytes. Materialization
-uses the already loaded file Secrets, so no derived credential has its own file.
+The recipes (config["SECRET_TEMPLATES"], Secret name -> key -> text) come only
+from ENVIRONMENT and MOUNTS (environment.with_recipes, mounts.with_recipes) in
+the transient effective config; no config file may contain them. Validation
+only needs names and config, not credential bytes. Materialization uses the
+already loaded file Secrets, so no derived credential has its own file.
 """
 
 import base64
@@ -21,28 +24,25 @@ def declarations(config):
     """Check recipe shape and resource collisions without opening any file."""
     recipes = config.get(common.SECRET_TEMPLATES, {})
     if not isinstance(recipes, dict):
-        raise common.DeployError("SECRET_TEMPLATES must be a map of Secret IDs")
+        raise common.DeployError("Secret recipes must be a map of Secret names")
     for name, values in recipes.items():
         if not isinstance(name, str) or not common.ID.fullmatch(name):
-            raise common.DeployError("Invalid Secret ID in SECRET_TEMPLATES")
+            raise common.DeployError(f"Invalid Secret name {name!r}")
         if any(
             name in config.get(group, {})
             for group in (common.SECRET_FILES, common.VOLUME_FILES)
         ):
             raise common.DeployError(
-                f"SECRET_TEMPLATES.{name} collides with a file resource"
+                f"Secret {name} (from ENVIRONMENT or MOUNTS) has the same name "
+                "as a SECRET_FILES or VOLUME_FILES ID; rename that ID"
             )
         if not isinstance(values, dict) or not values:
-            raise common.DeployError(
-                f"SECRET_TEMPLATES.{name} must be a nonempty key map"
-            )
+            raise common.DeployError(f"Secret {name} must have at least one key")
         for key, text in values.items():
             if not isinstance(key, str) or not common.SECRET_KEY.fullmatch(key):
-                raise common.DeployError(
-                    f"SECRET_TEMPLATES.{name} has an invalid Secret key"
-                )
+                raise common.DeployError(f"Secret {name} has an invalid key")
             if not isinstance(text, str):
-                raise common.DeployError(f"SECRET_TEMPLATES.{name}.{key} must be text")
+                raise common.DeployError(f"Secret {name} key {key} must be text")
     return recipes
 
 
@@ -93,7 +93,7 @@ def config_text(text, config, where):
     def resolve(group, field):
         if group is not None:
             raise common.DeployError(
-                f"{where}: secret placeholder is forbidden in ConfigMap data; use SECRET_TEMPLATES"
+                f"{where}: secret placeholder is forbidden in ConfigMap data; use ENVIRONMENT"
             )
         return config_value(config, field, where)
 
@@ -118,7 +118,7 @@ def validate(config, source_keys):
     """Check recipes using names and config only, never credential bytes."""
     for name, values in declarations(config).items():
         for key, text in values.items():
-            where = f"SECRET_TEMPLATES.{name}.{key}"
+            where = f"Secret {name} key {key}"
 
             def resolve(group, field, where=where):
                 if group is None:
@@ -145,7 +145,7 @@ def references(config):
         ("Secret", group)
         for name, values in declarations(config).items()
         for key, text in values.items()
-        for _, group, _ in tokens(text, f"SECRET_TEMPLATES.{name}.{key}")
+        for _, group, _ in tokens(text, f"Secret {name} key {key}")
         if group is not None
     }
 
@@ -157,7 +157,7 @@ def documents(config, file_documents):
     for name, values in declarations(config).items():
         data = {}
         for key, text in values.items():
-            where = f"SECRET_TEMPLATES.{name}.{key}"
+            where = f"Secret {name} key {key}"
 
             def resolve(group, field, where=where):
                 source = field if group is None else f"SECRET_FILES.{group}/{field}"
@@ -189,8 +189,6 @@ def documents(config, file_documents):
             "data": data,
         }
         if len(yaml.safe_dump(doc)) > common.MAX_SECRET_SIZE:
-            raise common.DeployError(
-                f"SECRET_TEMPLATES.{name} is too large for a Podman secret"
-            )
+            raise common.DeployError(f"Secret {name} is too large for a Podman secret")
         result.append(doc)
     return result

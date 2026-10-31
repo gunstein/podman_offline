@@ -66,13 +66,13 @@ writes nothing else. Then:
    about the configured volume. It is the first Podman query when a database
    check is needed; production install checks the user-manager environment earlier.
 4. `render.materialize()` then creates allowed missing secrets, reads the file
-   groups, composes `SECRET_TEMPLATES` using those loaded file bytes (checks that
+   groups, composes the `ENVIRONMENT`/`MOUNTS` Secrets using those loaded file bytes (checks that
    need file bytes run here), and returns the YAML and
    import volumes.
 
 `deploy.check_manifests()` runs `deploy.validate_component()` (step 2 plus the
 PostgreSQL layout, from declarations only) and then the database preflight;
-install, dev `prepare` and both standalone paths use it before any generation.
+install and dev `prepare` use it before any generation.
 `./deploy.sh validate` (`deployment/validation.py`) runs `validate_component()`,
 the same staging and, in a bundle, `install_checks()` and
 `install_preconditions()` (shared network, image archive, image names), but no
@@ -175,9 +175,8 @@ across process runs; conflicts are refused rather than guessed away. See
 [retry safety](acceptance/RESULTS.md). Run one lifecycle command at a time.
 
 Source dev preparation uses the same defaults, registration indexes and renderer
-against `build/dev/<component>`. `prepare_standalone()` and
-`install_standalone()` isolate the supported root-config examples/test fixtures
-from the component path; they are not migration or old-release adapters.
+against `build/dev/<component>`. There is no standalone mode: `prepare` needs
+`components/` and `bundles.yaml`, `install` an unpacked component bundle.
 
 ## Sequence diagrams
 
@@ -244,10 +243,7 @@ ranges into bundle metadata. Installed metadata keeps this version independently
 of the source files. Component names as arguments
 (`./build-bundle.sh app1`) build only those releases after the same catalog
 validation and do not rewrite `dist/current-bundles.txt`. Without
-`bundles.yaml`, `bundle.build()` builds one
-standalone release instead: `manifest_images()` from `manifests/`, the same
-secret guard, then a single `build_release(VERSION)` and no
-`dist/current-bundles.txt`.
+`bundles.yaml`, `bundle.build()` refuses to build.
 
 ```mermaid
 sequenceDiagram
@@ -344,7 +340,7 @@ root-owned installation root `/var/lib/<product>` (0755):
 | `storage/` | account, 0700 | `XDG_DATA_HOME`: Podman graphroot `containers/storage`, volumes, caches |
 
 `deploy.service_user()` is the single entry for production commands
-(init-config, validate, install, uninstall, standalone install). It refuses root,
+(init-config, validate, install, uninstall). It refuses root,
 a `HOME` other than the registered home and the source checkout, then calls
 `layout.select(product)` with the release descriptor's product:
 
@@ -477,10 +473,12 @@ architecture remain unchanged. See
 
 ## Derived Secret values (0.4.12 Identity)
 
-`SECRET_TEMPLATES` maps component-prefixed Secret IDs to key/text recipes.
-`templates.validate()` checks syntax and config inputs against file-key names;
-`render.check_templates()` is shared by config/manifest validation, including
-standalone fixtures. `templates.documents()` consumes the already loaded file
+`environment.with_recipes()` and `mounts.with_recipes()` turn each container's
+`ENVIRONMENT` secret lines and `MOUNTS` files into internal recipes
+(`SECRET_TEMPLATES` in the transient effective config, Secret name -> key ->
+text); no config file may contain them. `templates.validate()` checks syntax
+and config inputs against file-key names; `render.check_templates()` runs it in
+`effective_documents()`. `templates.documents()` consumes the already loaded file
 Secret documents inside `materialize()`, after generation and database preflight.
 It returns Opaque Secrets without separate persistent files or logs. Names, links,
 key validation and uninstall inventory include these Secrets. File sources used
@@ -493,11 +491,11 @@ rotate a PostgreSQL role's password. Backup/restore pairs DB data with credentia
 and config; derived values can be recreated. Rendered YAML and Podman storage
 contain recoverable values, and env delivery exposes them to runtime inspection.
 
-Identity 0.2.2 receives `ConnectionStrings__Default` through `secretKeyRef` and
+Identity receives `ConnectionStrings__Default` through `ENVIRONMENT` (envFrom) and
 no longer has an in-image builder or database-password mount. Its PostgreSQL
 pod still uses the original password file. Python apps retain file consumption.
 No new fapolicyd/SELinux rules or host/runtime dependencies are introduced.
-See [Secret templates](docs/COMPONENTS.md#secret-templates) and backlog 41 for
+See [secret values](docs/COMPONENTS.md#secret-values-in-environment-and-mounts) and backlog 41 for
 input restrictions and the pending real lab verification. The operator explicitly
 deferred the prerequisite probe to the lab run after local implementation.
 

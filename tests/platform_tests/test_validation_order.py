@@ -130,87 +130,6 @@ class RegistrationValidationOrderTests(ProductFixture):
         self.assertEqual(self.commands(), [])
 
 
-class StandaloneValidationOrderTests(DeployFixture):
-    def broken_fixture(self):
-        self.config["SECRET_FILES"] = {
-            "db": [{"path": "credentials", "generate": ["password"]}]
-        }
-        self.write_config()
-        self.manifest(
-            [
-                document(
-                    "Pod",
-                    "app",
-                    spec={
-                        "containers": [
-                            {
-                                "name": "web",
-                                "image": "localhost/app:1",
-                                "imagePullPolicy": "Never",
-                                "volumeMounts": [
-                                    {"name": "nowhere", "mountPath": "/x"}
-                                ],
-                            }
-                        ],
-                        "volumes": [{"name": "db", "secret": {"secretName": "db"}}],
-                    },
-                )
-            ],
-            "20-images.yaml",
-        )
-
-    def test_prepare_validates_before_generation_or_output(self):
-        self.broken_fixture()
-        with self.assertRaisesRegex(common.DeployError, "undefined volume"):
-            deploy.prepare()
-        self.assertFalse((common.CONFIG.parent / "credentials").exists())
-        self.assertFalse(common.BUILD.exists())
-        self.process.assert_not_called()
-
-    def test_install_checks_the_image_archive_before_generation(self):
-        self.install_fixture()
-        self.config["SECRET_FILES"] = {
-            "db": [{"path": "credentials", "generate": ["password"]}]
-        }
-        self.write_config()
-        self.manifest(
-            [
-                document(
-                    "Pod",
-                    "app",
-                    spec={
-                        "containers": [
-                            {
-                                "name": "web",
-                                "image": "localhost/app:1",
-                                "imagePullPolicy": "Never",
-                                "volumeMounts": [{"name": "db", "mountPath": "/x"}],
-                            }
-                        ],
-                        "volumes": [{"name": "db", "secret": {"secretName": "db"}}],
-                    },
-                )
-            ],
-            "20-images.yaml",
-        )
-        (self.root / "images/images.tar").unlink()
-        with self.assertRaisesRegex(common.DeployError, "Missing image archive"):
-            deploy.install()
-        self.assertFalse((common.STATE / "credentials").exists())
-        self.process.assert_not_called()
-
-    def test_install_validates_before_generation_or_host_commands(self):
-        self.install_fixture()
-        self.broken_fixture()
-        config = common.STATE / "config.yaml"
-        with self.assertRaisesRegex(common.DeployError, "undefined volume"):
-            deploy.install()
-        self.assertFalse((config.parent / "credentials").exists())
-        self.assertFalse(common.QUADLET_DIR.exists())
-        self.assertFalse(common.FILES_DIR.exists())
-        self.process.assert_not_called()
-
-
 class ImportedVolumeMessageTests(DeployFixture):
     def test_unused_imported_volume_names_bundles_yaml(self):
         """An accepts volume no manifest mounts is reported where it is declared."""
@@ -237,7 +156,11 @@ class ImportedVolumeMessageTests(DeployFixture):
             "Imported volume gw-routes \\(accepts in bundles.yaml\\)",
         ):
             rendering.effective_documents(
-                {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+                {},
+                (common.ROOT / "config.yaml"),
+                (common.ROOT / "manifests"),
+                None,
+                ["gw-routes"],
             )
 
     def test_declared_but_unmounted_imported_volume_is_refused(self):
@@ -259,7 +182,11 @@ class ImportedVolumeMessageTests(DeployFixture):
             "receives registrations in volume gw-routes; mount it with volumeMounts",
         ):
             rendering.effective_documents(
-                {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+                {},
+                (common.ROOT / "config.yaml"),
+                (common.ROOT / "manifests"),
+                None,
+                ["gw-routes"],
             )
         # An init container's mount counts as well.
         spec["initContainers"] = [
@@ -271,5 +198,9 @@ class ImportedVolumeMessageTests(DeployFixture):
         ]
         self.manifest([document("Pod", "app", spec=spec)], "20-images.yaml")
         rendering.effective_documents(
-            {}, common.CONFIG, common.MANIFESTS, None, ["gw-routes"]
+            {},
+            (common.ROOT / "config.yaml"),
+            (common.ROOT / "manifests"),
+            None,
+            ["gw-routes"],
         )

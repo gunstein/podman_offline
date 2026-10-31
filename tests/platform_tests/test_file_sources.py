@@ -4,10 +4,11 @@ import base64
 import tarfile
 
 import yaml
-from deployment import common, deploy
+from deployment import common
 from deployment import render as rendering
 
 from helpers.deploy_fixture import DeployFixture, document
+from helpers.render_helper import materialize_and_render
 
 
 class FileSourceTests(DeployFixture):
@@ -42,7 +43,7 @@ class FileSourceTests(DeployFixture):
                 )
             ]
         )
-        deploy.prepare()
+        materialize_and_render()
         source = self.root / "private/session-key"
         before = source.read_bytes()
         self.assertEqual(len(before), 32)
@@ -55,7 +56,7 @@ class FileSourceTests(DeployFixture):
             assert stream is not None
             with stream:
                 self.assertEqual(stream.read(), before)
-        deploy.prepare()
+        materialize_and_render()
         self.assertEqual(source.read_bytes(), before)
         self.assertEqual(archive.read_bytes(), archive_before)
         self.assertEqual(self.mode(archive), 0o600)

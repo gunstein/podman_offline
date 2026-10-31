@@ -145,7 +145,12 @@ class EnvironmentTests(ProductFixture):
             ]
 
         def recipe(shop):
-            shop["defaults"]["SECRET_TEMPLATES"] = {"shop-main-env-secret": {"A": "x"}}
+            shop["defaults"]["SECRET_TEMPLATES"] = {"shop-other": {"A": "x"}}
+
+        def same_name(shop):
+            shop["defaults"]["SECRET_FILES"]["shop-main-env-secret"] = [
+                {"path": "credentials/other", "generate": ["value"]}
+            ]
 
         for label, change, pattern in (
             (
@@ -195,10 +200,11 @@ class EnvironmentTests(ProductFixture):
                 "other-tokens is another component's secret; shop may use only its own",
             ),
             ("unsafe public value", env(Note="a;b"), "unsafe substituted text"),
+            ("written recipe", recipe, "SECRET_TEMPLATES is not supported"),
             (
-                "recipe collision",
-                recipe,
-                "SECRET_TEMPLATES.shop-main-env-secret is the Secret",
+                "name of a file source",
+                same_name,
+                "shop-main-env-secret .from ENVIRONMENT or MOUNTS. has the same name",
             ),
         ):
             with self.subTest(label):

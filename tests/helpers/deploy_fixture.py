@@ -36,15 +36,9 @@ class DeployFixture(unittest.TestCase):
             # replaced below and tested separately (test_layout.py).
             "STATE": self.root / "home",
             "ROOT": self.root,
-            "CONFIG": self.root / "config.yaml",
-            "MANIFESTS": self.root / "manifests",
             "BUILD": self.root / "build",
             "QUADLET_TEMPLATE": self.root / "quadlet/template.kube",
             "QUADLET_DIR": self.root / "home/.config/containers/systemd",
-            "QUADLET_TARGET": self.root
-            / "home/.config/containers/systemd/myproduct.kube",
-            "QUADLET_YAML": self.root
-            / "home/.config/containers/systemd/myproduct.yaml",
             "FILES_DIR": self.root / "home/files",
         }
         for name, path in paths.items():
@@ -101,7 +95,10 @@ class DeployFixture(unittest.TestCase):
         self.stderr = self.stack.enter_context(
             contextlib.redirect_stderr(io.StringIO())
         )
-        common.MANIFESTS.mkdir()
+        (self.root / "manifests").mkdir()
+        # Render-level tests use manifests/ and config.yaml directly; the
+        # catalog gives them the product name that Quadlet checks need.
+        self.write("bundles.yaml", "product: myproduct\ncomponents: [app]\n")
         self.write("quadlet/template.kube", "[Kube]\nYaml=@@UNIT_NAME@@.yaml\n")
         self.write(
             "quadlet/template.network", "[Network]\nNetworkName=@@PRODUCT_NAME@@\n"
@@ -143,7 +140,7 @@ class DeployFixture(unittest.TestCase):
             else spec
         )
         self.write_config()
-        return rendering.load_file_group(self.config, group)
+        return rendering.load_file_group(self.config, group, self.root)
 
     def volume_fixture(self):
         self.write("files/message.txt", "hello\n", 0o600)

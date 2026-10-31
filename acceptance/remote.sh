@@ -1028,13 +1028,6 @@ dev-e2e)
     cd "$src"
     for app in app1 app2; do APP_BASE_PATH=/$app .venv-smoke/bin/python dev/smoke-test.py; done
     ;;
-examples-setup)
-    image=$(cat "$base/registry-fixture/image.txt")
-    podman image exists "$image"
-    podman tag "$image" localhost/offline-example:1
-    echo 'PASS: examples use the BusyBox image downloaded from the TLS test registry'
-    ;;
-example-*) cd "$src"; ./examples/run.sh "${action#example-}";;
 dev-down) cd "$src"; ./dev/dev.sh down;;
 dev-whoami-e2e)
     cd "$src"

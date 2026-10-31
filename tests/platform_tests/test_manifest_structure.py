@@ -16,7 +16,7 @@ from helpers.product_fixture import ProductFixture, pod
 class ManifestStructureTests(ProductFixture):
     def setUp(self):
         super().setUp()
-        ref = {"secretKeyRef": {"name": "processor-settings", "key": "connection"}}
+        ref = {"secretKeyRef": {"name": "processor-password", "key": "password"}}
         self.job = pod("processor-job", "localhost/worker:1")
         container = self.job["spec"]["containers"][0]
         container["env"] = [{"name": "CONTROL", "valueFrom": ref}]
@@ -32,11 +32,6 @@ class ManifestStructureTests(ProductFixture):
                 "processor-password": [
                     {"path": "credentials/database", "generate": ["password"]}
                 ]
-            },
-            "SECRET_TEMPLATES": {
-                "processor-settings": {
-                    "connection": "Password=@@secret:processor-password/password@@"
-                }
             },
         }
         self.write_product(

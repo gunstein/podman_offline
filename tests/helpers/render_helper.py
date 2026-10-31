@@ -25,7 +25,7 @@ def materialize_and_render(
     extra_secrets=(),
 ):
     """Validate, create allowed missing secrets, render YAML and optionally write imports."""
-    config_path = config_path or common.CONFIG
+    config_path = config_path or (common.ROOT / "config.yaml")
     if not config_path.exists():
         raise common.DeployError(f"Missing {config_path}")
     files_dir = files_dir or common.BUILD / "files"
@@ -35,7 +35,7 @@ def materialize_and_render(
     documents = effective_documents(
         config,
         config_path,
-        manifests or common.MANIFESTS,
+        manifests or (common.ROOT / "manifests"),
         component,
         extra_volumes or {},
         [doc["metadata"]["name"] for doc in extra_secrets],

@@ -169,18 +169,6 @@ class MessageTests(DeployFixture):
         self.assertIn("+ podman ps\n", self.stdout.getvalue())
         self.assertEqual(self.process.call_count, 2)
 
-    def test_prepare_success_and_failure_lines(self):
-        self.assertEqual(cli.main(["prepare"]), 0)
-        self.assertTrue(
-            self.stdout.getvalue().endswith("PASS: ./deploy.sh prepare completed\n")
-        )
-        self.write("config.yaml", "HTTPS_PORT: invalid")
-        self.stdout.truncate(0)
-        self.stdout.seek(0)
-        self.assertEqual(cli.main(["prepare"]), 1)
-        self.assertNotIn("PASS:", self.stdout.getvalue())
-        self.assertIn("ERROR: ", self.stderr.getvalue())
-
 
 class Journal:
     """A fake /dev/log: a datagram socket that collects audit lines."""

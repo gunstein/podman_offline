@@ -92,6 +92,10 @@ render.write_private(output, text)
 """
 
 
+# The fixture's Secrets: its password, the two ENVIRONMENT Secrets, the oracle.
+SECRET_SUFFIXES = ("-password", "-init-env-secret", "-control-env-secret", "-expected")
+
+
 def private_yaml(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(yaml.safe_dump(value))
@@ -117,57 +121,55 @@ def fixture(source, name, probe_image):
     config = {
         "HOST": "default.invalid",
         "SECRET_FILES": {name + "-password": [{"path": "credentials/password"}]},
-        "SECRET_TEMPLATES": {
-            name + "-settings": {
-                "connection-string": "Host=@@HOST@@;Password=@@secret:"
-                + name
-                + "-password/password@@"
-            }
-        },
     }
-    private_yaml(component / "config.defaults.yaml", config)
-    env = [
-        {
-            "name": "APP_CONNECTIONSTRING",
-            "valueFrom": {
-                "secretKeyRef": {"name": name + "-settings", "key": "connection-string"}
-            },
-        }
-    ]
+    # Both containers receive the value through ENVIRONMENT, which the
+    # platform delivers as the Secret <name>-<container>-env-secret (envFrom).
+    connection = "Host=@@HOST@@;Password=@@secret:" + name + "-password/password@@"
+    environment = {
+        role: {"APP_CONNECTIONSTRING": connection} for role in ("init", "control")
+    }
+    private_yaml(
+        component / "config.defaults.yaml", dict(config, ENVIRONMENT=environment)
+    )
     container = {
         "name": "init",
         "image": probe_image,
         "imagePullPolicy": "Never",
         "command": ["python", "-c", CHECK],
-        "env": env,
         "volumeMounts": [
             {"name": "expected", "mountPath": "/run/secrets/expected", "readOnly": True}
         ],
     }
     control = copy.deepcopy(container)
     control["name"] = "control"
-    private_yaml(
-        component / "manifests/pod.yaml",
-        {
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "name": name + "-job",
-                "annotations": {"io.podman.annotations.init.container.type": "always"},
-            },
-            "spec": {
-                "initContainers": [container],
-                "containers": [control],
-                "volumes": [
-                    {"name": "expected", "secret": {"secretName": name + "-expected"}}
-                ],
-            },
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": name + "-job",
+            "annotations": {"io.podman.annotations.init.container.type": "always"},
         },
-    )
-    # A declaration is required for product validation. Runtime expectation is
-    # independently replaced below, never read back from the rendered recipe.
-    config["SECRET_TEMPLATES"][name + "-expected"] = {"value": "test-only"}
-    private_yaml(component / "config.defaults.yaml", config)
+        "spec": {
+            "initContainers": [container],
+            "containers": [control],
+            "volumes": [
+                {"name": "expected", "secret": {"secretName": name + "-expected"}}
+            ],
+        },
+    }
+    # The independent oracle: replaced at runtime (instrument), never read
+    # back from the rendered ENVIRONMENT Secret.
+    oracle = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": name + "-expected"},
+        "type": "Opaque",
+        "data": {"value": base64.b64encode(b"test-only").decode()},
+    }
+    manifest = component / "manifests/pod.yaml"
+    manifest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    manifest.write_text(yaml.safe_dump_all([oracle, pod]))
+    manifest.chmod(0o600)
     return config
 
 
@@ -184,10 +186,12 @@ def instrument(rendered, manifest, name, expected, nonce):
                 container["command"][-1] = CHECK.replace(
                     "EXPECTED_DIGEST", hashlib.sha256(expected.encode()).hexdigest()
                 )
-                container["env"] += [
-                    {"name": "PROBE_RUN", "value": nonce},
-                    {"name": "PROBE_ROLE", "value": role},
-                ]
+                container.setdefault("env", []).extend(
+                    [
+                        {"name": "PROBE_RUN", "value": nonce},
+                        {"name": "PROBE_ROLE", "value": role},
+                    ]
+                )
     manifest.write_text(yaml.safe_dump_all(docs))
     manifest.chmod(0o600)
 
@@ -261,8 +265,8 @@ def cleanup(unit, manifest, name, unit_started, played):
         except (RuntimeError, OSError, subprocess.TimeoutExpired):
             failures.append(True)
     # kube down can leave Secret-backed volumes behind. Never enumerate/remove
-    # unrelated volumes or secrets. All three IDs belong to this UUID fixture.
-    for suffix in ("-password", "-settings", "-expected"):
+    # unrelated volumes or secrets. All four IDs belong to this UUID fixture.
+    for suffix in SECRET_SUFFIXES:
         try:
             exists = command(
                 ["podman", "volume", "exists", name + suffix], allowed=(0, 1)

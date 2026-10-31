@@ -72,8 +72,7 @@ files, and the shared network `<product>`. It is compiled into every
 install and uninstall refuse a bundle whose product differs from the installed
 components'. Use lowercase letters, digits and inner hyphens, a letter first and
 at most 32 characters. The demo uses `myproduct`; the renamed acceptance product
-uses `shop`. A standalone manifest fixture (no `bundles.yaml`) is always
-`myproduct`.
+uses `shop`.
 
 ### Component IDs
 
@@ -121,7 +120,7 @@ is not accepted in `bundles.yaml`. Components released together keep the same
 number in their separate files. Missing, invalid or escaping version files are
 refused before building. Each bundle retains an informational root `VERSION`;
 installed metadata stores its compiled version, so existing installations need
-no migration. Standalone manifest fixtures without a catalog keep root `VERSION`.
+no migration.
 
 Every install renders and restarts the component again, also at the same
 version, so a changed `config.yaml` or a replaced credential takes effect by
@@ -205,7 +204,8 @@ redirect URIs, so they cannot be renamed:
 | `PUBLIC_ORIGIN` | Validated as an HTTPS origin; set only in the gateway's `config.yaml` and read from there by every other component; OIDC redirect URIs are built from it |
 | `HTTPS_PORT` | Validated as a port 1-65535; set and read like `PUBLIC_ORIGIN` |
 | `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error |
-| `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES` | File-source and Secret-template declarations, not placeholder values |
+| `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values |
+| `SECRET_TEMPLATES` | Refused in every config file; the platform's internal name for the Secrets it renders from `ENVIRONMENT` and `MOUNTS` |
 | `ENVIRONMENT`, `MOUNTS` | Each container's environment and mounted files; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
 | Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@` in its own component |
 
@@ -311,7 +311,7 @@ Rules, each refused before anything is written with the file and the next step:
 - A secret must be declared in this component's `SECRET_FILES`; the error lists
   the declared IDs. A component uses only its own secrets (IDs starting with
   its own ID); the one exception is identity's API secret line below.
-- Values follow the [Secret template](#secret-templates) text rules: no
+- Values follow the [secret value](#secret-values-in-environment-and-mounts) text rules: no
   surrounding spaces, quotes, `;`, control characters or `@@` in a substituted
   value. A secret that does not fit uses `secretKeyRef` in the manifest.
 - Every `POSTGRES_PASSWORD*` variable stays in the manifest's `env`: the
@@ -469,66 +469,38 @@ the resource is inactive.
 6. Run `./deploy.sh validate` and read the derived lines, then
    `dev/dev.sh up`. app3 is the converted example to copy.
 
-## Secret templates
+## Secret values in ENVIRONMENT and MOUNTS
 
-`SECRET_TEMPLATES` builds complete private configuration values at render time,
-without changing an application's image or code:
+A secret reaches a container only through `@@secret:<id>/<key>@@` in an
+`ENVIRONMENT` line or a `MOUNTS` file; the platform renders the generated
+Secrets (`<component>-<container>-env-secret`, `<component>-<container>-files`).
+A manifest may also mount or reference a `SECRET_FILES` Secret directly
+(`secretName`, `secretKeyRef`). No config file can define other composed
+Secrets: `SECRET_TEMPLATES` in a config file is refused.
 
-```yaml
-DB_HOST: database
-DB_PORT: '5432'
-DB_NAME: app
-DB_USER: app
-SECRET_FILES:
-  orders-database-password:
-    - path: credentials/database
-      generate: [password]
-SECRET_TEMPLATES:
-  orders-database:
-    ConnectionStrings__Default: "Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:orders-database-password/password@@"
-```
-
-The application container consumes the result with ordinary Kubernetes YAML:
-
-```yaml
-env:
-  - name: ConnectionStrings__Default
-    valueFrom:
-      secretKeyRef:
-        name: orders-database
-        key: ConnectionStrings__Default
-```
-
-An application that reads files can instead mount this Secret with
-`volumes[].secret.items`, selecting the same key. Secret IDs follow the component
-prefix/name rules and cannot collide with `SECRET_FILES`, `VOLUME_FILES` or
-manifest resources; keys follow the Secret file-name rule. Each ID has a nonempty
-mapping of keys to string templates. It is a reserved setting and cannot be shared.
-
-Secret templates and ConfigMap `data` values accept placeholders inside strings.
-In Secret templates, `@@NAME@@` reads this
-component's effective string/integer config (including shared settings).
-`@@secret:<id>/<file>@@` reads a file key delivered by this component's
-`SECRET_FILES`, including a declared generated file. A declared source without
-`generate` may be supplied by the operator after `init-config`; it must exist
-before install. `validate` and `install` report a missing source file without
-reading or printing its contents during declaration validation. References to
-other templates, recursive expansion, expressions and commands are unsupported. Other manifest
-fields still replace whole values only.
+`@@NAME@@` reads this component's effective text or integer setting (including
+`PUBLIC_ORIGIN`/`HTTPS_PORT` from the gateway); `@@secret:<id>/<key>@@` reads a
+file key of this component's `SECRET_FILES`, including a generated one. A
+declared source without `generate` may be supplied by the operator after
+`init-config`; it must exist before install. `validate` and `install` report a
+missing source file without reading or printing its contents. Substitution is
+one pass: no references to other values, recursive expansion, expressions or
+commands.
 
 The renderer removes trailing LF bytes from a secret input, matching PostgreSQL's
-`file_env`; it never rewrites the source file. Inputs containing semicolons, single
-or double quotes, control characters, leading/trailing whitespace, or placeholder
-markers (`@@`) are refused without including their values in diagnostics.
-Generated alphanumeric passwords satisfy this rule. The renderer does not escape
-for connection strings, URLs or other target formats. Use a file-aware app or
-prepare the complete value externally for formats requiring other encodings.
-An existing database password failing the rule must be changed through a
-coordinated database-role/password-file/client rotation or recovery procedure
-(backlog 2/3), never by deleting the file and letting install regenerate it.
+`file_env`; it never rewrites the source file. Substituted values containing
+semicolons, single or double quotes, control characters, leading/trailing
+whitespace, or placeholder markers (`@@`) are refused without including their
+values in diagnostics; the text around them (a connection string, SQL in a
+`MOUNTS` file) may contain anything. Generated alphanumeric passwords satisfy
+this rule. The renderer does not escape for connection strings, URLs or other
+target formats. An existing database password failing the rule must be changed
+through a coordinated database-role/password-file/client rotation or recovery
+procedure (backlog 2/3), never by deleting the file and letting install
+regenerate it.
 
-`validate` checks recipe shape, public inputs and file-key declarations without
-reading credentials. Secret bytes are checked only during materialization after
+`validate` checks the placeholders and file-key declarations without reading
+credentials. Secret bytes are checked only during materialization after
 database preflight and permitted generation. Derived values have no separate
 persistent source: config plus the original password file are authoritative.
 Every install recomputes values; a systemd restart uses the last installed YAML.
@@ -539,9 +511,9 @@ uses the release's value, without writing the file; the operator's values win.
 The output is an Opaque Secret in the existing 0600 install YAML. Base64 is not
 encryption; protect YAML, source files, Podman storage and backups. Environment
 values are visible to the service user/root through `podman inspect`, process
-environments and child processes. File mounts avoid the extra environment copy
-but still require suitable container ownership/modes. No new credential files,
-network services, SELinux exceptions or fapolicyd trust rules are needed.
+environments and child processes. `MOUNTS` files avoid the extra environment
+copy but still require suitable container ownership/modes. No new credential
+files, network services, SELinux exceptions or fapolicyd trust rules are needed.
 
 ## Reaching the public origin from a container
 
@@ -729,7 +701,7 @@ Inline inputs must be strings or integers and the result is always text.
 Whole-value replacement retains its existing type behavior before ConfigMap data
 is converted with `str()`. The same single-pass substitution function serves
 Secret recipes and ConfigMaps, but ConfigMaps have no access to Secret contents:
-`@@secret:<id>/<file>@@` is refused with a pointer to `SECRET_TEMPLATES`.
+`@@secret:<id>/<file>@@` is refused with a pointer to `ENVIRONMENT`.
 Keep private input in `SECRET_FILES`, not ordinary public config.
 
 ConfigMap public text does not use the Secret recipe's character restrictions:
@@ -738,7 +710,7 @@ expansion or escape syntax for `@@`; malformed markers or markers remaining in
 a substituted value are refused. Dollar syntax such as `${HTTPS_PORT}`, `$host`
 and shell/nginx templates is preserved verbatim.
 
-Outside ConfigMap `data` and `SECRET_TEMPLATES`, fields such as container
+Outside ConfigMap `data`, `ENVIRONMENT` and `MOUNTS` files, fields such as container
 `env.value`, images, names, volume bindings and ConfigMap metadata still require
 whole-value placeholders. Validation is shared by initialization, validate and
 rendering before generation or host commands. Config changes take effect at

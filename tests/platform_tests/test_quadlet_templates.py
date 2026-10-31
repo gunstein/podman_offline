@@ -4,7 +4,6 @@ import shutil
 from unittest import mock
 
 from deployment import common, deploy, layout, validation
-from deployment import render as rendering
 
 from helpers.deploy_fixture import DeployFixture
 from helpers.product_fixture import ProductFixture, pod
@@ -73,44 +72,6 @@ class QuadletTextTests(DeployFixture):
             common.DeployError, "unresolved placeholder marker"
         ):
             deploy.quadlet_text(".kube", "cedar", "@@PRODUCT_NAME@@")
-
-    def test_standalone_uses_internal_names_despite_config(self):
-        self.install_fixture()
-        self.config.update(UNIT_NAME="untrusted-unit", PRODUCT_NAME="untrusted-product")
-        self.write_config()
-        deploy.install()
-        self.assertEqual(
-            common.QUADLET_TARGET.read_text(), "[Kube]\nYaml=myproduct.yaml\n"
-        )
-        self.assertEqual(
-            common.QUADLET_TARGET.with_suffix(".network").read_text(),
-            "[Network]\nNetworkName=myproduct\n",
-        )
-
-    def test_standalone_rejects_before_host_queries_generation_or_output(self):
-        self.install_fixture()
-        before_templates = {
-            suffix: common.QUADLET_TEMPLATE.with_suffix(suffix).read_text()
-            for suffix in (".kube", ".network")
-        }
-        for suffix, original in before_templates.items():
-            path = common.QUADLET_TEMPLATE.with_suffix(suffix)
-            path.write_text("Value=@@BAD@@")
-            before = snapshot(self.root)
-            for operation in (validation.validate, deploy.prepare, deploy.install):
-                with self.subTest(suffix=suffix, operation=operation.__name__):
-                    self.process.reset_mock()
-                    with mock.patch.object(layout, "check_user_manager") as manager:
-                        with mock.patch.object(rendering, "materialize") as materialize:
-                            with self.assertRaisesRegex(
-                                common.DeployError, "unknown Quadlet token"
-                            ):
-                                operation()
-                    manager.assert_not_called()
-                    materialize.assert_not_called()
-                    self.process.assert_not_called()
-                    self.assertEqual(snapshot(self.root), before)
-            path.write_text(original)
 
 
 class QuadletBundleTests(ProductFixture):
@@ -192,7 +153,7 @@ class QuadletBundleTests(ProductFixture):
         unit = common.QUADLET_DIR / "cedar-processor.kube"
         expected = (
             "# ./deploy.sh install fills in the product name (bundles.yaml) and the unit name\n"
-            "# (<product>-<component>, or the product for a standalone fixture).\n"
+            "# (<product>-<component>).\n"
             "[Unit]\nDescription=cedar-processor\n\n[Kube]\nYaml=cedar-processor.yaml\n"
             "Network=cedar.network\n"
             "[Service]\n"

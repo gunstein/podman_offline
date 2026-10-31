@@ -142,14 +142,13 @@ def product_name(root):
     """Return the product name of the release or checkout at root.
 
     A bundle reads its compiled bundle.yaml, the source checkout reads
-    bundles.yaml, and a standalone manifest fixture uses
-    common.STANDALONE_PRODUCT.
+    bundles.yaml.
     """
     if (root / "bundle.yaml").is_file():
         return load_bundle_descriptor(root)["product"]
     if (root / "bundles.yaml").is_file():
         return catalog_document(root)[1]["product"]
-    return common.STANDALONE_PRODUCT
+    raise common.DeployError(f"{root} has neither bundle.yaml nor bundles.yaml")
 
 
 def load_catalog(root):
@@ -666,7 +665,7 @@ def gateway_settings(gateway, state=None):
 
 
 # Maps whose IDs are completed one by one from the release defaults.
-FILE_GROUPS = (common.SECRET_FILES, common.VOLUME_FILES, common.SECRET_TEMPLATES)
+FILE_GROUPS = (common.SECRET_FILES, common.VOLUME_FILES)
 
 
 def release_defaults(component):
@@ -679,7 +678,7 @@ def operator_config(descriptor, path, state=None):
     """Return (config, names taken from the release) for an installed component.
 
     The operator's config.yaml wins. A setting it does not have, or a
-    SECRET_FILES/VOLUME_FILES/SECRET_TEMPLATES ID it does not list, comes from
+    SECRET_FILES/VOLUME_FILES ID it does not list, comes from
     the release's config.defaults.yaml, so a new release can add one without
     an operator edit; nothing is written. PUBLIC_ORIGIN and HTTPS_PORT come
     from the gateway's config.yaml; another component's config.yaml may not

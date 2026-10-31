@@ -865,21 +865,8 @@ class Run:
             "venv",
             "dev-e2e",
             "registry-test",
-            "examples-setup",
+            "dev-down",
         ]
-        actions += [
-            "example-" + name
-            for name in (
-                "basic",
-                "secrets",
-                "generated-secrets",
-                "volumes",
-                "init-containers",
-                "manifest-defined",
-                "failures",
-            )
-        ]
-        actions += ["dev-down"]
         for action in actions:
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))

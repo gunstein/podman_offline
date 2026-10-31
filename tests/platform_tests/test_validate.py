@@ -12,7 +12,7 @@ from unittest import mock
 import yaml
 from deployment import cli, common, deploy, validation
 
-from helpers.deploy_fixture import DeployFixture, document
+from helpers.deploy_fixture import document
 from helpers.product_fixture import RENAMED, ProductFixture
 from helpers.validation_fixture import CASES, broken_orders
 
@@ -332,38 +332,3 @@ class BundleAgreementTests(ProductFixture):
             "existing volume orders-data; restore the password from backup",
             "orders: .*declare generate .*, or restore the password from backup",
         )
-
-
-class StandaloneValidationTests(DeployFixture):
-    def test_fixture_manifests_against_config(self):
-        self.config["SECRET_FILES"] = {
-            "db": [{"path": "credentials", "generate": ["password"]}]
-        }
-        self.write_config()
-        pod = document(
-            "Pod",
-            "app",
-            spec={
-                "containers": [
-                    {
-                        "name": "web",
-                        "image": "localhost/app:1",
-                        "imagePullPolicy": "Never",
-                        "volumeMounts": [{"name": "db", "mountPath": "/x"}],
-                    }
-                ],
-                "volumes": [{"name": "db", "secret": {"secretName": "db"}}],
-            },
-        )
-        self.manifest([pod], "20-images.yaml")
-        validation.validate()
-        self.assertIn("[OK] validated manifests", self.stdout.getvalue())
-        pod["spec"]["containers"][0]["image"] = "app:1"
-        self.manifest([pod], "20-images.yaml")
-        with self.assertRaisesRegex(
-            common.DeployError, "manifests: Image app:1 must be fully qualified"
-        ):
-            validation.validate()
-        self.process.assert_not_called()
-        self.assertFalse((common.CONFIG.parent / "credentials").exists())
-        self.assertFalse(common.BUILD.exists())

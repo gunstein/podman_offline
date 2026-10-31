@@ -56,9 +56,10 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 77. Make a component intuitive to write: env files, mounts and shared secrets
 
-Status: **implemented**; the form on `318d394` passed all seven lab scenarios
+Status: **implemented**; the form on `7f22375` passed all seven lab scenarios
 (CLEAN PASS, [latest results](acceptance/RESULTS.md)). Later commits on the same
-branch have unit and harness tests; their lab run is outstanding.
+branch (`MOUNTS`, no standalone mode, no authored `SECRET_TEMPLATES`) have unit
+and harness tests; their lab run is outstanding.
 
 What a component author writes now ([contract](docs/COMPONENTS.md)):
 
@@ -70,6 +71,10 @@ What a component author writes now ([contract](docs/COMPONENTS.md)):
   mounted read-only from a generated Secret). One secret form, `@@secret:<id>/<key>@@`; an API declares its own
   secret and Identity's `ApiResources__<n>__ApiSecrets__0__Value` line names it.
   `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` come from `client.yaml`.
+  `SECRET_TEMPLATES` is only the platform's internal form; a config file that
+  contains it is refused.
+- `prepare` runs only in the source checkout and `install` only from an
+  unpacked component bundle; the standalone mode and `examples/` are gone.
 - `PUBLIC_ORIGIN`/`HTTPS_PORT` only in the gateway's `config.yaml`. Every
   install renders again; only a downgrade is refused. Settings or secret IDs
   missing from the operator's `config.yaml` come from the release defaults.
@@ -81,10 +86,6 @@ installations). The design history is in git.
 
 Remaining in this item:
 
-- Remove the standalone mode (install/prepare/validate without `components/`,
-  `examples/`) and `SECRET_TEMPLATES` as something authors write (also removes
-  templated secret files). About 100 tests use them and must move to a product
-  fixture with `ENVIRONMENT`.
 - `MOUNTS` has unit tests only; no demo component uses it, so it has no real
   Podman run. The generated mount has the same shape as app3's verified
   trust-chain mount (Secret items with `subPath`, read-only).

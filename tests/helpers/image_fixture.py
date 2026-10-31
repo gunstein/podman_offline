@@ -24,7 +24,6 @@ class ImageHelperFixture(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         (self.root / "dev").mkdir()
-        (self.root / "manifests").mkdir()
         for name in (
             "bundle.py",
             "dev/build-images.sh",
@@ -58,8 +57,14 @@ class ImageHelperFixture(unittest.TestCase):
         )
 
     def manifest(self, images):
-        """Write one Pod using the requested full image names."""
-        (self.root / "manifests/app.yaml").write_text(
+        """Write a one-component product whose Pod uses the requested image names."""
+        (self.root / "bundles.yaml").write_text(
+            "product: myproduct\ncomponents: [app]\n"
+        )
+        component = self.root / "components/app"
+        (component / "manifests").mkdir(parents=True)
+        (component / "VERSION").write_text("1.0.0\n")
+        (component / "manifests/app.yaml").write_text(
             yaml.safe_dump(
                 {
                     "kind": "Pod",

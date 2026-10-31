@@ -1,4 +1,8 @@
-"""Secret recipes: declaration safety, private materialization and lifecycle replay."""
+"""Secret recipes: declaration safety, private materialization and lifecycle replay.
+
+Recipes come only from ENVIRONMENT and MOUNTS; the render-level tests here put
+them in the config dict directly to drive deployment/templates.py.
+"""
 
 import base64
 import copy
@@ -65,7 +69,7 @@ class SecretTemplateTests(DeployFixture):
 
     def checked(self):
         return deploy.validate_component(
-            self.config, self.path, common.MANIFESTS, "app"
+            self.config, self.path, (common.ROOT / "manifests"), "app"
         )
 
     def materialize(self):
@@ -135,20 +139,6 @@ class SecretTemplateTests(DeployFixture):
             ),
         )
 
-    def test_validate_reads_no_credential_contents_and_runs_no_host_commands(self):
-        self.init_pod()
-        self.write("config.yaml", yaml.safe_dump(self.config))
-        original = Path.open
-
-        def no_credentials(path, *args, **kwargs):
-            if "credentials" in path.parts:
-                raise AssertionError("credential read")
-            return original(path, *args, **kwargs)
-
-        with mock.patch.object(Path, "open", no_credentials):
-            validation.validate()
-        self.process.assert_not_called()
-
     def test_generated_source_can_be_missing_until_materialization(self):
         self.password.unlink()
         self.checked()
@@ -174,20 +164,6 @@ class SecretTemplateTests(DeployFixture):
         compose.assert_not_called()
         self.assertNotIn("PrivatePassword", str(error.exception))
         self.assertFalse(self.password.exists())
-        self.process.assert_not_called()
-
-    def test_standalone_prepare_and_validate_check_templates_before_side_effects(self):
-        self.config["SECRET_TEMPLATES"]["app-settings"]["connection"] = "@@MISSING@@"
-        self.write_config()
-        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
-        for operation in (deploy.prepare, validation.validate):
-            with self.subTest(operation=operation.__name__):
-                with self.assertRaisesRegex(common.DeployError, "MISSING") as error:
-                    operation()
-                self.assertNotIn("PrivatePassword", str(error.exception))
-        self.assertEqual(
-            before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
-        )
         self.process.assert_not_called()
 
     def test_invalid_recipes_fail_before_generation_and_do_not_echo_input(self):
@@ -237,7 +213,9 @@ class SecretTemplateTests(DeployFixture):
                     with self.assertRaises(common.DeployError) as error:
                         self.materialize()
                     self.assertNotIn(value, str(error.exception))
-                    self.assertIn("app-settings.connection", str(error.exception))
+                    self.assertIn(
+                        "Secret app-settings key connection", str(error.exception)
+                    )
         for value in (b"", b"\n\n", b"\xff"):
             self.config["HOST"] = "database"
             self.password.write_bytes(value)
@@ -261,7 +239,9 @@ class SecretTemplateTests(DeployFixture):
                     self.checked()
         self.config["SECRET_TEMPLATES"] = {"app-settings": {"key": "text"}}
         self.config["VOLUME_FILES"] = {"app-settings": [{"path": "credentials"}]}
-        with self.assertRaisesRegex(common.DeployError, "collides"):
+        with self.assertRaisesRegex(
+            common.DeployError, "has the same name as a SECRET_FILES"
+        ):
             self.checked()
 
     def test_selected_template_key_and_size_limit(self):
@@ -289,7 +269,7 @@ class SecretTemplateTests(DeployFixture):
         )
         with self.assertRaisesRegex(common.DeployError, "more than once"):
             self.checked()
-        (common.MANIFESTS / "secret.yaml").unlink()
+        ((common.ROOT / "manifests") / "secret.yaml").unlink()
         self.pod["spec"]["containers"][0]["env"].append(
             {"name": "HOST", "value": "prefix-@@HOST@@"}
         )
@@ -362,18 +342,10 @@ class TemplateLifecycleTests(ProductFixture):
         product = copy.deepcopy(WORKER)
         product["worker"]["defaults"] = {
             "SECRET_FILES": {"worker-token": [{"path": "credentials/api/token"}]},
-            "SECRET_TEMPLATES": {
-                "worker-settings": {"URL": "Token=@@secret:worker-token/token@@"}
-            },
         }
-        product["worker"]["manifests"][0]["spec"]["containers"][0]["env"] = [
-            {
-                "name": "URL",
-                "valueFrom": {
-                    "secretKeyRef": {"name": "worker-settings", "key": "URL"}
-                },
-            }
-        ]
+        product["worker"]["env"] = {
+            "main": {"URL": "Token=@@secret:worker-token/token@@"}
+        }
         return product
 
     def operator_release(self, product=None):
@@ -427,7 +399,9 @@ class TemplateLifecycleTests(ProductFixture):
         self.install(release, configure=provide)
         output = catalog.component_paths("worker")[2]
         docs = list(yaml.safe_load_all(output.read_text()))
-        secret = next(d for d in docs if d["metadata"]["name"] == "worker-settings")
+        secret = next(
+            d for d in docs if d["metadata"]["name"] == "worker-main-env-secret"
+        )
         self.assertEqual(
             base64.b64decode(secret["data"]["URL"]), b"Token=OperatorToken"
         )
@@ -438,21 +412,21 @@ class TemplateLifecycleTests(ProductFixture):
         )
         self.assertNotIn("OperatorToken", self.stdout.getvalue())
 
-    def test_init_config_refuses_unknown_operator_group_before_writing(self):
+    def test_validate_refuses_undeclared_secret_before_writing(self):
         product = self.operator_product()
         product["worker"]["defaults"]["SECRET_FILES"] = {}
         self.operator_release(product)
+        deploy.init_config("worker")
         with self.assertRaisesRegex(
-            common.DeployError,
-            "missing declared source SECRET_FILES.worker-token/token",
-        ) as error:
-            deploy.init_config("worker")
-        self.assertNotIn("OperatorToken", str(error.exception))
-        self.assertFalse((common.STATE / "worker/config.yaml").exists())
+            common.DeployError, "URL: SECRET_FILES has no worker-token"
+        ):
+            validation.validate()
+        self.assertFalse((common.STATE / "worker/credentials").exists())
         self.process.assert_not_called()
 
-    def test_init_config_refuses_known_directory_without_referenced_key(self):
+    def test_validate_refuses_known_directory_without_referenced_key(self):
         self.operator_release()
+        deploy.init_config("worker")
         directory = common.STATE / "worker/credentials/api/token"
         directory.mkdir(parents=True)
         (directory / "other").write_text("OperatorToken")
@@ -460,9 +434,8 @@ class TemplateLifecycleTests(ProductFixture):
             common.DeployError,
             "missing declared source SECRET_FILES.worker-token/token",
         ) as error:
-            deploy.init_config("worker")
+            validation.validate()
         self.assertNotIn("OperatorToken", str(error.exception))
-        self.assertFalse((common.STATE / "worker/config.yaml").exists())
         self.process.assert_not_called()
 
     def test_install_upgrade_failure_retry_and_retention(self):
@@ -475,20 +448,10 @@ class TemplateLifecycleTests(ProductFixture):
                     {"path": "credentials/db", "generate": ["password"]}
                 ]
             },
-            "SECRET_TEMPLATES": {
-                "worker-settings": {
-                    "connection": "@@HOST@@:@@secret:worker-password/password@@"
-                }
-            },
         }
-        worker["manifests"][0]["spec"]["containers"][0]["env"] = [
-            {
-                "name": "CONNECTION",
-                "valueFrom": {
-                    "secretKeyRef": {"name": "worker-settings", "key": "connection"}
-                },
-            }
-        ]
+        worker["env"] = {
+            "main": {"CONNECTION": "@@HOST@@:@@secret:worker-password/password@@"}
+        }
         self.write_product(product)
         releases = self.build_and_unpack()
         self.install(releases["worker"])
@@ -536,14 +499,16 @@ class ConfigMapTemplateTests(DeployFixture):
     def setUp(self):
         super().setUp()
         self.config.update(HOST="api.test", PORT=8080)
-        self.path = common.CONFIG
+        self.path = common.ROOT / "config.yaml"
 
     def write_map(self, data, **extra):
-        doc = document("ConfigMap", "settings", data=data, **extra)
+        doc = document("ConfigMap", "app-settings", data=data, **extra)
         self.write("manifests/settings.yaml", yaml.safe_dump(doc))
 
     def checked(self):
-        return deploy.validate_component(self.config, self.path, common.MANIFESTS)
+        return deploy.validate_component(
+            self.config, self.path, (common.ROOT / "manifests"), "app"
+        )
 
     def test_inline_multiline_and_nginx_dollars_are_preserved(self):
         self.write_map(
@@ -598,7 +563,7 @@ class ConfigMapTemplateTests(DeployFixture):
             reader = mock.patch.object(
                 Path, "read_bytes", side_effect=AssertionError("credential read")
             )
-            failure = self.assertRaisesRegex(common.DeployError, "SECRET_TEMPLATES")
+            failure = self.assertRaisesRegex(common.DeployError, "use ENVIRONMENT")
             with reader:
                 with failure:
                     self.checked()
@@ -660,30 +625,10 @@ class ConfigMapTemplateTests(DeployFixture):
             self.write("manifests/pod.yaml", yaml.safe_dump(current))
             with self.assertRaisesRegex(common.DeployError, "Only whole values"):
                 self.checked()
-        (common.MANIFESTS / "pod.yaml").unlink()
+        ((common.ROOT / "manifests") / "pod.yaml").unlink()
         self.write_map({"text": "public"}, metadata={"name": "settings-@@HOST@@"})
         with self.assertRaisesRegex(common.DeployError, "Only whole values"):
             self.checked()
-
-    def test_validate_is_write_free_and_reads_no_secret_contents(self):
-        self.write_map({"endpoint": "http://@@HOST@@:@@PORT@@"})
-        self.write("config.yaml", yaml.safe_dump(self.config))
-        before = {
-            path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()
-        }
-        with mock.patch.object(
-            Path, "read_bytes", side_effect=AssertionError("private read")
-        ):
-            validation.validate()
-        self.assertEqual(
-            before,
-            {
-                path: path.read_bytes()
-                for path in self.root.rglob("*")
-                if path.is_file()
-            },
-        )
-        self.process.assert_not_called()
 
 
 class ConfigMapLifecycleTests(ProductFixture):
@@ -752,28 +697,15 @@ class InitSecretLifecycleTests(ProductFixture):
         worker["defaults"] = {
             "HOST": "release.invalid",
             "SECRET_FILES": {"worker-password": [{"path": "credentials/password"}]},
-            "SECRET_TEMPLATES": {
-                "worker-settings": {
-                    "connection-string": "Host=@@HOST@@;Password=@@secret:worker-password/password@@"
-                }
-            },
+        }
+        worker["env"] = {
+            "migration": {
+                "APP_CONNECTIONSTRING": "Host=@@HOST@@;Password=@@secret:worker-password/password@@"
+            }
         }
         pod = worker["manifests"][0]
         init = copy.deepcopy(pod["spec"]["containers"][0])
-        init.update(
-            name="migration",
-            env=[
-                {
-                    "name": "APP_CONNECTIONSTRING",
-                    "valueFrom": {
-                        "secretKeyRef": {
-                            "name": "worker-settings",
-                            "key": "connection-string",
-                        }
-                    },
-                }
-            ],
-        )
+        init["name"] = "migration"
         pod["spec"]["initContainers"] = [init]
         pod["metadata"]["annotations"] = {
             "io.podman.annotations.init.container.type": "always"
@@ -782,23 +714,16 @@ class InitSecretLifecycleTests(ProductFixture):
 
     def assert_connection(self, output, host):
         docs = list(yaml.safe_load_all(output.read_text()))
-        secret = next(d for d in docs if d["metadata"]["name"] == "worker-settings")
+        name = "worker-migration-env-secret"
+        secret = next(d for d in docs if d["metadata"]["name"] == name)
         self.assertEqual(
-            base64.b64decode(secret["data"]["connection-string"]),
+            base64.b64decode(secret["data"]["APP_CONNECTIONSTRING"]),
             ("Host=" + host + ";Password=SyntheticPassword").encode(),
         )
         pod = next(d for d in docs if d["kind"] == "Pod")
         self.assertEqual(
-            pod["spec"]["initContainers"][0]["env"][0],
-            {
-                "name": "APP_CONNECTIONSTRING",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "worker-settings",
-                        "key": "connection-string",
-                    }
-                },
-            },
+            pod["spec"]["initContainers"][0]["envFrom"],
+            [{"secretRef": {"name": name}}],
         )
         self.assertEqual(self.mode(output), 0o600)
 

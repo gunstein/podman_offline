@@ -27,23 +27,12 @@ class RetryTests(RetryFixture):
         self.actual_app_credentials()
         config_path = common.STATE / "app1/config.yaml"
         config = yaml.safe_load(config_path.read_text())
-        config["SECRET_TEMPLATES"] = {
-            "app1-connection": {
-                "connection": "@@DB_HOST@@:@@secret:app1-database-password/password@@"
-            }
-        }
-        config_path.write_text(yaml.safe_dump(config))
-        manifest = self.root / "components/app1/manifests/60-todo.yaml"
-        pod = yaml.safe_load(manifest.read_text())
-        pod["spec"]["containers"][0]["env"].append(
-            {
-                "name": "COMPLETE_CONNECTION",
-                "valueFrom": {
-                    "secretKeyRef": {"name": "app1-connection", "key": "connection"}
-                },
-            }
+        # The new release adds a secret line to the db container's environment.
+        self.write(
+            "components/app1/config.defaults.yaml",
+            "ENVIRONMENT:\n  db:\n    COMPLETE_CONNECTION: "
+            "'@@DB_HOST@@:@@secret:app1-database-password/password@@'\n",
         )
-        manifest.write_text(yaml.safe_dump(pod))
         self.before = self.protected()
         self.attempt()
         password = (common.STATE / "app1/credentials/database/password").read_bytes()
@@ -54,10 +43,10 @@ class RetryTests(RetryFixture):
         self.attempt()
         docs = list(yaml.safe_load_all(catalog.component_paths("app1")[2].read_text()))
         derived = next(
-            doc for doc in docs if doc["metadata"]["name"] == "app1-connection"
+            doc for doc in docs if doc["metadata"]["name"] == "app1-db-env-secret"
         )
         self.assertEqual(
-            base64.b64decode(derived["data"]["connection"]),
+            base64.b64decode(derived["data"]["COMPLETE_CONNECTION"]),
             config["DB_HOST"].encode() + b":" + password,
         )
         self.assertEqual(self.protected(), self.before)

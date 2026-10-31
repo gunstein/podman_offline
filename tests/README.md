@@ -37,8 +37,7 @@ mkdir -p ~/t && TMPDIR=~/t python3 -B tests/run.py platform
 ```
 
 Run the suite from one consistent copy of a single commit. A copy that mixes
-older `examples/` or `deployment/` files with newer tests can fail the example
-checks (for example `partial-placeholder unexpectedly succeeded`).
+older `deployment/` files with newer tests can fail in confusing ways.
 A venv, network, Podman, systemd and root are not required. Ruff, pyright, vermin
 and ShellCheck are contributor checks, not offline runtime prerequisites.
 
@@ -209,7 +208,7 @@ source dev, readonly validate, real bundle contents, source removal and release
 relocation, init-config retaining logical references, and newer bytes delivered
 to install archives with unchanged persistent config. It tests public Secret
 keys/size/redaction, directory delivery, private aliases, unsafe references,
-symlinked ancestors/descendants, FIFOs, generation/database-password/standalone
+symlinked ancestors/descendants, FIFOs, generation/database-password
 refusal, and a sensitive external dev seed absent from production. Existing
 file-source tests retain ordinary path behavior. Export/isolation automatically
 include the new test and reusable context-aware render helper.
@@ -243,15 +242,16 @@ See [runtime verification](../docs/PFX-CREDENTIALS.md#dev-production-and-runtime
 
 # Secret template and ConfigMap coverage (backlog 41)
 
-`test_secret_templates.py` tests schema, config/file-key references, rejected
+`test_secret_templates.py` drives the internal recipe engine behind `ENVIRONMENT`
+and `MOUNTS` (`deployment/templates.py`) and tests schema, config/file-key references, rejected
 characters and redaction, LF handling, deterministic private rendering, key/size
 checks, missing generated sources, install/config/password changes and retry.
 Operator-supplied sources may be absent at init-config: tests check private config
 creation without host commands, write-free validate diagnostics, delivery before
 install with LF removal/byte retention, unknown groups and known missing keys,
-and missing-file rejection before template materialization. A standalone regression
-checks that prepare and validate reject invalid templates before any side effects,
-even though those entry points bypass effective_config.
+and missing-file rejection before template materialization. `test_environment.py`
+checks that `SECRET_TEMPLATES` in a config file is refused, and `test_mounts.py`
+covers `MOUNTS` (rendered file Secret, read-only `subPath` mounts, refusals before writes).
 ConfigMap tests cover multiple placeholders, multi-line text, whole-value type
 compatibility, preserved dollar/backslash syntax, forbidden Secret references,
 invalid/non-recursive markers, non-scalar inputs and unchanged scopes elsewhere.
@@ -269,7 +269,7 @@ Podman or systemd behavior. See [lab verification](../acceptance/RESULTS.md).
 # Validate command (backlog 23)
 
 `test_validate.py` runs `./deploy.sh validate` on the renamed product in the source
-checkout, in an unpacked bundle and on a standalone fixture. Every case asserts
+checkout and in an unpacked bundle. Every case asserts
 that no file under the fixture changes and that no Podman or systemd command
 runs. It covers each finding type (the five broken orders manifests, a
 placeholder only in an init container, an unused id, a missing or directory
@@ -293,7 +293,7 @@ without a runtime directory.
 Backlog item 21. `test_validation_order.py` breaks one orders manifest five ways
 (undefined mount, missing reference, duplicate, online pull policy, unreplaced
 placeholder) and requires no secret, archive, YAML or host command on install,
-dev prepare and both standalone paths, plus a single render per install.
+dev prepare, plus a single render per install.
 `test_database_preflight.py` takes the volume, Secret and password path from
 config and asserts the configured name reaches Podman; absent, existing and
 failing checks; and refuses other `POSTGRES_PASSWORD*` forms (F2).
@@ -304,7 +304,7 @@ and finishes them in a fresh process, and uninstalls afterwards. See
 
 After the independent review, `test_validation_order.py` also requires that an
 invalid `client.yaml` stops install and dev prepare before any write or host
-command, and that a missing image archive stops standalone install before
+command, and that a missing image archive stops install before
 generation. `test_database_preflight.py` treats a data-directory mount as a
 database container. `test_registration_removal.py` asserts the exact owners
 left and restarted per failure point, including an interrupt after the first
@@ -391,7 +391,7 @@ ruff check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke
 ruff format --check deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
 pyright deployment/ bundle.py scripts/release.py tests/ acceptance/ dev/smoke-test.py
 vermin -t=3.6- deployment/ bundle.py scripts/release.py tests/ acceptance/prepare_host_test.py acceptance/release_safety_test.py
-shellcheck deploy.sh build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
+shellcheck deploy.sh build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh PKI/generate.sh
 ```
 
 Existing safety and fresh-process retry tests import the owning package modules;
@@ -494,9 +494,9 @@ Registry tests require sorted deduplicated pulls with policy=always before save,
 skip localhost/ names, and reject failed pulls without build/save fallback or
 private registry diagnostic output. `test_images.py` runs the actual dev helpers
 with a recording Podman stub, including manifest tags and localhost:port names.
-The installer tests check the render/load/exists order, rendered names,
-a missing archive/image and that existing Quadlet files are kept on check failures.
-Standalone prepare tests run without Podman calls. Component dev preparation
+`test_install_environment.py` checks the account/runtime guards, the
+load/exists/write order, a missing archive/image and that existing Quadlet files
+and archives are kept on check failures, on a one-component bundle. Component dev preparation
 checks the actual database volumes before creating a missing password; those
 Podman calls are stubbed in unit tests.
 
@@ -609,8 +609,7 @@ staging, pre-generation refusal and CLI diagnostics without supplied values.
 replacement, incomplete layers and duplicate keys, authoritative persistent config,
 changed release defaults, missing required placeholders before writes, exclusive
 initialization with private modes, symlink rejection, inherited core common values,
-and regenerated dev output with retained credentials/data. Existing standalone
-fixtures still test their explicit `config.yaml` paths separately.
+and regenerated dev output with retained credentials/data.
 
 Bundle regressions cover the new defaults files, exclusion of dev/private config
 and bytecode, and generated-secret symlink aliases resolved from materialized dev
@@ -664,7 +663,7 @@ synthetic `/run/user/1000` is absent; production guards remain tested separately
 ## Generated Secret values in init containers (backlog 61)
 
 `test_secret_templates.py` checks exact Secret bytes and preserved init
-`secretKeyRef`/`always` declarations, wrong/missing keys before generation,
+`envFrom`/`always` declarations, wrong/missing keys before generation,
 credential-free validation, component dev overrides and isolated production
 init-config/install/retry with retained config/passwords. These are product tests
 with host commands stubbed. `acceptance/test_init_secret.py` separately checks the
@@ -677,6 +676,6 @@ real Podman/systemd runs passed at `52f28e4`; see
 Backlog 54 adds `platform_tests.test_release`: real archive/publication and trust-file
 regressions without root/Podman/daemon requirements. Tests model root ownership;
 actual separate-UID enforcement belongs to the runnable
-[protected-release lab probe](../acceptance/RESULTS.md). Component and
-standalone lifecycle tests deny release writes while allowing persistent-home
+[protected-release lab probe](../acceptance/RESULTS.md). Component lifecycle
+tests deny release writes while allowing persistent-home
 outputs. Historical signing/host prerequisite failures must still be reported.

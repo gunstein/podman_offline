@@ -217,8 +217,8 @@ backup first. A help bundle cannot install platform or run without installed
 platform.
 
 Production install and upgrade read the persistent component config. The
-operator's values always win; a setting, or a `SECRET_FILES`/`VOLUME_FILES`/
-`SECRET_TEMPLATES` ID, that the persistent file lacks is taken from the new
+operator's values always win; a setting, or a `SECRET_FILES`/`VOLUME_FILES`
+ID, that the persistent file lacks is taken from the new
 release's `config.defaults.yaml` (a new generated secret is then generated).
 The file itself is never written; install and validate print which names came
 from the release. A key that neither has fails before image operations with the
@@ -242,12 +242,11 @@ They preserve YAML types; ConfigMap data is converted to text. ConfigMap `data`
 values also accept inline `@@NAME@@` placeholders, including in multi-line files.
 Other manifest fields still require whole values. Dollar-style nginx/shell
 variables are preserved. Missing inputs identify their key without exposing values;
-Secret references are allowed only in `SECRET_TEMPLATES`. See
+Secret references are allowed only in `ENVIRONMENT` and `MOUNTS`. See
 [ConfigMap inline values](docs/COMPONENTS.md#configmap-inline-values).
 
-The examples in `examples/` and the registry acceptance test still use one
-explicit `config.yaml` (and `/var/lib/<product>/state/config.yaml` when installed). The product itself
-does not; it uses the component config model described above. Older acceptance
+The registry acceptance test still uses one explicit `config.yaml`. The product
+itself does not; it uses the component config model described above. Older acceptance
 reports under `~/podman-offline-acceptance-runs/` may still mention the old
 configuration names; those reports are kept unchanged.
 
@@ -303,11 +302,8 @@ The same guard refuses Pod `spec.hostAliases` so aliases cannot bypass public-or
 network DNS (backlog 76; [how containers reach the public origin](docs/COMPONENTS.md#reaching-the-public-origin-from-a-container)).
 
 Run `./deploy.sh prepare` from the source checkout; product bundles reject dev
-prepare and use persistent config through install. Standalone fixtures retain
-their explicit prepare flow; in a release without `components/`, `./deploy.sh
-install` validates `manifests/` against `/var/lib/myproduct/state/config.yaml`, loads
-`images/images.tar` and runs one `myproduct.service` (see the
-`install_standalone` docstring for the order). Component prepare merges the component
+prepare and use persistent config through install, and `install` runs only from
+an unpacked component bundle. Component prepare merges the component
 defaults and optional `config/dev.yaml`.
 The local overrides apply to every rendered component. Generated config under
 `build/dev/<component>/` is output, never an input layer; credentials and data
@@ -371,7 +367,7 @@ component,
 `deploy.sh`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
 an informational `VERSION` and its own
 `images/images.tar` (standard docker-archive, `podman save -m`) and `images.txt`.
-Checksums cover all shipped files. Apps/dev/tests/examples/acceptance and local
+Checksums cover all shipped files. Apps/dev/tests/acceptance and local
 config, passwords and keys are not shipped. Optional component `files/` is for
 public product payloads. Declarations in common/component defaults and local/materialized dev config prevent generated
 secrets from being copied into bundles, including through symlink aliases. Keep
@@ -398,8 +394,8 @@ credentials. The current permission to discard lab installations is temporary.
 `quadlet/template.kube` and `quadlet/template.network` use `@@UNIT_NAME@@` and
 `@@PRODUCT_NAME@@`, including inline/repeated occurrences. These are internal
 values: the unit is `<product>-<component>` and the shared network uses the product
-from the catalog/bundle descriptor. Standalone fixtures use the standalone
-product name for both. Config settings with these names cannot override them.
+from the catalog/bundle descriptor. Config settings with these names cannot
+override them.
 
 The marker spelling is shared with YAML, ConfigMap and Secret templates, but
 Quadlet permits those internal names plus `@@PODMAN_HOSTS_CONFIG@@`, the
@@ -497,17 +493,16 @@ A Secret's keys are its file names (and `generate` names); every key a pod
 selects (`secret.items[].key`, `secretKeyRef.key`) must be one of them, or
 `validate`, `prepare` and `install` refuse before generating anything, naming
 the keys that exist. Only names are read, never contents.
-`SECRET_TEMPLATES` maps Secret IDs to key/text recipes and composes complete
-private values from `@@NAME@@` config inputs and
-`@@secret:<secret-files-id>/<file-key>@@` file inputs. Operators may supply a
+`ENVIRONMENT` lines and `MOUNTS` files compose complete private values from
+`@@NAME@@` config inputs and `@@secret:<secret-files-id>/<file-key>@@` file
+inputs; `SECRET_TEMPLATES` in a config file is refused. Operators may supply a
 declared `SECRET_FILES` source after `init-config`; it must exist before install,
 and `validate`/`install` report a missing file. Results are recomputed
 when the component renders, with no separate persistent derived file, and are
-encoded in the same 0600 YAML. Use `secretKeyRef` for unchanged apps reading a
-complete environment value or a Secret mount for file-aware apps. Environment
+encoded in the same 0600 YAML. Environment
 values remain visible to the service user and root in Podman inspection and
-process environments. See the [schema, example and input restrictions](docs/COMPONENTS.md#secret-templates).
-Within YAML, only Secret templates and ConfigMap `data` accept embedded placeholders; other
+process environments. See the [schema, example and input restrictions](docs/COMPONENTS.md#secret-values-in-environment-and-mounts).
+Within YAML, only ConfigMap `data` accepts embedded placeholders (besides `ENVIRONMENT` and `MOUNTS` files); other
 manifest fields keep whole-value replacement. ConfigMaps accept only ordinary
 string/integer config inputs and refuse `@@secret:...@@`. `validate` never reads Secret contents. Systemd restarts do not
 recompute templates; an install does.
@@ -557,8 +552,7 @@ mode `0600` and private parents. Existing nonempty files are retained; empty
 files and duplicate generation declarations are errors. No values are logged.
 Add new source/generate declarations explicitly to authoritative persistent
 config during ordinary future upgrades; never replace old database passwords.
-Back these files up with the database and other persistent state. See the
-[generated-secret example](examples/generated-secrets/README.md).
+Back these files up with the database and other persistent state.
 
 `GENERATED_SECRETS` and string-only source lists are no longer valid config.
 There is no migration, fallback or automatic rewrite of persistent config.
@@ -789,7 +783,7 @@ through app-specific Secrets; public registration directories still use PVC impo
 flowchart TD
     CONFIG["`Config declares files, delivery and Secret recipes
     SECRET_FILES / VOLUME_FILES sources with optional generate
-    SECRET_TEMPLATES for composed private values`"]
+    ENVIRONMENT and MOUNTS for composed private values`"]
 
     GENERATE["`Deploy creates missing secret files
     32 cryptographically random alphanumeric characters
@@ -821,12 +815,12 @@ flowchart TD
     PostgreSQL: first database initialization
     Python clients: database.py`"]
 
-    TEMPLATE["`SECRET_TEMPLATES composes Identity configuration
+    TEMPLATE["`ENVIRONMENT composes Identity configuration
     Retained password plus DB_* config
     Base64 Secret in existing private YAML`"]
 
     IDENTITY["`Identity reads ConnectionStrings__Default
-    Delivered through secretKeyRef
+    Delivered through envFrom
     Visible in runtime environment inspection`"]
 
     BACKEND["`Backend reads the session key at startup
@@ -1408,10 +1402,8 @@ as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
 
 systemctl is-active is not an individual container health check. Linger must
-keep the rootless timer/user instance alive. The manual
-[VM checklist](examples/VM-CHECKLIST.md) covers policy-based labels and read-only
-restorecon classifications. Local [unit tests](tests/README.md) need no Podman;
-[examples](examples/README.md) exercise real Podman; the
+keep the rootless timer/user instance alive. Local
+[unit tests](tests/README.md) need no Podman; the
 [acceptance harness](acceptance/README.md) tests clean dev-to-offline-prod snapshots,
 registry-only downloads, HTTPS, crash/hang recovery, reboot and upgrades.
 Previous monolithic run-23 passed on 2277a71; component acceptance results must
@@ -1475,14 +1467,15 @@ password is generated once by `generate: [password]` on its `SECRET_FILES` sourc
 and retained as persistent secret state. That same declaration delivers it as
 a Kubernetes Secret. PostgreSQL uses
 that Secret for first initialization, and its client uses the same password.
-Applications requiring a complete connection string can use `SECRET_TEMPLATES`
-and consume the result through `secretKeyRef`, as Identity demonstrates.
+Applications requiring a complete connection string write it as an
+`ENVIRONMENT` line, as Identity demonstrates; a file with the password (SQL, for
+example) is a `MOUNTS` file.
 
 Each database-owning component has `DB_HOST`, `DB_PORT`, `DB_USER` and `DB_NAME`
 in its `config.defaults.yaml`. The port must be quoted text containing an integer
 from 1 through 65535. A top-level dev `DB_PORT` override applies to all database
 components; help can carry that unused value without requiring a database. Server `POSTGRES_USER`, `POSTGRES_DB` and `PGPORT`, and client
-`DB_*` environment values use whole-value placeholders; password placeholders are confined to `SECRET_TEMPLATES`. Complete connection
+`DB_*` environment values use whole-value placeholders; password placeholders are confined to `ENVIRONMENT` and `MOUNTS`. Complete connection
 strings appear only as base64 Secret data in the existing private install YAML.
 
 | Owner | DB host | User / database | Persistent password below component directory | Secret / key | PostgreSQL volume | Client |
@@ -1519,7 +1512,7 @@ shell command substitution, clients remove **only trailing LF bytes**;
 spaces, tabs, dollar signs, semicolons, quotes and equals signs are preserved.
 Embedded LF, CR (including CRLF) and NUL are rejected because initdb's password-file
 interface cannot safely represent multiline credentials consistently. Existing
-files are never rewritten to normalize them. `SECRET_TEMPLATES` instead rejects semicolons, quotes, control characters and
+files are never rewritten to normalize them. `ENVIRONMENT` and `MOUNTS` instead reject semicolons, quotes, control characters and
 leading/trailing whitespace in substituted values; generated passwords satisfy
 this rule. Psycopg receives keyword arguments and retains its broader input support. Passwords are not restricted to the
 new generator's alphanumeric alphabet.

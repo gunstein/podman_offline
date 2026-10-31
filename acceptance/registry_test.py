@@ -283,7 +283,7 @@ def main(base, run):
             raise RuntimeError("Invalid source image ID")
         command(["podman", "tag", SOURCE, image])
         command(["podman", "push", image])
-        for name in (image, SOURCE, "localhost/offline-example:1"):
+        for name in (image, SOURCE):
             if image_exists(name):
                 command(["podman", "image", "rm", name])
         if image_exists(image_id):

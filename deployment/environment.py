@@ -9,7 +9,7 @@ Every value is the text written in the file; YAML does not turn it into a
 number or a boolean. A line without a secret reference becomes data of the
 generated ConfigMap <component>-<container>-env; a line with one becomes a key
 of the generated Secret <component>-<container>-env-secret, composed by an
-ordinary SECRET_TEMPLATES recipe. The platform adds envFrom for both to the
+internal SECRET_TEMPLATES recipe (deployment/templates.py). The platform adds envFrom for both to the
 container.
 
 The recipes exist only in the transient effective config (with_recipes, from
@@ -223,13 +223,7 @@ def with_recipes(config, component):
             secret[key] = value
         if not secret:
             continue
-        name = secret_name(component, container)
-        if name in recipes:
-            raise common.DeployError(
-                f"SECRET_TEMPLATES.{name} is the Secret {where} generates; "
-                "rename the recipe"
-            )
-        recipes[name] = secret
+        recipes[secret_name(component, container)] = secret
     result = dict(config)
     result[common.SECRET_TEMPLATES] = recipes
     return result

@@ -91,7 +91,13 @@ def validate_config(config, path):
                 "components/<id>/config.defaults.yaml; remove it here"
             )
 
-        if key in (common.SECRET_FILES, common.VOLUME_FILES, common.SECRET_TEMPLATES):
+        if key == common.SECRET_TEMPLATES:
+            raise common.DeployError(
+                f"{path}: SECRET_TEMPLATES is not supported; write the secret as "
+                "@@secret:<id>/<key>@@ in ENVIRONMENT or in a MOUNTS file"
+            )
+
+        if key in (common.SECRET_FILES, common.VOLUME_FILES):
             continue  # File groups and generated paths validate their own structures.
 
         if isinstance(value, bool) or not isinstance(value, (str, int)):
@@ -236,12 +242,9 @@ def validate_component_config(config, component, path):
 
 
 def check_templates(config, path, component=None):
-    """Validate recipes without reading credentials.
+    """Validate the ENVIRONMENT/MOUNTS recipes without reading credentials.
 
-    Config validation checks before init-config writes; effective_documents also
-    checks because standalone prepare/install/validate bypass effective_config.
-    Component paths deliberately repeat this declaration-only check rather than
-    carrying a validation flag/cache between independently usable entry points.
+    effective_documents runs it on the effective config, before any write.
     """
     templates.validate(
         with_derived(config, path), secret_keys(config, path, [], component)
@@ -462,10 +465,10 @@ def write_private(path, text):
         f.write(text)
 
 
-def resolve_path(value, base_dir=None):
+def resolve_path(value, base_dir):
     """Resolve a relative path from the config directory; ~ is allowed."""
     path = Path(value).expanduser()
-    return path if path.is_absolute() else (base_dir or common.CONFIG.parent) / path
+    return path if path.is_absolute() else base_dir / path
 
 
 def resolve_file_source(entry, base_dir=None, component=None, root=None):
@@ -980,7 +983,6 @@ def check_component_config_names(config, component, path):
     """Validate every configured Secret/PVC prefix without generating any files."""
     for group, kind in (
         (common.SECRET_FILES, "Secret"),
-        (common.SECRET_TEMPLATES, "Secret"),
         (common.VOLUME_FILES, "PersistentVolumeClaim"),
     ):
         mapping = config.get(group, {})

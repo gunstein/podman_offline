@@ -1,5 +1,0 @@
-HTTPS_PORT: 18080
-VOLUME_FILES:
-  example-run-uploads:
-  - path: files/single.txt
-  - path: files/tree

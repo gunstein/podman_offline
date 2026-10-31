@@ -39,8 +39,9 @@ Step counts and `EVIDENCE.md` were lost when the lab disk filled up and the
 run directories were deleted, so only the result is recorded.
 
 Commits after `7f22375` (demo settings in `ENVIRONMENT`, client id and path
-written once, no shared or per-component dev config file, and later changes)
-have unit and harness tests only.
+written once, no shared or per-component dev config file, `MOUNTS`, no
+standalone mode or `examples/`, no authored `SECRET_TEMPLATES`) have unit and
+harness tests only. The matrix no longer has the `03-example-*` steps.
 
 ## Other scenarios
 

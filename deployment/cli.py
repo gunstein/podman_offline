@@ -110,11 +110,11 @@ def audit_subject(command, args):
 
 
 def journal_product():
-    """The product named by this release; a standalone fixture uses its default."""
+    """The product named by this release or checkout; None writes no journal lines."""
     try:
         return catalog.product_name(common.ROOT)
     except (OSError, common.DeployError, yaml.YAMLError):
-        return common.STANDALONE_PRODUCT
+        return None
 
 
 def run(args):
@@ -139,11 +139,7 @@ def run(args):
     except subprocess.CalledProcessError as error:
         log.error(f"ERROR: {error}")
         if args.command == "install":
-            service = (
-                catalog.unit_name(deploy.bundle_descriptor()["name"]) + ".service"
-                if (common.ROOT / "bundle.yaml").is_file()
-                else common.SERVICE
-            )
+            service = catalog.unit_name(deploy.bundle_descriptor()["name"]) + ".service"
             log.error(
                 f"Troubleshoot: journalctl --user -u {service} and "
                 "/usr/lib/systemd/user-generators/podman-user-generator --dryrun"

@@ -12,13 +12,6 @@ from pathlib import Path
 HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
-MANIFESTS = ROOT / "manifests"
-CONFIG = ROOT / "config.yaml"  # Standalone manifest fixtures only.
-
-# A product declares its name in bundles.yaml (product:); it prefixes units,
-# the shared network and archives. Standalone manifest fixtures have no
-# catalog, so they use this explicit name.
-STANDALONE_PRODUCT = "myproduct"
 
 # quadlet/template.kube and template.network; @@PRODUCT_NAME@@ and @@UNIT_NAME@@ are filled in.
 QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
@@ -29,12 +22,9 @@ QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
 # registrations and the pending-operation record.
 STATE: Path = None  # type: ignore[assignment]
 QUADLET_DIR: Path = None  # type: ignore[assignment]
-QUADLET_TARGET: Path = None  # type: ignore[assignment]
-QUADLET_YAML: Path = None  # type: ignore[assignment]
 # Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
 # start, so they stay in the persistent state directory.
 FILES_DIR: Path = None  # type: ignore[assignment]
-SERVICE = STANDALONE_PRODUCT + ".service"
 
 SECRET_FILES = "SECRET_FILES"
 SECRET_TEMPLATES = "SECRET_TEMPLATES"

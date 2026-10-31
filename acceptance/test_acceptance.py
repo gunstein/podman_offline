@@ -208,8 +208,8 @@ class HarnessTests(unittest.TestCase):
             )
         self.assertFalse(self.harness.report())
 
-    def test_expected_example_validation_error_is_not_false_failure(self):
-        """Confirm that expected negative examples do not give false test failures."""
+    def test_expected_validation_error_is_not_false_failure(self):
+        """Confirm that an expected ERROR line in a passing step is not a failure."""
         process = mock.patch.object(
             runner.subprocess,
             "run",
@@ -219,7 +219,7 @@ class HarnessTests(unittest.TestCase):
         )
         with process:
             self.harness.step(
-                "00", lambda: self.harness.command(["examples/run.sh", "failures"])
+                "00", lambda: self.harness.command(["./deploy.sh", "validate"])
             )
 
     def test_configuration_permissions_and_duplicate_keys(self):
@@ -1137,7 +1137,7 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
         ):
             self.assertIn(step, records)
         self.assertLess(
-            records.index("03-registry-test"), records.index("03-examples-setup")
+            records.index("03-registry-test"), records.index("03-dev-down")
         )
         self.assertLess(
             records.index("06-install-help"), records.index("07-registry-offline")

@@ -667,7 +667,7 @@ ruff check deployment/ operations/ bundle.py tests/ acceptance/ dev/smoke-test.p
 ruff format --check deployment/ operations/ bundle.py tests/ acceptance/ dev/smoke-test.py
 pyright deployment/ operations/ bundle.py tests/ acceptance/ dev/smoke-test.py
 vermin -t=3.6- deployment/ operations/ bundle.py tests/
-shellcheck deploy.sh build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh examples/run.sh PKI/generate.sh
+shellcheck deploy.sh build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh PKI/generate.sh
 git diff --check
 ```
 

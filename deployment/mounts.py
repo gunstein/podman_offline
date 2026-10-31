@@ -14,7 +14,7 @@ is never copied to the operator's config.yaml (render.merge_config).
 The rendered files of one container go into the generated Secret
 <component>-<container>-files, because they may hold a password. The platform
 adds a volume to the container's Pod and mounts each file read-only at its path.
-As with ENVIRONMENT, the Secret is an ordinary SECRET_TEMPLATES recipe that
+As with ENVIRONMENT, the Secret is an internal SECRET_TEMPLATES recipe that
 exists only in the transient effective config (with_recipes), and the volume is
 added to the effective documents (apply) before the usual link checks.
 """
@@ -23,7 +23,7 @@ import posixpath
 
 from . import common, environment, templates
 
-# A container path: absolute, normalized, letters, digits and -._/ only.
+# One part of a container path, and a file name: letters, digits and -._ only.
 SAFE_PATH = common.SECRET_KEY
 
 
@@ -143,13 +143,7 @@ def with_recipes(config, component):
                         + (", ".join(declared) or "none")
                     )
             recipe[posixpath.basename(source)] = text
-        name = secret_name(component, container)
-        if name in recipes:
-            raise common.DeployError(
-                f"SECRET_TEMPLATES.{name} is the Secret MOUNTS.{container} "
-                "generates; rename the recipe"
-            )
-        recipes[name] = recipe
+        recipes[secret_name(component, container)] = recipe
     result = dict(config)
     result[common.SECRET_TEMPLATES] = recipes
     return result

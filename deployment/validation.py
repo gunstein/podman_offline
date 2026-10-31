@@ -25,8 +25,8 @@ def validate():
     """Report every component's first finding; exit non-zero when there is one.
 
     The source checkout validates every catalog component with its dev config,
-    an unpacked bundle its own component against the persistent config and the
-    installed set, and a standalone fixture its manifests against config.yaml.
+    and an unpacked bundle its own component against the persistent config and
+    the installed set.
     Staging uses a temporary directory that is removed. No secret generation,
     rendered output, archives, Podman, systemd or network.
     """
@@ -35,7 +35,9 @@ def validate():
     elif (common.ROOT / "components").is_dir():
         names, findings = validate_catalog()
     else:
-        names, findings = validate_standalone()
+        raise common.DeployError(
+            "Run validate from the source checkout or an unpacked component bundle"
+        )
     if findings:
         raise common.DeployError(
             f"{len(findings)} validation finding(s); nothing was written:\n"
@@ -145,21 +147,6 @@ def validate_bundle():
     except ERRORS as error:
         findings.append((name, str(error)))
     return [name], findings
-
-
-def validate_standalone():
-    """Validate the standalone fixture's manifests against config.yaml, as prepare."""
-    if not common.CONFIG.exists():
-        raise common.DeployError(f"Missing {common.CONFIG}")
-    findings = []
-    try:
-        config = rendering.load_config(common.CONFIG)
-        documents = deploy.validate_component(config, common.CONFIG, common.MANIFESTS)
-        check_images(documents)
-        check_sources(config, common.CONFIG, documents)
-    except ERRORS as error:
-        findings.append(("manifests", str(error)))
-    return ["manifests"], findings
 
 
 def check_images(documents):

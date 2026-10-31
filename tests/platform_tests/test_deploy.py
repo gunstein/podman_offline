@@ -2,8 +2,6 @@
 
 import base64
 import os
-import runpy
-import subprocess
 import sys
 import tarfile
 import tempfile
@@ -12,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from deployment import cli, common, deploy
+from deployment import cli, common
 from deployment import render as rendering
 
 from helpers.deploy_fixture import DeployFixture, document
@@ -23,7 +21,9 @@ class ConfigTests(DeployFixture):
     def test_strings_and_integers_preserve_types(self):
         self.config.update(TEXT="no", NUMBER=42, EMPTY="", ZERO=0, NEGATIVE=-7)
         self.write_config()
-        self.assertEqual(rendering.load_config(common.CONFIG), self.config)
+        self.assertEqual(
+            rendering.load_config(common.ROOT / "config.yaml"), self.config
+        )
 
     def test_rejects_non_scalar_config_values(self):
         for value in (True, False, None, 1.5, [], {}, ["a"], {"a": "b"}):
@@ -33,7 +33,7 @@ class ConfigTests(DeployFixture):
                 with self.assertRaisesRegex(
                     common.DeployError, "VALUE.*string or an integer"
                 ):
-                    rendering.load_config(common.CONFIG)
+                    rendering.load_config(common.ROOT / "config.yaml")
 
     def test_invalid_values_are_not_disclosed(self):
         """Keep secret-bearing invalid config values out of errors and CLI output."""
@@ -47,7 +47,7 @@ class ConfigTests(DeployFixture):
                 self.config = {"HTTPS_PORT": 8443, key: value}
                 self.write_config()
                 with self.assertRaises(common.DeployError) as caught:
-                    rendering.load_config(common.CONFIG)
+                    rendering.load_config(common.ROOT / "config.yaml")
                 self.assertNotIn(private, str(caught.exception))
                 with mock.patch.object(sys, "argv", ["deploy.sh", "prepare"]):
                     self.assertEqual(cli.main(), 1)
@@ -60,7 +60,7 @@ class ConfigTests(DeployFixture):
             with self.subTest(text=text):
                 self.write("config.yaml", text)
                 with self.assertRaisesRegex(common.DeployError, "KEY: value"):
-                    rendering.load_config(common.CONFIG)
+                    rendering.load_config(common.ROOT / "config.yaml")
 
     def test_rejects_non_string_keys(self):
         for key in (12, True, None):
@@ -69,7 +69,7 @@ class ConfigTests(DeployFixture):
                     "config.yaml", yaml.safe_dump({key: "x", "HTTPS_PORT": 8443})
                 )
                 with self.assertRaisesRegex(common.DeployError, "keys.*strings"):
-                    rendering.load_config(common.CONFIG)
+                    rendering.load_config(common.ROOT / "config.yaml")
 
     def test_port_boundaries(self):
         for port in (1, 65535):
@@ -77,7 +77,8 @@ class ConfigTests(DeployFixture):
                 self.config["HTTPS_PORT"] = port
                 self.write_config()
                 self.assertEqual(
-                    rendering.load_config(common.CONFIG)["HTTPS_PORT"], port
+                    rendering.load_config(common.ROOT / "config.yaml")["HTTPS_PORT"],
+                    port,
                 )
 
     def test_invalid_ports_and_missing_port(self):
@@ -86,18 +87,20 @@ class ConfigTests(DeployFixture):
                 self.config["HTTPS_PORT"] = port
                 self.write_config()
                 with self.assertRaisesRegex(common.DeployError, "HTTPS_PORT"):
-                    rendering.load_config(common.CONFIG)
+                    rendering.load_config(common.ROOT / "config.yaml")
         # Only components using it need HTTPS_PORT; their placeholders require it.
         self.config.pop("HTTPS_PORT")
         self.write_config()
-        self.assertNotIn("HTTPS_PORT", rendering.load_config(common.CONFIG))
+        self.assertNotIn(
+            "HTTPS_PORT", rendering.load_config(common.ROOT / "config.yaml")
+        )
 
     def test_duplicate_key_reports_second_line(self):
         self.write(
             "config.yaml", "HTTPS_PORT: 8443\nHOSTNAME: first\nHOSTNAME: second\n"
         )
         with self.assertRaises(yaml.YAMLError) as caught:
-            rendering.load_config(common.CONFIG)
+            rendering.load_config(common.ROOT / "config.yaml")
         self.assertIn("duplicate key 'HOSTNAME'", str(caught.exception))
         self.assertIn("line 3", str(caught.exception))
 
@@ -109,7 +112,7 @@ class ConfigTests(DeployFixture):
         ):
             self.write("config.yaml", text)
             with self.assertRaises(yaml.YAMLError) as caught:
-                rendering.load_config(common.CONFIG)
+                rendering.load_config(common.ROOT / "config.yaml")
             self.assertIn("line", str(caught.exception))
             self.assertNotIn("private-value", str(caught.exception))
 
@@ -119,14 +122,16 @@ class ConfigTests(DeployFixture):
             "HTTPS_PORT: 8443\nSECRET_FILES:\n  a: [{path: one}]\n  a: [{path: two}]\n",
         )
         with self.assertRaisesRegex(yaml.YAMLError, "line 4"):
-            rendering.load_config(common.CONFIG)
+            rendering.load_config(common.ROOT / "config.yaml")
 
     def test_groups_are_validated_separately(self):
         self.config.update(
             SECRET_FILES={"a": [{"path": "one"}]}, VOLUME_FILES={"b": [{"path": "two"}]}
         )
         self.write_config()
-        self.assertEqual(rendering.load_config(common.CONFIG), self.config)
+        self.assertEqual(
+            rendering.load_config(common.ROOT / "config.yaml"), self.config
+        )
 
 
 class ReplaceTests(unittest.TestCase):
@@ -206,7 +211,7 @@ class FileGroupTests(DeployFixture):
         with mock.patch.dict(os.environ, {"HOME": str(path.parent)}):
             groups = self.file_config("SECRET_FILES", {"test": ["~/test.bin"]})
         self.assertEqual(groups["test"], [path])
-        self.assertEqual(rendering.resolve_path(str(path)), path)
+        self.assertEqual(rendering.resolve_path(str(path), self.root), path)
 
     def test_invalid_group_and_entries(self):
         for group in ("SECRET_FILES", "VOLUME_FILES"):
@@ -249,7 +254,9 @@ class FileGroupTests(DeployFixture):
 
     def test_absent_groups(self):
         for group in ("SECRET_FILES", "VOLUME_FILES"):
-            self.assertEqual(rendering.load_file_group(self.config, group), {})
+            self.assertEqual(
+                rendering.load_file_group(self.config, group, self.root), {}
+            )
 
 
 class VolumeTests(DeployFixture):
@@ -459,7 +466,7 @@ class GeneratedSecretTests(DeployFixture):
     def test_prepare_creates_private_alphanumeric_file_without_logging_value(self):
         """Generate 32 characters once and deliver their bytes through SECRET_FILES."""
         path = self.configure_generated()
-        deploy.prepare()
+        text = materialize_and_render()
         value = path.read_bytes()
         self.assertEqual(len(value), 32)
         self.assertTrue(
@@ -475,73 +482,28 @@ class GeneratedSecretTests(DeployFixture):
         output = self.stdout.getvalue() + self.stderr.getvalue()
         self.assertIn(str(path), output)
         self.assertTrue(value.decode("ascii") not in output, "Generated value leaked")
-        docs = list(yaml.safe_load_all((common.BUILD / "install.yaml").read_text()))
+        docs = list(yaml.safe_load_all(text))
         secret = next(doc for doc in docs if doc["kind"] == "Secret")
         self.assertTrue(
             base64.b64decode(secret["data"]["key"]) == value, "Secret bytes differ"
         )
-        deploy.prepare()
+        materialize_and_render()
         self.assertTrue(
             path.read_bytes() == value, "Repeated prepare changed the secret"
         )
         self.process.assert_not_called()
-
-    def test_install_keeps_existing_home_secret_across_releases(self):
-        """Preserve home secrets on repeated install independently of dev/release paths."""
-        self.install_fixture()
-        self.config["VOLUME_FILES"] = {"uploads": [{"path": "files/message.txt"}]}
-        dev_path = self.configure_generated()
-        deploy.prepare()
-        dev_value = dev_path.read_bytes()
-        prod_config = dict(self.config)
-        prod_config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
-        self.write("home/config.yaml", yaml.safe_dump(prod_config))
-        rendering.generate_secrets(self.config, common.STATE)
-        prod_path = common.STATE / "credentials/app/key"
-        before = prod_path.read_bytes()
-        deploy.install()
-        deploy.install()
-        self.assertTrue(
-            prod_path.read_bytes() == before, "Install changed the persistent secret"
-        )
-        self.assertTrue(
-            dev_path.read_bytes() == dev_value, "Install changed the dev secret"
-        )
-        output = self.stdout.getvalue() + self.stderr.getvalue()
-        self.assertTrue(before.decode("ascii") not in output, "Install logged a secret")
-
-    def test_generated_secret_example_renders_and_reuses_its_file(self):
-        """Render the shipped example twice with private values only in temporary files."""
-        example = Path(__file__).resolve().parents[2] / "examples/generated-secrets"
-        self.write(
-            "config.yaml",
-            (example / "config.yaml").read_text() + "POD_NAME: example-run\n",
-        )
-        with mock.patch.object(common, "MANIFESTS", example / "manifests"):
-            first = list(yaml.safe_load_all(materialize_and_render()))
-            path = self.root / "credentials/app/API_TOKEN"
-            before = path.read_bytes()
-            second = list(yaml.safe_load_all(materialize_and_render()))
-        self.assertTrue(path.read_bytes() == before, "Example regenerated its secret")
-        self.assertEqual(self.mode(path), 0o600)
-        self.assertTrue(first == second, "Example render changed its secret")
-        secret = next(doc for doc in first if doc["kind"] == "Secret")
-        self.assertTrue(
-            base64.b64decode(secret["data"]["API_TOKEN"]) == before,
-            "Example Secret changed the bytes",
-        )
 
     def test_empty_or_directory_path_is_not_regenerated(self):
         """Reject empty files and directory targets without replacing them."""
         path = self.configure_generated()
         self.write("credentials/app/key", b"")
         with self.assertRaisesRegex(common.DeployError, "empty"):
-            deploy.prepare()
+            materialize_and_render()
         self.assertEqual(path.stat().st_size, 0)
         path.unlink()
         path.mkdir()
         with self.assertRaisesRegex(common.DeployError, "regular file"):
-            deploy.prepare()
+            materialize_and_render()
         self.assertTrue(path.is_dir())
 
     def test_escaping_paths_and_symlink_parents_are_rejected(self):
@@ -735,7 +697,8 @@ class RenderTests(DeployFixture):
                 with self.assertRaises(common.DeployError) as error:
                     materialize_and_render()
                 self.assertIn(
-                    str(common.MANIFESTS / "42-bad.yaml"), str(error.exception)
+                    str((common.ROOT / "manifests") / "42-bad.yaml"),
+                    str(error.exception),
                 )
                 self.assertIn(message, str(error.exception))
                 self.assertFalse(common.BUILD.exists())
@@ -803,7 +766,7 @@ class RenderTests(DeployFixture):
 
     def test_no_archives_for_unused_id_or_large_secret(self):
         self.volume_fixture()
-        (common.MANIFESTS / "10-pod.yaml").unlink()
+        ((common.ROOT / "manifests") / "10-pod.yaml").unlink()
         with self.assertRaisesRegex(common.DeployError, "not used"):
             materialize_and_render()
         self.assertFalse(common.BUILD.exists())
@@ -840,101 +803,12 @@ class RenderTests(DeployFixture):
         self.assertFalse(common.BUILD.exists())
 
     def test_missing_config(self):
-        common.CONFIG.unlink()
+        (common.ROOT / "config.yaml").unlink()
         with self.assertRaisesRegex(common.DeployError, "Missing"):
             materialize_and_render()
 
 
 class CommandTests(DeployFixture):
-    def test_prepare_writes_private_yaml_and_archives(self):
-        self.volume_fixture()
-        deploy.prepare()
-        output = common.BUILD / "install.yaml"
-        self.assertEqual(self.mode(output), 0o600)
-        self.assertEqual(self.mode(common.BUILD / "files/uploads.tar"), 0o600)
-        docs = list(yaml.safe_load_all(output.read_text()))
-        self.assertEqual(
-            docs[0]["metadata"]["annotations"][common.IMPORT_SOURCE],
-            str(common.BUILD / "files/uploads.tar"),
-        )
-        self.process.assert_not_called()
-        output.chmod(0o666)
-        deploy.prepare()
-        self.assertEqual(self.mode(output), 0o600)
-
-    def test_root_check_precedes_reads_writes_and_commands(self):
-        self.euid.return_value = 0
-        render = self.stack.enter_context(mock.patch.object(rendering, "materialize"))
-        load = self.stack.enter_context(mock.patch.object(rendering, "find_images"))
-        with self.assertRaisesRegex(common.DeployError, "root"):
-            deploy.install()
-        render.assert_not_called()
-        load.assert_not_called()
-        self.process.assert_not_called()
-        self.assertFalse(common.QUADLET_DIR.exists())
-        self.assertFalse(common.FILES_DIR.exists())
-
-    def test_standalone_install_and_validate_write_only_to_home(self):
-        self.install_fixture()
-        self.config["VOLUME_FILES"] = {
-            "uploads": [{"path": str(self.root / "files/message.txt")}]
-        }
-        self.write_config()
-        original_open = Path.open
-        original_mkdir = Path.mkdir
-
-        def readonly_open(path, mode="r", *args, **kwargs):
-            if (
-                self.root in path.parents
-                and common.STATE not in path.parents
-                and path != common.STATE
-                and any(flag in mode for flag in "wax+")
-            ):
-                raise AssertionError("write outside standalone persistent home")
-            return original_open(path, mode, *args, **kwargs)
-
-        def readonly_mkdir(path, *args, **kwargs):
-            if (
-                self.root in path.parents
-                and common.STATE not in path.parents
-                and path != common.STATE
-            ):
-                raise AssertionError("mkdir in standalone release")
-            return original_mkdir(path, *args, **kwargs)
-
-        with mock.patch.object(Path, "open", readonly_open), mock.patch.object(
-            Path, "mkdir", readonly_mkdir
-        ):
-            from deployment import validation
-
-            validation.validate()
-            deploy.install()
-            deploy.install()
-        self.assertTrue(common.QUADLET_YAML.exists())
-
-    def test_install_uses_persistent_config_not_release_config(self):
-        self.install_fixture()
-        self.write("config.yaml", "invalid release config")
-        deploy.install()
-        self.assertIn("localhost/app:1", common.QUADLET_YAML.read_text())
-
-    def test_install_missing_persistent_config_names_expected_path(self):
-        self.install_fixture()
-        path = self.root / "home/config.yaml"
-        path.unlink()
-        with self.assertRaises(common.DeployError) as failure:
-            deploy.install()
-        self.assertIn(str(path), str(failure.exception))
-        self.process.assert_not_called()
-
-    def test_prepare_uses_release_config_even_when_home_config_exists(self):
-        self.volume_fixture()
-        self.write("home/config.yaml", "invalid prod config")
-        with mock.patch.dict(os.environ, {"HOME": str(self.root / "home")}):
-            deploy.prepare()
-        self.assertTrue((common.BUILD / "install.yaml").is_file())
-        self.process.assert_not_called()
-
     def test_separate_config_directory_resolves_secrets_and_volumes(self):
         for directory in ("dev", "home"):
             with self.subTest(directory=directory):
@@ -978,171 +852,6 @@ class CommandTests(DeployFixture):
                     with content:
                         self.assertEqual(content.read(), b"persistent volume")
 
-    def test_paths_follow_user_database_even_when_home_differs(self):
-        home = self.root / "other-service-user"
-        environment = mock.patch.dict(os.environ, {"HOME": str(self.root / "operator")})
-        lookup = mock.patch.object(
-            common.pwd, "getpwuid", return_value=mock.Mock(pw_dir=str(home))
-        )
-        with environment:
-            with lookup as account:
-                module = runpy.run_path(common.__file__, run_name="rootless_paths_test")
-        account.assert_called_once_with(os.getuid())
-        self.assertEqual(module["HOME"], home)
-        # Production paths come only from layout.select(), never from the home.
-        for name in ("STATE", "QUADLET_DIR", "QUADLET_YAML", "FILES_DIR"):
-            self.assertIsNone(module[name])
-
-    def test_install_rejects_mismatched_home_before_any_action(self):
-        self.install_fixture()
-        operator = self.root / "operator"
-        environment = mock.patch.dict(os.environ, {"HOME": str(operator)})
-        renderer = mock.patch.object(rendering, "materialize")
-        with environment:
-            with renderer as render:
-                with self.assertRaisesRegex(
-                    common.DeployError, "HOME=.*differs.*user database"
-                ) as failure:
-                    deploy.install()
-                render.assert_not_called()
-        self.assertIn(str(common.HOME), str(failure.exception))
-        self.process.assert_not_called()
-        self.assertFalse(common.QUADLET_DIR.exists())
-        self.assertFalse(common.FILES_DIR.exists())
-
-    def test_install_accepts_absent_home_using_user_database(self):
-        self.install_fixture()
-        os.environ.pop("HOME", None)
-        deploy.install()
-        self.assertTrue(common.QUADLET_YAML.is_file())
-
-    def test_runtime_fallback_reaches_subprocesses(self):
-        self.install_fixture()
-        os.environ.pop("XDG_RUNTIME_DIR", None)
-        original = Path.is_dir
-        seen = []
-
-        def is_dir(path):
-            return True if path == Path("/run/user/1000") else original(path)
-
-        def command(*args, **kwargs):
-            seen.append(os.environ.get("XDG_RUNTIME_DIR"))
-
-        self.process.side_effect = command
-        with mock.patch.object(Path, "is_dir", is_dir):
-            deploy.install()
-        self.assertEqual(seen, ["/run/user/1000"] * 7)
-
-    def test_existing_runtime_is_preserved(self):
-        self.install_fixture()
-        runtime = os.environ["XDG_RUNTIME_DIR"]
-        self.process.side_effect = lambda *a, **k: self.assertEqual(
-            os.environ["XDG_RUNTIME_DIR"], runtime
-        )
-        deploy.install()
-
-    def test_missing_runtime_stops_before_render_and_commands(self):
-        os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
-        directory = mock.patch.object(Path, "is_dir", return_value=False)
-        renderer = mock.patch.object(rendering, "materialize")
-        with directory:
-            with renderer as render:
-                with self.assertRaisesRegex(
-                    common.DeployError, "runtime directory.*linger"
-                ):
-                    deploy.install()
-                render.assert_not_called()
-        self.process.assert_not_called()
-        self.assertFalse(common.QUADLET_DIR.exists())
-
-    def test_foreign_runtime_is_rejected_before_any_action(self):
-        for configured in (
-            "/run/user/0",
-            "/run/user/2000",
-            "",
-            str(self.root / "runtime"),
-        ):
-            with self.subTest(runtime=configured):
-                os.environ["XDG_RUNTIME_DIR"] = configured
-                renderer = mock.patch.object(rendering, "materialize")
-                with renderer as render:
-                    with self.assertRaisesRegex(
-                        common.DeployError, "XDG_RUNTIME_DIR=.*expected /run/user/1000"
-                    ) as error:
-                        deploy.install()
-                    self.assertIn(repr(configured), str(error.exception))
-                    render.assert_not_called()
-                self.process.assert_not_called()
-
-    def test_install_order_files_and_permissions(self):
-        self.install_fixture()
-        events = []
-
-        def command(args, check):
-            self.assertTrue(check)
-            events.append(args)
-            if args[0] == "podman" and args[1] in ("load", "image"):
-                self.assertFalse((common.FILES_DIR / "uploads.tar").exists())
-                self.assertFalse(common.QUADLET_YAML.exists())
-            if args[0] == "systemctl":
-                self.assertTrue((common.FILES_DIR / "uploads.tar").exists())
-                self.assertTrue(common.QUADLET_YAML.exists())
-                # The standalone fixture fills the templates with its explicit name.
-                self.assertEqual(
-                    common.QUADLET_TARGET.with_suffix(".network").read_text(),
-                    "[Network]\nNetworkName=myproduct\n",
-                )
-                self.assertEqual(
-                    common.QUADLET_TARGET.read_text(), "[Kube]\nYaml=myproduct.yaml\n"
-                )
-
-        self.process.side_effect = command
-        deploy.install()
-        self.assertEqual(
-            events,
-            [
-                ["podman", "load", "-i", str(self.root / "images/images.tar")],
-                ["podman", "image", "exists", "localhost/app:1"],
-                ["podman", "image", "exists", "localhost/init:1"],
-                ["systemctl", "--user", "daemon-reload"],
-                ["systemctl", "--user", "restart", "myproduct.service"],
-                ["systemctl", "--user", "is-active", "--quiet", "myproduct.service"],
-                ["podman", "ps", "--all", "--pod"],
-            ],
-        )
-        for path, mode in (
-            (common.QUADLET_YAML, 0o600),
-            (common.QUADLET_TARGET, 0o644),
-            (common.QUADLET_TARGET.with_suffix(".network"), 0o644),
-            (common.FILES_DIR, 0o700),
-            (common.FILES_DIR / "uploads.tar", 0o600),
-        ):
-            self.assertEqual(self.mode(path), mode)
-        docs = list(yaml.safe_load_all(common.QUADLET_YAML.read_text()))
-        self.assertEqual(
-            docs[0]["metadata"]["annotations"][common.IMPORT_SOURCE],
-            str(common.FILES_DIR / "uploads.tar"),
-        )
-
-    def test_command_failure_returns_one_with_hints_and_stops(self):
-        self.install_fixture()
-        for failing in (0, 3, 4, 5, 6):
-            with self.subTest(failing=failing):
-                self.process.reset_mock()
-                self.process.side_effect = [None] * failing + [
-                    subprocess.CalledProcessError(1, "test-command")
-                ]
-                self.stderr.seek(0)
-                self.stderr.truncate()
-                with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
-                    self.assertEqual(cli.main(), 1)
-                self.assertEqual(self.process.call_count, failing + 1)
-                self.assertIn(
-                    "journalctl --user -u myproduct.service", self.stderr.getvalue()
-                )
-                self.assertIn("podman-user-generator --dryrun", self.stderr.getvalue())
-                self.assertNotIn("Traceback", self.stderr.getvalue())
-
     def test_invalid_arguments_return_two_without_side_effects(self):
         for args in ([], ["unknown"], ["prepare", "extra"], ["install", "prepare"]):
             argv = mock.patch.object(cli.sys, "argv", ["deploy.sh"] + args)
@@ -1151,86 +860,6 @@ class CommandTests(DeployFixture):
                     self.assertEqual(cli.main(), 2)
         self.process.assert_not_called()
         self.assertFalse(common.BUILD.exists())
-
-    def test_prepare_success_and_validation_failure_exit_codes(self):
-        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "prepare"]):
-            self.assertEqual(cli.main(), 0)
-            self.write("config.yaml", "HTTPS_PORT: invalid")
-            self.assertEqual(cli.main(), 1)
-        self.assertIn("ERROR:", self.stderr.getvalue())
-
-    def test_missing_archive_stops_before_quadlet(self):
-        self.install_fixture()
-        (self.root / "images/images.tar").unlink()
-        with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
-            self.assertEqual(cli.main(), 1)
-        self.assertIn("Missing image archive", self.stderr.getvalue())
-        self.assertIn("images.tar", self.stderr.getvalue())
-        self.process.assert_not_called()
-        self.assertFalse(common.QUADLET_DIR.exists())
-
-    def test_missing_image_stops_before_quadlet_and_names_image(self):
-        self.install_fixture()
-        for failing, image in ((1, "localhost/app:1"), (2, "localhost/init:1")):
-            with self.subTest(image=image):
-                self.process.reset_mock()
-                self.process.side_effect = [None] * failing + [
-                    subprocess.CalledProcessError(
-                        1, ["podman", "image", "exists", image]
-                    )
-                ]
-                self.stderr.seek(0)
-                self.stderr.truncate()
-                with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
-                    self.assertEqual(cli.main(), 1)
-                self.assertIn("ERROR:", self.stderr.getvalue())
-                self.assertIn(image, self.stderr.getvalue())
-                self.assertNotIn("Traceback", self.stderr.getvalue())
-                self.assertEqual(self.process.call_count, failing + 1)
-                self.assertFalse(common.QUADLET_DIR.exists())
-
-    def test_failed_image_check_preserves_existing_quadlet_files(self):
-        self.install_fixture()
-        common.QUADLET_DIR.mkdir(parents=True)
-        common.QUADLET_YAML.write_text("old yaml")
-        common.QUADLET_TARGET.write_text("old kube")
-        self.process.side_effect = [None, subprocess.CalledProcessError(125, "exists")]
-        with self.assertRaisesRegex(common.DeployError, "localhost/app:1.*exit 125"):
-            deploy.install()
-        self.assertEqual(common.QUADLET_YAML.read_text(), "old yaml")
-        self.assertEqual(common.QUADLET_TARGET.read_text(), "old kube")
-
-    def test_failed_image_operations_preserve_existing_archives(self):
-        self.install_fixture()
-        archive = common.FILES_DIR / "uploads.tar"
-        archive.parent.mkdir(parents=True)
-        archive.write_bytes(b"previous archive")
-        for failing in (0, 1, 2):
-            with self.subTest(failing=failing):
-                self.process.side_effect = [None] * failing + [
-                    subprocess.CalledProcessError(1, "podman")
-                ]
-                with mock.patch.object(cli.sys, "argv", ["deploy.sh", "install"]):
-                    self.assertEqual(cli.main(), 1)
-                self.assertEqual(archive.read_bytes(), b"previous archive")
-                self.assertFalse(common.QUADLET_DIR.exists())
-        (self.root / "images/images.tar").unlink()
-        with self.assertRaisesRegex(common.DeployError, "Missing image archive"):
-            deploy.install()
-        self.assertEqual(archive.read_bytes(), b"previous archive")
-
-    def test_install_validates_rendered_image_names(self):
-        self.install_fixture()
-        for image in ("postgres:16", "team/app:1"):
-            with self.subTest(image=image):
-                self.config["APP_IMAGE"] = image
-                self.write_config()
-                self.process.reset_mock()
-                with self.assertRaisesRegex(common.DeployError, "fully qualified"):
-                    deploy.install()
-                # Decided from the effective manifest: before load or generation.
-                self.process.assert_not_called()
-                self.assertFalse(common.QUADLET_DIR.exists())
 
 
 class ImageTests(unittest.TestCase):
@@ -1352,25 +981,6 @@ class ImageTests(unittest.TestCase):
                     )
         with self.assertRaisesRegex(common.DeployError, "entries must be maps"):
             rendering.find_images([{"kind": "Pod", "spec": {"containers": ["x"]}}])
-
-
-class ExampleFailureTests(unittest.TestCase):
-    def test_failure_examples_still_fail_for_their_documented_reason(self):
-        """Run the lab's failures example; it needs no Podman, so drift shows here."""
-        root = Path(__file__).resolve().parents[2]
-        with tempfile.TemporaryDirectory() as directory:
-            result = subprocess.run(
-                ["bash", str(root / "examples/run.sh"), "failures"],
-                env=dict(os.environ, TMPDIR=directory),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 0, result.stdout)
-        for case in sorted((root / "examples/failures").iterdir()):
-            if case.is_dir():
-                self.assertIn("PASS: " + case.name + "\n", result.stdout)
 
 
 if __name__ == "__main__":

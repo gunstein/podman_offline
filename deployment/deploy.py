@@ -321,7 +321,7 @@ def check_manifests(
 ):
     """Validate the component, then check database volumes; no writes.
 
-    Every path (install, prepare, standalone) runs this before generating any
+    Every path (install, prepare) runs this before generating any
     secret: declarations are validated before any Podman command. Production
     install has already checked the user-manager environment at this point.
     """
@@ -430,28 +430,15 @@ def prepare_components():
 
 def prepare():
     """Write validated dev YAML and import archives without running Podman."""
-    if (common.ROOT / "components").is_dir():
-        if (common.ROOT / "bundle.yaml").exists():
-            raise common.DeployError(
-                "Run prepare from the source checkout; production bundles use persistent config with install"
-            )
-        prepare_components()
-        return
-    prepare_standalone()
-
-
-def prepare_standalone():
-    """Render the explicit root-config fixture used by standalone examples/tests."""
-    output = common.BUILD / "install.yaml"
-    if not common.CONFIG.exists():
-        raise common.DeployError(f"Missing {common.CONFIG}")
-    config = rendering.load_config(common.CONFIG)
-    documents = check_manifests(config, common.CONFIG, common.MANIFESTS)
-    files = common.BUILD / "files"
-    text, volumes = rendering.materialize(config, common.CONFIG, documents, files)
-    rendering.write_file_archives(volumes, files)
-    rendering.write_private(output, text)
-    log.info(f"[OK] {output}")
+    if not (common.ROOT / "components").is_dir():
+        raise common.DeployError(
+            "Run prepare from the source checkout; it has components/ and bundles.yaml"
+        )
+    if (common.ROOT / "bundle.yaml").exists():
+        raise common.DeployError(
+            "Run prepare from the source checkout; production bundles use persistent config with install"
+        )
+    prepare_components()
 
 
 def run(*args):
@@ -519,80 +506,6 @@ def production_environment():
         )
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
     layout.check_user_manager(root)
-
-
-def install_standalone():
-    """Install a release without components/: one manifests/ folder, one service.
-
-    install() calls this for a release that has neither bundle.yaml nor
-    components/, such as a fixture under examples/ (examples/VM-CHECKLIST.md).
-    It reads config.yaml in the state directory (common.STATE) and the
-    release's manifests/ and images/images.tar, in this order:
-
-    1. service_user() selects installation paths, check_quadlet_templates()
-       validates both templates, then production_environment() checks runtime
-       and the user manager. STATE/config.yaml must exist.
-    2. check_manifests(): kinds, placeholders, pull policy, mounts and links
-       of the effective manifests, then the database preflight; images.tar
-       must exist and every container needs a fully qualified image.
-    3. rendering.materialize(): may generate allowed missing secrets and
-       renders the YAML once; no other files are written yet.
-    4. podman load of images.tar, then podman image exists for every image.
-    5. Only then the import archives in files/, so a failed image check never
-       leaves new imports beside the old YAML.
-    6. The Quadlet .yaml, .kube and .network, then daemon-reload, restart and
-       is-active for the single service, and podman ps.
-
-    It uses no catalog, metadata, registrations, pending record or markers.
-    It raises DeployError for a missing config, invalid manifests, a database
-    preflight finding, a missing images.tar or an image the archive did not
-    provide; a failing systemctl or podman command raises CalledProcessError.
-    """
-    service_user()
-    quadlets = check_quadlet_templates()
-    production_environment()
-    config_path = common.STATE / "config.yaml"
-    if not config_path.exists():
-        raise common.DeployError(f"Missing {config_path}")
-    config = rendering.load_config(config_path)
-    documents = check_manifests(config, config_path, common.MANIFESTS)
-    archive = image_archive()
-    rendering.find_images(documents)
-    text, volumes = rendering.materialize(
-        config, config_path, documents, common.FILES_DIR
-    )
-    run("podman", "load", "-i", archive)
-    for image in rendering.find_images(yaml.safe_load_all(text)):
-        try:
-            run("podman", "image", "exists", image)
-        except subprocess.CalledProcessError as error:
-            raise common.DeployError(
-                f"Image {image} is not available after podman load "
-                f"(podman image exists returned exit {error.returncode})"
-            ) from None
-
-    # Old YAML must not import new files after a failed image check.
-    rendering.write_file_archives(volumes, common.FILES_DIR)
-
-    common.QUADLET_DIR.mkdir(parents=True, exist_ok=True)
-    rendering.write_private(common.QUADLET_YAML, text)
-    for suffix in (".kube", ".network"):
-        target = common.QUADLET_TARGET.with_suffix(suffix)
-        target.write_text(
-            quadlets[suffix],
-            encoding="utf-8",
-        )
-        target.chmod(0o644)
-
-    run("systemctl", "--user", "daemon-reload")
-    run("systemctl", "--user", "restart", common.SERVICE)
-    run("systemctl", "--user", "is-active", "--quiet", common.SERVICE)
-    health.wait_healthy(common.SERVICE, common.QUADLET_YAML)
-    run("podman", "ps", "--all", "--pod")
-
-    log.info(
-        f"[OK] {common.SERVICE} is running. Check that the containers above are 'Up'."
-    )
 
 
 def bundle_descriptor():
@@ -694,10 +607,10 @@ def quadlet_text(suffix, product, name):
     return templates.substitute(text, resolve, str(path))
 
 
-def check_quadlet_templates(component=None):
+def check_quadlet_templates(component):
     """Validate both release templates without config, credentials or host queries."""
     product = catalog.product_name(common.ROOT)
-    name = catalog.unit_name(component) if component is not None else product
+    name = catalog.unit_name(component)
     return {
         suffix: quadlet_text(suffix, product, name) for suffix in (".kube", ".network")
     }
@@ -1036,15 +949,12 @@ def install_components():
 
 
 def install():
-    """Install the selected component bundle or a standalone manifest fixture."""
-    if (common.ROOT / "bundle.yaml").exists():
-        install_components()
-    elif (common.ROOT / "components").is_dir():
+    """Install the component of this unpacked bundle."""
+    if not (common.ROOT / "bundle.yaml").exists():
         raise common.DeployError(
             "Run install from an unpacked component bundle, not the source checkout"
         )
-    else:
-        install_standalone()
+    install_components()
 
 
 def uninstall_plan(component, delete_data, installed, product):

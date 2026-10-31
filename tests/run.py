@@ -23,7 +23,7 @@ def export_platform(target):
     (target / "docs").mkdir()
     for name in ("PRODUCTION-INSTALL.md", "PFX-CREDENTIALS.md"):
         shutil.copy2(str(ROOT / "docs" / name), str(target / "docs" / name))
-    for name in ("deployment", "scripts", "quadlet", "examples"):
+    for name in ("deployment", "scripts", "quadlet"):
         shutil.copytree(
             str(ROOT / name),
             str(target / name),

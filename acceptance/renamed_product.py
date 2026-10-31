@@ -111,21 +111,9 @@ def rename_env(values):
 def rename_defaults(config):
     """Rename prefixed file-source IDs and the database host."""
     result = dict(config)
-    for group in ("SECRET_FILES", "VOLUME_FILES", "SECRET_TEMPLATES"):
+    for group in ("SECRET_FILES", "VOLUME_FILES"):
         if group in result:
             result[group] = {rename(key): value for key, value in result[group].items()}
-    if "SECRET_TEMPLATES" in result:
-        result["SECRET_TEMPLATES"] = {
-            name: {
-                key: re.sub(
-                    r"@@secret:([^/]+)/",
-                    lambda match: "@@secret:" + rename(match[1]) + "/",
-                    text,
-                )
-                for key, text in values.items()
-            }
-            for name, values in result["SECRET_TEMPLATES"].items()
-        }
     if "ENVIRONMENT" in result:
         result["ENVIRONMENT"] = {
             container: rename_env(values)
