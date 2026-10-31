@@ -48,7 +48,12 @@ The first real run, `whoami-ff53717` (2026-10-31), was NOT CLEAN at
 logged in over `127.0.0.1`, which the postgres image's `pg_hba.conf` trusts
 (initdb's default), so no password was checked. The check now connects to the
 container's own address (`scram-sha-256`); verified against a local
-`postgres:17.11` container, lab rerun outstanding.
+`postgres:17.11` container. The rerun `whoami-64a2c65` is CLEAN PASS (46
+steps). `c77d-normal-64a2c65` was then NOT CLEAN at `03-registry-test`:
+"Missing component catalog …/registry-fixture/bundles.yaml". Another harness
+defect: the registry fixture still used the removed standalone layout. It is
+now a one-component catalog product (`myproduct-registry-0.0.0`); a test runs
+the copied `bundle.py` on it. Lab rerun outstanding.
 
 ## Other scenarios
 

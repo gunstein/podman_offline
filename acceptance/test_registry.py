@@ -249,7 +249,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_negative_bundle_checks_name_login_hint_and_no_fallback(self):
         """Reject a generic exit-1 error or any successful-save/build fallback."""
-        (self.root / "manifests").mkdir()
+        (self.root / registry.MANIFEST.parent).mkdir(parents=True)
         image = "registry.example.test/app:1"
         log = self.root / "operations.txt"
 
@@ -312,7 +312,7 @@ class RegistryTests(unittest.TestCase):
                 return "2026-10-13T10:00:00Z\n", ""
             elif args == ["python3", "bundle.py"]:
                 assert cwd is not None and env is not None
-                image = yaml.safe_load((cwd / "manifests/app.yaml").read_text())[
+                image = yaml.safe_load((cwd / registry.MANIFEST).read_text())[
                     "spec"
                 ]["containers"][0]["image"]
                 log = Path(env["REGISTRY_COMMAND_LOG"])
@@ -322,7 +322,7 @@ class RegistryTests(unittest.TestCase):
                     return "", "ERROR: Cannot pull " + image + "; check podman login\n"
                 cache.add(image)
                 log.write_text("pull\nsave\n")
-                path = cwd / "build/bundle/myproduct-0.0.0/images"
+                path = cwd / "build/bundle" / registry.RELEASE / "images"
                 path.mkdir(parents=True)
                 (path / "images.txt").write_text(image + "\n")
             elif args == ["bash", "dev/pull-images.sh"]:
@@ -380,6 +380,35 @@ class RegistryTests(unittest.TestCase):
         """Refuse an existing certificate directory without touching the user's certificate."""
         _, certificate = self.run_fixture(existing_certificate=True)
         self.assertEqual((certificate / "ca.crt").read_text(), "existing certificate")
+
+    def test_fixture_is_a_catalog_product_the_real_tooling_accepts(self):
+        """The copied bundle.py finds the image through the fixture's own catalog."""
+        image = "127.0.0.1:17000/acceptance/busybox:1.37.0"
+        fixture = registry.create_fixture(self.root)
+        registry.write_manifest(fixture, image)
+        result = subprocess.run(
+            [
+                "python3",
+                "-B",
+                "-c",
+                "import bundle, json; print(json.dumps(bundle.manifest_images()))",
+            ],
+            cwd=str(fixture),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [image])
+        # The controller and PROD expect the archive bundle.py names.
+        root = Path(registry.__file__).parent
+        self.assertIn(
+            '"' + registry.RELEASE + '-offline.tar.gz"',
+            (root / "acceptance.py").read_text(),
+        )
+        self.assertIn(
+            "release=" + registry.RELEASE + "\n", (root / "remote.sh").read_text()
+        )
 
 
 if __name__ == "__main__":

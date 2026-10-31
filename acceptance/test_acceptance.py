@@ -1267,10 +1267,10 @@ done
                 elif failure == "missing-image":
                     del files["images/images.tar"]
                 files["checksums.sha256"] = checksums.encode()
-                archive = registry / "myproduct-0.0.0-offline.tar.gz"
+                archive = registry / "myproduct-registry-0.0.0-offline.tar.gz"
                 with tarfile.open(str(archive), "w:gz") as output:
                     for name, value in files.items():
-                        member = tarfile.TarInfo("myproduct-0.0.0/" + name)
+                        member = tarfile.TarInfo("myproduct-registry-0.0.0/" + name)
                         member.size = len(value)
                         output.addfile(member, io.BytesIO(value))
                 archive.with_name(archive.name + ".sha256").write_text(
@@ -1306,9 +1306,11 @@ as_product() {
                         "checksums verified from archive streams", result.stdout
                     )
                     self.assertTrue(
-                        (registry / "myproduct-0.0.0/images/images.tar").is_file()
+                        (registry / "myproduct-registry-0.0.0/images/images.tar").is_file()
                     )
-                    self.assertFalse((registry / "myproduct-0.0.0/scripts").exists())
+                    self.assertFalse(
+                        (registry / "myproduct-registry-0.0.0/scripts").exists()
+                    )
 
     def test_launcher_denial_stops_before_markers_hang_or_reboot(self):
         """Stop immediately at the first pre-reboot launcher audit failure."""

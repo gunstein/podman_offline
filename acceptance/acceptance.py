@@ -475,7 +475,8 @@ class Run:
         folder = self.folder / "registry"
         folder.mkdir(mode=0o700)
         self.ssh("PROD", "mkdir -p " + shlex.quote(base + "/registry"))
-        archive = "myproduct-0.0.0-offline.tar.gz"  # Standalone fixture name.
+        # acceptance/registry_test.py RELEASE: the one-component fixture bundle.
+        archive = "myproduct-registry-0.0.0-offline.tar.gz"
         for suffix in ("", ".sha256"):
             local = folder / (archive + suffix)
             self.command(

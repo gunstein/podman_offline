@@ -1681,19 +1681,21 @@ publish-release)
     cat "$base/version-$bundle"
     ;;
 registry-offline)
+    # acceptance/registry_test.py RELEASE: the one-component fixture's bundle root.
+    release=myproduct-registry-0.0.0
     cd "$base/registry"
-    sha256sum -c myproduct-0.0.0-offline.tar.gz.sha256
+    sha256sum -c "$release-offline.tar.gz.sha256"
     # Even an unprivileged checksum reader cannot open untrusted Python under
     # fapolicyd. Verify every member from compressed archive streams instead.
-    python3 - myproduct-0.0.0-offline.tar.gz <<'REGISTRY_CHECKSUMS'
+    python3 - "$release" <<'REGISTRY_CHECKSUMS'
 import hashlib
 from pathlib import PurePosixPath
 import re
 import sys
 import tarfile
 
-root = "myproduct-0.0.0"
-with tarfile.open(sys.argv[1], "r:gz") as archive:
+root = sys.argv[1]
+with tarfile.open(root + "-offline.tar.gz", "r:gz") as archive:
     members = archive.getmembers()
     names = [member.name for member in members]
     if len(names) != len(set(names)) or any(
@@ -1725,10 +1727,10 @@ with tarfile.open(sys.argv[1], "r:gz") as archive:
 print("PASS: complete registry fixture checksums verified from archive streams")
 REGISTRY_CHECKSUMS
     # This fixture consumes only images; never extract or execute its Python.
-    tar xzf myproduct-0.0.0-offline.tar.gz -- \
-        myproduct-0.0.0/images/images.tar myproduct-0.0.0/images/images.txt
-    as_product podman load -i /dev/stdin < myproduct-0.0.0/images/images.tar
-    image=$(cat myproduct-0.0.0/images/images.txt)
+    tar xzf "$release-offline.tar.gz" -- \
+        "$release/images/images.tar" "$release/images/images.txt"
+    as_product podman load -i /dev/stdin < "$release/images/images.tar"
+    image=$(cat "$release/images/images.txt")
     [[ $image =~ ^127\.0\.0\.1:[0-9]+/acceptance/busybox:1\.37\.0$ ]]
     as_product podman image exists "$image"
     as_product podman images --format '{{.Repository}}:{{.Tag}}'

@@ -18,6 +18,11 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = "docker.io/library/busybox:1.37.0"
 SERVER = "docker.io/library/registry:3.0.0"
+# The fixture is a one-component catalog product; its bundle root and archive
+# name follow <product>-<component>-<version> (bundle.py).
+COMPONENT = "registry"
+RELEASE = "myproduct-" + COMPONENT + "-0.0.0"
+MANIFEST = Path("components", COMPONENT, "manifests", "app.yaml")
 # Distribution's HTTP handler emits Combined access records even with a JSON app logger.
 COMBINED_ACCESS = re.compile(
     r"\S+ - \S+ \[[0-9]{2}/[A-Za-z]{3}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}\] "
@@ -67,7 +72,7 @@ def image_exists(image):
 
 def write_manifest(fixture, image):
     """Write an offline Pod fixture with one exact registry image reference."""
-    (fixture / "manifests/app.yaml").write_text(
+    (fixture / MANIFEST).write_text(
         yaml.safe_dump(
             {
                 "apiVersion": "v1",
@@ -170,11 +175,11 @@ def negative_bundle(fixture, image, env, log, label):
     print(f"PASS: expected {label} failure; no save/build fallback")
 
 
-def main(base, run):
-    """Seed a loopback TLS registry, test uncached/cached pulls and retain only public bundle evidence."""
+def create_fixture(base):
+    """Copy the product tooling and declare the one-component catalog product."""
     fixture = base / "registry-fixture"
     fixture.mkdir(mode=0o700)
-    (fixture / "manifests").mkdir()
+    (fixture / MANIFEST.parent).mkdir(parents=True)
     (fixture / "dev").mkdir()
     for name in (
         "deploy.sh",
@@ -186,8 +191,16 @@ def main(base, run):
         shutil.copy2(ROOT / name, fixture / name)
     for name in ("deployment", "scripts", "quadlet"):
         shutil.copytree(ROOT / name, fixture / name)
-    (fixture / "VERSION").write_text("0.0.0\n")
-    (fixture / "config.defaults.yaml").write_text("HTTPS_PORT: 8443\n")
+    (fixture / "bundles.yaml").write_text(
+        yaml.safe_dump({"product": "myproduct", "components": [COMPONENT]})
+    )
+    (fixture / MANIFEST.parent.parent / "VERSION").write_text("0.0.0\n")
+    return fixture
+
+
+def main(base, run):
+    """Seed a loopback TLS registry, test uncached/cached pulls and retain only public bundle evidence."""
+    fixture = create_fixture(base)
     private = Path(
         tempfile.mkdtemp(prefix="registry-test-", dir=os.environ["XDG_RUNTIME_DIR"])
     )
@@ -315,7 +328,7 @@ def main(base, run):
         check_operations(log, ["pull", "save"])
         registry_requests(container, since.strip())
         image_names = (
-            fixture / "build/bundle/myproduct-0.0.0/images/images.txt"
+            fixture / "build/bundle" / RELEASE / "images/images.txt"
         ).read_text()
         if image_names != image + "\n" or not image_exists(image):
             raise RuntimeError("Registry name not preserved after download/save")
