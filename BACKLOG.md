@@ -281,8 +281,10 @@ product owner the same day; item 76 is complete; the specification's second
 independent check (2026-10-30, two blocking and five minor findings) is
 corrected in the specification. Implemented 2026-10-30 with product/unit and
 harness tests ([change, evidence and lab check](acceptance/COMPONENT-MODEL-77.md)).
-Verified on real Podman/systemd 2026-10-30: six scenarios CLEAN PASS on
-`0459e5a`; `--renamed-product` CLEAN PASS on `6210670` after a harness fix.**
+The first implementation is verified on real Podman/systemd 2026-10-30: six
+scenarios CLEAN PASS on `0459e5a`; `--renamed-product` CLEAN PASS on `6210670`
+after a harness fix. The product owner's later changes below (2026-10-30 and
+2026-10-31) have product/unit and harness tests; their lab run is outstanding.**
 
 **Decision (product owner, 2026-10-30, after review of the first
 implementation):** config must be in as few files as possible and easy to
