@@ -3,9 +3,7 @@ gateway: platform
 identity: identity
 components:
   platform:
-    upgrade: newer-only
   identity:
-    upgrade: newer-only
   app1:
   app2:
   help:

@@ -39,8 +39,7 @@ class ProxyTests(unittest.TestCase):
         routes.mkdir()
         (routes / "installed.conf").write_text("")
         config = rendering.merge_config(
-            REPO / "config/common.defaults.yaml",
-            REPO / "components/platform/config.defaults.yaml",
+            REPO / "components/platform/config.defaults.yaml"
         )
         path = base / "config.yaml"
         path.write_text(yaml.safe_dump(config))

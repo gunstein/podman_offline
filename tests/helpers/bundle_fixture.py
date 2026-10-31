@@ -86,8 +86,7 @@ class BundleFixture(unittest.TestCase):
     def write_component_catalog(self):
         """Write the demo graph without registrations: no route/client files."""
         catalog = {
-            name: {key: DEMO[name][key] for key in ("requires", "upgrade")}
-            for name in DEMO_COMPONENTS
+            name: {"requires": DEMO[name]["requires"]} for name in DEMO_COMPONENTS
         }
         self.write(
             "bundles.yaml",

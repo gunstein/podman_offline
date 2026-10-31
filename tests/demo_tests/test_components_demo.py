@@ -10,6 +10,7 @@ from deployment import render as rendering
 
 from demo_tests.demo_fixture import (
     DEMO_COMPONENTS,
+    DEMO_PUBLIC,
     write_secret_fixtures,
 )
 from helpers.component_fixture import ComponentFixture
@@ -64,8 +65,8 @@ class DemoComponentTests(ComponentFixture):
         )
         for component in DEMO_COMPONENTS:
             config = rendering.merge_config(
-                repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",
+                overrides=DEMO_PUBLIC,
             )
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for entries in config.get(group, {}).values():

@@ -118,21 +118,28 @@ placeholder, another component's secret, a leftover `env/` directory).
 (`accounts` is identity; `ledger` and `reports` declare `<api>-api-secret` and
 accounts names it on its `ApiResources__<n>__ApiSecrets__0__Value` lines)
 through dev `prepare`, `validate`, bundle build, production install, rotation,
-a release built without the identity line, a `newer-only` API that is not
-re-rendered, and uninstall. It checks the raw values on both sides, the
+a release built without the identity line, and uninstall. It checks the raw
+values on both sides, the
 descriptor mapping, private registrations, restart order (API, then owner),
 refusals before any write (foreign use, duplicate/partial lines, unowned
 secrets, a removed `api.yaml`, an API that does not declare the named secret
 or key, an API the installed Identity does not list, an Identity release that
 drops an installed API, a changed skipped mapping), a moved `<n>`, and that no
 value reaches output or errors. Review regressions: an interrupted owner YAML
-rewrite keeps the old file and a fresh-process retry finishes; a non-rendering
-retry of another version's pending install is refused; `validate` never opens
+rewrite keeps the old file and a fresh-process retry finishes; `validate` never opens
 a registered or source `value`; a secret with a trailing newline is refused in
 dev and production before any write. `demo_tests/test_whoami_demo.py` checks
 that app3's and Identity's `ENVIRONMENT` lines, names and scopes agree and that
 the demo Identity hashes the value. Podman is stubbed; real sign-in and
 introspection is `dev/whoami-smoke-test.py`.
+
+`platform_tests/test_product_changes.py` (`PublicSettingTests`),
+`test_config.py` and `test_component_dev.py` check that `PUBLIC_ORIGIN` and
+`HTTPS_PORT` live only in the gateway's config: init-config writes none,
+install reads them from the gateway, and a copy in another component's
+`config.yaml`, defaults or dev file is refused. `test_components.py`,
+`test_identity.py` and `test_status.py` check that every install renders again
+and that only a downgrade is refused.
 
 # .NET/TypeScript demo (backlog 71)
 

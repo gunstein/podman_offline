@@ -1166,19 +1166,20 @@ renamed-init-check)
     as_product podman volume exists inventory-data
     sudo -n test ! -e "$state/platform"
     sudo -n test ! -e "$state/app1"
-    # gateway shares SHOP_NAME; every public_from dependent inherited the same value.
+    # Only gateway's config.yaml holds PUBLIC_ORIGIN and HTTPS_PORT (backlog 77).
     as_product python3 - <<'SHARED_SETTING'
 import os
 import pathlib
 import yaml
 
 home = pathlib.Path(os.environ["PRODUCT_STATE"])
-expected = yaml.safe_load((home / "gateway/config.yaml").read_text())["SHOP_NAME"]
+if "PUBLIC_ORIGIN" not in yaml.safe_load((home / "gateway/config.yaml").read_text()):
+    raise SystemExit("FAIL: gateway's config.yaml has no PUBLIC_ORIGIN")
 for component in ("login-service", "orders", "inventory", "manual"):
-    config = yaml.safe_load((home / component / "config.yaml").read_text())
-    if config.get("SHOP_NAME") != expected:
-        raise SystemExit("FAIL: " + component + " did not inherit gateway's SHOP_NAME")
-print("PASS: login-service, orders, inventory and manual share gateway's SHOP_NAME")
+    config = yaml.safe_load((home / component / "config.yaml").read_text()) or {}
+    if "PUBLIC_ORIGIN" in config or "HTTPS_PORT" in config:
+        raise SystemExit("FAIL: " + component + " holds its own public settings")
+print("PASS: only gateway's config.yaml holds PUBLIC_ORIGIN and HTTPS_PORT")
 SHARED_SETTING
     echo 'PASS: orders init container exited 0; renamed volumes exist; no demo component state'
     ;;

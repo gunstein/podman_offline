@@ -17,6 +17,19 @@ DEMO_COMPONENTS = tuple(DEMO)
 COMPATIBLE = {"min": "1.0.0", "before": "2.0.0"}
 
 
+# The demo gateway's public settings, which every other component reads from
+# platform's config.yaml.
+def operator_config(config):
+    """A non-gateway component's config.yaml as init-config writes it."""
+    return {key: value for key, value in config.items() if key not in DEMO_PUBLIC}
+
+
+DEMO_PUBLIC = catalog.public_settings(
+    yaml.safe_load((REPO / "components/platform/config.defaults.yaml").read_text()),
+    REPO / "components/platform/config.defaults.yaml",
+)
+
+
 def demo_descriptor(root, name, requirement=None, version=None):
     """Compile one demo component like bundle.py, reading the fixture's files.
 
@@ -34,9 +47,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
             dependency: dict(requirement or COMPATIBLE)
             for dependency in entry["requires"]
         },
-        "upgrade": entry["upgrade"],
         "public_from": entry["public_from"],
-        "shares": list(entry["shares"]),
         "routes": entry["routes"],
         "clients": entry["clients"],
         "accepts": dict(entry["accepts"]),

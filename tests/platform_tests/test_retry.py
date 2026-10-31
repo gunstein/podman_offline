@@ -229,7 +229,8 @@ class RetryTests(RetryFixture):
                             self.assertEqual(self.pending()["component"], "identity")
                             self.assertEqual(self.pending()["owners"], [])
                             self.assertEqual(
-                                json.loads(metadata.read_text()), descriptor
+                                json.loads(metadata.read_text()),
+                                catalog.descriptor_document(descriptor),
                             )
                             self.assertEqual(
                                 marker.read_bytes() if marker.exists() else None,
@@ -238,7 +239,10 @@ class RetryTests(RetryFixture):
                         events = self.attempt()
                         self.assertIn(service("identity"), events)
                         self.assertEqual(marker.read_bytes(), b"1.2.0\n")
-                        self.assertEqual(json.loads(metadata.read_text()), descriptor)
+                        self.assertEqual(
+                            json.loads(metadata.read_text()),
+                            catalog.descriptor_document(descriptor),
+                        )
                         for path in (marker, metadata):
                             self.assertEqual(self.mode(path), 0o600)
                         self.assertEqual(self.protected(), self.before)

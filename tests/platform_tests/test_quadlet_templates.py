@@ -182,13 +182,7 @@ class QuadletBundleTests(ProductFixture):
         )
 
     def test_relocated_bundle_repeat_and_sibling_preservation(self):
-        self.check_relocated_bundle("always")
-
-    def test_equal_version_newer_only_checks_both_templates(self):
-        self.check_relocated_bundle("newer-only")
-
-    def check_relocated_bundle(self, upgrade):
-        self.write_catalog({"processor": {"upgrade": upgrade}, "observer": {}})
+        self.write_catalog({"processor": {}, "observer": {}})
         releases = self.build_and_unpack()
         shutil.rmtree(self.source)
         relocated = self.root / "offline"
@@ -235,7 +229,7 @@ class QuadletBundleTests(ProductFixture):
         for suffix, original in templates.items():
             path = common.QUADLET_TEMPLATE.with_suffix(suffix)
             for token in INVALID:
-                with self.subTest(upgrade=upgrade, suffix=suffix, token=token):
+                with self.subTest(suffix=suffix, token=token):
                     path.write_text(original + "\nValue=" + token)
                     before = snapshot(self.root)
                     errors = []

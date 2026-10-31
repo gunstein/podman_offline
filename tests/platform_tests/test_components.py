@@ -55,7 +55,7 @@ class ComponentTests(ComponentFixture):
         )
         self.write(
             "home/app1/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\nSECRET_FILES:\n  other-token:\n  - path: missing\n",
+            "SECRET_FILES:\n  other-token:\n  - path: missing\n",
         )
         with self.assertRaisesRegex(common.DeployError, "config.yaml.*app1-"):
             deploy.install()
@@ -119,7 +119,7 @@ class ComponentTests(ComponentFixture):
         self.component_manifest("help")
         self.write(
             "home/help/config.yaml",
-            "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\n",
+            "{}\n",
         )
         with self.assertRaisesRegex(common.DeployError, "before installing help"):
             deploy.install()
@@ -131,7 +131,7 @@ class ComponentTests(ComponentFixture):
         self.component_manifest("app2")
         self.write(
             "home/app2/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+            "{}\n",
         )
         deploy.install()
         self.assertEqual((common.STATE / "installed/platform").read_text(), "1.0.0\n")
@@ -142,19 +142,15 @@ class ComponentTests(ComponentFixture):
         )
 
     def test_platform_version_missing_equal_newer_and_older(self):
-        """Apply all four platform version decisions without touching running services."""
+        """Missing, equal and newer versions install; only an older one is refused."""
         descriptor = self.select("platform")
         (common.STATE / "installed/platform").unlink()
-        self.assertTrue(deploy.install_needed(dict(descriptor, version="1.0.0")))
+        deploy.check_not_downgrade(dict(descriptor, version="1.0.0"))
         self.write("home/installed/platform", "1.2.3\n")
-        self.assertFalse(deploy.install_needed(dict(descriptor, version="1.2.3")))
-        self.assertTrue(deploy.install_needed(dict(descriptor, version="1.10.0")))
+        deploy.check_not_downgrade(dict(descriptor, version="1.2.3"))
+        deploy.check_not_downgrade(dict(descriptor, version="1.10.0"))
         with self.assertRaisesRegex(common.DeployError, "downgrade refused"):
-            deploy.install_needed(dict(descriptor, version="1.2.2"))
-        # upgrade: always never compares versions.
-        self.assertTrue(
-            deploy.install_needed(dict(descriptor, version="1.0.0", upgrade="always"))
-        )
+            deploy.check_not_downgrade(dict(descriptor, version="1.2.2"))
 
     def test_equal_platform_is_not_rewritten_or_restarted(self):
         """Keep equal-version platform YAML, secrets and service unchanged during app install."""
@@ -270,17 +266,20 @@ class ComponentTests(ComponentFixture):
     def test_invalid_client_and_origin_are_rejected_before_live_writes(self):
         """Reject inconsistent public origins and client identities without modifying routes."""
         work = self.registration_fixture()
+        # Only the gateway's config.yaml holds the public settings.
         self.write(
             "home/app1/config.yaml",
             "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://other.test:8443\n",
         )
-        with self.assertRaisesRegex(common.DeployError, "PUBLIC_ORIGIN.*must match"):
+        with self.assertRaisesRegex(
+            common.DeployError, "PUBLIC_ORIGIN in .* is read from platform's config"
+        ):
             deploy.install()
         self.assertFalse((common.STATE / "routes").exists())
         self.process.assert_not_called()
         self.write(
             "home/app1/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+            "{}\n",
         )
         work = self.root / "invalid-client-stage"
         work.mkdir()
@@ -351,13 +350,12 @@ class ComponentTests(ComponentFixture):
         """Reject a malformed shared origin during client staging without exposing it."""
         work = self.registration_fixture()
         origin = "https://synthetic-credential＠example.test"
-        for component in ("platform", "app1"):
-            self.write(
-                "home/" + component + "/config.yaml",
-                yaml.safe_dump({"HTTPS_PORT": 8443, "PUBLIC_ORIGIN": origin}),
-            )
+        self.write(
+            "home/platform/config.yaml",
+            yaml.safe_dump({"HTTPS_PORT": 8443, "PUBLIC_ORIGIN": origin}),
+        )
         with self.assertRaisesRegex(
-            common.DeployError, "PUBLIC_ORIGIN.*app1/config.yaml"
+            common.DeployError, "PUBLIC_ORIGIN.*platform/config.yaml"
         ) as caught:
             registrations.registration_stage(["app1"], work, self.known())
         self.assertNotIn("synthetic-credential", str(caught.exception))
@@ -498,7 +496,7 @@ class ComponentTests(ComponentFixture):
         self.component_manifest("help")
         self.write(
             "home/help/config.yaml",
-            "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\n",
+            "{}\n",
         )
         route = self.write(
             "components/help/route.conf", "location /help/ { return 200; }\n"
@@ -556,10 +554,7 @@ class ComponentTests(ComponentFixture):
                 self.component_manifest(first)
                 self.component_manifest(second)
                 for component in (first, second):
-                    self.write(
-                        "home/" + component + "/config.yaml",
-                        "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 8443\n",
-                    )
+                    self.write("home/" + component + "/config.yaml", "{}\n")
                 self.write("components/platform/VERSION", "1.0.0\n")
                 self.select(first)
                 if (common.STATE / "installed/platform").exists():

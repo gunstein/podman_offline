@@ -8,11 +8,11 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from helpers.deploy_fixture import DeployFixture, document
-from helpers.product_fixture import WORKER, ProductFixture
-
 from deployment import catalog, common, deploy, templates, validation
 from deployment import render as rendering
+
+from helpers.deploy_fixture import DeployFixture, document
+from helpers.product_fixture import WORKER, ProductFixture
 
 
 class SecretTemplateTests(DeployFixture):
@@ -522,16 +522,12 @@ class TemplateLifecycleTests(ProductFixture):
         self.assertNotEqual(previous, output.read_bytes())
         self.assertEqual(password.read_bytes(), b"ControlledReplacement")
         self.assertNotIn("ControlledReplacement", self.stdout.getvalue())
-        # Preserve the existing equal-version newer-only contract.
-        descriptor_path = releases["worker"] / "bundle.yaml"
-        descriptor = yaml.safe_load(descriptor_path.read_text())
-        descriptor["upgrade"] = "newer-only"
-        descriptor_path.write_text(yaml.safe_dump(descriptor))
-        config["HOST"] = "not-applied-at-equal-version"
+        # A same-version install applies changed config: every install renders.
+        config["HOST"] = "applied-at-equal-version"
         config_path.write_text(yaml.safe_dump(config))
         kept = output.read_bytes()
-        self.assertEqual(self.install(releases["worker"]), [])
-        self.assertEqual(kept, output.read_bytes())
+        self.assertEqual(self.install(releases["worker"]), ["worker"])
+        self.assertNotEqual(kept, output.read_bytes())
         deploy.uninstall("worker")
         self.assertTrue(password.exists())
 

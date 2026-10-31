@@ -292,7 +292,8 @@ def build_release(version, descriptor=None):
     if components:
         # The compiled descriptor lets the target work without bundles.yaml.
         (target / "bundle.yaml").write_text(
-            yaml.safe_dump(descriptor, sort_keys=False), encoding="utf-8"
+            yaml.safe_dump(catalog.descriptor_document(descriptor), sort_keys=False),
+            encoding="utf-8",
         )
     for dirname in (
         ["scripts", "quadlet"] if components else ["manifests", "scripts", "quadlet"]

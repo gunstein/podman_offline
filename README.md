@@ -78,8 +78,8 @@ path `/` returns 404; use `/app1/`, `/app2/` or `/help/`.
 In `bundles.yaml`, `gateway: platform` and `identity: identity` name the
 receivers; the apps and help register with them through their `route.conf`,
 `client.yaml` and Identity's API secret line ([the catalog](docs/COMPONENTS.md#the-catalog-bundlesyaml)). Each component has its own
-`components/<id>/VERSION` containing `major.minor.patch`. Platform and Identity
-use `upgrade: newer-only`. All Pod, Secret, PVC and ConfigMap
+`components/<id>/VERSION` containing `major.minor.patch`. Every install renders
+the component again; an older version than the installed one is refused. All Pod, Secret, PVC and ConfigMap
 names must start with their component prefix; the renderer rejects other names
 before writes.
 
@@ -87,8 +87,8 @@ Each component has its own `<product>-<component>` Quadlet service. The identica
 `<product>.network` is shared and never removed by component uninstall. Install
 platform, then Identity, then either app. Help needs only platform; the proxy
 starts without Identity DNS. Bundles contain only their own resources and images.
-Only a component's own bundle upgrades it. Equal shared versions retain installed
-files, newer versions upgrade and downgrades refuse. New required settings are
+Only a component's own bundle upgrades it. Installing renders the component again
+at an equal or newer version; a downgrade is refused. New required settings are
 checked when that component is rendered. Apps retry their databases for 60 seconds.
 
 | Registration change | Owner restarted (demo) |
@@ -125,14 +125,14 @@ coverage, local evidence and pending lab commands.
 
 Some setting names have built-in meaning (`PUBLIC_ORIGIN`, `HTTPS_PORT`,
 `PUBLIC_HOSTNAME`, `SECRET_FILES`, `VOLUME_FILES`); every other name only
-replaces its placeholder in each component separately. A component can share
-the gateway's settings with every other component through `shares:` on the
-gateway's entry in `bundles.yaml`. See [reserved configuration names and shared
-settings](docs/COMPONENTS.md#reserved-configuration-names).
+replaces its placeholder in each component separately. `PUBLIC_ORIGIN` and
+`HTTPS_PORT` are set only in platform's `config.yaml`; every other component
+reads them from there. See [reserved configuration
+names](docs/COMPONENTS.md#reserved-configuration-names).
 
 | File | Role |
 | --- | --- |
-| `config/common.defaults.yaml` | Shared defaults for initialization and dev |
+| `config/common.defaults.yaml` | Optional defaults for every component (the demo has none) |
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
 | `components/<component>/config.defaults.yaml` | Component-specific defaults, including secret and volume references |
@@ -220,15 +220,15 @@ with Identity at its first install (`app3-api-secret` in app3's `config.yaml`,
 file `credentials/api-secret/value`). To reuse a value, or to rotate it, write
 it there as the runtime account (mode 0600, one line, no trailing newline)
 and run `./deploy.sh install` from the app3 bundle; app3 restarts, then
-Identity. Every component except the gateway
-(Identity, the apps and help) initializes with only the
-installed platform config's actual `PUBLIC_ORIGIN` and `HTTPS_PORT` as final
-overrides; dev prepare inherits them the same way. Other platform settings are never copied.
-An invalid platform config or missing shared setting fails instead of falling back
-to release defaults. If platform is installed but its config file is missing, restore
-that authoritative file from a private backup before initializing a new component. A help bundle cannot install platform or run without installed
-platform. Installation rejects inconsistent shared values; it never rewrites config
-to resolve a mismatch.
+Identity. `PUBLIC_ORIGIN` and `HTTPS_PORT` are set only in platform's
+`config.yaml`; every other component (Identity, the apps and help) reads them
+from there at init-config, validate and install, and its own `config.yaml` may
+not contain them. To change the public address, edit platform's `config.yaml`
+and install the components again. An invalid platform config or missing setting
+fails instead of falling back to release defaults. If platform is installed but
+its config file is missing, restore that authoritative file from a private
+backup first. A help bundle cannot install platform or run without installed
+platform.
 
 Production install and upgrade read only persistent component config. Release
 defaults are never merged into it, and config is never overwritten or extended
@@ -424,7 +424,7 @@ systemd-escaped absolute path to the current release's regular
 markers fail with template-path diagnostics. Literal braces, shell `${...}` and
 systemd `%` specifiers are preserved. Both templates are checked by validate and
 the lifecycle before generation, output or host commands; install checks them
-before querying the user manager, also on an equal-version `newer-only` repeat.
+before querying the user manager, also on a repeated same-version install.
 See [verification](acceptance/QUADLET-TEMPLATES.md).
 
 ### Signed bundles
@@ -525,8 +525,8 @@ values remain visible to the service user and root in Podman inspection and
 process environments. See the [schema, example and input restrictions](docs/COMPONENTS.md#secret-templates).
 Within YAML, only Secret templates and ConfigMap `data` accept embedded placeholders; other
 manifest fields keep whole-value replacement. ConfigMaps accept only ordinary
-string/integer config inputs and refuse `@@secret:...@@`. `validate` never reads Secret contents. Equal `newer-only` installs
-and systemd restarts do not recompute templates.
+string/integer config inputs and refuse `@@secret:...@@`. `validate` never reads Secret contents. Systemd restarts do not
+recompute templates; an install does.
 
 `VOLUME_FILES` creates private import tar archives and PVCs. Import archives
 normalize ownership, modes and timestamps (mtime 0), so identical imported
@@ -1308,11 +1308,9 @@ removed from pending work individually; uninstall remains resumable after its
 YAML or data has been removed. Config and credentials remain untouched unless
 the original uninstall explicitly requested data deletion.
 
-An install record also names the version that last published files. A bundle
-of another version may finish it only if it renders the component; retrying an
-interrupted `newer-only` upgrade with the older bundle is refused with the
-version to use, because that bundle would restart registration owners without
-re-rendering the component.
+An install record also names the version that last published files. Every
+install renders the component, so any bundle that is not a downgrade may finish
+it.
 
 An unfinished operation blocks other component installs/uninstalls and config
 initialization, with a message naming the component and command to finish first.

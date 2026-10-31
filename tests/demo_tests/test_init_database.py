@@ -18,7 +18,7 @@ import bundle
 import yaml
 from deployment import render as rendering
 
-from demo_tests.demo_fixture import write_secret_fixtures
+from demo_tests.demo_fixture import DEMO_PUBLIC, write_secret_fixtures
 from helpers.render_helper import materialize_and_render
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,8 +63,7 @@ class InitDatabaseTests(unittest.TestCase):
             (base / "credentials/todo").mkdir(parents=True)
             (base / "credentials/todo/fixture").write_text("synthetic certificate")
             config = rendering.merge_config(
-                ROOT / "config/common.defaults.yaml",
-                ROOT / "components/app1/config.defaults.yaml",
+                ROOT / "components/app1/config.defaults.yaml", overrides=DEMO_PUBLIC
             )
             write_secret_fixtures(base, config, "app1")
             path = base / "config.yaml"

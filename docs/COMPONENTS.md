@@ -30,22 +30,20 @@ gateway: platform           # optional: the reverse proxy component
 identity: identity          # optional: the component that registers OIDC clients and API secrets
 components:
   platform:
-    upgrade: newer-only     # or always (the default)
   identity:
-    upgrade: newer-only
   app1:                     # an empty entry is complete
   reports:
     requires: [app1]        # only dependencies the rules below do not create
 ```
 
-Per component only `upgrade`, `requires` and, on the gateway, `shares` exist.
+Per component only `requires` exists.
 Everything else is derived from `gateway:`, `identity:` and the component's
 files (backlog 77):
 
 | Rule | Result |
 | --- | --- |
 | The gateway | Receives every `route.conf` in the volume `<gateway>-routes`, which its manifests must mount. |
-| Every other component, when a gateway is set | Takes the gateway's `PUBLIC_ORIGIN`, `HTTPS_PORT` and `shares`, and requires the gateway. |
+| Every other component, when a gateway is set | Reads the gateway's `PUBLIC_ORIGIN` and `HTTPS_PORT` and requires the gateway. |
 | A component with `route.conf` | Registers it with the gateway. Without a gateway, or on the gateway itself, it is refused. |
 | A component with `client.yaml` | Registers it with identity and requires identity. It needs a gateway (the redirect URI uses the public origin); not on the gateway or identity itself. |
 | A component whose secret identity's `ApiResources__<n>__ApiSecrets__0__Value` line names | Is an API: identity receives that secret ([API secrets](#api-secrets)) and the API requires identity. |
@@ -130,55 +128,40 @@ refused before building. Each bundle retains an informational root `VERSION`;
 installed metadata stores its compiled version, so existing installations need
 no migration. Standalone manifest fixtures without a catalog keep root `VERSION`.
 
-- `upgrade: always` renders and restarts the component on every install.
-- `upgrade: newer-only` installs a missing or newer version, keeps an equal
-  installed version unchanged (its route/client imports may still be rebuilt)
-  and refuses a downgrade. The demo uses it for `platform` and `identity`.
+Every install renders and restarts the component again, also at the same
+version, so a changed `config.yaml` or a replaced credential takes effect by
+installing again. An older version than the installed one is refused
+(backlog 77 removed the earlier `upgrade:` choice). `bundle.yaml` and installed
+metadata still carry `upgrade: always` and `shares: []` for older releases that
+read them; this release ignores both.
 
-### Public settings and shared settings
+### Public settings
 
-Every component except the gateway uses the same `PUBLIC_ORIGIN` and
-`HTTPS_PORT` as the gateway, plus every name the gateway lists in `shares`.
-`init-config` copies these values from the gateway's persistent config, dev
-prepare copies them from its dev config, and install (and `validate`) refuse a
-mismatch, naming the setting, both files and the gateway, never the values.
-Without a gateway no component takes them.
-
-```yaml
-gateway: gateway
-components:
-  gateway:
-    shares: [SHOP_NAME]          # every other component takes it
-  orders:                        # gets PUBLIC_ORIGIN, HTTPS_PORT and SHOP_NAME
-```
-
-`shares` holds config names (`A-Z`, `0-9`, `_`, the placeholder rule) without
-repeats. `PUBLIC_ORIGIN` and `HTTPS_PORT` are always shared; listing them changes
-nothing. The owner's own config must define every name it shares. `shares` is
-compiled into `bundle.yaml` and installed metadata, so a dependent's install
-compares against the owner's installed declaration without the source. An owner
-upgrade that stops sharing a name an installed dependent takes from it is
-refused before any write; keep the name until the dependents no longer use it.
-A descriptor from before `shares` existed is read as sharing nothing.
+`PUBLIC_ORIGIN` and `HTTPS_PORT` are written once, in the gateway's
+`config.yaml`. Every other component reads them from there when it is
+validated, installed or prepared in dev; its own `config.yaml` does not hold
+them, and a copy there is refused ("is read from gateway's config.yaml; remove
+it here"). `init-config` checks the installed gateway's values but writes none
+of them. To change the public address, edit the gateway's `config.yaml` and
+install the components again. Without a gateway, a component that uses them
+sets them in its own config. No other setting is shared between components.
 
 ### Component dev configuration
 
-Source dev merges optional common defaults, component defaults, global
+Source dev merges optional common defaults (`config/common.defaults.yaml`; the
+demo has none), component defaults, global
 `config/dev.yaml`, then `components/<id>/config.dev.yaml`. Values replace whole
 top-level values, including file/Secret maps and source lists. The component dev
 file is tracked shared configuration, contains no secret values, and wins over
 the ignored global dev file. It is excluded from bundles and never read by
 production `init-config`, `validate` or `install`.
 
-The gateway's component dev settings are inherited by every other component.
-A dependent that declares any of those shared keys in its own component dev file
-is refused, rather than silently losing the value to inheritance. This includes
-`PUBLIC_ORIGIN`, `HTTPS_PORT` and custom `shares`. Shared keys always come from
-the owner's effective dev config, which includes global `config/dev.yaml`, so a
-global value reaches the owner and every dependent identically. An owner's own
-`config.dev.yaml` value is more specific and wins over the global one for all
-dependents alike, as production `init-config` also inherits from the owner
-(backlog 58).
+Every other component gets the gateway's effective dev `PUBLIC_ORIGIN` and
+`HTTPS_PORT`, as production reads them from the gateway's `config.yaml`. A
+component that sets either in its own `config.defaults.yaml` or
+`config.dev.yaml` is refused, rather than silently losing the value. The
+gateway's effective dev config includes global `config/dev.yaml`, so a global
+value reaches every component identically (backlog 58).
 
 Relative file sources still resolve from `build/dev/<id>/`; generated config
 there is output, never an input layer. See the [configuration examples and
@@ -223,19 +206,19 @@ or cross-file rollback guarantee.
 
 All settings are written the same way, but these names have built-in meaning.
 The tools must know them to validate values, derive the hostname and build
-redirect URIs, so they cannot be renamed or shared freely:
+redirect URIs, so they cannot be renamed:
 
 | Name | What the tools do with it |
 | --- | --- |
-| `PUBLIC_ORIGIN` | Validated as an HTTPS origin; always taken from the gateway by every other component (copied at `init-config` and in dev, compared at install); OIDC redirect URIs are built from it |
-| `HTTPS_PORT` | Validated as a port 1-65535; always shared and compared like `PUBLIC_ORIGIN` |
-| `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error; cannot be shared |
-| `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES` | File-source and Secret-template declarations, not placeholder values; cannot be shared |
-| `ENVIRONMENT` | Each container's environment; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file; cannot be shared |
-| Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@`; each component keeps its own copy unless the gateway lists it in `shares` |
+| `PUBLIC_ORIGIN` | Validated as an HTTPS origin; set only in the gateway's `config.yaml` and read from there by every other component; OIDC redirect URIs are built from it |
+| `HTTPS_PORT` | Validated as a port 1-65535; set and read like `PUBLIC_ORIGIN` |
+| `PUBLIC_HOSTNAME` | Always derived from `PUBLIC_ORIGIN`; setting it is an error |
+| `SECRET_FILES`, `VOLUME_FILES`, `SECRET_TEMPLATES` | File-source and Secret-template declarations, not placeholder values |
+| `ENVIRONMENT` | Each container's environment; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
+| Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@` in its own component |
 
-A `PUBLIC_` prefix has no meaning of its own. `deploy.PUBLIC_KEYS` and
-`catalog.UNSHAREABLE` hold these names in code.
+A `PUBLIC_` prefix has no meaning of its own. `catalog.PUBLIC_KEYS` holds the
+two public names in code.
 
 ### Registrations: routes, OIDC clients and API secrets
 
@@ -377,9 +360,8 @@ ENVIRONMENT:
 - When identity is built, the mapping `{API: {index, secret}}` is compiled into
   its `bundle.yaml` (`api_secrets`). The installed, rendered identity's mapping
   is the only one: an API it does not list is refused ("install the identity
-  release that lists it first"), an identity release that drops an installed
-  API is refused, and a `newer-only` identity that would not be rendered may
-  not change its lines. A newer identity may move an API to another `<n>`;
+  release that lists it first") and an identity release that drops an
+  installed API is refused. A newer identity may move an API to another `<n>`;
   the values follow by API.
 - `validate` shows each link without values:
 
@@ -407,10 +389,8 @@ To reuse an existing value, write it to the declared path (the demo's
 `credentials/api-secret/value`) as the runtime account before the first
 install: mode 0600, one line, no trailing newline, not through shell history.
 Rotating means replacing that file and installing the API again: the API
-restarts first, then Identity. An API with `upgrade: newer-only` is
-re-rendered only by a newer version, so rotate it with a new version; a
-same-version install keeps the installed registration, so Identity never
-receives a value its API does not yet run with. Uninstalling the API, or
+restarts first, then Identity; the same bundle version is enough, because
+every install renders again. Uninstalling the API, or
 installing an API release built while identity had no line for it, removes
 its value from `<identity>-apis`; identity's name and scopes for it stay and
 the resource is inactive.
@@ -514,8 +494,7 @@ coordinated database-role/password-file/client rotation or recovery procedure
 reading credentials. Secret bytes are checked only during materialization after
 database preflight and permitted generation. Derived values have no separate
 persistent source: config plus the original password file are authoritative.
-Actual rendering recomputes values; `upgrade: newer-only` with an equal version
-still skips rendering, and a systemd restart uses the last installed YAML.
+Every install recomputes values; a systemd restart uses the last installed YAML.
 Existing installations must explicitly add the new declaration to their persistent
 config before upgrading to a manifest that references it; `init-config` retains
 existing config rather than merging new defaults.
@@ -578,9 +557,8 @@ extra-override file. Pod `spec.hostAliases` remains refused by the shared
 validation/bundle guard so aliases cannot override public-origin network DNS.
 
 Install new bundles for all affected components when updating an existing
-installation; upgrading only an app does not rewrite its owners' units. The
-platform and Identity patch versions advance so `newer-only` will not skip
-this change. No installed release is modified in place.
+installation; upgrading only an app does not rewrite its owners' units. No installed
+release is modified in place.
 
 The `--no-hosts` version passed the six-scenario matrix, but three PROD
 containers could not resolve localhost. The replacement passed focused whoami
@@ -726,9 +704,8 @@ and shell/nginx templates is preserved verbatim.
 Outside ConfigMap `data` and `SECRET_TEMPLATES`, fields such as container
 `env.value`, images, names, volume bindings and ConfigMap metadata still require
 whole-value placeholders. Validation is shared by initialization, validate and
-rendering before generation or host commands. Config changes take effect when
-a component actually renders; the existing equal-version `newer-only` policy
-and ordinary restart behavior apply here too.
+rendering before generation or host commands. Config changes take effect at
+the component's next install; a plain restart uses the installed YAML.
 
 The demo's platform ConfigMap supplies `PUBLIC_ENDPOINT` from
 `PUBLIC_HOSTNAME` and `HTTPS_PORT`. The acceptance health check verifies both the

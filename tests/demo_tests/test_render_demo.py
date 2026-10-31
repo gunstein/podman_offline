@@ -7,7 +7,12 @@ import yaml
 from deployment import catalog
 from deployment import render as rendering
 
-from demo_tests.demo_fixture import DEMO, DEMO_COMPONENTS, write_secret_fixtures
+from demo_tests.demo_fixture import (
+    DEMO,
+    DEMO_COMPONENTS,
+    DEMO_PUBLIC,
+    write_secret_fixtures,
+)
 from helpers.deploy_fixture import DeployFixture
 from helpers.render_helper import materialize_and_render
 
@@ -30,8 +35,8 @@ class DemoRenderTests(DeployFixture):
                 str(self.root / "components" / component / "config.defaults.yaml"),
             )
             config = rendering.merge_config(
-                repo / "config/common.defaults.yaml",
                 repo / "components" / component / "config.defaults.yaml",
+                overrides=DEMO_PUBLIC,
             )
             base = self.root / "state" / component
             for group in ("SECRET_FILES", "VOLUME_FILES"):

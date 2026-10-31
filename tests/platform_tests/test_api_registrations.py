@@ -86,7 +86,7 @@ def identity_lines(*apis):
 API_PRODUCT = {
     "accounts": {
         "role": "identity",
-        "catalog": {"upgrade": "newer-only"},
+        "catalog": {},
         "manifests": [api_pod("accounts-server")],
         "env": {"main": identity_lines("ledger", "reports")},
     },
@@ -355,7 +355,6 @@ class ApiRegistrationTests(ProductFixture):
             self.assertEqual(self.install(releases["ledger"]), ["ledger"])
 
         with self.subTest("a newer owner keeps the registrations"):
-            self.assertEqual(self.install(releases["accounts"]), [])
             self.write_product(self.product(), version="1.1.0")
             newer = self.build_and_unpack()
             self.assertEqual(self.install(newer["accounts"]), ["accounts"])
@@ -406,19 +405,6 @@ class ApiRegistrationTests(ProductFixture):
             self.assertEqual(self.owner_secret(), {})
             self.assertFalse((common.STATE / "apis/ledger").exists())
 
-    def test_newer_only_api_keeps_the_registration_it_runs_with(self):
-        """Same version, not rendered: a changed file must not reach the owner alone."""
-        ledger = copy.deepcopy(API_PRODUCT["ledger"])
-        ledger["catalog"]["upgrade"] = "newer-only"
-        releases, _ = self.install_all(self.product({"ledger": ledger}))
-        before = self.owner_secret()
-        (common.STATE / "ledger/credentials/api-secret/value").write_text(
-            "not-yet-active"
-        )
-        self.assertEqual(self.install(releases["ledger"]), [])
-        self.assertEqual(self.owner_secret(), before)
-        self.assertTrue((common.STATE / "apis/ledger/value").is_file())
-
     def test_api_must_be_in_the_installed_identity_lines(self):
         """An isolated API bundle needs an installed Identity that lists it."""
         self.write_product(self.product({"reports": None}))
@@ -458,17 +444,6 @@ class ApiRegistrationTests(ProductFixture):
 
         moved = self.product()
         moved["accounts"]["env"]["main"] = identity_lines("reports", "ledger")
-        with self.subTest("the same skipped version may not change its lines"):
-            shutil.rmtree(self.source)
-            shutil.rmtree(self.releases)
-            self.write_product(moved)
-            same = self.build_and_unpack()
-            self.use_root(same["accounts"])
-            with self.assertRaisesRegex(
-                common.DeployError, "give accounts a higher version"
-            ):
-                deploy.install()
-
         with self.subTest("a newer release moves the lines; values follow by API"):
             shutil.rmtree(self.source)
             shutil.rmtree(self.releases)
@@ -552,45 +527,6 @@ class ApiRegistrationTests(ProductFixture):
                 self.install(releases["ledger"])
             self.assertNotIn("third", str(raised.exception))
             self.assertTrue((common.STATE / "pending-operation.json").exists())
-
-    def test_skipped_newer_only_retry_of_another_version_is_refused(self):
-        ledger = copy.deepcopy(API_PRODUCT["ledger"])
-        ledger["catalog"]["upgrade"] = "newer-only"
-        product = self.product({"ledger": ledger})
-        old, _ = self.install_all(product)
-        self.write_product(product, version="1.1.0")
-        for name in ("accounts", "reports"):
-            (self.source / "components" / name / "VERSION").write_text("1.0.0\n")
-        new = self.build_and_unpack()
-        (common.STATE / "ledger/credentials/api-secret/value").write_text("upgraded")
-        self.fail_on(["systemctl", "--user", "restart", "myproduct-accounts.service"])
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.install(new["ledger"])
-        self.assertEqual((common.STATE / "installed/ledger").read_text(), "1.0.0\n")
-        # The 1.0.0 bundle would skip rendering and restart only the owner.
-        self.use_root(old["ledger"])
-        before = self.snapshot(common.STATE)
-        self.process.reset_mock()
-        with self.assertRaisesRegex(
-            common.DeployError, r"Pending install of ledger 1\.1\.0; this 1\.0\.0"
-        ):
-            deploy.install()
-        self.assertEqual(self.snapshot(common.STATE), before)
-        self.process.assert_not_called()
-        # The attempted release finishes it; both sides hold the new value.
-        self.use_root(new["ledger"])
-        self.quiet(deploy.install)
-        self.assertEqual(self.restarts(), ["ledger", "accounts"])
-        self.assertEqual(
-            self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
-            "upgraded",
-        )
-        self.assertEqual(
-            self.secrets(catalog.component_paths("ledger")[2])[
-                "ledger-main-env-secret"
-            ],
-            {"Authentication__ApiSecret": "upgraded"},
-        )
 
     def test_validate_never_opens_or_copies_api_values(self):
         releases, _ = self.install_all(self.product())

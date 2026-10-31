@@ -93,7 +93,7 @@ class IdentityTests(ComponentFixture):
         self.component_manifest("help")
         self.write(
             "home/help/config.yaml",
-            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+            "{}\n",
         )
         self.write("components/help/route.conf", "location /help/ { return 200; }\n")
         self.select("help")
@@ -142,9 +142,10 @@ class IdentityTests(ComponentFixture):
                 ("platform/", "app1/", "installed/platform", "installed/app1")
             ):
                 self.assertEqual(after[name], value)
+        # The same version renders and restarts again; there is no skip.
         self.process.reset_mock()
         deploy.install()
-        self.assertEqual(self.restarts(), [])
+        self.assertEqual(self.restarts(), ["myproduct-identity.service"])
         self.write("components/identity/VERSION", "1.0.0\n")
         self.select("identity")
         self.process.reset_mock()

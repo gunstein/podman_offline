@@ -9,6 +9,8 @@ from unittest import mock
 import yaml
 from deployment import render as rendering
 
+from demo_tests.demo_fixture import DEMO_PUBLIC
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -48,8 +50,7 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(probe["timeoutSeconds"], 5)
                 self.assertEqual(probe["failureThreshold"], 6)
                 config = rendering.merge_config(
-                    ROOT / "config/common.defaults.yaml",
-                    path.parent.parent / "config.defaults.yaml",
+                    path.parent.parent / "config.defaults.yaml", overrides=DEMO_PUBLIC
                 )
                 command = rendering.replace(probe["exec"]["command"], config)
                 self.assertTrue(command)

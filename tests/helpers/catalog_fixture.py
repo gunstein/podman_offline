@@ -33,9 +33,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
             dependency: dict(requirement or COMPATIBLE)
             for dependency in entry["requires"]
         },
-        "upgrade": entry["upgrade"],
         "public_from": entry["public_from"],
-        "shares": list(entry["shares"]),
         "routes": entry["routes"],
         "clients": entry["clients"],
         "apis": entry["apis"],

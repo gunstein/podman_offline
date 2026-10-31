@@ -108,9 +108,11 @@ reference. `catalog.py` is the single reader and validator:
    `load_installed_metadata()`, `installed_components()` and `dependents()` read
    it back strictly. A completion marker without metadata is an error.
 
-Decisions read only these descriptors: `install_needed()` (upgrade policy),
-`check_dependencies_installed()` / `check_dependents()` (version ranges),
-`check_public_settings()` / `check_kept_shares()` (`public_from`, `shares`), `role_owners()` (who accepts routes
+Decisions read only these descriptors: `check_not_downgrade()` (every install
+renders; an older version is refused), `check_dependencies_installed()` /
+`check_dependents()` (version ranges), `catalog.with_gateway_settings()`
+(`public_from`: `PUBLIC_ORIGIN`/`HTTPS_PORT` read from the gateway's
+`config.yaml`), `role_owners()` (who accepts routes
 and clients), `registration_stage()` (which registrations exist and which owner
 imports them) and `restart_order()` (reverse dependency order). No module names
 a demo component. The demo's certificate and user provisioning is the explicit
@@ -125,9 +127,7 @@ ranges and the declared `public_from` settings. `production_environment()` then
 checks the runtime and queries the systemd user-manager environment. Install stages
 and validates registrations in a temporary directory (`registration_stage`), and only then
 checks the effective manifests and DB state (`check_manifests`), whose
-database preflight precedes image loading and secret generation. A `newer-only`
-component with an equal installed version is excluded from rendering; its images
-are still verified and its registrations still staged.
+database preflight precedes image loading and secret generation.
 
 The incoming release is authoritative for its own registrations: staging never
 copies the selected component's installed route or client, and a role the
@@ -153,8 +153,7 @@ never means removal.
 The pending record remains even when no registration owners need work. Owner
 acknowledgement only removes owners; it never closes the install attempt. Thus a
 failed same-version reinstall remains incomplete in `status` while the previous
-completed version stays available. Retry uses the same upgrade/render policy;
-an equal-version `newer-only` retry still skips rendering and component restart.
+completed version stays available. A retry renders again like every install.
 
 The sequence describes the established behavior, including secret materialization
 before image loading and possible persistent file changes before a service
@@ -215,9 +214,9 @@ sequenceDiagram
     D->>G: check_pending (pending-operation.json)
     D->>C: load_installed_metadata, check_id_prefixes, check_owners
     D->>C: installed_version / dependents
-    Note over D: check_dependencies_installed, check_dependents,<br/>install_needed (upgrade policy)
+    Note over D: check_dependencies_installed, check_dependents,<br/>check_not_downgrade
     D->>R: load_config, validate_component_config
-    D->>D: check_public_settings (public_from)
+    D->>D: with_gateway_settings (public_from)
     D->>H: production_environment: check user-manager environment (read-only)
     D->>G: registration_stage (temp dir): imports, updates, removals
     D->>R: effective_config, effective_documents
@@ -487,8 +486,8 @@ key validation and uninstall inventory include these Secrets. File sources used
 only by templates count as consumed; template-to-template references are refused.
 
 The password file remains authoritative and byte-preserved. Derived values are
-recomputed only when rendering actually runs: an equal `newer-only` release and
-an ordinary systemd restart keep the installed YAML. Changing a file does not
+recomputed only when an install renders; an ordinary systemd restart keeps the
+installed YAML. Changing a file does not
 rotate a PostgreSQL role's password. Backup/restore pairs DB data with credentials
 and config; derived values can be recreated. Rendered YAML and Podman storage
 contain recoverable values, and env delivery exposes them to runtime inspection.

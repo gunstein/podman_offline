@@ -83,7 +83,8 @@ class RenamedProductTests(RenamedFixture):
         orders_config = yaml.safe_load(
             (common.STATE / "orders/config.yaml").read_text()
         )
-        self.assertEqual(orders_config["PUBLIC_ORIGIN"], "https://shop.test:9443")
+        # orders reads the public origin from gateway's config.yaml; it holds none.
+        self.assertNotIn("PUBLIC_ORIGIN", orders_config)
         self.assertTrue(
             (common.STATE / "orders/credentials/database/password").is_file()
         )

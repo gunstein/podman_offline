@@ -1,3 +1,8 @@
+# Settings the operator may change: init-config copies them to config.yaml.
+# PUBLIC_ORIGIN and HTTPS_PORT are set only here; every other component reads
+# them from platform's config.yaml.
+PUBLIC_ORIGIN: https://myproduct-proxy:8443
+HTTPS_PORT: 8443
 IP_ADDRESS: 127.0.0.1
 SECRET_FILES:
   platform-web-tls:

@@ -37,20 +37,11 @@ def init_config(component):
             f"[OK] Existing config retained unchanged: {target}; install validates it"
         )
         return
-    overrides = {}
-    source = descriptor["public_from"]
-    if source is not None:
-        # The dependency is installed (checked above), so its config must exist.
-        source_path = catalog.component_paths(source)[0]
-        if not source_path.exists():
-            raise common.DeployError(
-                f"Missing {source_path}; restore installed {source} config before initializing {component}"
-            )
-        owner = catalog.load_installed_metadata(common.STATE)[source]
-        overrides = public_settings(
-            rendering.load_config(source_path), source_path, shared_keys(owner)
-        )
-    config = rendering.component_defaults(component, overrides=overrides)
+    # The gateway's public settings complete the defaults for validation only;
+    # they stay in the gateway's config.yaml, which install reads again.
+    public = catalog.gateway_settings(descriptor["public_from"])
+    config = rendering.component_defaults(component, overrides=public)
+    config = {key: value for key, value in config.items() if key not in public}
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
     fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -62,83 +53,12 @@ def init_config(component):
     )
 
 
-# Always shared with public_from dependents, with extra validation. Other names
-# are shared only when the owner lists them in shares (bundles.yaml). Reserved
-# names: docs/COMPONENTS.md, "Reserved configuration names".
-PUBLIC_KEYS = ("PUBLIC_ORIGIN", "HTTPS_PORT")
-
-
-def shared_keys(owner):
-    """The config names an owner's public_from dependents take from it."""
-    return PUBLIC_KEYS + tuple(key for key in owner["shares"] if key not in PUBLIC_KEYS)
-
-
-def public_settings(config, path, keys=PUBLIC_KEYS):
-    """Return the validated shared settings of one config (origin, port, shares)."""
-    for key in keys:
-        if key not in config:
-            raise common.DeployError(
-                f"Missing {key} in {path}; add it explicitly before installation"
-            )
-    rendering.public_origin(config["PUBLIC_ORIGIN"], path)
-    return {key: config[key] for key in keys}
-
-
-def check_public_settings(descriptor, config, path, known):
-    """A component declaring public_from must use that dependency's shared settings.
-
-    known holds the owner's descriptor (installed metadata, or this bundle).
-    Errors name the setting, both files and the owner, never the values.
-    """
-    source = descriptor["public_from"]
-    if source is None:
-        return
-    keys = shared_keys(known[source])
-    source_path = catalog.component_paths(source)[0]
-    expected = public_settings(rendering.load_config(source_path), source_path, keys)
-    actual = public_settings(config, path, keys)
-    for key in keys:
-        if actual[key] != expected[key]:
-            raise common.DeployError(
-                f"{key} in {path} must match {source_path} ({source} shares it)"
-            )
-
-
-def check_own_shares(descriptor, config, path):
-    """An owner's own config must define every name it shares."""
-    for key in descriptor["shares"]:
-        if key not in config:
-            raise common.DeployError(
-                f"Missing {key} in {path}; {descriptor['name']} shares it "
-                "(shares in bundles.yaml)"
-            )
-
-
-def check_kept_shares(descriptor, installed):
-    """An owner upgrade must keep every name its installed dependents take from it."""
-    name = descriptor["name"]
-    if name not in installed:
-        return
-    dropped = set(installed[name]["shares"]) - set(descriptor["shares"])
-    dependents = sorted(
-        other for other, entry in installed.items() if entry["public_from"] == name
-    )
-    if dropped and dependents:
-        raise common.DeployError(
-            f"{name} no longer shares {', '.join(sorted(dropped))}, which installed "
-            f"{', '.join(dependents)} take from it (public_from); keep it in "
-            f"{name}'s shares until they no longer use it"
-        )
-
-
-def check_api_secret_lines(descriptor, installed, render):
+def check_api_secret_lines(descriptor, installed):
     """Identity's API secret lines decide where each installed API's value goes.
 
-    The installed, rendered Identity's api_secrets is the only mapping. A new
-    Identity release may move a line to another <n> (owner_secrets rebuilds the
-    Secret by API name), but it may not drop an installed API, and a release
-    that is not rendered (newer-only, same version) may not change the mapping
-    under the running Identity.
+    The installed Identity's api_secrets is the only mapping. A new Identity
+    release may move a line to another <n> (owner_secrets rebuilds the Secret
+    by API name), but it may not drop an installed API.
     """
     name = descriptor["name"]
     apis = sorted(
@@ -152,16 +72,6 @@ def check_api_secret_lines(descriptor, installed, render):
             f"This {name} release has no API secret line for installed "
             f"{', '.join(dropped)}; uninstall {dropped[0]} first, or keep its "
             f"ApiResources__<n>__ApiSecrets__0__Value line in {name}'s ENVIRONMENT"
-        )
-    if (
-        not render
-        and name in installed
-        and installed[name]["api_secrets"] != descriptor["api_secrets"]
-    ):
-        raise common.DeployError(
-            f"This {name} {descriptor['version']} bundle changes its API secret "
-            f"lines but would not be rendered (upgrade: newer-only, same version); "
-            f"give {name} a higher version"
         )
 
 
@@ -347,17 +257,18 @@ def check_database_volume_absent(claim, password):
         )
 
 
-def check_dev_shared_settings(component, owner, keys):
-    """Refuse component dev values that the owner's final overrides would hide."""
-    path = common.ROOT / "components" / component / "config.dev.yaml"
-    if path.exists() or path.is_symlink():
-        local = rendering.config_layer(path)
-        for key in keys:
-            if key in local:
-                raise common.DeployError(
-                    f"{path}: {key} is shared by {owner}; "
-                    f"set it in the owner's config, not this component's dev config"
-                )
+def check_dev_shared_settings(component, gateway):
+    """Refuse a component's own public settings; they are read from the gateway."""
+    for name in ("config.defaults.yaml", "config.dev.yaml"):
+        path = common.ROOT / "components" / component / name
+        if path.exists() or path.is_symlink():
+            local = rendering.config_layer(path)
+            for key in catalog.PUBLIC_KEYS:
+                if key in local:
+                    raise common.DeployError(
+                        f"{path}: {key} is read from {gateway}'s config; "
+                        f"set it there, not in {component}"
+                    )
 
 
 def dev_settings():
@@ -372,12 +283,10 @@ def dev_settings():
     for component, descriptor in known.items():
         source = descriptor["public_from"]
         if source:
-            check_dev_shared_settings(component, source, shared_keys(known[source]))
+            check_dev_shared_settings(component, source)
         overrides = (
-            public_settings(
-                settings[source],
-                common.BUILD / "dev" / source / "config.yaml",
-                shared_keys(known[source]),
+            catalog.public_settings(
+                settings[source], common.BUILD / "dev" / source / "config.yaml"
             )
             if source
             else None
@@ -493,7 +402,6 @@ def prepare_components():
                     component: (config, state / component / "config.yaml")
                     for component, (config, _) in checked.items()
                 },
-                state=state,
             )
         )
         documents, archives = [], []
@@ -732,28 +640,20 @@ def check_version_requirement(component, version, requirement, dependent):
         )
 
 
-def install_needed(descriptor):
-    """Decide whether this install renders and restarts the component.
-
-    upgrade: always reinstalls every time. upgrade: newer-only installs a missing
-    or newer version, keeps an equal one and refuses a downgrade.
-    """
-    if descriptor["upgrade"] == "always":
-        return True
+def check_not_downgrade(descriptor):
+    """Every install renders the component again; only a downgrade is refused."""
     component = descriptor["name"]
     installed = catalog.installed_version(common.STATE, component)
     if installed is None:
-        return True
-    requested = catalog.version_number(descriptor["version"])
-    if requested < catalog.version_number(installed):
+        return
+    if catalog.version_number(descriptor["version"]) < catalog.version_number(
+        installed
+    ):
+        # The harness parses "<Component> downgrade refused" (acceptance/remote.sh).
         raise common.DeployError(
-            component.title()
-            + " downgrade refused: requested "
-            + descriptor["version"]
-            + ", installed "
-            + installed
+            f"{component.title()} downgrade refused: requested "
+            f"{descriptor['version']}, installed {installed}"
         )
-    return requested > catalog.version_number(installed)
 
 
 def quadlet_text(suffix, product, name):
@@ -993,7 +893,7 @@ def write_installed_metadata(descriptor):
     """
     write_install_record(
         catalog.metadata_path(common.STATE, descriptor["name"]),
-        json.dumps(descriptor, sort_keys=True) + "\n",
+        json.dumps(catalog.descriptor_document(descriptor), sort_keys=True) + "\n",
     )
 
 
@@ -1004,26 +904,16 @@ def write_installed_marker(descriptor):
     )
 
 
-def install_preconditions(name, checked):
+def install_preconditions(checked):
     """Install's checks after the manifests and before generation; read-only.
 
     The shared network matches the bundle, the image archive exists and every
-    image install will verify is fully qualified: the rendered component's, or
-    the component's own manifests when it is not rendered. ./deploy.sh validate
+    image of the rendered component is fully qualified. ./deploy.sh validate
     runs this too.
     """
     network, network_text = check_shared_network()
     archive = image_archive()
-    documents = [doc for _, docs in checked.values() for doc in docs]
-    if name not in checked:
-        for path in sorted(
-            (common.ROOT / "components" / name / "manifests").glob("*.yaml")
-        ):
-            source_documents = rendering.load_yaml_all(path)
-            # Keep the source path when newer-only skips effective rendering.
-            rendering.pod_specs(source_documents, str(path))
-            documents.extend(source_documents)
-    rendering.find_images(documents)
+    rendering.find_images([doc for _, docs in checked.values() for doc in docs])
     return network, network_text, archive
 
 
@@ -1032,7 +922,7 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     name = descriptor["name"]
     components = list(checked)
     owners = catalog.role_owners(known, "registration owners")
-    network, network_text, archive = install_preconditions(name, checked)
+    network, network_text, archive = install_preconditions(checked)
     rendered = materialize_component_manifests(checked, imports, known)
     updates = dict(updates)
     updates.update(
@@ -1065,9 +955,8 @@ def install_checks():
 
     The bundle descriptor, the installed set with this descriptor (ID prefixes,
     role owners, pending owner work), dependency and dependent ranges, and the
-    persistent config with its public_from settings. Returns (descriptor,
-    known, config, config_path, render); render is False when only
-    registrations and owners are refreshed. ./deploy.sh validate runs this too.
+    persistent config with the gateway's public settings. Returns (descriptor,
+    known, config, config_path). ./deploy.sh validate runs this too.
     """
     descriptor = bundle_descriptor()
     name = descriptor["name"]
@@ -1092,32 +981,18 @@ def install_checks():
         )
     check_dependencies_installed(descriptor)
     check_dependents(descriptor, installed)
-    check_kept_shares(descriptor, installed)
     config_path = catalog.component_paths(name)[0]
     if not config_path.is_file():
         raise common.DeployError(
             f"Missing {config_path}; run ./deploy.sh init-config {name} first"
         )
-    config = rendering.load_config(config_path)
-    render = install_needed(descriptor)
-    recorded = pending.get("version") if pending else None
-    if not render and recorded not in (None, descriptor["version"]):
-        # Its interrupted attempt may have published files and registrations
-        # of version <recorded>; finishing without rendering would restart
-        # owners with them while this component keeps running the old ones.
-        raise common.DeployError(
-            f"Pending install of {name} {recorded}; this {descriptor['version']} "
-            f"bundle would not render {name} (upgrade: newer-only), so it cannot "
-            f"finish that install. Run ./deploy.sh install from the {name} "
-            f"{recorded} bundle (or a newer one)"
-        )
-    check_api_secret_lines(descriptor, installed, render)
-    rendering.validate_component_config(
-        config, name, config_path, check_placeholders=render
+    config = catalog.with_gateway_settings(
+        descriptor, rendering.load_config(config_path), config_path
     )
-    check_own_shares(descriptor, config, config_path)
-    check_public_settings(descriptor, config, config_path, known)
-    return descriptor, known, config, config_path, render
+    check_not_downgrade(descriptor)
+    check_api_secret_lines(descriptor, installed)
+    rendering.validate_component_config(config, name, config_path)
+    return descriptor, known, config, config_path
 
 
 def install_components():
@@ -1130,7 +1005,7 @@ def install_components():
     """
     # Pure declaration checks precede even the user-manager host query.
     service_user()
-    descriptor, known, config, config_path, render = install_checks()
+    descriptor, known, config, config_path = install_checks()
     production_environment()
     name = descriptor["name"]
     with tempfile.TemporaryDirectory(
@@ -1141,10 +1016,9 @@ def install_components():
         imports, updates, removals = registrations.registration_stage(
             [name], Path(directory), known
         )
-        checked = {}
-        if render:
-            effective = rendering.effective_config(config, config_path, name)
-            checked[name] = (
+        effective = rendering.effective_config(config, config_path, name)
+        checked = {
+            name: (
                 effective,
                 check_manifests(
                     effective,
@@ -1155,6 +1029,7 @@ def install_components():
                     catalog.imported_secrets(descriptor),
                 ),
             )
+        }
         install_component_plan(descriptor, checked, known, imports, updates, removals)
 
 

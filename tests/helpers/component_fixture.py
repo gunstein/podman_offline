@@ -31,11 +31,15 @@ class ComponentFixture(DeployFixture):
             "quadlet/template.network", "[Network]\nNetworkName=@@PRODUCT_NAME@@\n"
         )
         self.write("images/images.tar")
+        # Only the gateway's config holds the public settings; the others read
+        # them from it.
+        self.write(
+            "home/platform/config.yaml",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+        )
+        for component in ("identity", "app1"):
+            self.write("home/" + component + "/config.yaml", "{}\n")
         for component in ("platform", "identity", "app1"):
-            self.write(
-                "home/" + component + "/config.yaml",
-                "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
-            )
             self.component_manifest(component)
 
         self.select("platform")
@@ -102,11 +106,11 @@ class ComponentFixture(DeployFixture):
 
     def registration_fixture(self):
         """Create matching origins, a public client descriptor and a synthetic PEM."""
-        for component in ("platform", "app1"):
-            self.write(
-                "home/" + component + "/config.yaml",
-                "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
-            )
+        self.write(
+            "home/platform/config.yaml",
+            "HTTPS_PORT: 8443\nPUBLIC_ORIGIN: https://example.test:8443\n",
+        )
+        self.write("home/app1/config.yaml", "{}\n")
         source = (
             Path(__file__).resolve().parents[1] / "fixtures/catalog/components/app1"
         )

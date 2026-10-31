@@ -113,7 +113,7 @@ def validate_bundle():
     directory or user manager, so it also works before linger is enabled.
     """
     deploy.service_user()
-    descriptor, known, config, config_path, render = deploy.install_checks()
+    descriptor, known, config, config_path = deploy.install_checks()
     name = descriptor["name"]
     findings = []
     try:
@@ -125,23 +125,19 @@ def validate_bundle():
         findings.append(("registrations", str(error)))
     imported = catalog.imported_volumes(descriptor)
     try:
-        checked = {}
-        if render:
-            effective = rendering.effective_config(config, config_path, name)
-            documents = deploy.validate_component(
-                effective,
-                config_path,
-                common.ROOT / "components" / name / "manifests",
-                name,
-                imported,
-                catalog.imported_secrets(descriptor),
-            )
-            checked[name] = (effective, documents)
-        deploy.install_preconditions(name, checked)
-        for effective, documents in checked.values():
-            check_sources(effective, config_path, documents, imported, name)
-            for line in environment.summary(name, effective):
-                log.info("[OK] " + line)
+        effective = rendering.effective_config(config, config_path, name)
+        documents = deploy.validate_component(
+            effective,
+            config_path,
+            common.ROOT / "components" / name / "manifests",
+            name,
+            imported,
+            catalog.imported_secrets(descriptor),
+        )
+        deploy.install_preconditions({name: (effective, documents)})
+        check_sources(effective, config_path, documents, imported, name)
+        for line in environment.summary(name, effective):
+            log.info("[OK] " + line)
     except ERRORS as error:
         findings.append((name, str(error)))
     return [name], findings

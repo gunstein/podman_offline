@@ -123,8 +123,8 @@ class ConfigTests(ConfigFixture):
             self.select("platform")
             deploy.init_config("platform")
 
-    def test_init_app_inherits_only_two_platform_shared_values(self):
-        """Copy the defined shared settings as final overrides, never other platform keys."""
+    def test_init_app_reads_but_never_copies_platform_public_settings(self):
+        """init-config validates with platform's values but writes none of them."""
         self.write(
             "home/platform/config.yaml",
             "HTTPS_PORT: 9443\nPUBLIC_ORIGIN: https://installed.test:9443\nCHOICE: private-platform\n",
@@ -132,9 +132,13 @@ class ConfigTests(ConfigFixture):
         (common.STATE / "app1/config.yaml").unlink()
         deploy.init_config("app1")
         config = rendering.load_config(common.STATE / "app1/config.yaml")
-        self.assertEqual(config["PUBLIC_ORIGIN"], "https://installed.test:9443")
-        self.assertEqual(config["HTTPS_PORT"], 9443)
+        self.assertNotIn("PUBLIC_ORIGIN", config)
+        self.assertNotIn("HTTPS_PORT", config)
         self.assertEqual(config["CHOICE"], "component")
+        # Install reads them from platform's config.yaml.
+        settings = deploy.install_checks()[2]
+        self.assertEqual(settings["PUBLIC_ORIGIN"], "https://installed.test:9443")
+        self.assertEqual(settings["HTTPS_PORT"], 9443)
 
     def test_invalid_existing_platform_never_falls_back_to_defaults(self):
         """A present but unusable platform config is an operator error."""
@@ -154,7 +158,7 @@ class ConfigTests(ConfigFixture):
         self.write("home/installed/platform", "1.0.0\n")
         (common.STATE / "platform/config.yaml").unlink()
         with self.assertRaisesRegex(
-            common.DeployError, "platform/config.yaml.*restore installed platform"
+            common.DeployError, "platform/config.yaml; restore the installed platform"
         ):
             deploy.init_config("app1")
         self.assertFalse((common.STATE / "app1/config.yaml").exists())
@@ -171,7 +175,7 @@ class ConfigTests(ConfigFixture):
         self.write("components/app1/config.defaults.yaml", "HTTPS_PORT: 1\n")
         deploy.install()
         self.assertEqual({p: p.read_bytes() for p in paths}, before)
-        self.assertEqual(rendering.load_config(paths[1])["HTTPS_PORT"], 8443)
+        self.assertEqual(rendering.load_config(paths[0])["HTTPS_PORT"], 8443)
 
     def test_new_required_placeholder_fails_before_secrets_images_or_writes(self):
         """Report config path and key, without silently adding a new release default."""
@@ -230,8 +234,8 @@ class ConfigTests(ConfigFixture):
                 )
                 self.assertTrue((base / "private/generated").is_file())
 
-    def test_install_rejects_shared_mismatch_without_rewriting_configs(self):
-        """Consistent shared settings are an explicit preflight, not an auto-correction."""
+    def test_install_refuses_own_public_settings_without_rewriting_configs(self):
+        """Only platform's config.yaml holds them; a copy is refused, not corrected."""
         for settings in (
             "PUBLIC_ORIGIN: https://other.test:8443\nHTTPS_PORT: 8443\n",
             "PUBLIC_ORIGIN: https://example.test:8443\nHTTPS_PORT: 9443\n",
@@ -239,15 +243,15 @@ class ConfigTests(ConfigFixture):
             path = self.write("home/app1/config.yaml", settings)
             before = path.read_bytes()
             with self.assertRaisesRegex(
-                common.DeployError, "app1/config.yaml.*must match.*platform/config.yaml"
+                common.DeployError, "app1/config.yaml is read from platform's config"
             ):
                 deploy.install()
             self.assertEqual(path.read_bytes(), before)
             self.assertFalse((common.STATE / "installed/app1").exists())
             self.process.assert_not_called()
 
-    def test_help_init_inherits_shared_values_without_bundled_platform(self):
-        """A help-only bundle uses existing platform settings without shipping/installing platform."""
+    def test_help_init_needs_installed_platform_settings_without_bundling_them(self):
+        """A help-only bundle validates with installed platform settings, copies none."""
         self.select("help")
         self.component_manifest("help")
         self.write("components/help/config.defaults.yaml", "{}\n")
@@ -257,8 +261,8 @@ class ConfigTests(ConfigFixture):
         )
         deploy.init_config("help")
         config = rendering.load_config(common.STATE / "help/config.yaml")
-        self.assertEqual(config["PUBLIC_ORIGIN"], "https://installed.test:9443")
-        self.assertEqual(config["HTTPS_PORT"], 9443)
+        self.assertNotIn("PUBLIC_ORIGIN", config)
+        self.assertNotIn("HTTPS_PORT", config)
         self.process.assert_not_called()
 
     def test_bundle_prepare_never_uses_legacy_root_config(self):

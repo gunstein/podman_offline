@@ -306,7 +306,7 @@ class StatusLifecycleTests(ProductFixture):
         self.write_product(
             {
                 "worker": {
-                    "catalog": {"upgrade": "always"},
+                    "catalog": {},
                     "defaults": {"MESSAGE": "original"},
                     "manifests": [
                         pod(
@@ -456,10 +456,10 @@ class StatusLifecycleTests(ProductFixture):
                 )
                 self.assertEqual(retained.read_bytes(), b"retained-private-key")
 
-    def test_newer_only_retry_preserves_previous_version_and_equal_version_skip(self):
+    def test_upgrade_retry_preserves_previous_version_and_downgrade_is_refused(self):
         path = self.release / "bundle.yaml"
         descriptor = yaml.safe_load(path.read_text())
-        descriptor.update(upgrade="newer-only", version="1.0.1")
+        descriptor.update(version="1.0.1")
         path.write_text(yaml.safe_dump(descriptor))
         self.config.write_text(yaml.safe_dump({"MESSAGE": "upgraded"}))
         self.attempt(
@@ -468,14 +468,10 @@ class StatusLifecycleTests(ProductFixture):
         self.report(False, recorded="1.0.1")
         self.attempt("install")
         self.report(True, version="1.0.1", recorded="1.0.1")
-        # An equal-version attempt still keeps its original no-render policy.
+        # The earlier release is refused before any host command.
         before = self.output.read_bytes()
-        self.config.write_text(yaml.safe_dump({"MESSAGE": "not selected"}))
-        self.attempt("install", expected=1, clear_failure=True)
-        self.report(False, version="1.0.1", recorded="1.0.1")
-        _, events = self.attempt("install")
-        self.assertFalse(
-            any(event[:3] == ["systemctl", "--user", "restart"] for event in events)
-        )
+        path.write_text(yaml.safe_dump(dict(descriptor, version="1.0.0")))
+        _, events = self.attempt("install", expected=1)
+        self.assertFalse(any(event[0] == "systemctl" for event in events))
         self.assertEqual(self.output.read_bytes(), before)
         self.report(True, version="1.0.1", recorded="1.0.1")

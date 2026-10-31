@@ -10,6 +10,7 @@ from pathlib import Path
 import bundle
 import yaml
 
+from demo_tests.demo_fixture import DEMO_PUBLIC
 from helpers.bundle_fixture import BundleFixture
 
 
@@ -20,12 +21,7 @@ class DemoBundleTests(BundleFixture):
         repo = Path(__file__).resolve().parents[2]
         self.write(
             "bundles.yaml",
-            "product: myproduct\ngateway: platform\ncomponents:\n  platform:\n"
-            "    upgrade: newer-only\n",
-        )
-        self.write(
-            "config/common.defaults.yaml",
-            (repo / "config/common.defaults.yaml").read_text(),
+            "product: myproduct\ngateway: platform\ncomponents:\n  platform:\n",
         )
         shutil.copytree(repo / "components/platform", self.root / "components/platform")
         self.write("components/platform/VERSION", "1.2.4\n")
@@ -64,10 +60,8 @@ class DemoBundleTests(BundleFixture):
         repo = Path(__file__).resolve().parents[2]
         # Only the app1 manifests matter here, so the catalog has no registrations.
         self.write("bundles.yaml", "product: myproduct\ncomponents:\n  app1: {}\n")
-        self.write(
-            "config/common.defaults.yaml",
-            (repo / "config/common.defaults.yaml").read_text(),
-        )
+        # Without a gateway, app1's own defaults carry the public settings.
+        self.write("config/common.defaults.yaml", yaml.safe_dump(DEMO_PUBLIC))
         shutil.copytree(repo / "components/app1", self.root / "components/app1")
         for name in ("route.conf", "client.yaml"):
             (self.root / "components/app1" / name).unlink()

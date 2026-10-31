@@ -177,11 +177,11 @@ def component_defaults(component, overrides=None, dev=False):
     return config
 
 
-def validate_component_config(config, component, path, check_placeholders=True):
+def validate_component_config(config, component, path):
     """Validate whole-value and ConfigMap inline inputs before initialization writes.
 
     Shared public settings are required by the component's declared contract
-    (deploy.check_public_settings), not here.
+    (catalog.with_gateway_settings), not here.
     """
     required = set()
     configmaps = []
@@ -198,17 +198,16 @@ def validate_component_config(config, component, path, check_placeholders=True):
             if match:
                 required.add(match[1])
 
-    if check_placeholders:
-        for manifest in sorted(
-            (common.ROOT / "components" / component / "manifests").glob("*.yaml")
-        ):
-            documents = load_yaml_all(manifest)
-            collect(documents)
-            configmaps.extend(
-                doc
-                for doc in documents
-                if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
-            )
+    for manifest in sorted(
+        (common.ROOT / "components" / component / "manifests").glob("*.yaml")
+    ):
+        documents = load_yaml_all(manifest)
+        collect(documents)
+        configmaps.extend(
+            doc
+            for doc in documents
+            if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
+        )
     # PUBLIC_HOSTNAME is always derived from PUBLIC_ORIGIN, so it cannot disagree.
     if "PUBLIC_HOSTNAME" in config:
         raise common.DeployError(

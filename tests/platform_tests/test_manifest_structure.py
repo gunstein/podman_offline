@@ -123,13 +123,7 @@ class ManifestStructureTests(ProductFixture):
                 self.assertEqual(self.snapshot(), before)
 
     def test_secret_reference_with_existing_key_rejected_in_relocated_release(self):
-        self.check_relocated_release("always")
-
-    def test_newer_only_repeat_reports_manifest_in_validate_and_install(self):
-        self.check_relocated_release("newer-only")
-
-    def check_relocated_release(self, upgrade):
-        self.write_catalog({"processor": {"upgrade": upgrade}})
+        self.write_catalog({"processor": {}})
         release = self.build_and_unpack()["processor"]
         shutil.rmtree(self.source)
         relocated = self.root / "relocated-release"
@@ -144,9 +138,8 @@ class ManifestStructureTests(ProductFixture):
         self.write_job(relocated, broken)
         before = self.snapshot()
         self.process.reset_mock()
-        self.assertEqual(deploy.install_checks()[-1], upgrade == "always")
         for operation in (validation.validate, deploy.install):
-            with self.subTest(upgrade=upgrade, operation=operation.__name__):
+            with self.subTest(operation=operation.__name__):
                 with self.without_credential_reads():
                     with self.assertRaisesRegex(
                         common.DeployError, r"10-resources.yaml: spec\.env"

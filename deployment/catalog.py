@@ -10,7 +10,8 @@ One schema describes a component everywhere:
 - Target: ``metadata/<id>.json`` keeps the installed descriptor, so dependents
   and registration owners stay known without the source checkout.
 
-A descriptor is a plain dict with exactly the keys in ``DESCRIPTOR_KEYS``.
+A descriptor is a plain dict with exactly the keys in ``DESCRIPTOR_KEYS``;
+the written files add ``OLDER_READER_KEYS`` (``descriptor_document``).
 """
 
 import json
@@ -33,22 +34,12 @@ ROLE_FILES = {"routes": "route.conf", "clients": "client.yaml"}
 # The role whose accepts value names a Secret instead of a volume.
 SECRET_ROLES = ("apis",)
 
-UPGRADES = ("always", "newer-only")
-# Config names a component may share with its public_from dependents, beside
-# PUBLIC_ORIGIN and HTTPS_PORT (always shared). The placeholder name rule; the
-# names below have built-in meaning and cannot be shared. See
-# docs/COMPONENTS.md, "Reserved configuration names".
-SETTING = re.compile(r"^[A-Z0-9_]+$")
-UNSHAREABLE = (
-    "PUBLIC_HOSTNAME",
-    "SECRET_FILES",
-    "VOLUME_FILES",
-    "SECRET_TEMPLATES",
-    "ENVIRONMENT",
-)
+# Every component except the gateway reads these from the gateway's
+# config.yaml at install and validate; its own config.yaml does not hold them.
+PUBLIC_KEYS = ("PUBLIC_ORIGIN", "HTTPS_PORT")
 # The fields a bundles.yaml component entry may have. Everything else in a
 # normalized entry is derived from the gateway/identity names and the files.
-CATALOG_KEYS = ("requires", "upgrade", "shares")
+CATALOG_KEYS = ("requires",)
 # Earlier explicit fields, refused with the rule that replaced them.
 REMOVED_KEYS = {
     "public_from": "every component except the gateway takes the gateway's public settings",
@@ -56,13 +47,13 @@ REMOVED_KEYS = {
     "clients": "a component with client.yaml registers it with identity",
     "apis": "an API component registers its secret with identity",
     "accepts": "the gateway and identity receive registrations under fixed names",
+    "upgrade": "every install renders the component again and a downgrade is refused",
+    "shares": "only PUBLIC_ORIGIN and HTTPS_PORT are shared, read from the gateway",
 }
 # Normalized fields, as the rest of the code and compiled descriptors use them.
 ENTRY_KEYS = (
     "requires",
-    "upgrade",
     "public_from",
-    "shares",
     "routes",
     "clients",
     "apis",
@@ -74,9 +65,7 @@ DESCRIPTOR_KEYS = (
     "product",
     "version",
     "requires",
-    "upgrade",
     "public_from",
-    "shares",
     "routes",
     "clients",
     "apis",
@@ -87,7 +76,10 @@ DESCRIPTOR_KEYS = (
 # value an older descriptor without them means. api_secrets is Identity's
 # {API component: {"index": <n> in ApiResources__<n>__ApiSecrets__0__Value,
 # "secret": "<SECRET_FILES ID>/<key>" of the API}}.
-LATER_KEYS = {"shares": [], "apis": None, "api_secrets": {}}
+LATER_KEYS = {"apis": None, "api_secrets": {}}
+# Fields older releases read from installed metadata (backlog 77 removed them).
+# This release writes them with these fixed values and ignores them on read.
+OLDER_READER_KEYS = {"upgrade": "always", "shares": []}
 
 
 def check_id(value, where):
@@ -335,24 +327,16 @@ def derive_entries(path, document, files):
     for name, written in components.items():
         written = written or {}
         found = files[name]
-        where = f"{path}: components.{name}"
         directory = f"components/{name}"
         entry = {
             "requires": list(written.get("requires", [])),
-            "upgrade": written.get("upgrade", "always"),
             "public_from": None,
-            "shares": written.get("shares", []),
             "routes": None,
             "clients": None,
             "apis": None,
             "accepts": {},
             "api_secrets": {},
         }
-        if "shares" in written and name != gateway:
-            raise common.DeployError(
-                f"{where}.shares: only the gateway ({gateway or 'none set'}) may "
-                "share settings; move them to its entry"
-            )
         if found["route"]:
             if gateway is None:
                 raise common.DeployError(
@@ -433,10 +417,6 @@ def derived_lines(entries):
 
 def check_entry(name, entry, where):
     """Validate the fields a catalog entry and a compiled descriptor share."""
-    if entry["upgrade"] not in UPGRADES:
-        raise common.DeployError(
-            f"{where}.upgrade must be one of {', '.join(UPGRADES)}"
-        )
     requires = entry["requires"]
     for key in ("public_from",) + ROLES:
         value = entry[key]
@@ -451,18 +431,6 @@ def check_entry(name, entry, where):
         raise common.DeployError(
             f"{where}: clients needs public_from for the redirect URI origin"
         )
-    shares = entry["shares"]
-    if not isinstance(shares, list) or len(set(map(str, shares))) != len(shares):
-        raise common.DeployError(f"{where}.shares must be a list without repeats")
-    for setting in shares:
-        if not isinstance(setting, str) or not SETTING.fullmatch(setting):
-            raise common.DeployError(
-                f"{where}.shares: {setting!r} is not a config name (A-Z, 0-9, _)"
-            )
-        if setting in UNSHAREABLE:
-            raise common.DeployError(
-                f"{where}.shares: {setting} is reserved and cannot be shared"
-            )
     accepts = entry["accepts"]
     if not isinstance(accepts, dict) or set(accepts) - set(ROLES):
         raise common.DeployError(
@@ -652,9 +620,7 @@ def source_descriptors(root):
                 dependency: compatible_range(versions[dependency])
                 for dependency in entry["requires"]
             },
-            "upgrade": entry["upgrade"],
             "public_from": entry["public_from"],
-            "shares": list(entry["shares"]),
             "routes": entry["routes"],
             "clients": entry["clients"],
             "apis": entry["apis"],
@@ -666,21 +632,30 @@ def source_descriptors(root):
     return descriptors
 
 
+def descriptor_document(descriptor):
+    """The descriptor as bundle.yaml and installed metadata store it."""
+    return dict(descriptor, **OLDER_READER_KEYS)
+
+
 def check_descriptor(data, where):
     """Validate one compiled descriptor read from bundle.yaml or installed metadata.
 
-    shares and apis came after the first product-named releases; a descriptor
-    without them shares nothing and registers no API (LATER_KEYS). Every other
-    field is required.
+    apis and api_secrets came after the first product-named releases; a
+    descriptor without them registers no API (LATER_KEYS). The fields only
+    older releases read (OLDER_READER_KEYS) are accepted and dropped. Every
+    other field is required.
     """
-    if isinstance(data, dict) and set(LATER_KEYS) - set(data):
+    if isinstance(data, dict):
         data = dict(data)
-        for key, value in LATER_KEYS.items():
+        for key, value in list(LATER_KEYS.items()) + list(OLDER_READER_KEYS.items()):
             data.setdefault(key, value)
-    if not isinstance(data, dict) or set(data) != set(DESCRIPTOR_KEYS):
+    fields = set(DESCRIPTOR_KEYS) | set(OLDER_READER_KEYS)
+    if not isinstance(data, dict) or set(data) != fields:
         raise common.DeployError(
-            f"{where}: expected exactly the fields {', '.join(DESCRIPTOR_KEYS)}"
+            f"{where}: expected exactly the fields {', '.join(sorted(fields))}"
         )
+    for key in OLDER_READER_KEYS:
+        del data[key]
     check_id(data["name"], f"{where}: name")
     check_product(data["product"], f"{where}: product")
     version_number(data["version"])
@@ -736,6 +711,46 @@ def state_paths(component, state=None):
     return folder / "config.yaml", folder / "files"
 
 
+def public_settings(config, path):
+    """The validated PUBLIC_ORIGIN and HTTPS_PORT of a gateway's config."""
+    for key in PUBLIC_KEYS:
+        if key not in config:
+            raise common.DeployError(
+                f"Missing {key} in {path}; add it explicitly before installation"
+            )
+    rendering.public_origin(config["PUBLIC_ORIGIN"], path)
+    return {key: config[key] for key in PUBLIC_KEYS}
+
+
+def gateway_settings(gateway, state=None):
+    """Read the installed gateway's public settings; {} without a gateway."""
+    if gateway is None:
+        return {}
+    path = state_paths(gateway, state)[0]
+    if not path.is_file():
+        raise common.DeployError(
+            f"Missing {path}; restore the installed {gateway} config first"
+        )
+    return public_settings(rendering.load_config(path), path)
+
+
+def with_gateway_settings(descriptor, config, path, state=None):
+    """Return a component's config plus its gateway's public settings; no writes.
+
+    The operator sets PUBLIC_ORIGIN and HTTPS_PORT once, in the gateway's
+    config.yaml; another component's config.yaml may not set them.
+    """
+    gateway = descriptor["public_from"]
+    if gateway is not None:
+        for key in PUBLIC_KEYS:
+            if key in config:
+                raise common.DeployError(
+                    f"{key} in {path} is read from {gateway}'s config.yaml; "
+                    "remove it here"
+                )
+    return dict(config, **gateway_settings(gateway, state))
+
+
 def component_paths(component):
     """Return one installed component's config, archives and Quadlet paths."""
     config, files = state_paths(component)
@@ -781,9 +796,9 @@ def load_installed_metadata(state):
                 raise ValueError("regular file required")
             check_id(name, str(path))
             data = json.loads(path.read_text())
-            if isinstance(data, dict) and set(data) == set(DESCRIPTOR_KEYS) - {
-                "product"
-            } - set(LATER_KEYS):
+            # Releases before product names wrote upgrade but no product or shares.
+            before_product = (set(DESCRIPTOR_KEYS) | {"upgrade"}) - {"product"}
+            if isinstance(data, dict) and set(data) == before_product - set(LATER_KEYS):
                 raise PreProductMetadata()
             descriptor = check_descriptor(data, str(path))
             if descriptor["name"] != name:

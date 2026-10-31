@@ -142,17 +142,14 @@ class ComponentDevTests(ProductFixture):
             self.assertEqual(self.snapshot(), before)
             self.process.assert_not_called()
 
-    def test_dependent_cannot_override_owner_shared_keys_even_with_equal_values(self):
-        product = copy.deepcopy(RENAMED)
-        product["gateway"]["catalog"]["shares"] = ["SHOP_REGION"]
-        product["gateway"]["defaults"]["SHOP_REGION"] = "private-region"
-        self.write_product(product)
-        for key, value in (
-            ("PUBLIC_ORIGIN", "https://shop.test:9443"),
-            ("HTTPS_PORT", 9443),
-            ("SHOP_REGION", "private-region"),
+    def test_dependent_cannot_set_gateway_public_keys_even_with_equal_values(self):
+        self.write_product(copy.deepcopy(RENAMED))
+        for name, key, value in (
+            ("config.dev.yaml", "PUBLIC_ORIGIN", "https://shop.test:9443"),
+            ("config.dev.yaml", "HTTPS_PORT", 9443),
+            ("config.defaults.yaml", "PUBLIC_ORIGIN", "https://shop.test:9443"),
         ):
-            path = self.layer("components/orders/config.dev.yaml", {key: value})
+            path = self.layer("components/orders/" + name, {key: value})
             before = self.snapshot()
             for action in (validation.validate, deploy.prepare):
                 with self.subTest(key=key, action=action.__name__):
@@ -164,17 +161,11 @@ class ComponentDevTests(ProductFixture):
                     self.assertNotIn(str(value), message)
             self.assertEqual(self.snapshot(), before)
             self.process.assert_not_called()
+            path.unlink()
 
     def test_owner_dev_settings_reach_dependents(self):
-        product = copy.deepcopy(RENAMED)
-        product["gateway"]["catalog"]["shares"] = ["SHOP_REGION"]
-        self.write_product(product)
-        expected = {
-            "PUBLIC_ORIGIN": "https://dev.test:9555",
-            "HTTPS_PORT": 9555,
-            "SHOP_REGION": "dev-region",
-        }
-        self.layer("config/dev.yaml", {"SHOP_REGION": "global-region"})
+        self.write_product(copy.deepcopy(RENAMED))
+        expected = {"PUBLIC_ORIGIN": "https://dev.test:9555", "HTTPS_PORT": 9555}
         self.layer("components/gateway/config.dev.yaml", expected)
         known, settings = deploy.dev_settings()
         for name in (

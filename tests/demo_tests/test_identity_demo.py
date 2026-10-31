@@ -4,7 +4,7 @@ from pathlib import Path
 
 from deployment import render as rendering
 
-from demo_tests.demo_fixture import DEMO
+from demo_tests.demo_fixture import DEMO, DEMO_PUBLIC
 from helpers.component_fixture import ComponentFixture
 
 
@@ -14,12 +14,10 @@ class DemoIdentityTests(ComponentFixture):
     ):
         repo = Path(__file__).resolve().parents[2]
         platform = rendering.merge_config(
-            repo / "config/common.defaults.yaml",
-            repo / "components/platform/config.defaults.yaml",
+            repo / "components/platform/config.defaults.yaml"
         )
         identity = rendering.merge_config(
-            repo / "config/common.defaults.yaml",
-            repo / "components/identity/config.defaults.yaml",
+            repo / "components/identity/config.defaults.yaml", overrides=DEMO_PUBLIC
         )
         self.assertFalse(any(name.startswith("DB_") for name in platform))
         self.assertNotIn("GENERATED_SECRETS", platform)

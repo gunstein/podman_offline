@@ -8,7 +8,7 @@ from unittest import mock
 
 import bundle
 import yaml
-from deployment import common, deploy, registrations, validation
+from deployment import catalog, common, deploy, registrations, validation
 
 from helpers.product_fixture import RENAMED, WORKER, ProductFixture, pod, route
 
@@ -220,111 +220,41 @@ class ClientIdentityTests(ProductFixture):
         self.refused("Invalid public client descriptor")
 
 
-class SharedSettingTests(ProductFixture):
-    """shares: an owner's custom settings travel and are compared like PUBLIC_ORIGIN."""
-
-    def product(self, shares=("SHOP_REGION",), version="1.0.0"):
-        """gateway owns SHOP_REGION; login-service (public_from gateway) uses it."""
-        product = copy.deepcopy(RENAMED)
-        gateway, login = product["gateway"], product["login-service"]
-        gateway["catalog"]["shares"] = list(shares)
-        gateway["defaults"].update(SHOP_REGION="eu", LOCAL_NOTE="gateway")
-        login["defaults"] = {"SHOP_REGION": "us", "LOCAL_NOTE": "login"}
-        environment = login["manifests"][0]["spec"]["containers"][0]["env"]
-        environment += [
-            {"name": "REGION", "value": "@@SHOP_REGION@@"},
-            {"name": "NOTE", "value": "@@LOCAL_NOTE@@"},
-        ]
-        gateway["manifests"][0]["spec"]["containers"][0]["env"].append(
-            {"name": "NOTE", "value": "@@LOCAL_NOTE@@"}
-        )
-        self.write_product(product, version=version)
-        return product
+class PublicSettingTests(ProductFixture):
+    """PUBLIC_ORIGIN and HTTPS_PORT are set once, in the gateway's config.yaml."""
 
     def edit(self, component, **values):
         path = common.STATE / component / "config.yaml"
-        config = yaml.safe_load(path.read_text())
+        config = yaml.safe_load(path.read_text()) or {}
         config.update(values)
-        for key in [key for key, value in values.items() if value is None]:
-            del config[key]
         path.write_text(yaml.safe_dump(config))
 
-    def install_gateway_and_init_login(self, region="nordic"):
+    def test_other_components_read_them_and_never_hold_a_copy(self):
+        self.write_product(RENAMED)
         releases = self.build_and_unpack()
+        origin = "https://changed.test:9443"
         self.install(
-            releases["gateway"], lambda _: self.edit("gateway", SHOP_REGION=region)
+            releases["gateway"], lambda _: self.edit("gateway", PUBLIC_ORIGIN=origin)
         )
         self.use_root(releases["login-service"])
         deploy.init_config("login-service")
-        return releases
-
-    def test_dev_inherits_shared_names_only(self):
-        product = self.product()
-        self.provide_credentials(product, common.BUILD / "dev")
-        deploy.prepare()
-        config = yaml.safe_load(
-            (common.BUILD / "dev/login-service/config.yaml").read_text()
-        )
-        self.assertEqual(config["SHOP_REGION"], "eu")
-        self.assertEqual(config["LOCAL_NOTE"], "login")
-
-    def test_init_config_inherits_and_install_refuses_a_mismatch(self):
-        self.product()
-        releases = self.install_gateway_and_init_login()
-        config = yaml.safe_load(
-            (common.STATE / "login-service/config.yaml").read_text()
-        )
-        self.assertEqual(config["SHOP_REGION"], "nordic")
-        self.assertEqual(config["LOCAL_NOTE"], "login")  # Unshared: its own value.
-        self.edit("login-service", SHOP_REGION="eu")
-        self.process.reset_mock()
-        with self.assertRaises(common.DeployError) as raised:
-            deploy.install()
-        message = str(raised.exception)
-        self.assertRegex(
-            message,
-            "SHOP_REGION in .*login-service/config.yaml must match "
-            ".*gateway/config.yaml \\(gateway shares it\\)",
-        )
-        self.assertNotIn("nordic", message)
-        self.assertNotIn("'eu'", message)
-        self.assertEqual(self.commands(), [])
-        # Unshared names may differ; the matching shared value installs.
-        self.edit("login-service", SHOP_REGION="nordic", LOCAL_NOTE="different")
-        self.use_root(releases["login-service"])
+        path = common.STATE / "login-service/config.yaml"
+        config = yaml.safe_load(path.read_text()) or {}
+        self.assertNotIn("PUBLIC_ORIGIN", config)
+        self.assertNotIn("HTTPS_PORT", config)
         deploy.install()
-        self.assertTrue((common.STATE / "installed/login-service").is_file())
-
-    def test_owner_must_define_what_it_shares(self):
-        self.product()
-        releases = self.build_and_unpack()
-        with self.assertRaisesRegex(
-            common.DeployError,
-            "Missing SHOP_REGION in .*gateway/config.yaml; gateway shares it",
-        ):
-            self.install(
-                releases["gateway"], lambda _: self.edit("gateway", SHOP_REGION=None)
-            )
-
-    def test_owner_upgrade_cannot_drop_a_share_its_dependents_take(self):
-        self.product()
-        self.install_gateway_and_init_login()
-        self.edit("login-service", SHOP_REGION="nordic")
-        deploy.install()
-        before = (common.STATE / "metadata/gateway.json").read_bytes()
-        shutil.rmtree(self.source)
-        self.product(shares=(), version="1.0.1")
-        release = self.build_and_unpack()["gateway"]
-        self.use_root(release)
+        rendered = catalog.component_paths("login-service")[2].read_text()
+        self.assertIn(origin, rendered)  # login-service's ISSUER
+        # A copy in the component's own config.yaml is refused before any command.
+        self.edit("login-service", PUBLIC_ORIGIN=origin)
         self.process.reset_mock()
         with self.assertRaisesRegex(
             common.DeployError,
-            "gateway no longer shares SHOP_REGION, which installed login-service "
-            "take from it",
+            "PUBLIC_ORIGIN in .*login-service/config.yaml is read from gateway's "
+            "config.yaml; remove it here",
         ):
             deploy.install()
         self.assertEqual(self.commands(), [])
-        self.assertEqual((common.STATE / "metadata/gateway.json").read_bytes(), before)
 
 
 class ServiceChangeTests(ProductFixture):

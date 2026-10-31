@@ -125,7 +125,9 @@ def registration_stage(components, directory, known, state=None, configs=None):
             continue
         config_path = catalog.state_paths(component, state)[0]
         if configs is None:
-            config = rendering.load_config(config_path)
+            config = catalog.with_gateway_settings(
+                known[component], rendering.load_config(config_path), config_path, state
+            )
         else:
             config = configs[component]
         if api_line is not None:
@@ -412,31 +414,19 @@ def api_registration(component, line, config, config_path):
     return {"apis/" + component + "/value": secret.encode("utf-8")}
 
 
-def api_updates(components, known, imports, configs, state=None):
+def api_updates(components, known, imports, configs):
     """Stage the API registrations of components whose secrets now exist.
 
     configs maps each rendered component to (config, config_path); its secrets
-    are generated here if missing (dev renders the owner before the API). A
-    selected component that is not rendered (newer-only at the same version)
-    keeps its installed registration, which matches the secret it runs with:
-    the pending record binds a retry to the attempted version
-    (check_pending), so a skipped render never follows another release's
-    published registration. Returns the updates; the staged copies feed
-    owner_secrets.
+    are generated here if missing (dev renders the owner before the API).
+    Returns the updates; the staged copies feed owner_secrets.
     """
-    state = state or common.STATE
     owner = catalog.role_owners(known, "registration owners")["apis"]
     updates = {}
     for component in components:
         if known[component]["apis"] is None:
             continue
         staged = imports[known[owner]["accepts"]["apis"]][0] / component
-        if component not in configs:
-            installed = state / "apis" / component
-            if installed.exists() or installed.is_symlink():
-                check_api_registration(installed)
-                staged.mkdir(mode=0o700)
-            continue
         config, config_path = configs[component]
         rendering.generate_secrets(config, config_path.parent)
         update = api_registration(
@@ -678,8 +668,7 @@ def check_pending(operation, component, product, delete_data=False):
 
     product is the bundle's product; another product's bundle never resumes or
     clears the record, even with the same component ID. An install record
-    names the version that last published files; install_checks refuses a
-    retry that would not render while another version is recorded.
+    names the version that last published files; every retry renders again.
     """
     state = load_pending()
     if state is None:

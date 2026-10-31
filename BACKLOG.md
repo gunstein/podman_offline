@@ -293,18 +293,26 @@ config file per component (`ENVIRONMENT` in `config.defaults.yaml` instead of
 by the API and named on Identity's line (instead of `@@api-secret:`).
 Implemented the same day ([change](acceptance/COMPONENT-MODEL-77.md)).
 
+**Decision (product owner, 2026-10-31):** `upgrade:` and `shares:` are removed.
+Every install renders the component again and only a downgrade is refused
+(restarting platform or Identity on a same-version reinstall is acceptable).
+`PUBLIC_ORIGIN` and `HTTPS_PORT` are set only in the gateway's `config.yaml`
+and read from there; other components hold no copies.
+`config/common.defaults.yaml` is gone from the demo (its values are platform's
+defaults). Implemented the same day ([change](acceptance/COMPONENT-MODEL-77.md)).
+
 **Simplification candidates (assessment 2026-10-30, not decided):** each
 config type was checked for whether it can go.
 
 | Config | Assessment |
 | --- | --- |
 | `bundles.yaml` `product`, `gateway`, `identity`, component list | Keep: each is one decision no file can derive. |
-| `upgrade:` | Can go: `always` allows a silent downgrade, `newer-only` silently ignores changed config and rotated secrets on a same-version install, and it causes most special cases of item 72/77. One rule instead: refuse downgrades, a same-version install re-applies config. Needs a decision whether reinstalling the same platform/Identity may restart them. |
+| `upgrade:` | Removed 2026-10-31: refuse downgrades, every install re-applies config. |
 | `requires:` | Keep for the rare extra dependency; everything else is derived. |
-| `shares:` | Probably can go: unused by the demo; only needed if a product shares settings beyond `PUBLIC_ORIGIN`/`HTTPS_PORT` with every component. |
+| `shares:` and copied `PUBLIC_ORIGIN`/`HTTPS_PORT` | Removed 2026-10-31: the two public settings are read from the gateway's `config.yaml`. |
 | Hand-written settings ConfigMaps (app1, app2, platform `10-configmap.yaml`) | Can go: move to `ENVIRONMENT`, so settings have one form. No decision needed. |
 | `SECRET_TEMPLATES` | Can leave the authoring model: no component writes it any more; `ENVIRONMENT` covers environment variables. The remaining case is a templated secret *file* (for example `bootstrap.sql`). Needs a decision whether that case is needed. |
-| `config/common.defaults.yaml` | Can go: its two values belong in the gateway's `config.defaults.yaml`, from which every component already inherits them. |
+| `config/common.defaults.yaml` | Removed from the demo 2026-10-31; the optional layer stays in code for products that want it. |
 | `components/<id>/config.dev.yaml` | Probably can go: only app1 uses it (demo layer marker, dev SQL sample); `config/dev.yaml` stays for machine-specific values. |
 | `client.yaml` `environment:` plus `APP_ID`/`BASE_PATH` in the manifest | The same id and path are written twice and compared. Can be written once: `ENVIRONMENT` lines `APP_ID: '@@CLIENT_ID@@'`, `BASE_PATH: '@@CLIENT_BASE_PATH@@'` filled from `client.yaml`, without the compare. |
 | `route.conf`, `client.yaml` (id, path, scopes, certificate), `VERSION`, `files/`, manifests | Keep: each holds facts nothing else has. |

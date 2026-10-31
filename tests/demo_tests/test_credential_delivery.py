@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 from deployment import render as rendering
 
+from demo_tests.demo_fixture import DEMO_PUBLIC
 from helpers.deploy_fixture import DeployFixture
 from helpers.render_helper import materialize_and_render
 
@@ -17,8 +18,8 @@ REPO = Path(__file__).resolve().parents[2]
 class CredentialDeliveryTests(DeployFixture):
     def defaults(self, component):
         return rendering.merge_config(
-            REPO / "config/common.defaults.yaml",
             REPO / "components" / component / "config.defaults.yaml",
+            overrides=DEMO_PUBLIC,
         )
 
     def test_apps_deliver_independent_private_files_only_to_backend_as_secrets(self):

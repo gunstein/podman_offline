@@ -315,12 +315,16 @@ class GeneratorTests(unittest.TestCase):
             sorted(path.name for path in (dev / "routes").iterdir()),
             ["inventory.conf", "login-service.conf", "manual.conf", "orders.conf"],
         )
-        # gateway shares SHOP_NAME; its public_from dependents inherit it in dev.
-        catalog_data = yaml.safe_load((self.target / "bundles.yaml").read_text())
-        self.assertEqual(catalog_data["components"]["gateway"]["shares"], ["SHOP_NAME"])
-        for name in ("gateway", "login-service", "orders", "inventory", "manual"):
+        # Only gateway's defaults hold the public settings; dev gives every
+        # other component gateway's values.
+        sources = self.target / "components"
+        gateway = yaml.safe_load((dev / "gateway/config.yaml").read_text())
+        for name in ("login-service", "orders", "inventory", "manual"):
+            defaults = sources / name / "config.defaults.yaml"
+            if defaults.exists():
+                self.assertNotIn("PUBLIC_ORIGIN", yaml.safe_load(defaults.read_text()))
             config = yaml.safe_load((dev / name / "config.yaml").read_text())
-            self.assertEqual(config["SHOP_NAME"], "Renamed shop", name)
+            self.assertEqual(config["PUBLIC_ORIGIN"], gateway["PUBLIC_ORIGIN"], name)
 
 
 class RemoteActionTests(unittest.TestCase):

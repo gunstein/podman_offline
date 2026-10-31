@@ -107,11 +107,8 @@ class RetryFixture(ComponentFixture):
             shutil.copytree(
                 repo / "components/app1/files", self.root / "components/app1/files"
             )
-        config = rendering.merge_config(
-            repo / "config/common.defaults.yaml",
-            repo / "components/app1/config.defaults.yaml",
-            overrides={"PUBLIC_ORIGIN": "https://example.test:8443"},
-        )
+        # app1 reads PUBLIC_ORIGIN and HTTPS_PORT from platform's config.yaml.
+        config = rendering.merge_config(repo / "components/app1/config.defaults.yaml")
         self.write("home/app1/config.yaml", yaml.safe_dump(config), 0o600)
         for name in ("session-key", "todo-client.key", "ca.crt"):
             self.write(

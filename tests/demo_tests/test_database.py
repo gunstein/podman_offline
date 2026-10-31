@@ -16,7 +16,9 @@ from deployment import render as rendering
 
 from demo_tests.demo_fixture import (
     DEMO_COMPONENTS,
+    DEMO_PUBLIC,
     mark_installed,
+    operator_config,
     write_descriptor,
     write_secret_fixtures,
 )
@@ -40,7 +42,7 @@ class DatabaseTests(DeployFixture):
             ignore=shutil.ignore_patterns("dev.yaml"),
         )
         self.path = common.STATE / "app1/config.yaml"
-        self.settings = rendering.component_defaults("app1")
+        self.settings = rendering.component_defaults("app1", overrides=DEMO_PUBLIC)
         self.password = self.path.parent / "credentials/database/password"
         self.manifests = common.ROOT / "components/app1/manifests"
         self.process.return_value = subprocess.CompletedProcess([], 1)
@@ -69,7 +71,7 @@ class DatabaseTests(DeployFixture):
     def test_app_passwords_are_generated_independently(self):
         passwords = []
         for component in ("app1", "app2"):
-            config = rendering.component_defaults(component)
+            config = rendering.component_defaults(component, overrides=DEMO_PUBLIC)
             base = common.STATE / component
             deploy.check_manifests(
                 rendering.effective_config(config, base / "config.yaml", component),
@@ -136,7 +138,9 @@ class DatabaseTests(DeployFixture):
             "home/platform/config.yaml",
             yaml.safe_dump(rendering.component_defaults("platform")),
         )
-        self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
+        self.write(
+            "home/app1/config.yaml", yaml.safe_dump(operator_config(self.settings))
+        )
         # The public client certificate is validated by staging, before the guard.
         self.write(
             "home/app1/credentials/todo/todo-client.crt",
@@ -161,14 +165,17 @@ class DatabaseTests(DeployFixture):
             "home/platform/config.yaml",
             yaml.safe_dump(rendering.component_defaults("platform")),
         )
-        identity = rendering.component_defaults("identity")
+        identity = operator_config(
+            rendering.component_defaults("identity", overrides=DEMO_PUBLIC)
+        )
+        settings = operator_config(self.settings)
         self.write("home/identity/config.yaml", yaml.safe_dump(identity))
-        for component, settings in (("identity", identity), ("app1", self.settings)):
+        for component, config in (("identity", identity), ("app1", settings)):
             for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
                 with self.subTest(component=component, key=key):
                     self.write("home/identity/config.yaml", yaml.safe_dump(identity))
-                    self.write("home/app1/config.yaml", yaml.safe_dump(self.settings))
-                    legacy = dict(settings)
+                    self.write("home/app1/config.yaml", yaml.safe_dump(settings))
+                    legacy = dict(config)
                     del legacy[key]
                     self.write(
                         "home/" + component + "/config.yaml", yaml.safe_dump(legacy)
@@ -253,7 +260,7 @@ class DatabaseTests(DeployFixture):
 
     def test_all_components_share_their_secret_and_public_database_parameters(self):
         for component in ("identity", "app1", "app2"):
-            config = rendering.component_defaults(component)
+            config = rendering.component_defaults(component, overrides=DEMO_PUBLIC)
             config["PUBLIC_HOSTNAME"] = "myproduct-proxy"
             docs = []
             for path in (common.ROOT / "components" / component / "manifests").glob(
@@ -338,9 +345,15 @@ class DatabaseTests(DeployFixture):
         self.write("config/dev.yaml", 'DB_PORT: "5544"\n')
         for component in DEMO_COMPONENTS:
             self.assertEqual(
-                rendering.component_defaults(component, dev=True)["DB_PORT"], "5544"
+                rendering.component_defaults(
+                    component, dev=True, overrides=DEMO_PUBLIC
+                )["DB_PORT"],
+                "5544",
             )
-        self.assertNotIn("DB_HOST", rendering.component_defaults("help", dev=True))
+        self.assertNotIn(
+            "DB_HOST",
+            rendering.component_defaults("help", dev=True, overrides=DEMO_PUBLIC),
+        )
 
     def test_dev_checks_all_databases_before_config_or_secret_writes(self):
         self.process.side_effect = [

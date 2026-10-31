@@ -12,7 +12,7 @@ with the commands below.
 ## Change
 
 - `bundles.yaml` names `gateway:` and `identity:`; entries keep only
-  `requires`, `upgrade` and (gateway) `shares`. `catalog.derive_entries`
+  `requires` (2026-10-31: `upgrade` and `shares` removed). `catalog.derive_entries`
   derives the normalized entries from them and the component files; compiled
   descriptors keep the earlier normalized form plus Identity's `api_secrets`.
 - One config file per component (product owner, 2026-10-30): `ENVIRONMENT` in
@@ -35,6 +35,13 @@ with the commands below.
   hand-written ConfigMaps are gone, so the operator's Identity `config.yaml`
   holds only `DB_*` and the secret sources. All components advance one patch
   version because every bundle carries the changed deployment code.
+- Every install renders the component again; only a downgrade is refused
+  (`deploy.check_not_downgrade`). Descriptors still write `upgrade: always`
+  and `shares: []` for older readers and drop them on read.
+- `PUBLIC_ORIGIN` and `HTTPS_PORT` live only in the gateway's `config.yaml`;
+  other components read them at init-config (validation only), validate,
+  install and staging (`catalog.with_gateway_settings`) and may not hold a
+  copy. `config/common.defaults.yaml` is gone from the demo.
 - Contracts: [the catalog](../docs/COMPONENTS.md#the-catalog-bundlesyaml),
   [one config file per component](../docs/COMPONENTS.md#one-config-file-per-component-configdefaultsyaml),
   [API secrets](../docs/COMPONENTS.md#api-secrets) and the
@@ -78,15 +85,18 @@ What each part exercises for this change:
 - `--whoami`: app3's and Identity's `ENVIRONMENT`, app3's generated
   `credentials/api-secret/value`, Identity hashing it itself, introspection
   through `dev/whoami-smoke-test.py`, and app3's restart.
-- normal and app2-first: the derived catalog on the fixed demo,
-  `newer-only` platform/Identity upgrades and Identity's injected `envFrom`
-  with an empty `identity-apis` (app3 is not installed).
+- normal and app2-first: the derived catalog on the fixed demo, platform and
+  Identity upgrades that always render, no `PUBLIC_ORIGIN` in any component
+  config except platform's, and Identity's injected `envFrom` with an empty
+  `identity-apis` (app3 is not installed).
 - `--identity-only`: the pinned old Identity baseline (its own ConfigMap, no
   `ENVIRONMENT`) upgrading to the `ENVIRONMENT` Identity without any operator
   config addition (the harness adds none when the release has no recipe).
 - platform/help and help-only: products without Identity links.
 - `--renamed-product`: the renamed generator's catalog (`gateway:`/`identity:`
-  renamed) and renamed `ENVIRONMENT` without Identity's app3 line.
+  renamed), renamed `ENVIRONMENT` without Identity's app3 line, and the
+  `renamed-init-check` step: only gateway's `config.yaml` holds the public
+  settings (it replaced the earlier `SHOP_NAME` share check).
 
 Record unit/product tests, harness tests and real runs separately. Keep
 failures and their output before any repair.
@@ -133,4 +143,13 @@ the product code.
 - A release that stops using a secret leaves its declaration in the operator's
   persistent `config.yaml`, which is then refused as unused (existing
   behaviour for every secret); the operator removes the entry.
+- Upgrades in the lab start from releases built before this change: their
+  installed metadata carries `upgrade`/`shares` (read and ignored) and their
+  other components' `config.yaml` files still hold `PUBLIC_ORIGIN` and
+  `HTTPS_PORT`, which install now refuses ("remove it here"). Pre-customer
+  installations may be discarded (review guide); a lab run across this change
+  must remove those two lines or start fresh. Not run.
+- Older releases reading metadata written by this one: `upgrade`/`shares` are
+  still written, but `api_secrets` (since the first backlog 77 commit) is not
+  in pre-77 readers' field list. Not run.
 - No unassisted human trial of the conversion checklist.

@@ -95,32 +95,6 @@ class CatalogTests(unittest.TestCase):
                     )
                     catalog.load_catalog(self.root)
 
-    def test_shares_are_config_names_and_not_reserved(self):
-        self.product(
-            {"gate": {"shares": ["SHOP_REGION", "PUBLIC_ORIGIN"]}}, gateway="gate"
-        )
-        self.assertEqual(
-            catalog.source_descriptors(self.root)["gate"]["shares"],
-            ["SHOP_REGION", "PUBLIC_ORIGIN"],
-        )
-        for shares, pattern in (
-            ("SHOP_REGION", "shares must be a list"),
-            (["A", "A"], "shares must be a list without repeats"),
-            (["shop_region"], "'shop_region' is not a config name"),
-            (["SHOP-REGION"], "is not a config name"),
-            ([7], "is not a config name"),
-            (["PUBLIC_HOSTNAME"], "PUBLIC_HOSTNAME is reserved and cannot be shared"),
-            (["SECRET_FILES"], "SECRET_FILES is reserved"),
-            (["VOLUME_FILES"], "VOLUME_FILES is reserved"),
-        ):
-            with self.subTest(shares=shares):
-                self.refuse(pattern, {"gate": {"shares": shares}}, gateway="gate")
-        self.refuse(
-            "components.app.shares: only the gateway \\(gate\\) may share",
-            {"gate": {}, "app": {"shares": ["SHOP_REGION"]}},
-            gateway="gate",
-        )
-
     def test_ids_that_extend_another_id_are_refused(self):
         """orders-data-db would be a resource name of both orders and orders-data."""
         self.refuse(
@@ -135,7 +109,11 @@ class CatalogTests(unittest.TestCase):
 
     def test_unknown_fields_values_and_duplicate_keys_are_refused(self):
         self.refuse("allowed fields are", {"app": {"depends": ["x"]}})
-        self.refuse("upgrade must be one of", {"app": {"upgrade": "sometimes"}})
+        for field in ("upgrade", "shares", "public_from"):
+            with self.subTest(field=field):
+                self.refuse(
+                    f"components.app.{field} is no longer written", {"app": {field: 1}}
+                )
         self.refuse("requires must be a list", {"app": {"requires": "x"}})
         self.refuse("components must be a nonempty map", {})
         (self.root / "bundles.yaml").write_text(
@@ -173,7 +151,7 @@ class CatalogTests(unittest.TestCase):
         """The normalized entries equal what the earlier explicit fields said."""
         self.product(
             {
-                "edge": {"upgrade": "newer-only"},
+                "edge": {},
                 "login": {},
                 "shop": {},
                 "worker": {},
@@ -193,9 +171,7 @@ class CatalogTests(unittest.TestCase):
             return dict(
                 {
                     "requires": [],
-                    "upgrade": "always",
                     "public_from": "edge",
-                    "shares": [],
                     "routes": None,
                     "clients": None,
                     "apis": None,
@@ -209,7 +185,6 @@ class CatalogTests(unittest.TestCase):
             entries,
             {
                 "edge": entry(
-                    upgrade="newer-only",
                     public_from=None,
                     accepts={"routes": "edge-routes"},
                 ),
@@ -374,7 +349,7 @@ class CatalogTests(unittest.TestCase):
     def test_compiled_descriptor_has_versions_and_ranges(self):
         self.product(
             {
-                "base": {"upgrade": "newer-only"},
+                "base": {},
                 "app": {"requires": ["base"]},
             }
         )
@@ -387,9 +362,7 @@ class CatalogTests(unittest.TestCase):
                 "product": "myproduct",
                 "version": "1.0.0",
                 "requires": {"base": {"min": "0.4.2", "before": "0.5.0"}},
-                "upgrade": "always",
                 "public_from": None,
-                "shares": [],
                 "routes": None,
                 "clients": None,
                 "apis": None,
@@ -398,22 +371,24 @@ class CatalogTests(unittest.TestCase):
             },
         )
         for descriptor in descriptors.values():
-            catalog.check_descriptor(descriptor, "fixture")
-        # Bundles built before shares or apis existed share nothing and
-        # register no API; still readable.
-        older = {
-            k: v for k, v in descriptors["app"].items() if k not in ("shares", "apis")
-        }
-        self.assertEqual(catalog.check_descriptor(older, "fixture")["shares"], [])
-        self.assertIsNone(catalog.check_descriptor(older, "fixture")["apis"])
-        self.assertNotIn("shares", older)
+            document = catalog.descriptor_document(descriptor)
+            # Written files keep the fields older releases read; reading drops them.
+            self.assertEqual((document["upgrade"], document["shares"]), ("always", []))
+            self.assertEqual(catalog.check_descriptor(document, "fixture"), descriptor)
+        # Bundles built before apis existed register no API; still readable, and
+        # an older release's upgrade and shares values are ignored.
+        older = dict(
+            {k: v for k, v in descriptors["app"].items() if k != "apis"},
+            upgrade="newer-only",
+            shares=["SHOP_REGION"],
+        )
+        self.assertEqual(catalog.check_descriptor(older, "fixture"), descriptors["app"])
         for change, pattern in (
             ({"components": ["app"]}, "expected exactly the fields"),
             ({"version": "1.0"}, "three numeric parts"),
             ({"requires": {"base": {"min": "1.0.0", "before": "1.0.0"}}}, "Empty"),
             ({"name": "my_app"}, "invalid component ID"),
             ({"product": "My App"}, "invalid product name"),
-            ({"shares": ["PUBLIC_HOSTNAME"]}, "reserved and cannot be shared"),
         ):
             failure = self.assertRaisesRegex(common.DeployError, pattern)
             with self.subTest(change=change):
