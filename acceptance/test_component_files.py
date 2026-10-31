@@ -46,13 +46,17 @@ class SeedContentTests(unittest.TestCase):
 class ReportLoginTests(unittest.TestCase):
     """MOUNTS demo: the login made by the rendered seed SQL file (backlog 77)."""
 
-    def check(self, results):
-        """Run check_report_login with stubbed psql results; return the calls."""
+    MOUNTED = (0, "/seed\n/seed-secret/020-report-role.sql\n", "")
+    ROLE = (0, "1\n", "")
+
+    def check(self, results, before=(MOUNTED, ROLE)):
+        """Run check_report_login with stubbed Podman results; return the logins."""
         login = guest_code("SEED_CONTENT")["check_report_login"]
+        results = list(before) + list(results)
         calls = []
 
         def run(arguments, **kwargs):
-            calls.append((arguments, kwargs["input"]))
+            calls.append((arguments, kwargs.get("input")))
             returncode, stdout, stderr = results[len(calls) - 1]
             return types.SimpleNamespace(
                 returncode=returncode, stdout=stdout, stderr=stderr
@@ -66,7 +70,7 @@ class ReportLoginTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output,
             ):
                 login("app1", password, "release-v1")
-        return calls, output.getvalue()
+        return calls[len(before) :], output.getvalue()
 
     def test_right_password_logs_in_and_wrong_password_is_rejected(self):
         calls, output = self.check([(0, "release-v1\n", ""), (2, "", "auth failed")])
@@ -81,15 +85,23 @@ class ReportLoginTests(unittest.TestCase):
             self.assertNotIn("GeneratedReportPassword", " ".join(arguments))
         self.assertIn("MOUNTS SQL file created todo_report", output)
 
-    def test_failed_login_accepted_wrong_password_and_leaks_fail(self):
-        for results in (
-            [(2, "", ""), (2, "", "")],
-            [(0, "release-v1\n", ""), (0, "release-v1\n", "")],
-            [(0, "stale\n", ""), (2, "", "")],
-            [(0, "release-v1\n", "GeneratedReportPassword"), (2, "", "")],
+    def test_each_failure_names_its_cause_without_values(self):
+        ok, refused = (0, "release-v1\n", ""), (2, "", "")
+        for before, results, cause in (
+            ((self.MOUNTED, self.ROLE), [refused, refused], "generated password was refused"),
+            ((self.MOUNTED, self.ROLE), [ok, ok], "wrong password was accepted"),
+            ((self.MOUNTED, self.ROLE), [(0, "stale\n", ""), refused], "unexpected query result"),
+            (
+                (self.MOUNTED, self.ROLE),
+                [(0, "release-v1\n", "GeneratedReportPassword"), refused],
+                "output contains the password",
+            ),
+            (((0, "/seed\n", ""),), [], "has no /seed-secret/020-report-role.sql mount"),
+            ((self.MOUNTED, (0, "0\n", "")), [], "role todo_report does not exist"),
         ):
-            with self.subTest(results=results), self.assertRaises(RuntimeError) as failure:
-                self.check(results)
+            with self.subTest(cause=cause), self.assertRaises(RuntimeError) as failure:
+                self.check(results, before)
+            self.assertIn(cause, str(failure.exception))
             self.assertNotIn("GeneratedReportPassword", str(failure.exception))
 
 

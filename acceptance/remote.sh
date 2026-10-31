@@ -695,18 +695,41 @@ def check_report_login(component, password_file, expected):
     """MOUNTS: the seed SQL file, rendered with the generated password, made the login.
 
     The password goes to psql on stdin, never in argv; a wrong password must fail,
-    so the login proves the substituted value, not a trust rule.
+    so the login proves the substituted value, not a trust rule. Each failure
+    names its cause with a fixed message, never a value.
     """
+    if not password_file.is_file():
+        raise RuntimeError("Report login: generated password file is missing")
     password = password_file.read_bytes().decode("utf-8").rstrip("\n")
+    seed = component + "-todo-seed-database"
+    mounts = subprocess.run(["podman", "inspect", "--format", "{{range .Mounts}}{{.Destination}}\n{{end}}", seed],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=15)
+    if mounts.returncode:
+        raise RuntimeError("Report login: cannot inspect " + seed)
+    if "/seed-secret/020-report-role.sql" not in mounts.stdout.splitlines():
+        raise RuntimeError("Report login: " + seed + " has no /seed-secret/020-report-role.sql mount; mounts: "
+                           + " ".join(sorted(mounts.stdout.split())))
+    role = 'exec psql -X -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_roles WHERE rolname = \'todo_report\'"'
+    result = subprocess.run(["podman", "exec", component + "-postgres-db", "sh", "-ec", role],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, check=False, timeout=15)
+    if result.returncode or result.stdout.strip() != "1":
+        raise RuntimeError("Report login: role todo_report does not exist (the mounted SQL did not run)")
     script = 'PGPASSWORD="$(cat)"; export PGPASSWORD; exec psql -X -A -t -h 127.0.0.1 -U todo_report -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT value FROM demo_seed WHERE name = \'reference\'"'
     for value, accepted in ((password, True), ("wrong-" + password, False)):
         result = subprocess.run(["podman", "exec", "-i", component + "-postgres-db", "sh", "-ec", script],
                                 input=value, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 universal_newlines=True, check=False, timeout=15)
         if password in result.stdout + result.stderr:
-            raise RuntimeError("Report login output contains the password")
-        if (result.returncode == 0) != accepted or (accepted and result.stdout.strip() != expected):
-            raise RuntimeError("Report login from the MOUNTS SQL file failed")
+            raise RuntimeError("Report login: output contains the password")
+        if accepted and result.returncode:
+            raise RuntimeError("Report login: the generated password was refused (exit "
+                               + str(result.returncode) + ")")
+        if accepted and result.stdout.strip() != expected:
+            raise RuntimeError("Report login: unexpected query result")
+        if not accepted and result.returncode == 0:
+            raise RuntimeError("Report login: a wrong password was accepted (no password check)")
     print("PASS: MOUNTS SQL file created todo_report with the generated password (" + component + ")")
 
 
@@ -745,7 +768,10 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired):
+    except RuntimeError as error:
+        # Only fixed messages; values never reach them.
+        raise SystemExit("FAIL: demo seed content check: " + str(error))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
         raise SystemExit("FAIL: demo seed content check (details withheld)")
 SEED_CONTENT
 }
