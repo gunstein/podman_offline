@@ -159,7 +159,7 @@ files as possible, easy to read, no name or path that no file states, only what
 is needed now, and no code for earlier formats (there are no customer
 installations). The design history is in git.
 
-Remaining in this item:
+Done and verified on real Podman/systemd (`7f58936`, c77g runs):
 
 - `MOUNTS` demo: app1's seed SQL `020-report-role.sql` creates `todo_report`
   with the generated `app1-report-password`; `seed_content` in the acceptance
@@ -171,8 +171,8 @@ Remaining in this item:
   (initdb's default), so no password was checked. The check now connects to the
   container's own address (`scram-sha-256`); verified against a local
   `postgres:17.11` container and in the lab (`whoami-64a2c65` onwards).
-- Independent review of `64a2c65` (2026-11-01): fixed with local regression
-  tests, no lab run yet: an API install interrupted before its registration
+- Independent review of `64a2c65` (2026-11-01), fixed with regression tests
+  and verified in the c77g runs: an API install interrupted before its registration
   value blocked the retry (F1); a symlinked directory under `files/` let
   `MOUNTS` and bundles read files from elsewhere (F2); an unknown placeholder
   was repeated in the error (F3); fixed text with `;` in an `ENVIRONMENT` line
@@ -183,6 +183,8 @@ Remaining in this item:
   Removed with it: unused `ENTRY_KEYS`, `FILES_DIR` and image-check branch,
   pending records without version, the special `GENERATED_SECRETS` message,
   the 0.2.0 upgrade harness and stale documentation of removed fields.
+Remaining in this item:
+
 - Open from the review: `registration_stage` mixes kept and selected
   registrations and should be split; receiver volume names (`<gateway>-routes`)
   must be repeated in manifests; the production manual still needs a
