@@ -535,6 +535,6 @@ as automatic failure cleanup.
 
 Steps 2, 3, init-layout, init-config and identical credential copying can be repeated.
 An install attempt can safely be completed with the same command and retained
-settings; `upgrade: always` may restart the selected service on repeat. Do not
+settings; every install renders again and restarts the selected service. Do not
 repeat config editing with old values or retire a different version.
 Run only one setup/install/upgrade/retire operation at a time.

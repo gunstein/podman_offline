@@ -38,16 +38,6 @@ SECRET_ROLES = ("apis",)
 PUBLIC_KEYS = ("PUBLIC_ORIGIN", "HTTPS_PORT")
 # bundles.yaml lists component IDs only; a normalized entry is derived from
 # the gateway/identity names and the component files (derive_entries).
-# Normalized fields, as the rest of the code and compiled descriptors use them.
-ENTRY_KEYS = (
-    "requires",
-    "public_from",
-    "routes",
-    "clients",
-    "apis",
-    "accepts",
-    "api_secrets",
-)
 # api_secrets is Identity's {API component: {"index": <n> in
 # ApiResources__<n>__ApiSecrets__0__Value, "secret": "<SECRET_FILES ID>/<key>"}}.
 DESCRIPTOR_KEYS = (

@@ -294,7 +294,6 @@ def select(product):
     root = install_root(product, read_bootstrap(path), path)
     check_root(root)
     common.STATE = root / "state"
-    common.FILES_DIR = common.STATE / "files"
     common.QUADLET_DIR = root / DIRECTORIES["XDG_CONFIG_HOME"] / "containers/systemd"
     os.environ.update(environment(root))
     return root

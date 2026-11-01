@@ -334,16 +334,18 @@ class VolumeTests(DeployFixture):
         self.assertEqual(self.mode(output / "one.tar"), 0o600)
 
     def test_claim_points_at_requested_archive(self):
-        claims = rendering.volume_claims({"one": [], "two": []}, common.FILES_DIR)
+        claims = rendering.volume_claims(
+            {"one": [], "two": []}, (self.root / "home/files")
+        )
         self.assertEqual([doc["metadata"]["name"] for doc in claims], ["one", "two"])
         self.assertEqual(
             claims[0]["metadata"]["annotations"][common.IMPORT_SOURCE],
-            str(common.FILES_DIR / "one.tar"),
+            str((self.root / "home/files") / "one.tar"),
         )
 
     def test_empty_volumes_do_not_create_directory(self):
-        rendering.write_file_archives({}, common.FILES_DIR)
-        self.assertFalse(common.FILES_DIR.exists())
+        rendering.write_file_archives({}, (self.root / "home/files"))
+        self.assertFalse((self.root / "home/files").exists())
 
 
 class LinkTests(unittest.TestCase):
@@ -705,13 +707,13 @@ class RenderTests(DeployFixture):
 
     def test_render_without_archive_writes_still_validates(self):
         self.volume_fixture()
-        text = materialize_and_render(common.FILES_DIR, write_archives=False)
-        self.assertIn(str(common.FILES_DIR / "uploads.tar"), text)
-        self.assertFalse(common.FILES_DIR.exists())
+        text = materialize_and_render((self.root / "home/files"), write_archives=False)
+        self.assertIn(str((self.root / "home/files") / "uploads.tar"), text)
+        self.assertFalse((self.root / "home/files").exists())
         self.manifest([document("ConfigMap", "uploads")], "99-collision.yaml")
         with self.assertRaisesRegex(common.DeployError, "uploads.*more than once"):
-            materialize_and_render(common.FILES_DIR, write_archives=False)
-        self.assertFalse(common.FILES_DIR.exists())
+            materialize_and_render((self.root / "home/files"), write_archives=False)
+        self.assertFalse((self.root / "home/files").exists())
 
     def test_sorted_multidocument_manifests_and_configmap_strings(self):
         self.manifest([document("Pod", "last")], "20.yaml")

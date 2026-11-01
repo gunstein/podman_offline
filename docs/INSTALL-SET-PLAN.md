@@ -54,7 +54,7 @@ credential generation (backlog 45b), changes to the per-component commands.
 | Who runs component code | `install-set` runs each component's **own** published `deploy.sh` (`init-config`, `validate`, `install`) as a child process. It never imports another release's Python, so every component keeps the lifecycle code of its own version. |
 | Order and compatibility | `catalog.dependency_order` over the newest published descriptors. Before any change, check every dependency range between them and against installed components that will stay. A missing or incompatible dependency stops with the component, the required range and who must act. |
 | Progress record | None new. Every run recomputes from durable state: published releases, installed markers/metadata, `state/pending-operation.json`, existing config and credential files. |
-| Already installed | A component complete at its newest published version is **skipped**, also for `upgrade: always` components, so a rerun restarts nothing that is done. To apply a changed config the operator runs that component's own `install` (manual section "Change configuration"). |
+| Already installed | A component complete at its newest published version is **skipped** (although a single `install` renders again at the same version), so a rerun restarts nothing that is done. To apply a changed config the operator runs that component's own `install` (manual section "Change configuration"). |
 | Older installed | Upgrade through that component's own `install`; existing config, credentials, database passwords and volumes are kept as today. |
 | Newer installed than published | Stop: downgrade is refused. Rollback is a database restore plus reinstall, outside this item; the manual tells the administrator to take a backup before upgrades. |
 | Public settings | Optional `--settings <file>`: data-only `component.KEY=value` lines (parsed like the bootstrap file, never executed), applied only when `init-config` creates a new config. An existing config with a different value stops with the key name, never the value. Replaces the inline Python edit in the manual. |
@@ -213,7 +213,7 @@ the signature path is tested, host commands replaced:
 - Order and compatibility: dependency order; dependency published later
   (DVD-at-a-time); incompatible ranges both ways; cycle.
 - Converge: first install of three components; rerun starts and restarts nothing
-  (trace `systemctl` calls); `upgrade: always` component at the same version is
+  (trace `systemctl` calls); a component already complete at the same version is
   skipped; upgrade of one component only; platform-then-app upgrade order;
   downgrade refused.
 - Stops: missing credential, missing setting, `validate` failure; exit code 3;

@@ -267,8 +267,8 @@ For the organisation's external Identity image, record a new real verification:
 5. Capture versions/commit and redacted evidence, separately for dev and PROD.
 
 A missing PFX can be re-exported from retained PEM/password, but the new bytes
-must be delivered through the ordinary render/upgrade path. An equal-version
-`newer-only` install skips rendering; a plain restart uses installed YAML.
+must be delivered through an ordinary install, which renders again also at the
+same version; a plain restart uses installed YAML.
 
 Local certificate tests verify OpenSSL operations and retention; platform tests
 verify binary Secret delivery and file mapping. They do not prove the external

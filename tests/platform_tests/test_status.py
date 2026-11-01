@@ -179,6 +179,7 @@ class StatusTests(ProductFixture):
             "operation": "install",
             "component": "a-worker",
             "product": "cedar",
+            "version": "1.0.0",
             "owners": ["z-hub"],
         }
         registrations.save_pending(pending)
@@ -244,6 +245,7 @@ class StatusTests(ProductFixture):
                 "operation": "install",
                 "component": "a-worker",
                 "product": "another",
+                "version": "1.0.0",
                 "owners": ["z-hub"],
             }
         )

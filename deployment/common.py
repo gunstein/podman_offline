@@ -22,9 +22,6 @@ QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
 # registrations and the pending-operation record.
 STATE: Path = None  # type: ignore[assignment]
 QUADLET_DIR: Path = None  # type: ignore[assignment]
-# Tar archives for VOLUME_FILES. Podman imports them into the volumes on every
-# start, so they stay in the persistent state directory.
-FILES_DIR: Path = None  # type: ignore[assignment]
 
 SECRET_FILES = "SECRET_FILES"
 SECRET_TEMPLATES = "SECRET_TEMPLATES"

@@ -538,7 +538,7 @@ def begin_install(component, product, version):
     rendering release that resumes another version's attempt takes it over.
     """
     pending = check_pending("install", component, product)
-    if pending is not None and pending.get("version") != version:
+    if pending is not None and pending["version"] != version:
         pending = dict(pending, version=version)
         save_pending(pending)
     if pending is None:
@@ -601,8 +601,7 @@ def load_pending():
             keys.update(("delete_data", "volumes", "stopped"))
         elif operation != "install":
             raise ValueError("operation")
-        elif "version" in state:
-            # Records written before backlog 72 name no version.
+        else:
             keys.add("version")
             catalog.version_number(state["version"])
         component = state.get("component")

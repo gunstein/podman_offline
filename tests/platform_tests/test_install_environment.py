@@ -97,7 +97,7 @@ class InstallEnvironmentTests(ProductFixture):
         account.assert_called_once_with(os.getuid())
         self.assertEqual(module["HOME"], home)
         # Production paths come only from layout.select(), never from the home.
-        for name in ("STATE", "QUADLET_DIR", "FILES_DIR"):
+        for name in ("STATE", "QUADLET_DIR"):
             self.assertIsNone(module[name])
 
     def test_mismatched_home_is_refused_before_any_action(self):

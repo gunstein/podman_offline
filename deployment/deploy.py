@@ -672,18 +672,12 @@ def materialize_component_manifests(checked, imports, known):
     return rendered
 
 
-def load_and_verify_images(archive, components, source_components, rendered):
+def load_and_verify_images(archive, rendered):
     """Load this bundle and verify every required image before persistent service changes."""
     run("podman", "load", "-i", archive)
     documents = [
         doc for text, _ in rendered.values() for doc in yaml.safe_load_all(text)
     ]
-    for component in source_components:
-        if component not in components:
-            for path in sorted(
-                (common.ROOT / "components" / component / "manifests").glob("*.yaml")
-            ):
-                documents.extend(rendering.load_yaml_all(path))
     for image in rendering.find_images(documents):
         try:
             run("podman", "image", "exists", image)
@@ -859,7 +853,7 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
             },
         )
     )
-    load_and_verify_images(archive, components, [name], rendered)
+    load_and_verify_images(archive, rendered)
     registrations.begin_install(name, descriptor["product"], descriptor["version"])
     write_installed_metadata(descriptor)
     changed, pending = registrations.apply_registration_updates(

@@ -135,13 +135,13 @@ names](docs/COMPONENTS.md#reserved-configuration-names).
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
 | `components/<component>/config.defaults.yaml` | Component settings, secret and volume references, `ENVIRONMENT` and `MOUNTS` |
-| `/var/lib/myproduct/<component>/config.yaml` | Authoritative persistent production config |
+| `/var/lib/myproduct/state/<component>/config.yaml` | Authoritative persistent production config |
 
 Dev merges the component defaults and then the developer's own
-`config/dev.yaml`, which applies to every component. A later value replaces the
-entire earlier value, including `SECRET_FILES` and `VOLUME_FILES` maps
-(including their source lists and generate declarations); no recursive merge or
-list concatenation takes place. Duplicate YAML keys are rejected in each source
+`config/dev.yaml`, which applies to every component. A setting there replaces
+the whole value. A `SECRET_FILES` or `VOLUME_FILES` ID there replaces only that
+ID's source list, in the component whose ID it starts with; the component must
+already declare the ID. No recursive merge or list concatenation takes place. Duplicate YAML keys are rejected in each source
 file. Missing `config/dev.yaml` means no overrides; an invalid one fails.
 Production initialization, validation and install never read it, even if a file
 is copied into a release by hand. `IP_ADDRESS` belongs to platform because only
@@ -149,8 +149,7 @@ its proxy binds the host address. A component may not set the gateway's
 `PUBLIC_ORIGIN` or `HTTPS_PORT` in its own defaults; a global dev value reaches
 the gateway and, through it, every component.
 
-For a renamed component `orders`, a `config/dev.yaml` map override must repeat
-retained entries. For example, if `components/orders/config.defaults.yaml`
+For a renamed component `orders`, if `components/orders/config.defaults.yaml`
 contains:
 
 ```yaml
@@ -159,7 +158,8 @@ VOLUME_FILES:
   - path: seed/reference.sql
 ```
 
-then `config/dev.yaml` can add a dev input with:
+then `config/dev.yaml` can give that ID a dev input as well, repeating the
+shipped entry:
 
 ```yaml
 VOLUME_FILES:
@@ -168,9 +168,8 @@ VOLUME_FILES:
   - path: seed/dev-sample.sql
 ```
 
-This replaces the entire `VOLUME_FILES` map for every component; repeat any
-other required volume groups too. The same rule applies to `SECRET_FILES`.
-Relative sources resolve from `build/dev/orders/`, so these example files must
+Only `orders-seed` changes; other IDs and other components keep their own
+sources. An ID that no component declares is refused. Relative sources resolve from `build/dev/orders/`, so these example files must
 exist under `build/dev/orders/seed/`, not beside the override file. Generated
 `build/dev/<component>/config.yaml` is output and is never another input layer.
 For shipped files, use `component_file` as described below. Adding a dev layer
@@ -229,7 +228,7 @@ that require rendering platform again. Public route/client imports are updated
 independently and restart their respective owners without upgrading their versions.
 
 Relative paths in all three file settings resolve from the materialized config
-folder: `/var/lib/myproduct/<component>/` in production and
+folder: `/var/lib/myproduct/state/<component>/` in production and
 `build/dev/<component>/` in dev, never from the defaults file. Existing absolute
 and `~` paths remain supported for secret/volume inputs. Generated secrets must
 stay confined to that component’s config folder, including through symlinks.
@@ -465,7 +464,7 @@ keys and certificates, whether generated locally or supplied externally.
 `SECRET_FILES` and `VOLUME_FILES` describe how files reach containers; optional
 `generate` on each source selects files deploy creates. Dev uses
 `build/dev/<component>/credentials/`; production uses
-`/var/lib/myproduct/<component>/credentials/`. Shared `PKI/private` stays in place.
+`/var/lib/myproduct/state/<component>/credentials/`. Shared `PKI/private` stays in place.
 Release 0.4.1 uses this layout for fresh state only, with no path migration,
 aliases or fallback. Container mounts, Secret/PVC names and image tags are unchanged.
 See [credential-path verification](acceptance/RESULTS.md) for results
@@ -633,7 +632,7 @@ VOLUME_FILES:
 The relative `path` resolves from `build/dev/sts/`, so each developer places the
 file at `build/dev/sts/dev-inputs/900-dev-users.sql`. `build/` is ignored by Git,
 and the tracked dev file contains no machine-specific path. The dev file repeats
-the full map because later maps replace earlier ones. The external seed is not
+the shipped entry because it replaces that ID's whole source list. The external seed is not
 collected into bundles and is not needed in production.
 Test passwords belong in external/generated `credentials/` inputs. Every file
 under the component's `files/` is packaged, even when production config does not
@@ -700,7 +699,7 @@ flowchart TD
     May contain placeholders such as @@DB_HOST@@`"]
 
     CONFIG["`Persistent production config
-    /var/lib/myproduct/component/config.yaml
+    /var/lib/myproduct/state/component/config.yaml
     Contains values and references to input files
     Examples: DB_HOST, SECRET_FILES, VOLUME_FILES`"]
 
@@ -730,7 +729,7 @@ flowchart TD
     Sensitive when it contains secrets`"]
 
     ARCHIVE["`Separate import archives
-    /var/lib/myproduct/component/files/*.tar
+    /var/lib/myproduct/state/component/files/*.tar
     Contain files selected through VOLUME_FILES
     Sensitive when they contain private files`"]
 
@@ -770,7 +769,7 @@ show how specific credentials pass through these two delivery mechanisms.
 
 Read these diagrams from creation, through persistent host files and container
 delivery, to application use. Paths starting with `credentials/` are relative to
-the component's persistent directory: `/var/lib/myproduct/<component>/` in prod
+the component's persistent directory: `/var/lib/myproduct/state/<component>/` in prod
 or `build/dev/<component>/` in dev. Code paths are relative to the repository root.
 Production uses the existing component `config.yaml`; release defaults fill
 only the names it lacks and are never written into it.
@@ -879,7 +878,7 @@ remain subject to [target verification](acceptance/RESULTS.md).
 ### Certificate and private-key flow
 
 Certificate preparation is a separate operator step before `deploy.sh install`.
-The demo uses `dev/generate-certificates.sh --root /var/lib/myproduct
+The demo uses `dev/generate-certificates.sh --root /var/lib/myproduct/state
 <component> <DNS-hostname>`; see the complete commands below. It is demo
 provisioning and is not part of the product bundles (which ship the host setup
 helper `scripts/prepare-host.sh`); copy it from
@@ -1486,7 +1485,7 @@ strings appear only as base64 Secret data in the existing private install YAML.
 | app1 | app1-postgres | todo / todo | credentials/database/password | app1-database-password / password | app1-data | app1 Todo backend |
 | app2 | app2-postgres | todo / todo | credentials/database/password | app2-database-password / password | app2-data | app2 Todo backend |
 
-The component directory is `/var/lib/myproduct/<component>` in production and
+The component directory is `/var/lib/myproduct/state/<component>` in production and
 `build/dev/<component>` in dev. DB settings belong to each component's own defaults.
 The table documents default identities; manifests/config remain the source of
 truth. The two Todo users have the same name in **different clusters** and have

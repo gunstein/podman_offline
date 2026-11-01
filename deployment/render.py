@@ -80,11 +80,6 @@ def validate_config(config, path):
         if not isinstance(key, str):
             raise common.DeployError(f"All keys in {path} must be strings")
 
-        if key == "GENERATED_SECRETS":
-            raise common.DeployError(
-                f"{path}: use generate on a file source; GENERATED_SECRETS is not supported"
-            )
-
         if key in (common.ENVIRONMENT, common.MOUNTS):
             raise common.DeployError(
                 f"{path}: {key} belongs only in the release's "
@@ -354,10 +349,6 @@ def public_origin(value, path):
 
 def file_group_sources(config, group):
     """Validate one delivery map without reading or generating its source files."""
-    if "GENERATED_SECRETS" in config:
-        raise common.DeployError(
-            "Use generate on a file source; GENERATED_SECRETS is not supported"
-        )
     mapping = config.get(group, {})
     if not isinstance(mapping, dict):
         raise common.DeployError(f"{group} must be id: [list of file sources]")

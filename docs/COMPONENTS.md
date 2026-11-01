@@ -125,9 +125,7 @@ no migration.
 Every install renders and restarts the component again, also at the same
 version, so a changed `config.yaml` or a replaced credential takes effect by
 installing again. An older version than the installed one is refused
-(backlog 77 removed the earlier `upgrade:` choice). `bundle.yaml` and installed
-metadata still carry `upgrade: always` and `shares: []` for older releases that
-read them; this release ignores both.
+(backlog 77 removed the earlier `upgrade:` choice).
 
 ### Public settings
 
@@ -143,8 +141,9 @@ sets them in its own config. No other setting is shared between components.
 ### Component dev configuration
 
 Source dev merges the component defaults, then the developer's local
-`config/dev.yaml` (untracked, for every component). Values replace whole
-top-level values, including file/Secret maps and source lists. It is excluded
+`config/dev.yaml` (untracked, for every component). A setting replaces the
+whole value; a `SECRET_FILES`/`VOLUME_FILES` ID replaces only that ID's source
+list in the component it starts with, which must declare it. It is excluded
 from bundles and never read by production `init-config`, `validate` or
 `install`.
 
@@ -178,7 +177,7 @@ content; external/generated credentials stay protected by the bundle guard.
 Validation inspects names/types without reading input bytes.
 
 For `sts`, use `component_file: sql/010-reference.sql` for shipped migrations in
-`config.defaults.yaml`. A `config/dev.yaml` map can repeat that reference and add
+`config.defaults.yaml`. A `config/dev.yaml` entry for the same ID can repeat that reference and add
 `path: ~/dev-inputs/sts/900-dev-users.sql` for a sensitive local dev seed outside
 `files/`. Production needs only the shipped input; the local path is neither
 packaged nor read there. All of `files/` ships, including dev-only files stored
@@ -795,6 +794,12 @@ prepare or install.
 
 ## Example: add a service with an external image
 
+Add `components/reports/VERSION` with its release version:
+
+```text
+1.0.0
+```
+
 Add `components/reports/manifests/10-reports.yaml`:
 
 ```yaml
@@ -822,7 +827,7 @@ Add its ID to the list in `bundles.yaml` (the gateway, `route.conf` and its
 dependency are derived):
 
 ```yaml
-components: [platform, identity, app1, app2, help, reports]
+components: [platform, identity, app1, app2, app3, help, reports]
 ```
 
 No Python or shell file changes. `./deploy.sh prepare` and `dev/dev.sh up` start

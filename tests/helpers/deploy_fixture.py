@@ -39,7 +39,6 @@ class DeployFixture(unittest.TestCase):
             "BUILD": self.root / "build",
             "QUADLET_TEMPLATE": self.root / "quadlet/template.kube",
             "QUADLET_DIR": self.root / "home/.config/containers/systemd",
-            "FILES_DIR": self.root / "home/files",
         }
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(common, name, path))
@@ -118,8 +117,6 @@ class DeployFixture(unittest.TestCase):
 
     def write_config(self):
         self.write("config.yaml", yaml.safe_dump(self.config))
-        if getattr(self, "production_config", False):
-            self.write("home/config.yaml", yaml.safe_dump(self.config), 0o600)
 
     def manifest(self, docs, name="10-pod.yaml"):
         return self.write("manifests/" + name, yaml.safe_dump_all(docs))
@@ -160,38 +157,6 @@ class DeployFixture(unittest.TestCase):
                     },
                 )
             ]
-        )
-
-    def install_fixture(self):
-        self.volume_fixture()
-        self.production_config = True
-        self.stack.enter_context(
-            mock.patch.dict(os.environ, {"HOME": str(self.root / "home")})
-        )
-        self.config["VOLUME_FILES"] = {"uploads": [{"path": "../files/message.txt"}]}
-        self.write("quadlet/template.kube", "[Kube]\nYaml=@@UNIT_NAME@@.yaml\n")
-        self.write(
-            "quadlet/template.network", "[Network]\nNetworkName=@@PRODUCT_NAME@@\n"
-        )
-        self.write("images/images.tar")
-        self.config["APP_IMAGE"] = "localhost/app:1"
-        self.write_config()
-        self.manifest(
-            [
-                {
-                    "kind": "Pod",
-                    "spec": {
-                        "containers": [
-                            {"image": "@@APP_IMAGE@@", "imagePullPolicy": "Never"},
-                            {"image": "localhost/app:1", "imagePullPolicy": "Never"},
-                        ],
-                        "initContainers": [
-                            {"image": "localhost/init:1", "imagePullPolicy": "Never"}
-                        ],
-                    },
-                }
-            ],
-            "20-images.yaml",
         )
 
     def mode(self, path):

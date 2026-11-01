@@ -45,7 +45,6 @@ class LayoutFixture(unittest.TestCase):
             "HOME": self.home,
             "STATE": None,
             "QUADLET_DIR": None,
-            "FILES_DIR": None,
         }.items():
             self.stack.enter_context(mock.patch.object(common, name, value))
         for name, value in {
@@ -81,7 +80,6 @@ class BootstrapTests(LayoutFixture):
         )
         self.assertEqual(layout.select(PRODUCT), self.install)
         self.assertEqual(common.STATE, self.install / "state")
-        self.assertEqual(common.FILES_DIR, self.install / "state/files")
         self.assertEqual(common.QUADLET_DIR, self.install / "config/containers/systemd")
         self.assertEqual(os.environ["XDG_CONFIG_HOME"], str(self.install / "config"))
         self.assertEqual(os.environ["XDG_DATA_HOME"], str(self.install / "storage"))

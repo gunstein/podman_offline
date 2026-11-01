@@ -1289,44 +1289,6 @@ bundle)
     cd ..
     cat build/bundle/"$product_name"-*/images/images.txt
     ;;
-legacy-build)
-    cd "$src"
-    legacy_revision=86e8e27ed38d6e209eecf018299fd48ec2ce0b1b
-    git cat-file -e "$legacy_revision^{commit}"
-    git worktree add --detach "$base/legacy" "$legacy_revision"
-    cd "$base/legacy"
-    test "$(git rev-parse HEAD)" = "$legacy_revision"
-    test "$(cat VERSION)" = 0.2.0
-    test "$(cat CORE_VERSION)" = 0.2.0
-    ./dev/build-images.sh
-    ./dev/pull-images.sh
-    ./build-bundle.sh
-    (cd dist && sha256sum -c ./*.sha256)
-    mkdir -p "$src/dist"
-    # The 0.2.0 build predates signing; sign its archives with the lab key.
-    for archive in dist/myproduct-*-0.2.0-offline.tar.gz; do
-        gpg --batch --yes --local-user "$BUNDLE_SIGNING_KEY" --armor --detach-sign "$archive"
-    done
-    cp dist/myproduct-*-0.2.0-offline.tar.gz* "$src/dist/"
-    ;;
-legacy-install)
-    sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-before"
-    prepare_release
-    # Actual release wrapper, called from the account home rather than release cwd.
-    as_product "$product/deploy" install
-    ;;
-legacy-retire)
-    old_release="$state/releases/$product_name-$bundle-$old_version"
-    # Retire only the selected release; compare every other bundle's trust records.
-    sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-after"
-    cmp "$base/legacy-trust-before" "$base/legacy-trust-after"
-    sudo -n fapolicyd-cli --file delete "$old_release/deploy.py" --trust-file "$product_name-$bundle"
-    sudo -n fapolicyd-cli --update
-    wait_trust "$product/deploy.py" "$old_release/deploy.py"
-    sudo -n fapolicyd-cli --dump-db | grep -F "$state/releases/myproduct-" | grep -v -F "/myproduct-$bundle-" | sort > "$base/legacy-trust-after"
-    cmp "$base/legacy-trust-before" "$base/legacy-trust-after"
-    echo 'PASS: verified own old trust retired, sibling trust unchanged'
-    ;;
 upgrade-bundle)
     cd "$src"
     output=$(git status --porcelain)

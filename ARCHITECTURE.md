@@ -110,7 +110,7 @@ reference. `catalog.py` is the single reader and validator:
 
 Decisions read only these descriptors: `check_not_downgrade()` (every install
 renders; an older version is refused), `check_dependencies_installed()` /
-`check_dependents()` (version ranges), `catalog.with_gateway_settings()`
+`check_dependents()` (version ranges), `catalog.operator_config()`
 (`public_from`: `PUBLIC_ORIGIN`/`HTTPS_PORT` read from the gateway's
 `config.yaml`), `role_owners()` (who accepts routes
 and clients), `registration_stage()` (which registrations exist and which owner
@@ -215,7 +215,7 @@ sequenceDiagram
     D->>C: installed_version / dependents
     Note over D: check_dependencies_installed, check_dependents,<br/>check_not_downgrade
     D->>R: load_config, validate_component_config
-    D->>D: with_gateway_settings (public_from)
+    D->>D: operator_config (gateway's public settings, release defaults)
     D->>H: production_environment: check user-manager environment (read-only)
     D->>G: registration_stage (temp dir): imports, updates, removals
     D->>R: effective_config, effective_documents

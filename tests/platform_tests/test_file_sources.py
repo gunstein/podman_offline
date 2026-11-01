@@ -3,7 +3,6 @@
 import base64
 import tarfile
 
-import yaml
 from deployment import common
 from deployment import render as rendering
 
@@ -139,12 +138,3 @@ class FileSourceTests(DeployFixture):
         with self.assertRaisesRegex(common.DeployError, "must be a directory"):
             rendering.generate_secrets(config, self.root)
         self.assertEqual((self.root / "file").read_bytes(), b"retained")
-
-    def test_removed_top_level_field_is_rejected_instead_of_ignored(self):
-        config = {"HTTPS_PORT": 8443, "GENERATED_SECRETS": ["private/key"]}
-        path = self.write("config.yaml", yaml.safe_dump(config))
-        with self.assertRaisesRegex(common.DeployError, "not supported"):
-            rendering.load_config(path)
-        with self.assertRaisesRegex(common.DeployError, "not supported"):
-            rendering.generate_secrets(config, self.root)
-        self.assertFalse((self.root / "private").exists())
