@@ -327,6 +327,23 @@ class HostProbeTests(unittest.TestCase):
                 probe.command(["probe"])
             self.assertIs(probe.command(["probe"], check=False), failure)
 
+    def test_fixture_directories_follow_prepare_host(self):
+        """The probe creates what the root phase creates, which the helper expects."""
+        script = Path(__file__).resolve().parent.parent / "scripts/prepare-host.sh"
+        directories = probe.account_directories(script)
+        namespace = {}
+        exec(compile(probe.helper_source(script), "PREPARE_HOME", "exec"), namespace)  # noqa: S102 - repository script
+        self.assertEqual(
+            directories,
+            tuple(name for name in namespace["DIRECTORIES"] if "/" not in name),
+        )
+        self.assertIn("incoming", directories)
+        with tempfile.TemporaryDirectory() as directory:
+            ambiguous = Path(directory) / "prepare-host.sh"
+            ambiguous.write_text("for name in a b; do\nfor name in a; do\n")
+            with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                probe.account_directories(ambiguous)
+
     def test_disposable_user_cleanup_does_not_follow_home_metadata(self):
         account = mock.Mock(pw_uid=os.geteuid(), pw_gid=os.getegid())
         with (
@@ -334,7 +351,7 @@ class HostProbeTests(unittest.TestCase):
             mock.patch.object(probe, "command") as execute,
             mock.patch.object(probe.pwd, "getpwnam", return_value=account),
             self.assertRaisesRegex(RuntimeError, "injected"),
-            probe.temporary_account(Path(directory)),
+            probe.temporary_account(Path(directory), ("state",)),
         ):
             raise RuntimeError("injected")
         first, last = (

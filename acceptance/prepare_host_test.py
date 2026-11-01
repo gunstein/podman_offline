@@ -121,6 +121,20 @@ def helper_source(script):
     return text[text.index("\n", start) + 1 : text.index("\nPREPARE_HOME\n", start) + 1]
 
 
+def account_directories(script):
+    """The directories prepare-host.sh's root phase creates for the account.
+
+    Read from the script, so the probe's fixture follows the product.
+    """
+    lists = {
+        match.group(1)
+        for match in re.finditer(r"^for name in ([a-z ]+); do$", script.read_text(), re.M)
+    }
+    if len(lists) != 1:
+        raise RuntimeError("prepare-host.sh account directory list not found or ambiguous")
+    return tuple(lists.pop().split())
+
+
 def shell(script, uid, gid, home, body, code=None, arguments=(), check=True):
     """Load trusted shell functions, passing every runtime parameter explicitly."""
     program = (
@@ -242,12 +256,12 @@ def prepare(script, account, home, check=True):
 
 
 @contextlib.contextmanager
-def temporary_account(base):
+def temporary_account(base, directories):
     """Create only a uniquely named probe account; never remove a real account.
 
     Yields the account and a disposable installation root laid out like
-    prepare-host.sh leaves it: root-owned 0755 with the account's state/,
-    config/ and storage/ (0700).
+    prepare-host.sh leaves it: root-owned 0755 with the account's directories
+    (account_directories, 0700).
     """
     name = "po46-" + uuid.uuid4().hex[:12]
     home = base / "home"
@@ -271,7 +285,7 @@ def temporary_account(base):
         home.mkdir(mode=0o700)
         os.chown(str(home), account.pw_uid, account.pw_gid)
         root.mkdir(mode=0o755)
-        for directory in ("state", "config", "storage"):
+        for directory in directories:
             (root / directory).mkdir(mode=0o700)
             os.chown(str(root / directory), account.pw_uid, account.pw_gid)
         yield account, root
@@ -336,7 +350,7 @@ def planted_link(script, account, home, path, target):
 
 def disposable(script, base):
     """Exercise the actual helper, separate identities and real restorecon."""
-    with temporary_account(base) as (account, home):
+    with temporary_account(base, account_directories(script)) as (account, home):
         authority = json.loads(
             as_user(script, account, home, ["python3", "-B", "-"], AUTHORITY).stdout
         )
