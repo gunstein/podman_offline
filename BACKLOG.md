@@ -183,6 +183,7 @@ Done and verified on real Podman/systemd (`7f58936`, c77g runs):
   Removed with it: unused `ENTRY_KEYS`, `FILES_DIR` and image-check branch,
   pending records without version, the special `GENERATED_SECRETS` message,
   the 0.2.0 upgrade harness and stale documentation of removed fields.
+
 Remaining in this item:
 
 - Open from the review: `registration_stage` mixes kept and selected
