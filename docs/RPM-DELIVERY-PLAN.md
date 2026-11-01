@@ -715,8 +715,13 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
 0. Investigation above (lab rules, run order, probes A–H, complete runner,
    local tests and a separate code review before the lab run); results in
    `acceptance/`; plan revised if needed.
-1. Supplier build: productise `rpm-prototype/` (release and tools RPMs,
-   explicit requirements, guard scriptlets, ledger, interface checks), tests.
+1. Supplier build, **done 2026-11-01 within the decisions of that day**:
+   `./build-rpms.sh` (`rpms.py`) builds one unsigned release RPM per bundle,
+   side by side by name, with the erase guard (single-use authorization
+   naming the package) as its only scriptlet and no generated dependencies;
+   a built version is never rebuilt. No tools RPM yet (it carries the admin
+   command, WP2), no ledger and no interface check (decisions 4 and 6).
+   `rpm-prototype/` stays only for the WP0 runner.
 2. `<product>-admin`: isolated verification, selection, identity, preflight,
    host preparation (reusing `prepare-host.sh`, adding `incoming/`),
    `host.conf`, trust poll and self-check, credential hand-over, tests.

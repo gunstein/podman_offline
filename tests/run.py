@@ -18,7 +18,14 @@ def export_platform(target):
     if target.exists():
         raise ValueError("Export destination already exists")
     target.mkdir(parents=True)
-    for name in ("bundle.py", "deploy.sh", "build-bundle.sh", "README.md"):
+    for name in (
+        "bundle.py",
+        "rpms.py",
+        "deploy.sh",
+        "build-bundle.sh",
+        "build-rpms.sh",
+        "README.md",
+    ):
         shutil.copy2(str(ROOT / name), str(target / name))
     (target / "docs").mkdir()
     for name in ("PRODUCTION-INSTALL.md", "PFX-CREDENTIALS.md"):

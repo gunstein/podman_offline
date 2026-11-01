@@ -372,6 +372,22 @@ public product payloads. Declarations in common/component defaults and local/mat
 secrets from being copied into bundles, including through symlink aliases. Keep
 private files out of shipped directories and retain their declarations.
 
+### Release RPMs (backlog 69, phase 1)
+
+After `./build-bundle.sh`, `./build-rpms.sh [<component> ...]` wraps each
+selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`.
+It needs `rpmbuild` (package `rpm-build`) on the build machine. The RPM
+installs the release unchanged under
+`/var/lib/<product>/releases/<product>-<component>-<version>/`; the version
+is part of the package name, so versions install side by side. fapolicyd
+trusts the files through the RPM database. The RPM has no generated
+dependencies and no scriptlet except the erase guard: a plain `dnf remove` or
+`rpm -e` is refused unless `/run/<product>/erase-authorization` names exactly
+that package (written by the administrator command, backlog 69 WP2). A version
+is built once; an existing RPM of the same name is never replaced, so a changed
+release needs a new `VERSION`. The production manual still uses the signed
+bundle flow until the administrator and runtime commands exist (WP2/WP3).
+
 ### Installation compatibility
 
 Until the first real customer installation, existing development/lab installations

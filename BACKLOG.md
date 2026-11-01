@@ -981,7 +981,9 @@ Status 2026-10-27: the WP0 investigation matrix passed (all 24 case/profile
 runs at `3222efb`, 2026-10-25,
 [report](acceptance/RESULTS.md)). Nothing is implemented.
 Status 2026-11-01: **go for WP1**, and the open phase 1 decisions are taken;
-see "Decisions (product owner, 2026-11-01)" below. Not implemented yet.
+see "Decisions (product owner, 2026-11-01)" below. WP1 (release RPM build,
+`./build-rpms.sh`) is implemented with local tests using real `rpmbuild`; no
+lab run yet. WP2 (the administrator command and tools RPM) is next.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the

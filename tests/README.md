@@ -458,6 +458,12 @@ Use the current commands above; the commands below are historical.
 
 # Unit tests
 
+`test_rpms.py` (backlog 69 WP1) builds release RPMs from real bundles with
+the real `rpmbuild` and inspects them with `rpm`: name and version, file modes
+and ownership, no generated dependencies, the erase guard run from the built
+package, and refusal of a rebuilt version or a changed bundle. It is skipped
+where `rpmbuild` is not installed.
+
 `test_deploy.py` and `test_bundle.py` use only the standard library
 and PyYAML. `test_certificates.py` requires bash and OpenSSL,
 with all key material in a temporary directory. All paths point into `TemporaryDirectory`; Podman/systemd calls and the user check
