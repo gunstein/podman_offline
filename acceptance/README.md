@@ -544,8 +544,26 @@ ruff format --check acceptance/ dev/smoke-test.py
 pyright acceptance/ dev/smoke-test.py
 ```
 
-The 141 local tests stub/simulate failures and cover stop rules, masking of secrets,
+The local tests stub/simulate failures and cover stop rules, masking of secrets,
 cleanup, duplicate run IDs/steps and that incomplete runs never become CLEAN PASS.
+
+Rules that keep them in step with the product (backlog 78):
+
+- Fixtures come from the product: real compiled descriptors
+  (`catalog.source_descriptors`), the generated renamed product, the real
+  `bundle.py` and `./deploy.sh validate`, or a copy of the files Git tracks
+  (`renamed_product.copy_tracked_files`). Do not hand-write a product format.
+- A `remote.sh` action that only edits files or builds bundles runs locally on
+  such a tree, with only Podman, git and network commands stubbed:
+  `test_release_builders.py` (help/identity/platform upgrade builds),
+  `test_renamed.py` (inventory drop, manual removal), `test_components.py`
+  (app1 upgrade build) and `test_registry.py` (registry fixture).
+- When the product removes a field, layout or placeholder, add it to
+  `REMOVED` in `test_removed_concepts.py`; any remaining use in the lab code
+  then fails locally.
+- `test_local_podman.py` checks image assumptions (the postgres image trusts
+  loopback) with a real container when `LOCAL_PODMAN=1` and Podman is
+  installed; it is skipped otherwise and never replaces the lab.
 
 ## Host preparation boundary (backlog 46)
 

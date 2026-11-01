@@ -3,9 +3,6 @@
 import contextlib
 import io
 import os
-import shutil
-import subprocess
-import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,8 +10,6 @@ from unittest import mock
 
 import test_acceptance as base
 import test_components as components
-
-import bundle
 
 
 class IdentityHarnessTests(unittest.TestCase):
@@ -186,91 +181,3 @@ class IdentityEvidenceTests(unittest.TestCase):
                 (root / "identity-lifecycle.json").stat().st_mode & 0o777, 0o600
             )
             self.assertNotIn("private-config-hash", output.getvalue())
-
-    def test_identity_build_rebuilds_changed_code_and_packages_only_identity(self):
-        code = base.shell_code(
-            Path(__file__).with_name("remote.sh").read_text(), heredoc="HELP_BUILD"
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "source"
-            source.mkdir()
-            texts = {
-                "VERSION": "0.4.0\n",
-                "components/platform/VERSION": "0.4.0\n",
-                "components/identity/VERSION": "0.4.0\n",
-                "deploy.sh": "#!/bin/sh\n",
-                "deployment/__init__.py": "# fixture\n",
-                "deployment/__main__.py": "# fixture\n",
-                "README.md": "fixture\n",
-                "config/common.defaults.yaml": "HTTPS_PORT: 8443\n",
-                "bundles.yaml": "product: myproduct\ngateway: platform\ncomponents: [platform, identity]\n",
-                "components/platform/manifests/10-proxy.yaml": "kind: Pod\n",
-                "components/identity/config.defaults.yaml": "{}\n",
-                "components/identity/manifests/50-identity.yaml": "kind: Pod\nspec:\n  containers:\n  - name: app\n    image: localhost/demo-identity:0.2.1\n    imagePullPolicy: Never\n",
-                "apps/identity/Program.cs": 'app.MapGet("/health", () => Results.Ok(new { status = "ok" }));\n',
-                "apps/identity/Containerfile": "FROM fixture\n",
-                "scripts/prepare-host.sh": "#!/bin/sh\n",
-                "quadlet/template.kube": "[Kube]\n",
-            }
-            for name, text in texts.items():
-                path = source / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text)
-            builds, checkouts = [], []
-
-            def command(args, **kwargs):
-                if args[:2] == ["git", "clone"]:
-                    shutil.copytree(source, Path(args[-1]))
-                elif args[:1] == ["git"] and args[3:] == [
-                    "checkout",
-                    "-q",
-                    "--detach",
-                    "f" * 40,
-                ]:
-                    checkouts.append(args[2])
-                elif args[:2] == ["podman", "build"]:
-                    builds.append((args, (Path(args[-1]) / "Program.cs").read_text()))
-                elif args[:2] == ["podman", "save"]:
-                    Path(args[4]).write_bytes(b"stub image transport")
-                else:
-                    raise AssertionError("Unexpected external command: " + str(args))
-
-            with (
-                mock.patch.object(Path, "cwd", return_value=source),
-                mock.patch.object(subprocess, "run", side_effect=command),
-                mock.patch.multiple(
-                    bundle, ROOT=source, STAGE=source / "unused", DIST=source / "dist"
-                ),
-                mock.patch.dict(
-                    os.environ,
-                    HELP_RELEASE_VERSION="0.4.1",
-                    RELEASE_KIND="identity",
-                    SOURCE_REVISION="f" * 40,
-                ),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                exec(compile(code, "HELP_BUILD", "exec"), {})  # noqa: S102 - repository action under test
-            self.assertEqual(len(builds), 1)
-            self.assertEqual(len(checkouts), 1)
-            self.assertIn("localhost/demo-identity:0.4.1", builds[0][0])
-            self.assertIn('release = "0.4.1"', builds[0][1])
-            with tarfile.open(
-                str(source / "dist/myproduct-identity-0.4.1-offline.tar.gz")
-            ) as archive:
-                prefix = "myproduct-identity-0.4.1/"
-                names = archive.getnames()
-                self.assertFalse(
-                    any(
-                        "components/platform" in name or "components/app1" in name
-                        for name in names
-                    )
-                )
-                images = archive.extractfile(prefix + "images/images.txt")
-                assert images is not None
-                self.assertEqual(
-                    images.read().decode().splitlines(),
-                    ["localhost/demo-identity:0.4.1"],
-                )
-                descriptor = archive.extractfile(prefix + "bundle.yaml")
-                assert descriptor is not None
-                self.assertIn("platform:", descriptor.read().decode())

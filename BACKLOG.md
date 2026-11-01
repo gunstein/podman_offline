@@ -84,8 +84,27 @@ as a recommended layout.
 
 ## 78. Keep the acceptance harness in step with the product
 
-Status: **planned** (2026-11-01, requested by the product owner). Not
-implemented.
+Status: **implemented with local tests** (2026-11-01), requested by the
+product owner the same day. The last "done when" condition, a product change
+that removes a concept reaching the lab without a harness-only NOT CLEAN, can
+only be shown by the next such change.
+
+Delivered:
+
+1. Fixtures from the product: `test_release_builders.py` runs the lab's help,
+   identity and platform upgrade builders (`HELP_BUILD`) on a copy of the files
+   Git tracks, with the real `bundle.py`; it replaces a hand-written mini
+   product in `test_identity.py` that still had `config/common.defaults.yaml`.
+2. File-only actions run locally: besides the earlier inventory-drop,
+   registry and app1 upgrade-build tests, `renamed-remove-manual` now runs its
+   own script on the generated product with the real `bundle.py`; only Podman,
+   curl, `dev.sh` and the smoke test are stubbed.
+3. Removal sweep: `test_removed_concepts.py` fails when lab code or a harness
+   test uses a removed field, layout or placeholder (`REMOVED`, extended in
+   the same change that removes one); the review guide's removal checks name it.
+4. `test_local_podman.py` checks the postgres image's loopback trust with a
+   real container when `LOCAL_PODMAN=1`; skipped otherwise. It has not run on
+   real Podman yet (none in the implementation environment).
 
 Why: during backlog 77, five lab runs stopped NOT CLEAN on harness defects,
 never on product code, and each cost a 10–30 minute lab run. The harness unit

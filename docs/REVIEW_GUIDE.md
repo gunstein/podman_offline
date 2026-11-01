@@ -132,6 +132,11 @@ must remain usable without the original source catalog or sibling release.
   deleted volumes may be absent on retry, but inspection errors still fail.
 - Refuse conflicting retry flags/operations clearly. Never acknowledge or remove
   another operation's pending work.
+- When a field, layout or placeholder leaves the product, search `acceptance/`
+  (lab code and harness tests) for it in the same change and add it to
+  `REMOVED` in `acceptance/test_removed_concepts.py`. Harness fixtures are built
+  from the real code, not written by hand (backlog 78,
+  [acceptance README](../acceptance/README.md#local-checks-of-the-test-harness)).
 
 | Registration change | Extra owner restarts |
 | --- | --- |

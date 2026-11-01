@@ -163,7 +163,6 @@ class GeneratorTests(unittest.TestCase):
         )
         self.assertEqual(defaults["DB_HOST"], "orders-postgres")
         self.assertIn("orders-database-password", defaults["SECRET_FILES"])
-        self.assertFalse((self.target / "components/orders/config.dev.yaml").exists())
         self.assertEqual(
             defaults["VOLUME_FILES"]["orders-seed"],
             [{"component_file": "sql/010-reference.sql"}],
@@ -174,16 +173,13 @@ class GeneratorTests(unittest.TestCase):
             ).read_bytes(),
             (ROOT / "components/app1/files/sql/010-reference.sql").read_bytes(),
         )
-        self.assertFalse(
-            (self.target / "components/inventory/config.dev.yaml").exists()
-        )
 
     @unittest.skipUnless(shutil.which("git"), "Git is required")
     def test_untracked_local_files_are_never_copied(self):
         """Local dev config and credentials stay out of the generated tree."""
         source = self.target.parent / "source"
         (source / "config").mkdir(parents=True)
-        (source / "config/common.defaults.yaml").write_text("{}\n")
+        (source / "config/settings.yaml").write_text("{}\n")
         subprocess.run(["git", "init", "-q", str(source)], check=True)
         subprocess.run(["git", "-C", str(source), "add", "-A"], check=True)
         (source / "config/dev.yaml").write_text("SECRET_FILES: {platform-x: []}\n")
@@ -193,7 +189,7 @@ class GeneratorTests(unittest.TestCase):
         renamed_product.copy_tracked_files(source, target)
         self.assertEqual(
             sorted(str(path.relative_to(target)) for path in target.rglob("*")),
-            ["config", "config/common.defaults.yaml"],
+            ["config", "config/settings.yaml"],
         )
 
     def test_platform_group_inventory_survives_renamed_generation(self):
@@ -271,6 +267,68 @@ class GeneratorTests(unittest.TestCase):
         )
         self.assertIn("[OK] inventory:", validate.stdout)
         self.assertNotIn("comes from client.yaml", validate.stdout + validate.stderr)
+
+    def test_manual_removal_action_leaves_a_valid_product(self):
+        """The lab action on the generated tree; Podman, curl, dev.sh and smoke stubbed.
+
+        The real bundle.py builds the remaining bundles, so a removal that
+        leaves a reference to manual (catalog, route, ENVIRONMENT) fails here.
+        """
+        root = self.target.parent
+        stubs = root / "bin"
+        stubs.mkdir()
+        pods = (
+            "gateway-proxy\ninventory-postgres\ninventory-todo\nlogin-service-postgres\n"
+            "login-service-server\norders-postgres\norders-todo\n"
+        )
+        for name, text in (
+            (
+                "podman",
+                (
+                    'case "$1 $2" in\n'
+                    f"  'pod ps') printf '{pods}';;\n"
+                    '  save*) shift 3; : > "$1";;\n'
+                    "esac\n"
+                ),
+            ),
+            ("curl", "printf 404\n"),
+        ):
+            (stubs / name).write_text("#!/usr/bin/env bash\n" + text)
+            (stubs / name).chmod(0o755)
+        (self.target / "dev/dev.sh").write_text("#!/bin/sh\nexit 0\n")
+        smoke = root / "src/.venv-smoke/bin/python"
+        smoke.parent.mkdir(parents=True)
+        smoke.write_text("#!/bin/sh\nexit 0\n")
+        smoke.chmod(0o755)
+        # The earlier manual archive, which the action keeps.
+        (self.target / "dist").mkdir()
+        (self.target / "dist/shop-manual-1.0.0-offline.tar.gz").touch()
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "set -euo pipefail\n"
+                + shell_code(REMOTE, action="renamed-remove-manual"),
+            ],
+            env=dict(
+                os.environ,
+                PATH=str(stubs) + os.pathsep + os.environ["PATH"],
+                renamed=str(self.target),
+                src=str(root / "src"),
+                product_name="shop",
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: manual removed", result.stdout)
+        descriptors = catalog.source_descriptors(self.target)
+        self.assertNotIn("manual", descriptors)
+        self.assertFalse((self.target / "components/manual").exists())
+        self.assertEqual(
+            len((self.target / "dist/current-bundles.txt").read_text().split()), 4
+        )
 
     def test_existing_target_is_never_overwritten(self):
         with self.assertRaisesRegex(SystemExit, "already exists"):
