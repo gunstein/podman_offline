@@ -16,7 +16,12 @@ phase 1 questions and the
 see [item 69, "Decisions"](../BACKLOG.md#decisions-product-owner-2026-11-01).
 Where those decisions differ from this revision (retirement lock, identity
 records, fapolicyd profiles, repository mode, answers file, `interface: 2`),
-the decisions win; revise this plan at the start of WP1. Read
+the decisions win; revise this plan at the start of WP1. The work uses
+today's component format ([COMPONENTS.md](COMPONENTS.md); product owner,
+2026-11-01, [item 77](../BACKLOG.md#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets)):
+a field this plan proposes for it is a possible format extension that needs
+its own product-owner decision and a concrete scenario the existing fields
+cannot cover. The `delivered` field below is not adopted (decision 8). Read
 [item 69](../BACKLOG.md#69-paper-first-installation-for-closed-networks)
 ("Chosen direction"), the
 [RPM prototype results](../acceptance/RESULTS.md)
@@ -106,7 +111,7 @@ stdin bootstrap.
 | Each component's own `deploy.sh` as child process; no imports across releases | **Kept.** |
 | Order, compatibility, skip completed, stops (exit 3), no new progress record, pending first | **Kept**, in `<product>`. |
 | `--settings` data file | **Kept** as the answer-file format. |
-| `--credentials <dir>` mirroring `<component>/credentials/<group>/<file>` | **Replaced** by the incoming directory and the `delivered` declaration. |
+| `--credentials <dir>` mirroring `<component>/credentials/<group>/<file>` | **Kept** as the mirrored layout of `incoming/` (decision 8); the `delivered` declaration proposed below is not adopted. |
 | Retirement by explicit administrator `retire` | **Replaced** by `<product>-admin` retirement. |
 
 Where this table says superseded or replaced, this plan wins; there is no
@@ -352,7 +357,10 @@ gateway, certificate or public origin gets no prompts.
   account (flags as above), which creates missing subdirectories and writes
   the files with 0600, refusing to replace a different file. Root never writes
   into the account's directories itself. Host preparation must have run first.
-- **Declaration:** the existing `path` file source gets an optional
+- **Declaration (not adopted):** decision 8 (2026-11-01) uses the mirrored
+  layout without this field; adding it later is a format extension that needs
+  its own product-owner decision (see the status above). The proposal: the
+  existing `path` file source would get an optional
   `delivered` list of file names, beside the existing `generate` list. Example
   for the demo identity component:
 

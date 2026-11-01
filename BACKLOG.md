@@ -178,6 +178,19 @@ files as possible, easy to read, no name or path that no file states, only what
 is needed now, and no code for earlier formats (there are no customer
 installations). The design history is in git.
 
+**Format decision (product owner, 2026-11-01):** the current component format,
+described in [docs/COMPONENTS.md](docs/COMPONENTS.md), covers today's needs and
+is the base for further work: `bundles.yaml` (product, roles, component list),
+one `config.defaults.yaml` per component with `SECRET_FILES`, `VOLUME_FILES`,
+`ENVIRONMENT` and `MOUNTS`, `client.yaml` for OIDC clients, and the existing
+manifest and file layout. It is not reorganised as a side effect of other work.
+A new field, an alternative spelling or a changed meaning needs a concrete use
+problem and an explicit product-owner decision. Fixes that bring the code in
+line with agreed behaviour, clearer error messages, explanatory comments and
+ordinary component content within the format need no format decision. This is
+not a permanent freeze: there is no format version, migration code or support
+for earlier formats (there are still no customer installations).
+
 Done and verified on real Podman/systemd (`7f58936`, c77g runs):
 
 - `MOUNTS` demo: app1's seed SQL `020-report-role.sql` creates `todo_report`
@@ -1294,6 +1307,13 @@ matching parts of the plan (revision 3.3) until the plan is revised.
 9. **Dropped:** `interface: 2`, `--repo` and `state/answers.conf`. The
    runtime command writes the config atomically with the answers and asks
    again after an interruption before that write.
+
+**Component format (product owner, 2026-11-01):** the RPM and installation
+work uses today's component format as it is
+([item 77, "Format decision"](#77-make-a-component-intuitive-to-write-env-files-mounts-and-shared-secrets)).
+If the work needs information the format does not express, describe a
+concrete scenario and why the existing fields are not enough, and get a
+product-owner decision before implementing a format extension.
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
 revision 3.3; the WP0 matrix passed at `3222efb` after an earlier attempt that
