@@ -70,9 +70,18 @@ Podman). `68fd050` changes only the harness and this file relative to
 
 ## Other scenarios
 
-Host setup (`--host-setup`, procedure and evidence in
-[HOST-SETUP.md](HOST-SETUP.md)), status/retry (`--status-retry`), the init
-Secret probe, the protected-release and production-layout matrices and the RPM
-prototype have no run on the current code; their last runs are in the git
-history. The AI operator walkthrough is [OPERATOR-REVIEW.md](OPERATOR-REVIEW.md);
+Status/retry (`--status-retry`): `c77f-status-retry-a57496d` was NOT CLEAN at
+`07-status-retry` ("status retry probe: KeyError"), a harness defect: the
+probe required the `upgrade` field that backlog 77 removed. The rerun
+`c77f-status-retry-e5031cd` (2026-11-01) is CLEAN PASS, 118 steps, clean
+checkout, Oracle Linux Server 9.8, Podman 5.8.2: a same-version failure stays
+pending with the old container active, a plain retry completes, and the
+restore leaves protected code unchanged. The later review commits `e785c12`
+and `0709537` (retry and file handling) are not covered by any lab run yet.
+
+The init Secret probe runs inside `03-database-runtime` and
+`03-renamed-generate`, so the matrix runs above cover it. Host setup
+(`--host-setup`, procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md)),
+the protected-release and production-layout matrices and the RPM prototype
+have no run on the current code; their last runs are in the git history. The AI operator walkthrough is [OPERATOR-REVIEW.md](OPERATOR-REVIEW.md);
 the unassisted human trial (backlog 68) is outstanding.
