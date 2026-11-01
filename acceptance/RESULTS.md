@@ -24,64 +24,36 @@ python3 acceptance/acceptance.py --run "platform-help-$rev" --platform-help-only
 python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 ```
 
-| Scenario | Latest run | Commit | Result |
+| Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `c77c-whoami-7f22375` | `7f22375` | CLEAN PASS |
-| normal | `c77c-normal-7f22375` | `7f22375` | CLEAN PASS |
-| `--first-app app2` | `c77c-app2-7f22375` | `7f22375` | CLEAN PASS |
-| `--identity-only` | `c77c-identity-7f22375` | `7f22375` | CLEAN PASS |
-| `--help-only` | `c77c-help-7f22375` | `7f22375` | CLEAN PASS |
-| `--platform-help-only` | `c77c-platform-help-7f22375` | `7f22375` | CLEAN PASS |
-| `--renamed-product` | `c77c-renamed-7f22375` | `7f22375` | CLEAN PASS |
+| `--whoami` | `c77g-whoami-7f58936` | 46 | CLEAN PASS |
+| normal | `c77g-normal-7f58936` | 117 | CLEAN PASS |
+| `--first-app app2` | `c77g-app2-7f58936` | 117 | CLEAN PASS |
+| `--identity-only` | `c77g-identity-7f58936` | 57 | CLEAN PASS |
+| `--help-only` | `c77g-help-7f58936` | 52 | CLEAN PASS |
+| `--platform-help-only` | `c77g-platform-help-7f58936` | 31 | CLEAN PASS |
+| `--renamed-product` | `c77g-renamed-7f58936` | 57 | CLEAN PASS |
 
-Reported by the product owner on 2026-10-31: all seven runs were CLEAN PASS.
-Step counts and `EVIDENCE.md` were lost when the lab disk filled up and the
-run directories were deleted, so only the result is recorded.
-
-Commits after `7f22375` (demo settings in `ENVIRONMENT`, client id and path
-written once, no shared or per-component dev config file, `MOUNTS`, no
-standalone mode or `examples/`, no authored `SECRET_TEMPLATES`) have unit and
-harness tests only. The matrix no longer has the `03-example-*` steps; its
-seed checks now also log in as `todo_report`, created by app1's `MOUNTS` SQL file.
-The first real run, `whoami-ff53717` (2026-10-31), was NOT CLEAN at
-`03-dev-up`: "a wrong password was accepted". A harness defect: the check
-logged in over `127.0.0.1`, which the postgres image's `pg_hba.conf` trusts
-(initdb's default), so no password was checked. The check now connects to the
-container's own address (`scram-sha-256`); verified against a local
-`postgres:17.11` container. The rerun `whoami-64a2c65` is CLEAN PASS (46
-steps). `c77d-normal-64a2c65` was then NOT CLEAN at `03-registry-test`:
-"Missing component catalog …/registry-fixture/bundles.yaml". Another harness
-defect: the registry fixture still used the removed standalone layout. It is
-now a one-component catalog product (`myproduct-registry-0.0.0`); a test runs
-the copied `bundle.py` on it.
-
-Matrix on `131f362` (2026-10-31, clean checkout, Oracle Linux Server 9.8,
-Podman 5.8.2): `whoami` 46, `normal` 117, `app2` 117, `identity` 57, `help`
-52 and `platform-help` 31 steps, all CLEAN PASS. `renamed` was NOT CLEAN at
-`10-install-inventory-without-registrations` after 48 passed steps: install
-refused "APP_ID: @@CLIENT_ID@@ comes from client.yaml, which
-components/inventory does not have". A harness defect: the inventory-drop
-action removed `client.yaml` but left the placeholders in `ENVIRONMENT`. It
-now writes the client's values (`inventory`, `/stock`) there; its test runs
-the real `./deploy.sh validate` on the result. The rerun
-`c77e-renamed-68fd050` is CLEAN PASS (57 steps, clean checkout, same OS and
-Podman). `68fd050` changes only the harness and this file relative to
-`131f362`, so the six runs above still cover the product code.
+All on `7f58936` (2026-11-01), clean detached checkout, Oracle Linux Server
+9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. Later
+commits up to `f7b237c` change only `BACKLOG.md`. The init Secret probe runs
+inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
+it. The harness defects found on the way to this matrix are listed in
+[backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
 
 ## Other scenarios
 
-Status/retry (`--status-retry`): `c77f-status-retry-a57496d` was NOT CLEAN at
-`07-status-retry` ("status retry probe: KeyError"), a harness defect: the
-probe required the `upgrade` field that backlog 77 removed. The rerun
-`c77f-status-retry-e5031cd` (2026-11-01) is CLEAN PASS, 118 steps, clean
-checkout, Oracle Linux Server 9.8, Podman 5.8.2: a same-version failure stays
-pending with the old container active, a plain retry completes, and the
-restore leaves protected code unchanged. The later review commits `e785c12`
-and `0709537` (retry and file handling) are not covered by any lab run yet.
+| Scenario | Latest run | Steps | Result |
+| --- | --- | --- | --- |
+| `--status-retry` | `c77g-status-retry-7f58936` | 118 | CLEAN PASS |
+| `--host-setup` | `c77g-host-setup-7f58936` | 36 | CLEAN PASS |
 
-The init Secret probe runs inside `03-database-runtime` and
-`03-renamed-generate`, so the matrix runs above cover it. Host setup
-(`--host-setup`, procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md)),
-the protected-release and production-layout matrices and the RPM prototype
-have no run on the current code; their last runs are in the git history. The AI operator walkthrough is [OPERATOR-REVIEW.md](OPERATOR-REVIEW.md);
-the unassisted human trial (backlog 68) is outstanding.
+Same commit, date, checkout, OS and Podman as the matrix. Status/retry: a
+same-version failure stays pending with the old container active, a plain
+retry completes, and the restore leaves protected code unchanged. Host setup:
+procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md).
+
+The protected-release and production-layout matrices and the RPM prototype
+have no run on the current code; their last runs are in the git history. The
+AI operator walkthrough is [OPERATOR-REVIEW.md](OPERATOR-REVIEW.md); the
+unassisted human trial (backlog 68) is outstanding.

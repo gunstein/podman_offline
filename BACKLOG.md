@@ -100,8 +100,8 @@ fixtures that did not follow the product's changes:
 | `c77e-renamed-131f362` | inventory-drop left `@@CLIENT_ID@@` without `client.yaml` | the test checked the catalog, not validation |
 | `c77f-status-retry-a57496d` | probe required the removed `upgrade` field | hand-written descriptor fixture |
 
-Fixed one by one in the commits named in
-[RESULTS.md](acceptance/RESULTS.md); those fixes already use the real
+Fixed one by one (`6210670`, `374a372`, `131f362`, `68fd050`, `e5031cd`;
+the matrix on `7f58936` is CLEAN PASS); those fixes already use the real
 descriptor, `bundle.py`, `./deploy.sh validate` and the guest action's own
 script. This item makes that the rule.
 
@@ -131,11 +131,10 @@ that removes a concept reaches the lab without a harness-only NOT CLEAN.
 
 ## 77. Make a component intuitive to write: env files, mounts and shared secrets
 
-Status: **implemented**; the form on `7f22375` passed all seven lab scenarios
-(CLEAN PASS, [latest results](acceptance/RESULTS.md)). The later commits
-(`MOUNTS`, no standalone mode, no authored `SECRET_TEMPLATES`) passed all
-seven too: six on `131f362`, the renamed product on `68fd050` after harness
-fixes (2026-10-31/11-01).
+Status: **implemented and verified on real Podman/systemd**: the current code
+(`7f58936`, including the review fixes) passed all seven matrix scenarios,
+`--status-retry` and `--host-setup` on 2026-11-01 (CLEAN PASS,
+[latest results](acceptance/RESULTS.md)).
 
 What a component author writes now ([contract](docs/COMPONENTS.md)):
 
