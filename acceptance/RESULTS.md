@@ -63,7 +63,10 @@ refused "APP_ID: @@CLIENT_ID@@ comes from client.yaml, which
 components/inventory does not have". A harness defect: the inventory-drop
 action removed `client.yaml` but left the placeholders in `ENVIRONMENT`. It
 now writes the client's values (`inventory`, `/stock`) there; its test runs
-the real `./deploy.sh validate` on the result. Renamed rerun outstanding.
+the real `./deploy.sh validate` on the result. The rerun
+`c77e-renamed-68fd050` is CLEAN PASS (57 steps, clean checkout, same OS and
+Podman). `68fd050` changes only the harness and this file relative to
+`131f362`, so the six runs above still cover the product code.
 
 ## Other scenarios
 

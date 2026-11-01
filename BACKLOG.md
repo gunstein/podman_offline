@@ -57,9 +57,10 @@ Open items follow, newest first. Finished and superseded items were removed on
 ## 77. Make a component intuitive to write: env files, mounts and shared secrets
 
 Status: **implemented**; the form on `7f22375` passed all seven lab scenarios
-(CLEAN PASS, [latest results](acceptance/RESULTS.md)). Later commits on the same
-branch (`MOUNTS`, no standalone mode, no authored `SECRET_TEMPLATES`) have unit
-and harness tests; their lab run is outstanding.
+(CLEAN PASS, [latest results](acceptance/RESULTS.md)). The later commits
+(`MOUNTS`, no standalone mode, no authored `SECRET_TEMPLATES`) passed all
+seven too: six on `131f362`, the renamed product on `68fd050` after harness
+fixes (2026-10-31/11-01).
 
 What a component author writes now ([contract](docs/COMPONENTS.md)):
 
@@ -95,7 +96,7 @@ Remaining in this item:
   logged in over `127.0.0.1`, which the postgres image's `pg_hba.conf` trusts
   (initdb's default), so no password was checked. The check now connects to the
   container's own address (`scram-sha-256`); verified against a local
-  `postgres:17.11` container, lab rerun outstanding.
+  `postgres:17.11` container and in the lab (`whoami-64a2c65` onwards).
 - Not started from the original scope: CA trust profiles, an example
   application for the organisation's SPA/.NET architecture.
 
