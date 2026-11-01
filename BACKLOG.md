@@ -54,6 +54,34 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 79. Acceptance scenario for a product without a gateway or Identity
+
+Status: **planned, low priority** (2026-11-01, requested by the product owner).
+Not implemented. The product owner expects a reverse proxy to be needed in
+practice, so this only proves that the optional case works; it does not make
+it a supported delivery shape on its own.
+
+Why: `gateway:` and `identity:` are optional in `bundles.yaml`, and the
+platform tests cover a product without them (the `WORKER` fixture). Every lab
+scenario installs platform, so a product without a gateway has never run on
+real Podman/systemd.
+
+Scope:
+
+- A small product in the harness, generated like the renamed product: one
+  component with a PostgreSQL Pod and an app Pod whose init container runs a
+  `MOUNTS` SQL file (the `orders` example from the product owner's review on
+  2026-11-01), no `route.conf`, no `client.yaml`, no `gateway:`/`identity:`.
+- Lab steps: build, transfer, host preparation, `init-config`, `validate`,
+  `install`, health, the SQL login check (right password accepted, wrong one
+  refused over the container address), reboot, repeat install, `uninstall`.
+- Check what host preparation needs without a public port: `prepare-host.sh`
+  requires `--port` today and opens it in the firewall. Decide with the
+  product owner whether the port becomes optional or stays required.
+
+Out of scope: making the demo product itself gateway-less, or documenting it
+as a recommended layout.
+
 ## 78. Keep the acceptance harness in step with the product
 
 Status: **planned** (2026-11-01, requested by the product owner). Not
