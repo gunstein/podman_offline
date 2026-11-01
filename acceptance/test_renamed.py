@@ -254,6 +254,23 @@ class GeneratorTests(unittest.TestCase):
         )
         self.assertNotIn("login-service", after["inventory"]["requires"])
         self.assertEqual(after["orders"]["clients"], "login-service")
+        environment = yaml.safe_load(
+            (self.target / "components/inventory/config.defaults.yaml").read_text()
+        )["ENVIRONMENT"]["backend"]
+        self.assertEqual(
+            (environment["APP_ID"], environment["BASE_PATH"]), ("inventory", "/stock")
+        )
+        # The real validation accepts inventory's ENVIRONMENT; dev credentials
+        # are not prepared here, so only that finding is checked.
+        validate = subprocess.run(
+            ["bash", "./deploy.sh", "validate"],
+            cwd=str(self.target),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertIn("[OK] inventory:", validate.stdout)
+        self.assertNotIn("comes from client.yaml", validate.stdout + validate.stderr)
 
     def test_existing_target_is_never_overwritten(self):
         with self.assertRaisesRegex(SystemExit, "already exists"):

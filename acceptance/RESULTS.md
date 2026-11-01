@@ -53,7 +53,17 @@ steps). `c77d-normal-64a2c65` was then NOT CLEAN at `03-registry-test`:
 "Missing component catalog …/registry-fixture/bundles.yaml". Another harness
 defect: the registry fixture still used the removed standalone layout. It is
 now a one-component catalog product (`myproduct-registry-0.0.0`); a test runs
-the copied `bundle.py` on it. Lab rerun outstanding.
+the copied `bundle.py` on it.
+
+Matrix on `131f362` (2026-10-31, clean checkout, Oracle Linux Server 9.8,
+Podman 5.8.2): `whoami` 46, `normal` 117, `app2` 117, `identity` 57, `help`
+52 and `platform-help` 31 steps, all CLEAN PASS. `renamed` was NOT CLEAN at
+`10-install-inventory-without-registrations` after 48 passed steps: install
+refused "APP_ID: @@CLIENT_ID@@ comes from client.yaml, which
+components/inventory does not have". A harness defect: the inventory-drop
+action removed `client.yaml` but left the placeholders in `ENVIRONMENT`. It
+now writes the client's values (`inventory`, `/stock`) there; its test runs
+the real `./deploy.sh validate` on the result. Renamed rerun outstanding.
 
 ## Other scenarios
 

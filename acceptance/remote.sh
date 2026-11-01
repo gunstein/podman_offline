@@ -1176,11 +1176,22 @@ REMOVE_MANUAL
     ;;
 renamed-inventory-drop)
     # A newer inventory release without a route or a client. The catalog derives
-    # both from route.conf and client.yaml (backlog 77), so removing them is enough.
+    # both from route.conf and client.yaml (backlog 77). Without client.yaml,
+    # @@CLIENT_ID@@/@@CLIENT_BASE_PATH@@ are refused, so the release writes the
+    # values it used to receive into its ENVIRONMENT.
     cd "$renamed"
     python3 - <<'DROP_REGISTRATIONS'
 import pathlib
+import yaml
 
+client = yaml.safe_load(pathlib.Path("components/inventory/client.yaml").read_text())
+defaults = pathlib.Path("components/inventory/config.defaults.yaml")
+text = defaults.read_text()
+for name, value in (("CLIENT_ID", client["id"]), ("CLIENT_BASE_PATH", client["base_path"])):
+    if "@@" + name + "@@" not in text:
+        raise SystemExit("FAIL: inventory ENVIRONMENT no longer uses @@" + name + "@@")
+    text = text.replace("@@" + name + "@@", value)
+defaults.write_text(text)
 major, minor, patch = pathlib.Path("components/inventory/VERSION").read_text().strip().split(".")
 pathlib.Path("components/inventory/VERSION").write_text(f"{major}.{minor}.{int(patch) + 1}\n")
 DROP_REGISTRATIONS
