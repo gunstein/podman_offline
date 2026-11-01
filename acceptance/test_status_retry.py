@@ -16,6 +16,10 @@ import status_retry_test as probe
 import test_acceptance as base
 import yaml
 
+from deployment import catalog
+
+ROOT = Path(__file__).resolve().parent.parent
+
 
 class StatusRetryProbeTests(unittest.TestCase):
     def setUp(self):
@@ -45,16 +49,11 @@ class StatusRetryProbeTests(unittest.TestCase):
         )
         self.original = self.config.read_bytes()
         self.marker.write_text("1.0.0\n")
-        (self.release / "bundle.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "name": "orders",
-                    "product": "cedar",
-                    "version": "1.0.0",
-                    "upgrade": "always",
-                }
-            )
-        )
+        # The real compiled descriptor's fields, so the probe cannot rely on
+        # one the product no longer writes.
+        descriptor = catalog.source_descriptors(ROOT)["app1"]
+        descriptor.update(name="orders", product="cedar", version="1.0.0")
+        (self.release / "bundle.yaml").write_text(yaml.safe_dump(descriptor))
         self.live = "original"
         self.ident = "old-container"
         self.render()

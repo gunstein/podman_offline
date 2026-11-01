@@ -136,10 +136,8 @@ def container_id(container):
 def run(release, component):
     require(os.geteuid() != 0, "run as the product runtime account")
     descriptor = yaml.safe_load((release / "bundle.yaml").read_text())
-    require(
-        descriptor["name"] == component and descriptor["upgrade"] == "always",
-        "requires selected upgrade-always bundle",
-    )
+    # Every install renders again, also at the same version (backlog 77).
+    require(descriptor["name"] == component, "requires the selected bundle")
     product, version = descriptor["product"], descriptor["version"]
     state = Path(os.environ["PRODUCT_STATE"])
     config_root = Path(os.environ["XDG_CONFIG_HOME"])
