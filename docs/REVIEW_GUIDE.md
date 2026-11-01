@@ -206,6 +206,12 @@ If many mode flags, parallel models or indirect special cases accumulate, reasse
 and simplify before continuing. Report simplifications and justify remaining
 complexity. Passing tests alone does not complete this review.
 
+Also check the simplicity requirements in [AGENTS.md](../AGENTS.md). Point out
+additions that today's requirements do not need, and propose concrete removal
+or simplification. Keep demonstrated defects separate from optional
+improvements. Do not require a new mechanism without showing the concrete
+scenario it solves.
+
 ## 7. Mandatory operator and procedure-understanding review
 
 This is a separate assessment in addition to code review, the developer-facing

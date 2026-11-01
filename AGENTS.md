@@ -52,7 +52,9 @@ ordinary use or maintenance requires unnecessary concepts or steps.
 
 For each new configuration file, setting, persistent state record, operating
 mode or architectural abstraction, briefly identify the current requirement
-it serves and why a simpler existing mechanism is insufficient.
+it serves and why a simpler existing mechanism is insufficient. Answer the
+question "What concretely stops working if we do not build this now?" with a
+need the product owner has decided, and name where that decision is recorded.
 
 Before declaring completion, review one ordinary operator task and one likely
 developer change. Identify unnecessary steps, files, concepts and indirection.

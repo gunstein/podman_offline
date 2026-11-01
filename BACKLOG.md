@@ -1200,6 +1200,57 @@ becomes phase 2.
   - Both choices keep phase 2 possible; neither changes package names, file
     layout or versions.
 
+### Simplification review (2026-11-01, proposals, not decisions)
+
+A review of this item and the plan against `main` (`a1f2256`) and the
+simplicity rules in [AGENTS.md](AGENTS.md) found the direction sound but the
+plan more complex than the decided needs; it predates backlog 77 and the
+phase 1 decision. Nothing below is decided; the plan stays revision 3.3 until
+the product owner decides.
+
+Proposals for the first delivery:
+
+1. **Retirement without a cross-account lock.** Remove a release only when it
+   is older than the component's completed version and no pending record names
+   the component. Downgrades are refused and the completed release is the one
+   the Quadlet unit references, so the operation lock, `SCM_RIGHTS` hand-over,
+   inherited lock and process-ancestry check are not needed. Lost: removing a
+   wrong delivery before anything is installed.
+2. **Immutable versions without identity records.** The admin command refuses a
+   candidate whose name and version are installed with other file digests, and
+   reinstalls an identical package that fails `rpm -V`; the build refuses an
+   existing version. Lost: detecting a deliberate root bypass with
+   `dnf --replacepkgs`.
+3. **Admin command with a plain directory** (the two open decisions together):
+   `sudo <product>-admin /mnt` copies to a root-owned directory and installs
+   those files; no `repodata/` or `.repo` file. An internal repository keeps
+   working because it can hold the same RPMs.
+4. **Credentials in a mirrored layout**, `incoming/<component>/credentials/
+   <group>/<file>` as in item 66, without a `delivered` declaration or flat
+   layout rules; `validate` already names missing files. Keep
+   `--credentials /mnt` for console-only use.
+5. **fapolicyd by dependencies:** preflight checks fapolicyd active, `rpmdb` in
+   `trust`, `rpm-plugin-fapolicyd`, `subj_cache_size`; one bounded run of the
+   release's Python as the runtime account replaces the trust poll and
+   self-check. Lost: the claim "verified profiles only".
+6. **Drop** `interface: 2`, `state/answers.conf` (write config with the answers
+   atomically), `--repo` and the identity records.
+7. **Configuration change without a new version:** `<product> <component>`
+   installs that component again with its current config; "skip completed"
+   otherwise leaves a changed config unused.
+
+Kept as necessary: tools RPM and admin command, the `%preun` guard (with a
+single-use record naming the package), the `setpriv` boundary, `host.conf` as
+the one source of the port, preflight naming who acts, prompts with options
+for the harness, the certificate name check, the existing pending-record
+retry and `checksums.sha256`.
+
+Decisions for the product owner: (a) admin command and plain directory;
+(b) retirement rule 1; (c) immutability as in 2; (d) fapolicyd as in 5;
+(e) `<product> <component>` for a config change; (f) keep the `dnf remove`
+guard (the largest remaining cost) or accept `dnf remove` and let `<product>`
+stop clearly on a missing release tree.
+
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
 revision 3.3; the WP0 matrix passed at `3222efb` after an earlier attempt that
 stopped before any probe ([report](acceptance/RESULTS.md)); not implemented. Product-owner

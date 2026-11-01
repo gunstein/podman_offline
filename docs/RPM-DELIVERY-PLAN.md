@@ -12,7 +12,10 @@ Not implemented. **WP0 matrix passed** (all 24 case/profile runs at
 statements marked "confirm in WP0" below were hypotheses before that run. WP1
 starts only after the product owner's go/no-go and the two open phase 1
 decisions in [item 69](../BACKLOG.md#phasing-decision-product-owner-2026-10-26)
-(status 2026-10-27: both open). Read
+(status 2026-10-27: both open). A simplification review on 2026-11-01
+proposes removing several mechanisms below; see
+[item 69, "Simplification review"](../BACKLOG.md#simplification-review-2026-11-01-proposals-not-decisions)
+(proposals, not decisions). Read
 [item 69](../BACKLOG.md#69-paper-first-installation-for-closed-networks)
 ("Chosen direction"), the
 [RPM prototype results](../acceptance/RESULTS.md)
