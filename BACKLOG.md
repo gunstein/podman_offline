@@ -54,6 +54,53 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 78. Keep the acceptance harness in step with the product
+
+Status: **planned** (2026-11-01, requested by the product owner). Not
+implemented.
+
+Why: during backlog 77, five lab runs stopped NOT CLEAN on harness defects,
+never on product code, and each cost a 10–30 minute lab run. The harness unit
+tests were green because they replaced the product with stubs and hand-written
+fixtures that did not follow the product's changes:
+
+| Lab run | Defect | Why the harness tests passed |
+| --- | --- | --- |
+| `c77-renamed-0459e5a` | inventory-drop popped removed `routes`/`clients` | the scenario tests stub every guest action |
+| `whoami-ff53717` | report login over `127.0.0.1`, which the postgres image trusts | depends on the image's `pg_hba.conf`; no real container |
+| `c77d-normal-64a2c65` | registry fixture used the removed standalone layout | `bundle.py` was stubbed |
+| `c77e-renamed-131f362` | inventory-drop left `@@CLIENT_ID@@` without `client.yaml` | the test checked the catalog, not validation |
+| `c77f-status-retry-a57496d` | probe required the removed `upgrade` field | hand-written descriptor fixture |
+
+Fixed one by one in the commits named in
+[RESULTS.md](acceptance/RESULTS.md); those fixes already use the real
+descriptor, `bundle.py`, `./deploy.sh validate` and the guest action's own
+script. This item makes that the rule.
+
+Scope:
+
+1. **Fixtures from the product.** Harness tests build descriptors, catalogs
+   and fixture products from the real code (`catalog.source_descriptors`,
+   `renamed_product.generate`, the real `bundle.py`), not by hand. Review the
+   remaining hand-written fixtures in `acceptance/test_*.py` and replace those
+   that copy a product format.
+2. **Run file-only DEV actions locally.** The `remote.sh` actions that only
+   edit or build files (renamed generate, inventory drop, manual removal, the
+   registry fixture's catalog and image lookup) run in a temporary tree in the
+   harness tests, with only Podman calls stubbed.
+3. **Sweep the harness when a product concept is removed.** When a field,
+   layout or placeholder leaves the product, search `acceptance/` for it before
+   the change is complete. Add this to the review guide's removal checks
+   ([section 4](docs/REVIEW_GUIDE.md#4-review-removal-and-failure-paths)).
+4. **Optional local check with real Podman.** A few assumptions about
+   container images (such as the postgres image trusting loopback) need a real
+   container. Run them when Podman is available locally and skip them
+   otherwise; they never replace the lab.
+
+Done when: the four points are in place, a deliberately stale fixture or
+removed field makes a harness test fail locally, and the next product change
+that removes a concept reaches the lab without a harness-only NOT CLEAN.
+
 ## 77. Make a component intuitive to write: env files, mounts and shared secrets
 
 Status: **implemented**; the form on `7f22375` passed all seven lab scenarios
