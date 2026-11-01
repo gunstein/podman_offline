@@ -660,5 +660,39 @@ class ScenarioTests(unittest.TestCase):
         )
 
 
+class ClientRemovalCheckTests(unittest.TestCase):
+    """renamed-registrations-removed asks the running Identity, not only the disk."""
+
+    LOGIN = "302 https://shop.test:8443/identity/account/login?ReturnUrl=%2Fidentity"
+    ERROR = "302 https://shop.test:8443/identity/home/error?errorId=CfDJ8"
+
+    def verdict(self, kept, removed):
+        script = Path(__file__).with_name("remote.sh").read_text()
+        function = re.search(r"(?ms)^check_client_removed\(\) \{.*?^\}\n", script)
+        assert function is not None
+        return subprocess.run(
+            ["bash", "-c", function.group(0) + 'check_client_removed "$1" "$2"', "-",
+             kept, removed],
+            env=dict(os.environ, prod_host="shop.test", port="8443"),
+            capture_output=True, text=True, check=False,
+        )  # fmt: skip
+
+    def test_the_removed_client_must_be_refused_by_identity(self):
+        self.assertEqual(self.verdict(self.LOGIN, self.ERROR).returncode, 0)
+        for kept, removed, cause in (
+            # Identity still holds the removed client (for example not restarted).
+            (self.LOGIN, self.LOGIN, "does not refuse the removed client"),
+            # Identity unreachable: no answer proves no refusal.
+            (self.LOGIN, "000 ", "does not refuse the removed client"),
+            (self.LOGIN, "502 ", "does not refuse the removed client"),
+            # The request itself is wrong: the kept client fails the same way.
+            (self.ERROR, self.ERROR, "kept client does not reach the login page"),
+        ):
+            with self.subTest(kept=kept, removed=removed):
+                result = self.verdict(kept, removed)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(cause, result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

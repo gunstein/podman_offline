@@ -737,6 +737,11 @@ def check_report_login(component, password_file, expected):
             raise RuntimeError("Report login: unexpected query result")
         if not accepted and result.returncode == 0:
             raise RuntimeError("Report login: a wrong password was accepted (no password check)")
+        # Only PostgreSQL's own refusal proves the password was checked; a stopped
+        # container, a missing psql or a refused connection must not count.
+        if not accepted and 'password authentication failed for user "todo_report"' not in result.stderr:
+            raise RuntimeError("Report login: the wrong password failed for another reason (exit "
+                               + str(result.returncode) + "), not a password check")
     print("PASS: MOUNTS SQL file created todo_report with the generated password (" + component + ")")
 
 
@@ -787,7 +792,9 @@ healthy() {
     local component components
     components=$(installed_components)
     for component in $components; do user_service is-active "$product_name-$component.service"; done
-    as_product python3 - <<'HEALTHY'
+    # The scenario's own public address: the expected value never comes from
+    # what the product rendered.
+    as_product python3 - "https://$prod_host:$port" <<'HEALTHY'
 import json
 import os
 import pathlib
@@ -795,7 +802,6 @@ import subprocess
 import sys
 import time
 import yaml
-from urllib.parse import urlsplit
 
 
 def podman(arguments):
@@ -858,7 +864,13 @@ def states(expected, init):
 
 
 def check_configmap_inline(paths):
-    """Verify the demo's public inline value inside its actual consumer container."""
+    """Verify the demo's public inline value inside its actual consumer container.
+
+    The expected value is the scenario's public endpoint (argument 1,
+    https://<host>:<port>), never one derived from the rendered ConfigMap: a
+    consistently wrong rendering would otherwise match itself.
+    """
+    expected = sys.argv[1]
     checked = 0
     for path in paths:
         docs = list(yaml.safe_load_all(path.read_text()))
@@ -871,7 +883,6 @@ def check_configmap_inline(paths):
                     data = maps.get(source.get("configMapRef", {}).get("name"), {})
                     if "PUBLIC_ENDPOINT" not in data:
                         continue
-                    expected = "https://" + urlsplit(data["PUBLIC_ORIGIN"]).hostname + ":" + data["HTTPS_PORT"]
                     if data["PUBLIC_ENDPOINT"] != expected:
                         raise RuntimeError("Inline ConfigMap endpoint was rendered incorrectly")
                     name = doc["metadata"]["name"] + "-" + container["name"]
@@ -953,6 +964,30 @@ lab_host_baseline() {
     if ! getent passwd "$service_user" >/dev/null; then
         sudo -n useradd --create-home --shell /bin/bash "$service_user"
     fi
+}
+# Ask the running Identity to start a sign-in for one client: "<status> <redirect>".
+# The request is complete (redirect URI as registered, PKCE), so a registered
+# client is sent to the login page and an unknown one to Identity's error page.
+identity_authorize() {
+    as_product curl --noproxy '*' --cacert "$state/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+        --output /dev/null --write-out '%{http_code} %{redirect_url}' --get \
+        --data-urlencode "client_id=$1" --data-urlencode response_type=code \
+        --data-urlencode scope=openid \
+        --data-urlencode "redirect_uri=https://$prod_host:$port$2/auth/callback" \
+        --data-urlencode code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM \
+        --data-urlencode code_challenge_method=S256 \
+        "https://$prod_host:$port/identity/connect/authorize"
+}
+# A removed client must be refused by the running Identity, not only deleted
+# on disk (Identity reads its clients at start). The kept client's answer
+# proves that the same request reaches the login page when the client exists.
+check_client_removed() {
+    local kept=$1 removed=$2 login="302 https://$prod_host:$port/identity/account/login?"
+    [[ $kept == "$login"* ]] \
+        || { echo "FAIL: the kept client does not reach the login page: ${kept%%\?*}"; return 1; }
+    [[ $removed == 302\ *errorId=* && $removed != *"/account/login"* ]] \
+        || { echo "FAIL: Identity does not refuse the removed client: ${removed%%\?*}"; return 1; }
 }
 # Run <product>-admin as the administrator does (backlog 69 WP2), never with a
 # terminal; print its output and keep it and the exit status for checks.
@@ -1244,7 +1279,8 @@ renamed-registrations-removed)
         --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
         --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/stock/")
     test "$http" = 404
-    echo "PASS: inventory $version without route and client: /stock 404, client gone, orders kept"
+    check_client_removed "$(identity_authorize orders-web /orders)" "$(identity_authorize inventory /stock)"
+    echo "PASS: inventory $version without route and client: /stock 404, Identity refuses the client, orders kept"
     ;;
 renamed-init-check)
     # orders keeps the demo's schema init container; it must have finished successfully.

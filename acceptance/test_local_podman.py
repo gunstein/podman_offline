@@ -70,7 +70,12 @@ class PostgresImageTests(unittest.TestCase):
         address = podman("exec", self.name, "hostname", "-i").stdout.split()
         address = [item for item in address if not item.startswith(("127.", "::1"))]
         self.assertTrue(address, "the container has no non-loopback address")
-        self.assertNotEqual(self.login(address[0], "wrong").returncode, 0)
+        refused = self.login(address[0], "wrong")
+        self.assertNotEqual(refused.returncode, 0)
+        # check_report_login (remote.sh) requires exactly this refusal.
+        self.assertIn(
+            'password authentication failed for user "report"', refused.stderr
+        )
         self.assertEqual(self.login(address[0], "right-password").returncode, 0)
 
 

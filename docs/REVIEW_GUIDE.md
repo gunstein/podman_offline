@@ -137,6 +137,14 @@ must remain usable without the original source catalog or sibling release.
   `REMOVED` in `acceptance/test_removed_concepts.py`. Harness fixtures are built
   from the real code, not written by hand (backlog 78,
   [acceptance README](../acceptance/README.md#local-checks-of-the-test-harness)).
+- An acceptance check must prove what it reports. A new or changed check names
+  the product defect it catches and has a local negative test that fails when
+  exactly that defect is present (for example: the wrong password fails for
+  another reason, a rendering is consistently wrong, Identity still accepts a
+  removed client). Expected values come from the scenario's inputs or
+  authoritative state, never from the product output under test. A failing
+  lab run is fixed in the product or by making the check more precise, never
+  by widening what the check accepts.
 
 | Registration change | Extra owner restarts |
 | --- | --- |

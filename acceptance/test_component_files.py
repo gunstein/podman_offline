@@ -49,6 +49,15 @@ class ReportLoginTests(unittest.TestCase):
 
     MOUNTED = (0, "/seed\n/seed-secret/020-report-role.sql\n", "")
     ROLE = (0, "1\n", "")
+    # PostgreSQL's own refusal of the wrong password, as psql prints it.
+    REFUSED = (
+        2,
+        "",
+        (
+            'psql: error: connection to server at "10.89.0.5", port 5432 failed: '
+            'FATAL:  password authentication failed for user "todo_report"\n'
+        ),
+    )
 
     def check(self, results, before=(MOUNTED, ROLE)):
         """Run check_report_login with stubbed Podman results; return the logins."""
@@ -74,13 +83,15 @@ class ReportLoginTests(unittest.TestCase):
         return calls[len(before) :], output.getvalue()
 
     def test_right_password_logs_in_and_wrong_password_is_rejected(self):
-        calls, output = self.check([(0, "release-v1\n", ""), (2, "", "auth failed")])
+        calls, output = self.check([(0, "release-v1\n", ""), self.REFUSED])
         self.assertEqual(
             [value for _, value in calls],
             ["GeneratedReportPassword", "wrong-GeneratedReportPassword"],
         )
         for arguments, _ in calls:
-            self.assertEqual(arguments[:4], ["podman", "exec", "-i", "app1-postgres-db"])
+            self.assertEqual(
+                arguments[:4], ["podman", "exec", "-i", "app1-postgres-db"]
+            )
             self.assertIn("-U todo_report", arguments[-1])
             # The password goes on stdin, never in argv.
             self.assertNotIn("GeneratedReportPassword", " ".join(arguments))
@@ -88,7 +99,7 @@ class ReportLoginTests(unittest.TestCase):
 
     def test_login_avoids_the_images_trusted_loopback(self):
         """The postgres image trusts 127.0.0.1/::1; only the own address checks passwords."""
-        calls, _ = self.check([(0, "release-v1\n", ""), (2, "", "auth failed")])
+        calls, _ = self.check([(0, "release-v1\n", ""), self.REFUSED])
         script = calls[0][0][-1]
         with tempfile.TemporaryDirectory() as directory:
             for name, body in (
@@ -125,23 +136,51 @@ class ReportLoginTests(unittest.TestCase):
             self.check([(97, "", "")])
 
     def test_each_failure_names_its_cause_without_values(self):
-        ok, refused = (0, "release-v1\n", ""), (2, "", "")
+        ok, refused = (0, "release-v1\n", ""), self.REFUSED
         for before, results, cause in (
-            ((self.MOUNTED, self.ROLE), [refused, refused], "generated password was refused"),
+            (
+                (self.MOUNTED, self.ROLE),
+                [refused, refused],
+                "generated password was refused",
+            ),
             ((self.MOUNTED, self.ROLE), [ok, ok], "wrong password was accepted"),
-            ((self.MOUNTED, self.ROLE), [(0, "stale\n", ""), refused], "unexpected query result"),
+            (
+                (self.MOUNTED, self.ROLE),
+                [(0, "stale\n", ""), refused],
+                "unexpected query result",
+            ),
             (
                 (self.MOUNTED, self.ROLE),
                 [(0, "release-v1\n", "GeneratedReportPassword"), refused],
                 "output contains the password",
             ),
-            (((0, "/seed\n", ""),), [], "has no /seed-secret/020-report-role.sql mount"),
+            (
+                ((0, "/seed\n", ""),),
+                [],
+                "has no /seed-secret/020-report-role.sql mount",
+            ),
             ((self.MOUNTED, (0, "0\n", "")), [], "role todo_report does not exist"),
         ):
             with self.subTest(cause=cause), self.assertRaises(RuntimeError) as failure:
                 self.check(results, before)
             self.assertIn(cause, str(failure.exception))
             self.assertNotIn("GeneratedReportPassword", str(failure.exception))
+
+    def test_a_wrong_password_must_fail_by_a_password_check(self):
+        """Another failure of the second login proves nothing about the password."""
+        ok = (0, "release-v1\n", "")
+        for other in (
+            (2, "", "psql: error: connection to server failed: Connection refused\n"),
+            (127, "", "sh: psql: command not found\n"),
+            (125, "", "Error: container app1-postgres-db is not running\n"),
+        ):  # fmt: skip
+            with (
+                self.subTest(exit=other[0]),
+                self.assertRaisesRegex(
+                    RuntimeError, "wrong password failed for another reason"
+                ),
+            ):
+                self.check([ok, other])
 
 
 class SeedRetryHarnessTests(unittest.TestCase):

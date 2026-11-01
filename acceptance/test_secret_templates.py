@@ -196,6 +196,11 @@ class TemplateUpgradeHarnessTests(unittest.TestCase):
 
 
 class ConfigMapInlineHarnessTests(unittest.TestCase):
+    def check(self, code, path):
+        """Run the check with the scenario's endpoint as the guest receives it."""
+        with mock.patch.object(code["sys"], "argv", ["-", "https://gateway.test:9443"]):
+            code["check_configmap_inline"]([path])
+
     def fixture(self, directory, component="platform"):
         docs = [
             {
@@ -235,7 +240,7 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
                 path, _ = self.fixture(directory, component)
                 code["podman"] = mock.Mock(return_value="https://gateway.test:9443\n")
                 with contextlib.redirect_stdout(io.StringIO()) as output:
-                    code["check_configmap_inline"]([path])
+                    self.check(code, path)
                 code["podman"].assert_called_once_with(
                     ["exec", component + "-proxy-nginx", "printenv", "PUBLIC_ENDPOINT"]
                 )
@@ -250,16 +255,33 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
             path, docs = self.fixture(directory)
             code["podman"] = mock.Mock(return_value="stale endpoint")
             with self.assertRaisesRegex(RuntimeError, "did not reach"):
-                code["check_configmap_inline"]([path])
+                self.check(code, path)
             docs[0]["data"]["PUBLIC_ENDPOINT"] = (
                 "https://@@PUBLIC_HOSTNAME@@:@@HTTPS_PORT@@"
             )
             path.write_text(yaml.safe_dump_all(docs))
             with self.assertRaisesRegex(RuntimeError, "rendered incorrectly"):
-                code["check_configmap_inline"]([path])
+                self.check(code, path)
             path.write_text(yaml.safe_dump_all(docs[1:]))
             with self.assertRaisesRegex(RuntimeError, "Missing inline"):
-                code["check_configmap_inline"]([path])
+                self.check(code, path)
+
+    def test_a_consistently_wrong_endpoint_does_not_match_itself(self):
+        """Rendered and running agree on the wrong address: the scenario's wins."""
+        from test_components import guest_code
+
+        code = guest_code("HEALTHY")
+        with tempfile.TemporaryDirectory() as directory:
+            path, docs = self.fixture(directory)
+            docs[0]["data"].update(
+                PUBLIC_ORIGIN="https://wrong.test:7443",
+                HTTPS_PORT="7443",
+                PUBLIC_ENDPOINT="https://wrong.test:7443",
+            )
+            path.write_text(yaml.safe_dump_all(docs))
+            code["podman"] = mock.Mock(return_value="https://wrong.test:7443\n")
+            with self.assertRaisesRegex(RuntimeError, "rendered incorrectly"):
+                self.check(code, path)
 
     def test_healthy_main_requires_runtime_configmap_value_before_success(self):
         from test_components import guest_code
@@ -291,6 +313,9 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
                 ),
                 contextlib.redirect_stdout(io.StringIO()) as output,
                 self.assertRaisesRegex(RuntimeError, "did not reach"),
+                mock.patch.object(
+                    code["sys"], "argv", ["-", "https://gateway.test:9443"]
+                ),
             ):
                 code["main"]()
             self.assertNotIn("PASS: all", output.getvalue())
