@@ -940,6 +940,37 @@ wait_backend() {
 }
 # Every DEV build after the source clone signs its bundles with the lab key.
 if [[ $role == DEV && -d $src/.git ]]; then lab_signing_key; fi
+# The documented host baseline (README, fapolicyd): a subject cache large
+# enough that starting processes are not evicted (backlog 29), and an existing
+# ordinary login account (home under /home, bash), created here only because
+# the lab VM is disposable; production uses an existing one.
+lab_host_baseline() {
+    sudo -n sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf
+    sudo -n grep -qx 'subj_cache_size = 16381' /etc/fapolicyd/fapolicyd.conf \
+        || echo 'subj_cache_size = 16381' | sudo -n tee -a /etc/fapolicyd/fapolicyd.conf >/dev/null
+    sudo -n systemctl restart fapolicyd
+    sudo -n systemctl is-active fapolicyd
+    if ! getent passwd "$service_user" >/dev/null; then
+        sudo -n useradd --create-home --shell /bin/bash "$service_user"
+    fi
+}
+# Run <product>-admin as the administrator does (backlog 69 WP2), never with a
+# terminal; print its output and keep it and the exit status for checks.
+run_admin() {
+    admin_status=0
+    admin_output=$(sudo -n "$product_name-admin" "$@" </dev/null 2>&1) || admin_status=$?
+    printf '%s\n' "$admin_output"
+    echo "admin exit=$admin_status"
+}
+# A command expected to fail; its output is indented so that an "Error:" line
+# from dnf is evidence here, not a harness failure.
+expect_refusal() {
+    local status=0 output
+    output=$("$@" 2>&1) || status=$?
+    sed 's/^/    /' <<< "$output"
+    if [[ $status == 0 ]]; then echo "FAIL: $* succeeded"; exit 1; fi
+    refusal_output=$output
+}
 case "$action" in
 readiness)
     profile
@@ -1542,18 +1573,7 @@ host65-credentials)
     bash "$src/dev/generate-certificates.sh" --root "$base/host65-credentials" identity "$prod_host"
     ;;
 prepare-host)
-    # The documented host baseline (README, fapolicyd): a subject cache large
-    # enough that starting processes are not evicted (backlog 29).
-    sudo -n sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf
-    sudo -n grep -qx 'subj_cache_size = 16381' /etc/fapolicyd/fapolicyd.conf \
-        || echo 'subj_cache_size = 16381' | sudo -n tee -a /etc/fapolicyd/fapolicyd.conf >/dev/null
-    sudo -n systemctl restart fapolicyd
-    sudo -n systemctl is-active fapolicyd
-    # An existing ordinary login account (home under /home, bash), created
-    # here only because the lab VM is disposable; production uses an existing one.
-    if ! getent passwd "$service_user" >/dev/null; then
-        sudo -n useradd --create-home --shell /bin/bash "$service_user"
-    fi
+    lab_host_baseline
     account_home=$(getent passwd "$service_user" | cut -d: -f6)
     [[ $account_home == /home/* ]]
     prepare_release
@@ -2667,6 +2687,101 @@ audit|audit-check|launch-audit-check)
             || echo "FAPOLICYD_STATUS unavailable: ${fapolicyd_status:0:200}"
     fi
     test "$diagnostic_status" = 0
+    ;;
+rpms)
+    # Backlog 69 WP2: release RPMs of two components and the tools RPM from the
+    # bundles just built. DEV is the build machine and may install rpm-build.
+    command -v rpmbuild >/dev/null || sudo -n dnf -y -q install rpm-build
+    cd "$src"
+    ./build-rpms.sh platform help --tools
+    ls -l dist/rpm
+    ;;
+admin-bootstrap)
+    # Once per server with OS tools only, as the manual will say.
+    tools=("$base/delivery/$product_name"-tools-*.noarch.rpm)
+    [[ ${#tools[@]} == 1 && -f ${tools[0]} ]]
+    sudo -n dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 -y -q install "${tools[0]}"
+    rpm -q "$product_name-tools"
+    test -x "/usr/sbin/$product_name-admin"
+    echo "PASS: $product_name-tools installed"
+    ;;
+admin-preflight-stop)
+    # Before the lab baseline the runtime account does not exist.
+    run_admin "$base/delivery" --user "$service_user" --port "$port"
+    [[ $admin_status == 1 ]]
+    grep -Fq 'Preflight stopped before any change' <<< "$admin_output"
+    grep -Fq "Account $service_user does not exist" <<< "$admin_output"
+    installed=$(rpm -qa "$product_name-*" --queryformat '%{NAME}\n')
+    [[ $installed == "$product_name-tools" ]]
+    sudo -n test ! -e "$install_root"
+    test ! -e "/etc/$product_name/host.conf"
+    echo "PASS: preflight stopped before any change"
+    ;;
+admin-baseline) lab_host_baseline;;
+admin-install)
+    run_admin "$base/delivery" --user "$service_user" --port "$port"
+    [[ $admin_status == 0 ]]
+    grep -Fxq "PASS: $product_name-admin completed" <<< "$admin_output"
+    for component in platform help; do
+        name=$(rpm -qa "$product_name-$component-*" --queryformat '%{NAME}\n')
+        [[ $name =~ ^$product_name-$component-[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        rpm -V "$name"
+        grep -Fxq "[OK] $service_user can run $name" <<< "$admin_output"
+        [[ $(stat -c '%U %a' "$release_root/$name") == "root 755" ]]
+    done
+    grep -Fxq "HTTPS_PORT=$port" "/etc/$product_name/host.conf"
+    [[ $(stat -c '%U %a' "/etc/$product_name/host.conf") == "root 644" ]]
+    for name in state incoming config storage; do
+        [[ $(sudo -n stat -c '%U %a' "$install_root/$name") == "$service_user 700" ]]
+    done
+    [[ $(loginctl show-user "$service_user" -p Linger --value) == yes ]]
+    sudo -n firewall-cmd --query-port="$port/tcp"
+    test -d /var/log/journal
+    echo "PASS: releases installed with dnf, host prepared, $service_user runs each release"
+    ;;
+admin-repeat)
+    # No options and no terminal: the account and port come from the host.
+    run_admin "$base/delivery"
+    [[ $admin_status == 0 ]]
+    if grep -Fq '[OK] installed' <<< "$admin_output"; then echo "FAIL: a repeat installed a package"; exit 1; fi
+    for component in platform help; do
+        grep -Eq "^\[OK\] $product_name-$component-[0-9.]+ [0-9.]+ is installed$" <<< "$admin_output"
+    done
+    echo "PASS: unchanged repeat installed nothing and asked nothing"
+    ;;
+admin-credentials)
+    medium="$base/credentials-medium"
+    mkdir -p "$medium/help/credentials/lab"
+    (umask 077; printf 'lab-credential-%s\n' "$run" > "$medium/help/credentials/lab/value")
+    target="$install_root/incoming/help/credentials/lab/value"
+    run_admin --credentials "$medium"
+    [[ $admin_status == 0 ]]
+    if grep -Fq "lab-credential-" <<< "$admin_output"; then echo "FAIL: credential content printed"; exit 1; fi
+    [[ $(sudo -n stat -c '%U %a' "$target") == "$service_user 600" ]]
+    [[ $(sudo -n stat -c '%U %a' "$install_root/incoming/help/credentials/lab") == "$service_user 700" ]]
+    sudo -n cmp "$target" "$medium/help/credentials/lab/value"
+    run_admin --credentials "$medium"
+    [[ $admin_status == 0 ]]
+    grep -Fq "incoming/help/credentials/lab/value is already there" <<< "$admin_output"
+    printf 'different\n' > "$medium/help/credentials/lab/value"
+    run_admin --credentials "$medium"
+    [[ $admin_status == 1 ]]
+    grep -Fq "already exist with other content; nothing was copied" <<< "$admin_output"
+    sudo -n grep -Fqx "lab-credential-$run" "$target"
+    echo "PASS: credentials copied as $service_user, kept on a repeat, a different file refused"
+    ;;
+admin-erase-guard)
+    name=$(rpm -qa "$product_name-help-*" --queryformat '%{NAME}\n')
+    [[ -n $name ]]
+    expect_refusal sudo -n dnf --disablerepo='*' -y remove "$name"
+    grep -Fq "removing $name is refused" <<< "$refusal_output"
+    expect_refusal sudo -n rpm -e "$name"
+    grep -Fq "removing $name is refused" <<< "$refusal_output"
+    expect_refusal sudo -n rpm -e "$product_name-tools"
+    grep -Fq "removing $product_name-tools is refused" <<< "$refusal_output"
+    rpm -q "$name" "$product_name-tools"
+    rpm -V "$name"
+    echo "PASS: plain dnf remove and rpm -e refused; packages intact"
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;

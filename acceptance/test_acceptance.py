@@ -1033,6 +1033,38 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
         self.assertIn(probes[0].kwargs.get("bundle", "app1"), transferred)
         self.assertTrue(self.harness.finished)
 
+    def test_admin_rpm_scenario_installs_only_through_the_admin_command(self):
+        """--admin-rpm (backlog 69 WP2): RPMs from DEV, every PROD change by RPM tools."""
+        self.harness.admin_rpm = True
+        for name in ("readiness", "reset", "source", "transfer_rpms"):
+            setattr(self.harness, name, mock.Mock())
+        self.harness.guest = mock.Mock(return_value="")
+        self.harness.execute()
+        self.harness.transfer_rpms.assert_called_once_with()
+        calls = [call.args[:2] for call in self.harness.guest.call_args_list]
+        prod = [action for role, action in calls if role == "PROD"]
+        self.assertEqual(
+            prod,
+            [
+                "isolate",
+                "admin-bootstrap",
+                "admin-preflight-stop",
+                "admin-baseline",
+                "admin-install",
+                "admin-repeat",
+                "admin-credentials",
+                "admin-erase-guard",
+            ],
+        )
+        self.assertIn(("DEV", "rpms"), calls)
+        self.assertLess(calls.index(("DEV", "bundle")), calls.index(("DEV", "rpms")))
+        script = Path(__file__).with_name("remote.sh").read_text()
+        for _, action in calls:
+            self.assertRegex(
+                script, r"(?m)^(?:[a-z0-9|-]*\|)?" + action + r"(?:\|[a-z0-9|-]*)?\)"
+            )
+        self.assertTrue(self.harness.finished)
+
     def test_full_run_rechecks_after_reboot_and_upgrade(self):
         """Confirm that prod checks are repeated after reboot and upgrade."""
         self.harness.meta["version"] = "0.1.0"
@@ -1136,9 +1168,7 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
             "07-healthy-host-repeat",
         ):
             self.assertIn(step, records)
-        self.assertLess(
-            records.index("03-registry-test"), records.index("03-dev-down")
-        )
+        self.assertLess(records.index("03-registry-test"), records.index("03-dev-down"))
         self.assertLess(
             records.index("06-install-help"), records.index("07-registry-offline")
         )
@@ -1306,7 +1336,9 @@ as_product() {
                         "checksums verified from archive streams", result.stdout
                     )
                     self.assertTrue(
-                        (registry / "myproduct-registry-0.0.0/images/images.tar").is_file()
+                        (
+                            registry / "myproduct-registry-0.0.0/images/images.tar"
+                        ).is_file()
                     )
                     self.assertFalse(
                         (registry / "myproduct-registry-0.0.0/scripts").exists()
@@ -1727,14 +1759,18 @@ class LauncherDiagnosticsTests(unittest.TestCase):
     def test_large_journal_message_is_read_without_printing_private_content(self):
         """Persistent journals retain long messages that JSON otherwise makes null."""
         private = "private-secret-value" * 500
-        message = private + " Failed at step EXEC spawning /usr/bin/podman: Permission denied"
+        message = (
+            private + " Failed at step EXEC spawning /usr/bin/podman: Permission denied"
+        )
 
         def command(arguments):
             if arguments[0] == "journalctl":
                 if "--list-boots" in arguments:
                     return "0 boot-id\n"
                 # Match journalctl's default omission of oversized fields.
-                return json.dumps({"MESSAGE": message if "--all" in arguments else None})
+                return json.dumps(
+                    {"MESSAGE": message if "--all" in arguments else None}
+                )
             return ""
 
         self.namespace["command"] = command
@@ -1747,7 +1783,9 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         ):
             self.namespace["main"]()
         self.assertIn("Permission denied", output.getvalue())
-        self.assertIn("PASS: read-only launcher diagnostics collected", output.getvalue())
+        self.assertIn(
+            "PASS: read-only launcher diagnostics collected", output.getvalue()
+        )
         self.assertNotIn("private-secret-value", output.getvalue())
 
     def test_unit_properties_log_only_the_expected_healthcheck_arguments(self):

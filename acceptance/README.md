@@ -11,6 +11,22 @@ environment's CA, the internal variant and the restore:
 python3 acceptance/acceptance.py --run whoami-1 --whoami run
 ```
 
+Backlog 69 WP2 (the tools RPM and `<product>-admin`) has its own focused
+scenario outside the fixed matrix until WP6 replaces the `release.py` flow:
+
+```sh
+python3 acceptance/acceptance.py --run "admin-rpm-$(git rev-parse --short HEAD)" --admin-rpm run
+```
+
+DEV builds the bundles, then the platform, help and tools RPMs (it installs
+`rpm-build` if missing). PROD installs the tools with `dnf`, must stop in
+preflight before any change while the runtime account is missing, then
+installs with `sudo myproduct-admin <delivery>`, repeats unchanged without
+options or terminal, receives credentials with `--credentials` (kept on a
+repeat, a different file refused) and refuses `dnf remove`/`rpm -e` of a
+release and of the tools. The audit check requires no FANOTIFY/AVC denial.
+There is no runtime install yet (WP3).
+
 Focused lab results, exact tested commits, the six conversion points and the
 public versus internal comparison are in [latest results](RESULTS.md).
 The [remaining fixed-matrix results](RESULTS.md) record five

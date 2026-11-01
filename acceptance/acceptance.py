@@ -120,6 +120,7 @@ class Run:
         self.status_retry = False
         self.host_setup = False
         self.whoami = False
+        self.admin_rpm = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -301,6 +302,7 @@ class Run:
             status_retry=self.status_retry,
             host_setup=self.host_setup,
             whoami=self.whoami,
+            admin_rpm=self.admin_rpm,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -857,6 +859,9 @@ class Run:
         if self.whoami:
             self.execute_whoami()
             return
+        if self.admin_rpm:
+            self.execute_admin_rpm()
+            return
         actions = [
             "unit",
             "build-images",
@@ -1074,6 +1079,56 @@ class Run:
             "10-survivor-after-manual", lambda: self.guest("DEV", "renamed-survivor")
         )
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
+        self.finished = True
+
+    def transfer_rpms(self):
+        """Copy the RPMs built on DEV through the controller into PROD's delivery."""
+        base = "podman-offline-acceptance/" + self.id
+        names = self.ssh(
+            "DEV", "cd " + shlex.quote(base + "/src/dist/rpm") + " && ls"
+        ).split()
+        if not names or not all(
+            re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.noarch\.rpm", name) for name in names
+        ):
+            raise RuntimeError("Unexpected RPM file names on DEV: " + repr(names))
+        self.ssh("PROD", "mkdir -p " + shlex.quote(base + "/delivery"))
+        for name in names:
+            local = self.folder / name
+            self.command(
+                SCP + [self.host("DEV") + ":" + base + "/src/dist/rpm/" + name, local]
+            )
+            self.command(
+                SCP + [local, self.host("PROD") + ":" + base + "/delivery/" + name]
+            )
+            local.unlink()
+        self.meta["rpms"] = names
+        self.write("rpms=" + json.dumps(names) + "\n")
+
+    def execute_admin_rpm(self):
+        """Backlog 69 WP2 on a real host: the tools RPM and <product>-admin.
+
+        A focused scenario outside the fixed matrix, until WP6 replaces the
+        release.py flow. DEV builds the platform and help release RPMs and the
+        tools RPM; PROD installs the tools with dnf (the bootstrap), sees the
+        preflight stop before any change, then installs, repeats unchanged,
+        receives credentials and refuses a plain erase. No runtime install:
+        that is the runtime command of WP3.
+        """
+        for action in ("build-images", "pull-images"):
+            self.step("03-" + action, lambda a=action: self.guest("DEV", a))
+        self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
+        self.step("04-rpms", lambda: self.guest("DEV", "rpms"))
+        self.step("05-transfer-rpms", self.transfer_rpms)
+        for action in (
+            "admin-bootstrap",
+            "admin-preflight-stop",
+            "admin-baseline",
+            "admin-install",
+            "admin-repeat",
+            "admin-credentials",
+            "admin-erase-guard",
+        ):
+            self.step("06-" + action, lambda a=action: self.guest("PROD", a))
         self.finished = True
 
     def execute_whoami(self):
@@ -1294,9 +1349,16 @@ def main():
         action="store_true",
         help="Install platform, identity and the .NET/TypeScript app3 and check backlog 71",
     )
+    parser.add_argument(
+        "--admin-rpm",
+        action="store_true",
+        help="Install the tools and release RPMs with <product>-admin (backlog 69 WP2)",
+    )
     args = parser.parse_args()
     if args.whoami and (args.status_retry or args.host_setup):
         parser.error("--whoami is a separate focused scenario")
+    if args.admin_rpm and (args.status_retry or args.host_setup):
+        parser.error("--admin-rpm is a separate focused scenario")
     if args.host_setup and (args.status_retry or args.identity_only or args.help_only):
         parser.error(
             "--host-setup is a separate focused scenario; choose normal, renamed or platform-only"
@@ -1311,6 +1373,7 @@ def main():
                 args.platform_help_only,
                 args.renamed_product,
                 args.whoami,
+                args.admin_rpm,
             )
         )
         > 1
@@ -1327,6 +1390,7 @@ def main():
     run.status_retry = args.status_retry
     run.host_setup = args.host_setup
     run.whoami = args.whoami
+    run.admin_rpm = args.admin_rpm
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence
