@@ -50,3 +50,17 @@ MAX_PORT = 65535
 
 class DeployError(Exception):
     """Error shown as a single ERROR line without a traceback."""
+
+
+def component_file(component, relative, root=None):
+    """components/<component>/files/<relative>, refusing a symlink in any part.
+
+    Release files must stay inside the component's files/: a link in the path
+    could make validate, prepare or a bundle read a file from elsewhere.
+    """
+    path = root or ROOT
+    for part in ("components", component, "files") + Path(relative).parts:
+        path = path / part
+        if path.is_symlink():
+            raise DeployError(f"Refuse symlink in component file path: {path}")
+    return path

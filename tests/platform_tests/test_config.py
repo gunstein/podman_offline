@@ -69,7 +69,9 @@ class ConfigTests(ConfigFixture):
         self.write(
             "components/platform/config.defaults.yaml",
             "PUBLIC_ORIGIN: https://defaults.test:8443\nHTTPS_PORT: 8443\n"
-            "SECRET_FILES:\n  platform-token:\n  - path: private\n    generate:\n    - token\n",
+            "SECRET_FILES:\n  platform-token:\n  - path: private\n    generate:\n    - token\n"
+            # init-config checks that the release uses every declared secret.
+            "ENVIRONMENT:\n  app:\n    TOKEN: '@@secret:platform-token/token@@'\n",
         )
         self.select("platform")
         deploy.init_config("platform")

@@ -1,6 +1,7 @@
 """Separate platform bundles, dependency contracts and scoped state operations."""
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -32,6 +33,10 @@ class PlatformSafetyTests(ComponentFixture):
             "components/app1/config.defaults.yaml",
         ):
             self.write(name, (repo / name).read_bytes())
+        # init-config checks the release's manifests against these defaults.
+        manifests = self.root / "components/app1/manifests"
+        shutil.rmtree(manifests)
+        shutil.copytree(repo / "components/app1/manifests", manifests)
         target = common.STATE / "app1/config.yaml"
         target.unlink()
         self.process.reset_mock()

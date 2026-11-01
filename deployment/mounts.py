@@ -50,7 +50,6 @@ def read_defaults(path, component):
     where = f"{path}: {common.MOUNTS}"
     if not isinstance(containers, dict) or not containers:
         raise common.DeployError(f"{where} must map each container name to its files")
-    files = path.parent / "files"
     result = {}
     for container, mounts in containers.items():
         here = f"{where}.{container}"
@@ -81,8 +80,8 @@ def read_defaults(path, component):
                     f"{here}.{target}: write a file under "
                     f"components/{component}/files/, for example sql/10-roles.sql"
                 )
-            file = files / source
-            if file.is_symlink() or not file.is_file():
+            file = common.component_file(component, source, path.parents[2])
+            if not file.is_file():
                 raise common.DeployError(
                     f"{here}.{target}: components/{component}/files/{source} "
                     "is missing or not a regular file"
@@ -103,7 +102,7 @@ def read_defaults(path, component):
 
 
 def file_text(component, source, where):
-    path = environment.defaults_path(component).parent / "files" / source
+    path = common.component_file(component, source)
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:

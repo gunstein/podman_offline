@@ -192,14 +192,21 @@ class EnvironmentTests(ProductFixture):
             (
                 "unknown placeholder",
                 env(Other="@@Secret:shop-tokens/signing@@"),
-                "Other: unknown placeholder @@Secret:shop-tokens/signing@@",
+                "Other: unknown or nested placeholder; use @@NAME@@",
             ),
             (
                 "another component's secret",
                 env(Other="@@secret:other-tokens/signing@@"),
                 "other-tokens is another component's secret; shop may use only its own",
             ),
-            ("unsafe public value", env(Note="a;b"), "unsafe substituted text"),
+            (
+                "unsafe inserted setting",
+                lambda shop: (
+                    shop["defaults"].update(NOTE="a;b"),
+                    shop["env"]["main"].update(Note="x=@@NOTE@@"),
+                ),
+                "Note: unsafe substituted text from NOTE",
+            ),
             ("written recipe", recipe, "SECRET_TEMPLATES is not supported"),
             (
                 "name of a file source",
@@ -209,8 +216,9 @@ class EnvironmentTests(ProductFixture):
         ):
             with self.subTest(label):
                 self.product(change)
-                with self.assertRaisesRegex(common.DeployError, pattern):
+                with self.assertRaisesRegex(common.DeployError, pattern) as raised:
                     deploy.prepare()
+                self.assertNotIn("Secret:shop-tokens", str(raised.exception))
                 self.assertFalse(common.BUILD.exists())
 
     def test_values_are_the_written_text(self):
@@ -224,6 +232,7 @@ class EnvironmentTests(ProductFixture):
             settings + "ENVIRONMENT:\n  main:\n"
             "    UMASK: 0022\n    ENABLED: yes\n    VERSION: 1.10\n"
             "    PORT: 5000\n    EMPTY:\n"
+            "    CONNECTION: 'Host=db;Database=@@DB_USER@@'\n"
             "    DB: '@@secret:shop-database-password/value@@'\n"
             "    SIGNING: '@@secret:shop-tokens/signing@@'\n"
         )
@@ -237,6 +246,8 @@ class EnvironmentTests(ProductFixture):
                 "VERSION": "1.10",
                 "PORT": "5000",
                 "EMPTY": "",
+                # Fixed text may hold ; like a secret line; only shop is inserted.
+                "CONNECTION": "Host=db;Database=shop",
             },
         )
         defaults.write_text(

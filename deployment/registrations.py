@@ -78,7 +78,10 @@ def registration_stage(components, directory, known, state=None, configs=None):
             if name == "apis":
                 if path.name not in known:
                     raise common.DeployError(f"Unexpected API registration: {path}")
-                check_api_registration(path)
+                # The selected component's own registration is rebuilt from its
+                # release below; an interrupted earlier attempt may have left it
+                # without value.
+                check_api_registration(path, partial=path.name in components)
                 if path.name not in components:
                     # Its value stays where it is; owner_secrets reads it there.
                     (directory / name / path.name).mkdir(mode=0o700)
@@ -285,16 +288,30 @@ def client_registration(component, path, config, config_path):
     }
 
 
-def check_api_registration(directory):
-    """An API registration is a directory holding only the file value."""
+def check_api_registration(directory, partial=False):
+    """An API registration is a directory holding only the file value.
+
+    partial: the registration is about to be rewritten (the API being
+    installed), so a missing value from an interrupted attempt is accepted.
+    """
+    names = (
+        []
+        if directory.is_symlink() or not directory.is_dir()
+        else [path.name for path in directory.iterdir()]
+    )
+    value = directory / "value"
     if (
         directory.is_symlink()
         or not directory.is_dir()
-        or [path.name for path in directory.iterdir()] != ["value"]
-        or (directory / "value").is_symlink()
-        or not (directory / "value").is_file()
+        or names not in ([["value"], []] if partial else [["value"]])
+        or value.is_symlink()
+        or (names and not value.is_file())
     ):
-        raise common.DeployError(f"Invalid API registration: {directory}")
+        raise common.DeployError(
+            f"Invalid API registration: {directory} must be a directory holding "
+            "only the file value; restore it from backup or remove it, then run "
+            "the same install again"
+        )
 
 
 def api_secret_line(component, known):

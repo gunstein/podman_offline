@@ -412,16 +412,15 @@ class TemplateLifecycleTests(ProductFixture):
         )
         self.assertNotIn("OperatorToken", self.stdout.getvalue())
 
-    def test_validate_refuses_undeclared_secret_before_writing(self):
+    def test_init_config_refuses_an_undeclared_secret_before_writing(self):
         product = self.operator_product()
         product["worker"]["defaults"]["SECRET_FILES"] = {}
         self.operator_release(product)
-        deploy.init_config("worker")
         with self.assertRaisesRegex(
             common.DeployError, "URL: SECRET_FILES has no worker-token"
         ):
-            validation.validate()
-        self.assertFalse((common.STATE / "worker/credentials").exists())
+            deploy.init_config("worker")
+        self.assertFalse((common.STATE / "worker").exists())
         self.process.assert_not_called()
 
     def test_validate_refuses_known_directory_without_referenced_key(self):

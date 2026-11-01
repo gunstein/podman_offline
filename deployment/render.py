@@ -164,19 +164,65 @@ def component_defaults(component, overrides=None, dev=False):
     """Build complete config from the component defaults and, in dev, config/dev.yaml.
 
     Each layer file is optional; a component without settings needs none.
-    config/dev.yaml is the developer's local, untracked override for every
-    component.
+    config/dev.yaml is the developer's local, untracked override (dev_layer).
     """
-    paths = [common.ROOT / "components" / component / "config.defaults.yaml"]
-    if dev:
-        paths.append(common.ROOT / "config/dev.yaml")
-    paths = [path for path in paths if path.exists() or path.is_symlink()]
-    config = merge_config(*paths, overrides=overrides)
+    defaults = common.ROOT / "components" / component / "config.defaults.yaml"
+    local = common.ROOT / "config/dev.yaml"
+    paths = [path for path in (defaults,) if path.exists() or path.is_symlink()]
+    config = merge_config(*paths)
+    if dev and (local.exists() or local.is_symlink()):
+        config = dev_layer(config, local, component)
+    config.update(overrides or {})
+    validate_config(config, local if dev else defaults)
     materialized = (
         (common.BUILD / "dev" if dev else common.STATE) / component / "config.yaml"
     )
     validate_component_config(config, component, materialized)
     return config
+
+
+def dev_layer(config, path, component):
+    """Apply config/dev.yaml to one component's config.
+
+    A setting replaces the whole value for every component. A SECRET_FILES or
+    VOLUME_FILES ID replaces only that ID's source list, in the component whose
+    ID it starts with; the ID must already be declared there.
+    """
+    layer = config_layer(path)
+    result = dict(config)
+    for key, value in layer.items():
+        if key not in (common.SECRET_FILES, common.VOLUME_FILES):
+            result[key] = value
+            continue
+        if not isinstance(value, dict):
+            raise common.DeployError(f"{path}: {key} must be a map of IDs")
+        group = dict(result.get(key) or {})
+        for name, sources in value.items():
+            if not str(name).startswith(component + "-"):
+                continue  # Another component's ID (dev_file_ids checks the owner).
+            if name not in group:
+                raise common.DeployError(
+                    f"{path}: {key}.{name} is not declared in "
+                    f"components/{component}/config.defaults.yaml; dev.yaml can only "
+                    "replace the sources of a declared ID"
+                )
+            group[name] = sources
+        result[key] = group
+    return result
+
+
+def dev_file_ids(path, components):
+    """Every SECRET_FILES/VOLUME_FILES ID in config/dev.yaml belongs to a component."""
+    if not (path.exists() or path.is_symlink()):
+        return
+    layer = config_layer(path)
+    for key in (common.SECRET_FILES, common.VOLUME_FILES):
+        for name in layer.get(key) or {}:
+            if not any(str(name).startswith(item + "-") for item in components):
+                raise common.DeployError(
+                    f"{path}: {key}.{name} does not start with a component ID "
+                    "from bundles.yaml"
+                )
 
 
 def validate_component_config(config, component, path):
@@ -494,12 +540,7 @@ def resolve_file_source(entry, base_dir=None, component=None, root=None):
         raise common.DeployError(
             "component_file must be a relative path below this component's files/"
         )
-    release = root or common.ROOT
-    path = release
-    for part in ("components", component, "files") + relative.parts:
-        path = path / part
-        if path.is_symlink():
-            raise common.DeployError(f"Refuse symlink in component_file source: {path}")
+    path = common.component_file(component, relative, root)
     check_component_file_tree(path)
     return path
 
@@ -515,7 +556,8 @@ def check_component_file_tree(path):
             check_component_file_tree(item)
     elif not stat.S_ISREG(mode):
         raise common.DeployError(
-            f"component_file must contain only regular files/directories, without symlinks: {path}"
+            f"{path}: a component's files/ may hold only regular files and "
+            "directories, without symlinks"
         )
 
 

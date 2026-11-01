@@ -168,8 +168,9 @@ def check_values(values, where):
                 templates.CONFIG_NAME.fullmatch(match[1])
                 or templates.SECRET_REF.fullmatch(match[1])
             ):
+                # Never repeat the text: a value pasted by mistake stays private.
                 raise common.DeployError(
-                    f"{where}: {key}: unknown placeholder {match[0]}; use "
+                    f"{where}: {key}: unknown or nested placeholder; use "
                     "@@NAME@@ for a setting or @@secret:<id>/<key>@@ for a secret"
                 )
         if key.startswith(DATABASE_PREFIX):
@@ -229,6 +230,21 @@ def with_recipes(config, component):
     return result
 
 
+def public_text(value, config, where):
+    """Fill in @@NAME@@ settings; like a secret line, only inserted values are checked.
+
+    The text around them is written by the release author and may contain
+    anything, such as the ; of a connection string.
+    """
+
+    def resolve(group, field):
+        inserted = templates.config_value(config, field, where)
+        templates.check_text(inserted, where, field)
+        return inserted
+
+    return templates.substitute(value, resolve, where)
+
+
 def apply(documents, sources, config, component, containers):
     """Add the generated ConfigMaps and envFrom entries to the effective documents.
 
@@ -283,9 +299,7 @@ def apply(documents, sources, config, component, containers):
                         f"{where}: {key}: @@{name}@@ comes from client.yaml, which "
                         f"components/{component} does not have"
                     )
-            text = templates.config_text(value, config, f"{where}: {key}")
-            templates.check_text(text, f"{where}: {key}", "config")
-            public[key] = text
+            public[key] = public_text(value, config, f"{where}: {key}")
         env_from = container.setdefault("envFrom", [])
         if public:
             name = configmap_name(component, container_name)

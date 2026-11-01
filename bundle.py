@@ -221,6 +221,12 @@ def build_release(version, descriptor):
         if not source.exists():
             continue
         guard(directory, [entry])
+        if entry == "files":
+            # Release files are copied, not followed: no links, no special files.
+            try:
+                rendering.check_component_file_tree(source)
+            except common.DeployError as error:
+                raise BundleError(str(error)) from None
         if source.is_dir():
             shutil.copytree(source, destination / entry, ignore=guard)
         else:

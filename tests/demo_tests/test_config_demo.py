@@ -24,6 +24,13 @@ class DemoConfigTests(ConfigFixture):
             self.write(
                 "components/" + component + "/config.defaults.yaml", source.read_bytes()
             )
+            # init-config checks the release's manifests against these defaults.
+            target_dir = self.root / "components" / component
+            shutil.rmtree(target_dir / "manifests", ignore_errors=True)
+            shutil.copytree(source.parent / "manifests", target_dir / "manifests")
+            for name in ("client.yaml", "route.conf"):
+                if (source.parent / name).exists():
+                    shutil.copy2(source.parent / name, target_dir / name)
             if not (self.root / "components" / component / "VERSION").exists():
                 self.write("components/" + component + "/VERSION", "1.2.3\n")
             write_descriptor(self.root, component)

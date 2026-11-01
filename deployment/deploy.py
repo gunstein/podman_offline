@@ -41,6 +41,16 @@ def init_config(component):
     # they stay in the gateway's config.yaml, which install reads again.
     public = catalog.gateway_settings(descriptor["public_from"])
     config = rendering.component_defaults(component, overrides=public)
+    # The release's own declarations (ENVIRONMENT, MOUNTS, manifests) are
+    # checked as validate does, before the file exists; credentials may follow.
+    validate_component(
+        rendering.effective_config(config, target, component),
+        target,
+        common.ROOT / "components" / component / "manifests",
+        component,
+        catalog.imported_volumes(descriptor),
+        catalog.imported_secrets(descriptor),
+    )
     config = {key: value for key, value in config.items() if key not in public}
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
@@ -278,6 +288,7 @@ def dev_settings():
     in production. Nothing is written here.
     """
     known = catalog.source_descriptors(common.ROOT)
+    rendering.dev_file_ids(common.ROOT / "config/dev.yaml", known)
     settings = {}
     for component, descriptor in known.items():
         source = descriptor["public_from"]

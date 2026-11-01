@@ -365,6 +365,28 @@ class ComponentFileTests(ProductFixture):
         self.assertEqual(validation.validate_bundle()[1], [])
         self.assert_archive(b"first release\n")
 
+    def test_dev_yaml_replaces_only_a_declared_id_of_its_own_component(self):
+        """config/dev.yaml applies to every component; an ID names its owner."""
+        self.product()
+        dev = self.source / "config/dev.yaml"
+        dev.parent.mkdir(exist_ok=True)
+        for groups, message in (
+            (
+                {"VOLUME_FILES": {"processor-other": [{"path": "x.sql"}]}},
+                "VOLUME_FILES.processor-other is not declared in components/processor",
+            ),
+            (
+                {"SECRET_FILES": {"elsewhere-key": [{"path": "x"}]}},
+                "SECRET_FILES.elsewhere-key does not start with a component ID",
+            ),
+        ):
+            dev.write_text(yaml.safe_dump(groups))
+            for operation in (deploy.prepare, validation.validate):
+                with self.subTest(message=message, operation=operation.__name__):
+                    with self.assertRaisesRegex(common.DeployError, message):
+                        operation()
+        self.assertFalse(common.BUILD.exists())
+
     def test_database_password_cannot_be_a_component_file(self):
         product = copy.deepcopy(RENAMED)
         product["orders"]["defaults"]["SECRET_FILES"]["orders-database-password"] = [

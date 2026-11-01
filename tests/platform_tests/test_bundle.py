@@ -156,7 +156,7 @@ class BundleTests(BundleFixture):
                 yaml.safe_dump({"SECRET_FILES": {"private": [{"path": str(source)}]}}),
             )
             alias.symlink_to(source, target_is_directory=source.is_dir())
-            with self.assertRaisesRegex(bundle.BundleError, "secret"):
+            with self.assertRaisesRegex(bundle.BundleError, "secret|without symlinks"):
                 bundle.build()
             self.process.assert_not_called()
             alias.unlink()
@@ -175,7 +175,7 @@ class BundleTests(BundleFixture):
         private = self.write("components/app/private/key", "private-fixture")
         self.write("components/app/files/public", "public-fixture")
         (self.root / "components/app/files/alias").symlink_to(private)
-        with self.assertRaisesRegex(bundle.BundleError, "secret"):
+        with self.assertRaisesRegex(bundle.BundleError, "secret|without symlinks"):
             bundle.build()
         self.process.assert_not_called()
 
@@ -225,7 +225,9 @@ class BundleTests(BundleFixture):
             with self.subTest(target=target.name):
                 alias = self.root / "components/app/files/alias"
                 alias.symlink_to(target, target_is_directory=target.is_dir())
-                with self.assertRaisesRegex(bundle.BundleError, "generated secret"):
+                with self.assertRaisesRegex(
+                    bundle.BundleError, "generated secret|without symlinks"
+                ):
                     bundle.build()
                 self.process.assert_not_called()
                 self.assertFalse(bundle.DIST.exists())
@@ -255,7 +257,7 @@ class BundleTests(BundleFixture):
                     alias.unlink()
         alias = self.root / "components/app/files/alias"
         alias.symlink_to(key.parent, target_is_directory=True)
-        with self.assertRaisesRegex(bundle.BundleError, "credentials"):
+        with self.assertRaisesRegex(bundle.BundleError, "credentials|without symlinks"):
             bundle.build()
         self.assertFalse(bundle.DIST.exists())
         self.process.assert_not_called()

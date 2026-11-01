@@ -20,6 +20,7 @@ from unittest import mock
 
 import yaml
 from deployment import catalog, common, deploy, registrations, validation
+from deployment import render as rendering
 
 from helpers.product_fixture import ProductFixture
 
@@ -517,6 +518,36 @@ class ApiRegistrationTests(ProductFixture):
                 self.install(releases["ledger"])
             self.assertNotIn("third", str(raised.exception))
             self.assertTrue((common.STATE / "pending-operation.json").exists())
+
+    def test_first_install_interrupted_before_the_value_is_retried(self):
+        """A registration directory without value (power loss) does not block retry."""
+        self.write_product(self.product())
+        releases = self.build_and_unpack()
+        self.install(releases["accounts"])
+        write_private = rendering.write_private
+
+        def power_loss(path, text):
+            if path == common.STATE / "apis/ledger/value":
+                raise OSError("injected power loss before the value")
+            return write_private(path, text)
+
+        with mock.patch.object(rendering, "write_private", side_effect=power_loss):
+            with self.assertRaises(OSError):
+                self.install(releases["ledger"])
+        self.assertEqual(list((common.STATE / "apis/ledger").iterdir()), [])
+        self.assertTrue((common.STATE / "pending-operation.json").exists())
+        self.process.reset_mock()
+        self.quiet(deploy.install)  # The same bundle again finishes the install.
+        self.assertEqual(
+            self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
+            self.value("ledger"),
+        )
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
+        # Another component's incomplete registration is still refused.
+        self.install(releases["reports"])
+        (common.STATE / "apis/reports/value").unlink()
+        with self.assertRaisesRegex(common.DeployError, "Invalid API registration"):
+            self.install(releases["ledger"])
 
     def test_validate_never_opens_or_copies_api_values(self):
         releases, _ = self.install_all(self.product())

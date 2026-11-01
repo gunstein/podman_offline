@@ -261,6 +261,8 @@ class UnsupportedKindTests(ProductFixture):
         release = releases["orders"]
         manifest = release / "components/orders/manifests/10-resources.yaml"
         original = manifest.read_text()
+        self.use_root(release)
+        deploy.init_config("orders")
         documents = list(yaml.safe_load_all(original))
         database = next(
             doc for doc in documents if doc["metadata"]["name"] == "orders-postgres"
@@ -279,8 +281,6 @@ class UnsupportedKindTests(ProductFixture):
                 manifest.write_text(
                     original + "---\n" + yaml.safe_dump(deployment, sort_keys=False)
                 )
-                self.use_root(release)
-                deploy.init_config("orders")
                 self.volumes.add("orders-data")
                 before = self.files_under(common.STATE)
                 self.process.reset_mock()

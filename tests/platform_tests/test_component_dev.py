@@ -40,12 +40,27 @@ class ComponentDevTests(ProductFixture):
                 },
             },
         )
+        # A file group ID must be declared by its component.
+        with self.assertRaisesRegex(
+            common.DeployError, "SECRET_FILES.worker-new is not declared"
+        ):
+            deploy.dev_settings()
+        global_dev = self.layer(
+            "config/dev.yaml",
+            {
+                "CHOICE": "global",
+                "SECRET_FILES": {"worker-old": [{"path": "new", "generate": ["t"]}]},
+            },
+        )
         config = deploy.dev_settings()[1]["worker"]
         self.assertEqual(config["CHOICE"], "global")
         self.assertEqual(
             config["SECRET_FILES"],
-            {"worker-new": [{"path": "new", "generate": ["token"]}]},
+            {"worker-old": [{"path": "new", "generate": ["t"]}]},
         )
+        global_dev = self.layer("config/dev.yaml", {"CHOICE": "global"})
+        config = deploy.dev_settings()[1]["worker"]
+        self.assertEqual(config["SECRET_FILES"], {"worker-old": [{"path": "old"}]})
         for path, expected in ((global_dev, "component"), (component, None)):
             path.unlink()
             self.assertEqual(deploy.dev_settings()[1]["worker"].get("CHOICE"), expected)

@@ -6,6 +6,7 @@ import io
 import shutil
 from contextlib import redirect_stderr, redirect_stdout
 
+import bundle
 import yaml
 from deployment import common, deploy, validation
 
@@ -130,6 +131,33 @@ class MountsTests(ProductFixture):
             common.DeployError, "MOUNTS belongs only in the release's"
         ):
             self.install(releases["shop"])
+
+    def test_links_out_of_files_are_refused_in_validate_prepare_and_bundle(self):
+        """A linked directory under files/ must not pull in a file from elsewhere."""
+        self.product(
+            lambda shop: shop["mounts"]["main"].update(
+                {"/etc/input.txt": "linked/input.txt"}
+            )
+        )
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "input.txt").write_text("PRIVATE-OUTSIDE-FILE\n")
+        files = self.source / "components/shop/files"
+        (files / "linked").symlink_to(outside, target_is_directory=True)
+        for operation in (validation.validate, deploy.prepare):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaisesRegex(
+                    common.DeployError, "Refuse symlink in component file path"
+                ):
+                    operation()
+        self.assertFalse(common.BUILD.exists())
+        # An unreferenced link under files/ is not copied into a bundle either.
+        self.product()
+        (self.source / "components/shop/files/linked").symlink_to(
+            outside, target_is_directory=True
+        )
+        with self.assertRaisesRegex(bundle.BundleError, "without symlinks"):
+            self.build_and_unpack()
 
     def test_validate_names_paths_and_secrets_without_values(self):
         self.product()
