@@ -9,13 +9,14 @@ journal/daemon trust observations as an automation adaptation and records
 WP0 verification status after the bounded-investigation merge (`3dc304e`).
 Not implemented. **WP0 matrix passed** (all 24 case/profile runs at
 `3222efb`, 2026-10-25, [report](../acceptance/RESULTS.md));
-statements marked "confirm in WP0" below were hypotheses before that run. WP1
-starts only after the product owner's go/no-go and the two open phase 1
-decisions in [item 69](../BACKLOG.md#phasing-decision-product-owner-2026-10-26)
-(status 2026-10-27: both open). A simplification review on 2026-11-01
-proposes removing several mechanisms below; see
-[item 69, "Simplification review"](../BACKLOG.md#simplification-review-2026-11-01-proposals-not-decisions)
-(proposals, not decisions). Read
+statements marked "confirm in WP0" below were hypotheses before that run.
+On 2026-11-01 the product owner gave the go for WP1 and decided the open
+phase 1 questions and the
+[simplification review](../BACKLOG.md#simplification-review-2026-11-01-proposals-not-decisions):
+see [item 69, "Decisions"](../BACKLOG.md#decisions-product-owner-2026-11-01).
+Where those decisions differ from this revision (retirement lock, identity
+records, fapolicyd profiles, repository mode, answers file, `interface: 2`),
+the decisions win; revise this plan at the start of WP1. Read
 [item 69](../BACKLOG.md#69-paper-first-installation-for-closed-networks)
 ("Chosen direction"), the
 [RPM prototype results](../acceptance/RESULTS.md)

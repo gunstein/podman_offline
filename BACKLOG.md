@@ -980,8 +980,8 @@ fixed.
 Status 2026-10-27: the WP0 investigation matrix passed (all 24 case/profile
 runs at `3222efb`, 2026-10-25,
 [report](acceptance/RESULTS.md)). Nothing is implemented.
-WP1 waits for the product owner's go/no-go and the two open phase 1 decisions
-under "Phasing decision"; both are still open.
+Status 2026-11-01: **go for WP1**, and the open phase 1 decisions are taken;
+see "Decisions (product owner, 2026-11-01)" below. Not implemented yet.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
@@ -1250,6 +1250,36 @@ Decisions for the product owner: (a) admin command and plain directory;
 (e) `<product> <component>` for a config change; (f) keep the `dnf remove`
 guard (the largest remaining cost) or accept `dnf remove` and let `<product>`
 stop clearly on a missing release tree.
+
+### Decisions (product owner, 2026-11-01)
+
+Taken one by one on the simplification review above; they replace the
+matching parts of the plan (revision 3.3) until the plan is revised.
+
+1. **Go for WP1** (phase 1, unsigned RPMs).
+2. **Admin command with a plain directory:** `sudo <product>-admin /mnt`
+   copies the RPMs to a root-owned directory and installs those files; no
+   repository metadata or `.repo` file. This settles both open phase 1
+   decisions; WP0 probes F and H stay phase 1 requirements.
+3. **Retirement:** a release is removed only when it is older than the
+   component's completed version and no pending record names the component.
+   No cross-account lock. A wrong delivery before the first installation stays
+   until a newer version is installed.
+4. **Immutable versions without identity records:** the build refuses an
+   existing version; the admin command refuses a package with the same name
+   and version but other file digests, and reinstalls an identical package
+   that fails `rpm -V`. No `identities/` records.
+5. **fapolicyd by dependencies:** preflight checks what the product needs
+   (fapolicyd active, `rpmdb` trust, `rpm-plugin-fapolicyd`,
+   `subj_cache_size`), then one bounded run of the release's code as the
+   runtime account; a failure stops and names what is missing. No list of
+   exact profiles.
+6. **Configuration change without a new version:** `<product> <component>`
+   installs that component again with its current config; plain `<product>`
+   keeps skipping completed components. No stored config checksum.
+7. **Keep refusing plain `dnf remove`, simplified:** a product package's
+   `%preun` refuses the erase unless the admin command has just written a
+   single-use authorization naming exactly that package.
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
 revision 3.3; the WP0 matrix passed at `3222efb` after an earlier attempt that
