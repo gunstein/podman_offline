@@ -385,8 +385,38 @@ dependencies and no scriptlet except the erase guard: a plain `dnf remove` or
 `rpm -e` is refused unless `/run/<product>/erase-authorization` names exactly
 that package (written by the administrator command, backlog 69 WP2). A version
 is built once; an existing RPM of the same name is never replaced, so a changed
-release needs a new `VERSION`. The production manual still uses the signed
-bundle flow until the administrator and runtime commands exist (WP2/WP3).
+release needs a new `VERSION`.
+
+`./build-rpms.sh` without arguments, or with `--tools`, also builds the tools
+RPM `dist/rpm/<product>-tools-<version>-1.noarch.rpm` (version in
+`tools/VERSION`; raise it whenever a file it carries changes, see
+`TOOLS_FILES` in `rpms.py`). It installs the administrator command (WP2):
+
+```sh
+sudo dnf --disablerepo='*' install /mnt/myproduct-tools-*.rpm   # once per server
+sudo myproduct-admin /mnt                  # every delivery; asks account and port once
+sudo myproduct-admin --credentials /mnt    # credentials on a medium
+```
+
+`myproduct-admin <directory>` stops before any change when the host lacks
+something (Oracle Linux 9, SELinux Enforcing, firewalld, fapolicyd with
+`rpmdb` trust, `rpm-plugin-fapolicyd` and `subj_cache_size >= 16381`,
+journald, an ordinary runtime account without sudo or privileged groups) and
+says who must act. It copies this product's RPMs into a private directory,
+installs newer tools first and restarts, then installs the newest release of
+each component with one offline `dnf` transaction. It refuses an RPM older than
+the installed version of its component, or one installed under the same name
+and version with other content, and reinstalls an identical one that fails
+`rpm -V`. It prepares the host (`scripts/prepare-host.sh`, a persistent
+journal, `/etc/<product>/host.conf` with the port) and runs each newest
+release once as the runtime account, so a release fapolicyd does not trust
+stops there. The runtime account and port are not changed after the first
+preparation. `--credentials` copies `<directory>/<component>/credentials/...`
+into `/var/lib/<product>/incoming/` with the same layout as the runtime
+account (0600 files); a file that already exists with other content stops the
+copy. Signature checking is off in phase 1 (`DNF` in `tools/admin.py`).
+The runtime command (WP3) that uses `incoming/` and `host.conf` does not exist
+yet, and the production manual still describes the signed bundle flow.
 
 ### Installation compatibility
 

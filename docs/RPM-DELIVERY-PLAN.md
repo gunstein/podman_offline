@@ -722,12 +722,20 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    a built version is never rebuilt. No tools RPM yet (it carries the admin
    command, WP2), no ledger and no interface check (decisions 4 and 6).
    `rpm-prototype/` stays only for the WP0 runner.
-2. `<product>-admin`: isolated verification, selection, identity, preflight,
-   host preparation (reusing `prepare-host.sh`, adding `incoming/`),
-   `host.conf`, trust poll and self-check, credential hand-over, tests.
-3. Release interface 2 in the lifecycle code (`init-config --settings`,
-   `delivered`, identity in metadata, lock) and `<product>` (item 66
-   orchestration, prompts, answers, incoming copy), tests.
+2. `<product>-admin`, **implemented 2026-11-01 within the decisions of that
+   day** (no lab run yet): tools RPM `<product>-tools` (`tools/admin.py`,
+   version `tools/VERSION`, built by `./build-rpms.sh`); preflight naming who
+   acts; selection and immutability checks on a root-only private copy (no
+   identity records, decision 4); newer tools first, then a restart; one
+   offline dnf transaction with the signature check off as one explicit
+   setting (`DNF`); host preparation reusing `prepare-host.sh` (now creating
+   `incoming/`), persistent journal and `host.conf`; one bounded run of each
+   newest release as the account instead of the trust poll (decision 5);
+   `--credentials` in the mirrored layout (decision 8). Signature
+   verification is phase 2; retirement is WP4.
+3. `<product>` (item 66 orchestration, prompts, config written atomically
+   with the answers, copy from `incoming/`), tests. No interface 2,
+   `delivered`, answers file or lock (decisions 3, 8 and 9).
 4. Retirement: `retire-check`, authorization record, guard scriptlets,
    one-package removal, repair, tests.
 5. Manual rewrite (including tools repair) and the AI operator walkthrough

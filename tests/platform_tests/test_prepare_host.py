@@ -205,13 +205,13 @@ echo later-host-actions
                 self.assertNotIn("chmod", result.stdout)
                 self.assertEqual(outside, [])
 
-    def test_fresh_root_creates_only_the_three_account_directories(self):
+    def test_fresh_root_creates_only_the_four_account_directories(self):
         def fresh(root, outside):
             pass
 
         result, _ = self.run_root_block(fresh)
         self.assertEqual(result.returncode, 0, result.stdout)
-        for name in ("state", "config", "storage"):
+        for name in ("state", "incoming", "config", "storage"):
             self.assertIn("chown -h ", result.stdout)
             self.assertIn("chmod 0700 ", result.stdout)
             self.assertIn("/orders/" + name, result.stdout)

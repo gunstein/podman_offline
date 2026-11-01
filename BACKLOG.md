@@ -983,7 +983,11 @@ runs at `3222efb`, 2026-10-25,
 Status 2026-11-01: **go for WP1**, and the open phase 1 decisions are taken;
 see "Decisions (product owner, 2026-11-01)" below. WP1 (release RPM build,
 `./build-rpms.sh`) is implemented with local tests using real `rpmbuild`; no
-lab run yet. WP2 (the administrator command and tools RPM) is next.
+lab run yet. WP2 (the tools RPM with `sudo <product>-admin <directory>` and
+`--credentials`, `tools/admin.py`; `incoming/` in `prepare-host.sh`) is
+implemented with local tests on real RPM files and a fake host; no lab run
+yet. Retirement and the erase authorization are WP4; the runtime command that
+reads `incoming/` and `host.conf` is WP3, next.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
@@ -1282,6 +1286,14 @@ matching parts of the plan (revision 3.3) until the plan is revised.
 7. **Keep refusing plain `dnf remove`, simplified:** a product package's
    `%preun` refuses the erase unless the admin command has just written a
    single-use authorization naming exactly that package.
+8. **Credentials in a mirrored layout:** `incoming/<component>/credentials/
+   <group>/<file>`, the same layout as `state/`; no `delivered` declaration
+   and no flat layout (the component's `validate` already names a missing
+   file). Over SSH: `scp -r`; at the console: `sudo <product>-admin
+   --credentials /mnt` copies into `incoming/` as the runtime account.
+9. **Dropped:** `interface: 2`, `--repo` and `state/answers.conf`. The
+   runtime command writes the config atomically with the answers and asks
+   again after an interruption before that write.
 
 Implementation plan: [RPM-DELIVERY-PLAN.md](docs/RPM-DELIVERY-PLAN.md),
 revision 3.3; the WP0 matrix passed at `3222efb` after an earlier attempt that

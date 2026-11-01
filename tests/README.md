@@ -464,6 +464,16 @@ and ownership, no generated dependencies, the erase guard run from the built
 package, and refusal of a rebuilt version or a changed bundle. It is skipped
 where `rpmbuild` is not installed.
 
+`test_admin.py` (backlog 69 WP2) builds the tools RPM and checks its files,
+`Requires` and erase guard, and that the packaged files alone run the
+command. It runs `<product>-admin` against real release and tools RPMs with
+a fake host (RPM database, dnf, SELinux, systemd, sudo, `prepare-host.sh`,
+`setpriv`): first installation and an unchanged repeat, prompts, preflight
+stops before changes, newer tools first, refused older or changed versions,
+reinstall of a damaged identical package, a failed host preparation and an
+untrusted release. The credential writer runs for real as the test user.
+Also skipped without `rpmbuild`.
+
 `test_deploy.py` and `test_bundle.py` use only the standard library
 and PyYAML. `test_certificates.py` requires bash and OpenSSL,
 with all key material in a temporary directory. All paths point into `TemporaryDirectory`; Podman/systemd calls and the user check

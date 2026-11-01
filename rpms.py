@@ -12,6 +12,12 @@ An installed release can be erased only by the administrator command
 /run/<product>/erase-authorization names exactly this package. That command
 writes the authorization for one package and deletes it afterwards.
 
+The tools RPM, dist/rpm/<product>-tools-<version>-1.noarch.rpm, carries the
+administrator command /usr/sbin/<product>-admin (tools/admin.py) with the host
+preparation script and the two deployment modules it imports, under
+/usr/libexec/<product>-tools/. Its version is tools/VERSION: raise it whenever
+one of TOOLS_FILES changes. It has the same erase guard; an upgrade replaces it.
+
 A version is built once: an existing RPM of the same name is never replaced,
 because one version has exactly one content.
 """
@@ -48,13 +54,18 @@ if [ "$1" -eq 0 ]; then
 fi
 """
 
-# rpmbuild must install the release byte for byte: no shebang rewriting,
+# rpmbuild must install the files byte for byte: no shebang rewriting,
 # bytecode, stripping or generated dependencies.
-SPEC = """\
+HEADER = """\
 %global debug_package %{{nil}}
 %global __os_install_post %{{nil}}
 %global __brp_mangle_shebangs %{{nil}}
 %global _build_id_links none
+"""
+
+SPEC = (
+    HEADER
+    + """\
 Name: {name}
 Version: {version}
 Release: 1
@@ -73,6 +84,51 @@ cp -a {tree} %{{buildroot}}/var/lib/{product}/releases/{name}
 %files
 %defattr(-,root,root,-)
 /var/lib/{product}/releases/{name}
+"""
+)
+
+# What the administrator command needs on the host before it can say what is
+# missing; dnf names a missing one when the tools are installed.
+TOOLS_SPEC = (
+    HEADER
+    + """\
+Name: {product}-tools
+Version: {version}
+Release: 1
+Summary: {product} administrator command
+License: Proprietary
+BuildArch: noarch
+AutoReqProv: no
+Requires: python3, python3-pyyaml, util-linux, rpm, dnf
+%description
+sudo {product}-admin installs delivered {product} RPMs and prepares the host.
+%install
+mkdir -p %{{buildroot}}/usr/sbin %{{buildroot}}/usr/libexec
+cp -a {tree}/{product}-admin %{{buildroot}}/usr/sbin/{product}-admin
+cp -a {tree}/{product}-tools %{{buildroot}}/usr/libexec/{product}-tools
+%preun
+{guard}
+%files
+%defattr(-,root,root,-)
+/usr/sbin/{product}-admin
+/usr/libexec/{product}-tools
+"""
+)
+
+# Source files of the tools RPM, below /usr/libexec/<product>-tools/.
+TOOLS_FILES = {
+    "admin.py": "tools/admin.py",
+    "scripts/prepare-host.sh": "scripts/prepare-host.sh",
+    "deployment/__init__.py": "deployment/__init__.py",
+    "deployment/arguments.py": "deployment/arguments.py",
+    "deployment/output.py": "deployment/output.py",
+}
+
+# /usr/sbin/<product>-admin. -E -s keep the environment and user site out;
+# -B writes no bytecode next to the RPM's files.
+WRAPPER = """\
+#!/bin/sh
+exec /usr/bin/python3 -E -s -B /usr/libexec/{product}-tools/admin.py "$@"
 """
 
 
@@ -147,15 +203,40 @@ def normalize_modes(release):
         path.chmod(0o755 if executable else 0o644)
 
 
+def refuse_existing(target, what):
+    if target.exists():
+        raise RpmError(
+            f"{target.name} already exists; one version has one content, so "
+            f"give {what} a new VERSION instead of rebuilding it"
+        )
+
+
+def rpmbuild(work, spec_name, text, target):
+    """Build the spec text in work; copy the one RPM to target."""
+    spec = work / spec_name
+    spec.write_text(text)
+    log.debug("+ rpmbuild -bb " + spec.name)
+    subprocess.run(
+        [
+            "rpmbuild",
+            "-bb",
+            "--quiet",
+            "--define",
+            f"_topdir {work}/rpmbuild",
+            str(spec),
+        ],
+        check=True,
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(str(work / "rpmbuild/RPMS/noarch" / target.name), str(target))
+    return target
+
+
 def build_rpm(archive, product, component, version, out):
     """Build one release RPM from a bundle archive into out; return its path."""
     name = f"{product}-{component}-{version}"
     target = out / f"{name}-{version}-1.noarch.rpm"
-    if target.exists():
-        raise RpmError(
-            f"{target.name} already exists; one version has one content, so "
-            f"give {component} a new VERSION instead of rebuilding it"
-        )
+    refuse_existing(target, component)
     with tempfile.TemporaryDirectory(prefix="rpm-") as directory:
         work = Path(directory)
         release = unpack(archive, work / "tree")
@@ -163,39 +244,51 @@ def build_rpm(archive, product, component, version, out):
             raise RpmError(f"{archive.name}: top directory is not {name}")
         check_release(release, product, component, version)
         normalize_modes(release)
-        spec = work / (name + ".spec")
-        spec.write_text(
-            SPEC.format(
-                name=name,
-                version=version,
-                product=product,
-                component=component,
-                tree=release,
-                guard=GUARD.format(product=product),
-            )
+        text = SPEC.format(
+            name=name,
+            version=version,
+            product=product,
+            component=component,
+            tree=release,
+            guard=GUARD.format(product=product),
         )
-        log.debug("+ rpmbuild -bb " + spec.name)
-        subprocess.run(
-            [
-                "rpmbuild",
-                "-bb",
-                "--quiet",
-                "--define",
-                f"_topdir {work}/rpmbuild",
-                str(spec),
-            ],
-            check=True,
+        return rpmbuild(work, name + ".spec", text, target)
+
+
+def build_tools(product, out):
+    """Build the tools RPM from TOOLS_FILES and tools/VERSION; return its path."""
+    version = (ROOT / "tools/VERSION").read_text().strip()
+    catalog.version_number(version)
+    target = out / f"{product}-tools-{version}-1.noarch.rpm"
+    refuse_existing(target, "tools (tools/VERSION)")
+    with tempfile.TemporaryDirectory(prefix="rpm-") as directory:
+        work = Path(directory)
+        tree = work / "tree"
+        libexec = tree / f"{product}-tools"
+        for installed, source in TOOLS_FILES.items():
+            (libexec / installed).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(ROOT / source), str(libexec / installed))
+        # admin.py and prepare-host.sh read the product name here.
+        (libexec / "bundle.yaml").write_text(yaml.safe_dump({"product": product}))
+        (tree / f"{product}-admin").write_text(WRAPPER.format(product=product))
+        (tree / f"{product}-admin").chmod(0o755)
+        (libexec / "scripts/prepare-host.sh").chmod(0o755)
+        normalize_modes(tree)
+        text = TOOLS_SPEC.format(
+            product=product,
+            version=version,
+            tree=tree,
+            guard=GUARD.format(product=product),
         )
-        out.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(str(work / "rpmbuild/RPMS/noarch" / target.name), str(target))
-    return target
+        return rpmbuild(work, product + "-tools.spec", text, target)
 
 
-def build(selected=()):
-    """Build one RPM per selected catalog component from its bundle in dist/.
+def build(selected=(), tools=False):
+    """Build the selected RPMs into dist/rpm/; return their paths.
 
-    Without names, every catalog component. Each bundle must have been built
-    first (./build-bundle.sh) and match its .sha256 file.
+    selected names catalog components, each built from its bundle in dist/
+    (./build-bundle.sh first, matching its .sha256 file); tools adds the tools
+    RPM. Without either, every catalog component and the tools.
     """
     if shutil.which("rpmbuild") is None:
         raise RpmError("rpmbuild is missing; install the rpm-build package")
@@ -203,9 +296,10 @@ def build(selected=()):
     unknown = sorted(set(selected) - set(descriptors))
     if unknown:
         raise RpmError("Unknown component " + ", ".join(unknown) + "; see bundles.yaml")
+    everything = not selected and not tools
     built = []
     for component, descriptor in descriptors.items():
-        if selected and component not in selected:
+        if not everything and component not in selected:
             continue
         product, version = descriptor["product"], descriptor["version"]
         archive = DIST / f"{product}-{component}-{version}-offline.tar.gz"
@@ -216,15 +310,27 @@ def build(selected=()):
             raise RpmError(f"{archive.name} does not match its .sha256 file")
         built.append(build_rpm(archive, product, component, version, DIST / "rpm"))
         log.info(f"[OK] {built[-1].relative_to(ROOT)}")
+    if everything or tools:
+        built.append(build_tools(catalog.product_name(ROOT), DIST / "rpm"))
+        log.info(f"[OK] {built[-1].relative_to(ROOT)}")
     return built
 
 
 def parser():
     result = arguments.Parser(
         prog="./build-rpms.sh",
-        usage="./build-rpms.sh [<component> ...] [--verbose]",
-        description="Wrap built bundles as RPMs; without components, every catalog component.",
+        usage="./build-rpms.sh [<component> ...] [--tools] [--verbose]",
+        description=(
+            "Wrap built bundles as RPMs and build the tools RPM; without "
+            "components or --tools, every catalog component and the tools."
+        ),
         allow_abbrev=False,
+    )
+    result.add_argument(
+        "--tools",
+        action=arguments.Once,
+        default=False,
+        help="build the tools RPM (the administrator command)",
     )
     result.add_argument(
         "--verbose", action=arguments.Once, default=False, help="also show each command"
@@ -242,7 +348,7 @@ def main(command_line=None):
         return error.code
     output.configure(verbose=args.verbose)
     try:
-        build(args.components)
+        build(args.components, args.tools)
     except (
         OSError,
         RpmError,

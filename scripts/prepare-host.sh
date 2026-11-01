@@ -25,8 +25,9 @@ prepare_install_directories() {
 """Prepare the account's directories through held descriptors, as that account.
 
 The installation root is root-owned and was checked by the caller, which also
-created state/, config/ and storage/ for the account; the account cannot replace
-them. config/ and storage/ are XDG_CONFIG_HOME and XDG_DATA_HOME for Podman.
+created state/, incoming/, config/ and storage/ for the account; the account
+cannot replace them. incoming/ receives delivered credentials (backlog 69);
+config/ and storage/ are XDG_CONFIG_HOME and XDG_DATA_HOME for Podman.
 """
 
 import os
@@ -35,6 +36,7 @@ import sys
 
 DIRECTORIES = (
     "state",
+    "incoming",
     "config",
     "config/cni",
     "config/cni/net.d",
@@ -225,7 +227,7 @@ fi
 [[ -z $(getfacl --absolute-names --skip-base -- "$install_root" 2>/dev/null) ]] \
     || die "Remove the ACL on $install_root"
 # One account per product and one product per account; never take over another's state.
-for name in state config storage; do
+for name in state incoming config storage; do
     path=$install_root/$name
     if [[ -e $path || -L $path ]]; then
         [[ ! -L $path && -d $path && $(stat -c %u "$path") == "$service_uid" ]] \
@@ -239,7 +241,7 @@ for other in "$dropin_dir"/podman-offline-*.conf; do
 done
 # The root creates the account's directories directly under the root-owned
 # root; the account cannot replace these entries, so chown/chmod are safe here.
-for name in state config storage; do
+for name in state incoming config storage; do
     path=$install_root/$name
     if [[ ! -e $path ]]; then
         mkdir -m 0700 "$path"

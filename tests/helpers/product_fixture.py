@@ -266,7 +266,7 @@ class ProductFixture(DeployFixture):
         self.source.mkdir(exist_ok=True)
         for name in ("deploy.sh", "README.md"):
             shutil.copy2(REPO / name, self.source / name)
-        for name in ("deployment", "scripts", "quadlet"):
+        for name in ("deployment", "scripts", "quadlet", "tools"):
             if not (self.source / name).exists():
                 shutil.copytree(
                     REPO / name,

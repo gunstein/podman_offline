@@ -32,7 +32,7 @@ class ReleaseRpmTests(ProductFixture):
     def setUp(self):
         super().setUp()
         self.product_name = "cedar"
-        product = copy.deepcopy(WORKER)
+        product: dict = copy.deepcopy(WORKER)
         product["worker"]["files"] = {"notes.txt": "public\n"}
         self.write_product(product, version="1.2.3")
         self.build_and_unpack()
@@ -49,7 +49,7 @@ class ReleaseRpmTests(ProductFixture):
         self.process.side_effect = command
 
     def test_one_side_by_side_package_with_the_unchanged_release(self):
-        (rpm,) = rpms.build()
+        (rpm,) = rpms.build(["worker"])
         self.assertEqual(rpm.name, "cedar-worker-1.2.3-1.2.3-1.noarch.rpm")
         self.assertEqual(
             rpm_query(rpm, "--queryformat", "%{NAME} %{VERSION} %{RELEASE} %{ARCH}"),
@@ -84,7 +84,7 @@ class ReleaseRpmTests(ProductFixture):
             )
 
     def test_erase_needs_the_authorization_for_exactly_this_package(self):
-        (rpm,) = rpms.build()
+        (rpm,) = rpms.build(["worker"])
         name = "cedar-worker-1.2.3-1.2.3-1"
         refused = self.guard(rpm, 0)
         self.assertEqual(refused.returncode, 1)
