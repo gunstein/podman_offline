@@ -995,11 +995,13 @@ runs at `3222efb`, 2026-10-25,
 [report](acceptance/RESULTS.md)). Nothing is implemented.
 Status 2026-11-01: **go for WP1**, and the open phase 1 decisions are taken;
 see "Decisions (product owner, 2026-11-01)" below. WP1 (release RPM build,
-`./build-rpms.sh`) is implemented with local tests using real `rpmbuild`; no
-lab run yet. WP2 (the tools RPM with `sudo <product>-admin <directory>` and
+`./build-rpms.sh`) is implemented with local tests using real `rpmbuild`.
+WP2 (the tools RPM with `sudo <product>-admin <directory>` and
 `--credentials`, `tools/admin.py`; `incoming/` in `prepare-host.sh`) is
-implemented with local tests on real RPM files and a fake host; no lab run
-yet. Retirement and the erase authorization are WP4; the runtime command that
+implemented with local tests on real RPM files and a fake host. WP1 and WP2
+passed on OL9 in `c69c-admin-rpm-14491ae` (2026-11-02, CLEAN PASS, with the
+full matrix on the same commit; [results](acceptance/RESULTS.md)).
+Retirement and the erase authorization are WP4; the runtime command that
 reads `incoming/` and `host.conf` is WP3, next.
 
 Many customers install in a closed server lab, often from a **printed manual**,

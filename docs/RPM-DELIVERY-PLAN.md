@@ -731,7 +731,7 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    command, WP2), no ledger and no interface check (decisions 4 and 6).
    `rpm-prototype/` stays only for the WP0 runner.
 2. `<product>-admin`, **implemented 2026-11-01 within the decisions of that
-   day** (no lab run yet): tools RPM `<product>-tools` (`tools/admin.py`,
+   day**, lab-verified with WP1 in `c69c-admin-rpm-14491ae` (2026-11-02): tools RPM `<product>-tools` (`tools/admin.py`,
    version `tools/VERSION`, built by `./build-rpms.sh`); preflight naming who
    acts; selection and immutability checks on a root-only private copy (no
    identity records, decision 4); newer tools first, then a restart; one
