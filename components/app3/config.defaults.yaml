@@ -26,3 +26,11 @@ ENVIRONMENT:
     # Must match ApiResources__0__Name in components/identity/config.defaults.yaml.
     Authentication__ApiName: app3-api
     Authentication__ApiSecret: '@@secret:app3-api-secret/value@@'
+
+# Files mounted read-only into a container. The environment's CA (backlog 70)
+# goes beside the image's own CAs as two single files, unchanged from the
+# app3-ingress-trust-chain Secret.
+MOUNTS:
+  backend:
+    /etc/ssl/certs/myproduct-root.pem: '@@secret:app3-ingress-trust-chain/root.crt@@'
+    /etc/ssl/certs/myproduct-ca.pem: '@@secret:app3-ingress-trust-chain/ca.crt@@'

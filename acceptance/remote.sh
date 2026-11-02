@@ -1944,6 +1944,7 @@ namespace["prepare_persistent_journal"]()
 whoami-chain-mounts)
     # Backlog 70's lab check in the running backend: both single-file subPath
     # mounts hold the environment's CA and the image's own CA files remain.
+    # Backlog 80: they come from MOUNTS secret files and must be read-only.
     podman --version
     printf 'SELinux: %s\n' "$(getenforce)"
     # The runtime account's shell expands the script's own variables.
@@ -1956,7 +1957,13 @@ whoami-chain-mounts)
         done
         count=$(podman exec app3-whoami-backend sh -c "ls /etc/ssl/certs | wc -l")
         [[ $count -gt 2 ]] || { echo "FAIL: the image CA files are hidden ($count entries)"; exit 1; }
-        echo "PASS: subPath files hold the environment CA; $count entries in /etc/ssl/certs"
+        writable=$(podman inspect app3-whoami-backend \
+            --format "{{range .Mounts}}{{.Destination}} {{.RW}}{{println}}{{end}}")
+        for name in root ca; do
+            grep -Fxq "/etc/ssl/certs/$1-$name.pem false" <<< "$writable" \
+                || { echo "FAIL: /etc/ssl/certs/$1-$name.pem is not a read-only mount"; exit 1; }
+        done
+        echo "PASS: read-only subPath files hold the environment CA; $count entries in /etc/ssl/certs"
     ' bash "$product_name" "$state"
     ;;
 whoami-log-safety)

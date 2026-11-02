@@ -241,7 +241,9 @@ They preserve YAML types; ConfigMap data is converted to text. ConfigMap `data`
 values also accept inline `@@NAME@@` placeholders, including in multi-line files.
 Other manifest fields still require whole values. Dollar-style nginx/shell
 variables are preserved. Missing inputs identify their key without exposing values;
-Secret references are allowed only in `ENVIRONMENT` and `MOUNTS`. See
+Secret references are allowed only in `ENVIRONMENT` and `MOUNTS`; a `MOUNTS`
+source that is exactly `@@secret:<id>/<key>@@` mounts that Secret file
+unchanged (backlog 80). See
 [ConfigMap inline values](docs/COMPONENTS.md#configmap-inline-values).
 
 The registry acceptance test still uses one explicit `config.yaml`. The product
