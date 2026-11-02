@@ -28,11 +28,8 @@ class PlatformSafetyTests(ComponentFixture):
     def test_config_initialization_and_repetition_need_no_podman_volume_checks(self):
         """Initialize current defaults without generating credentials or querying old volumes."""
         repo = Path(__file__).resolve().parents[1] / "fixtures/catalog"
-        for name in (
-            "config/common.defaults.yaml",
-            "components/app1/config.defaults.yaml",
-        ):
-            self.write(name, (repo / name).read_bytes())
+        name = "components/app1/config.defaults.yaml"
+        self.write(name, (repo / name).read_bytes())
         # init-config checks the release's manifests against these defaults.
         manifests = self.root / "components/app1/manifests"
         shutil.rmtree(manifests)

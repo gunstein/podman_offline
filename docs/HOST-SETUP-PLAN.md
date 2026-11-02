@@ -1,7 +1,7 @@
 # Item 65 implementation plan: host setup and operator guide
 
-Status: implemented on `feature/65-host-setup`, 2026-10-24; current-change real
-OL9 and unassisted human verification remain outstanding. See
+Status: implemented on `feature/65-host-setup`, 2026-10-24; real OL9 verification
+passed at `2d36d71`; unassisted human verification remains outstanding under backlog 68. See
 [implementation/evidence](../acceptance/HOST-SETUP.md). This plan records the
 constraints; current operator commands live in the production manual.
 Read [item 65](../BACKLOG.md#65-one-command-host-preparation-and-a-short-operator-guide),
@@ -352,7 +352,7 @@ python3 -B -m unittest discover -s acceptance -p 'test_*.py'
 ```
 
 Also run relevant focused tests and the current Ruff, Pyright, Vermin and shell
-checks from [tests/README.md](../tests/README.md#deployment-package-043), plus
+checks from [tests/README.md](../tests/README.md#contributor-checks), plus
 operator-document link checks in source and unpacked bundles and
 `git diff --check`. Report pre-existing lint separately; do not fix unrelated
 findings. Exercise bootstrap/guest code with the same static compatibility checks.

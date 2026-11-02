@@ -180,10 +180,7 @@ against `build/dev/<component>`. There is no standalone mode: `prepare` needs
 
 ## Sequence diagrams
 
-The Mermaid source below is authoritative. For viewers without Mermaid, the
-rendered images are in `docs/diagrams/`; run `dev/render-diagrams.sh` after
-changing a diagram ([install](docs/diagrams/deploy-install.png),
-[build](docs/diagrams/build-bundle.png)).
+The Mermaid diagrams below are maintained directly with the architecture.
 
 ### `./deploy.sh install` from an unpacked bundle
 

@@ -99,7 +99,6 @@ class BundleFixture(unittest.TestCase):
         )
         self.write("components/platform/VERSION", "1.0.0\n")
         self.write("components/identity/VERSION", "1.1.0\n")
-        self.write("config/common.defaults.yaml", "HTTPS_PORT: 8443\n")
         for component in ("app1", "app2", "help"):
             self.write("components/" + component + "/VERSION", "1.2.3\n")
         for component in ("platform", "identity", "app1", "app2", "help"):
