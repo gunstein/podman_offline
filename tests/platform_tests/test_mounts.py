@@ -3,8 +3,10 @@
 import base64
 import copy
 import io
+import os
 import shutil
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from unittest import mock
 
 import bundle
 import yaml
@@ -310,6 +312,14 @@ def trust_mount(target, key):
 
 
 class SecretFileMountTests(ProductFixture):
+    def tree(self, directory):
+        """Every file below directory with its bytes, to prove nothing was written."""
+        return {
+            str(path.relative_to(directory)): path.read_bytes()
+            for path in sorted(directory.rglob("*"))
+            if path.is_file()
+        }
+
     def product(self, change=None):
         product = copy.deepcopy(TRUST)
         if change:
@@ -398,8 +408,27 @@ class SecretFileMountTests(ProductFixture):
     def test_validate_names_the_secret_without_reading_it(self):
         self.product()
         self.deliver(common.BUILD / "dev/shop")
+        trust = str(common.BUILD / "dev/shop/credentials/trust")
+        real_open, real_os_open = io.open, os.open
+
+        def guarded(opener):
+            def open_file(file, *args, **kwargs):
+                if str(file).startswith(trust):
+                    raise AssertionError("validate opened a credential file")
+                return opener(file, *args, **kwargs)
+
+            return open_file
+
         stream = io.StringIO()
-        with redirect_stdout(stream), redirect_stderr(stream):
+        with ExitStack() as guards:
+            for name, opener in (
+                ("io.open", real_open),
+                ("builtins.open", real_open),
+                ("os.open", real_os_open),
+            ):
+                guards.enter_context(mock.patch(name, guarded(opener)))
+            guards.enter_context(redirect_stdout(stream))
+            guards.enter_context(redirect_stderr(stream))
             validation.validate()
         self.assertIn(
             "[OK] shop/main: MOUNTS -> /sql/10-roles.sql, /run/secrets/trust/root.crt, "
@@ -412,6 +441,34 @@ class SecretFileMountTests(ProductFixture):
             "[OK] shop/migrate: MOUNTS -> /run/certificates/signing.pfx "
             "(unchanged from Secret shop-trust-chain)",
             stream.getvalue(),
+        )
+
+    def test_a_key_no_source_provides_stops_install_before_any_write(self):
+        """init-config accepts it (credentials may follow); install refuses at once."""
+
+        def wrong_key(shop):
+            shop["mounts"]["main"]["/password"] = (
+                "@@secret:shop-database-password/wrong@@"
+            )
+
+        self.product(wrong_key)
+        releases = self.build_and_unpack()
+        self.use_root(releases["shop"])
+        deploy.init_config("shop")
+        self.deliver(common.STATE / "shop")
+        before = self.tree(common.STATE)
+        self.process.reset_mock()
+        with self.assertRaisesRegex(
+            common.DeployError,
+            r"MOUNTS\.main\./password: shop-database-password has no key wrong; "
+            "it provides value",
+        ):
+            deploy.install()
+        self.assertEqual(self.tree(common.STATE), before)
+        self.assertFalse((common.STATE / "shop/credentials/database/value").exists())
+        self.assertFalse(common.QUADLET_DIR.exists())
+        self.assertNotIn(
+            "load", [args[1] for args in self.commands() if args[0] == "podman"]
         )
 
     def test_a_secret_used_only_by_mounts_counts_as_used(self):
@@ -449,8 +506,10 @@ class SecretFileMountTests(ProductFixture):
                 "missing key",
                 source("@@secret:shop-trust-chain/intermediate.crt@@"),
                 (
-                    "uses key 'intermediate.crt' of Secret 'shop-trust-chain', which "
-                    "provides only ca.crt, root.crt, signing.pfx"
+                    r"components/shop/config.defaults.yaml: MOUNTS\.main\./run/x: "
+                    "shop-trust-chain has no key intermediate.crt; it provides ca.crt, "
+                    "root.crt, signing.pfx. Fix the key, or deliver a file named "
+                    "intermediate.crt in shop-trust-chain's source"
                 ),
             ),
             (
@@ -490,6 +549,12 @@ class SecretFileMountTests(ProductFixture):
             with self.subTest(label):
                 self.product(change)
                 self.deliver(common.BUILD / "dev/shop")
+                # An earlier dev state: config and a registration file.
+                (common.BUILD / "dev/shop/config.yaml").write_text("DB_USER: earlier\n")
+                routes = common.BUILD / "dev/routes"
+                routes.mkdir(parents=True, exist_ok=True)
+                (routes / "earlier.conf").write_text("location /earlier {}\n")
+                before = self.tree(common.BUILD)
                 with self.assertRaisesRegex(common.DeployError, pattern):
                     deploy.prepare()
-                self.assertFalse((common.BUILD / "install.yaml").exists())
+                self.assertEqual(self.tree(common.BUILD), before)

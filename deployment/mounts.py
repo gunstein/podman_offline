@@ -60,7 +60,10 @@ def secret_reference(source):
 
 
 def read(component):
-    """Return {container: {container path: file under files/}}; nothing rendered."""
+    """Return {container: {container path: source}}; nothing read or rendered.
+
+    A source is a file under files/ or a secret file (secret_reference).
+    """
     return read_defaults(environment.defaults_path(component), component)
 
 
@@ -197,6 +200,29 @@ def with_recipes(config, component):
     result = dict(config)
     result[common.SECRET_TEMPLATES] = recipes
     return result
+
+
+def check_keys(component, keys):
+    """A secret file's key must be one its Secret provides.
+
+    keys is render.secret_keys(): the keys each Secret provides, or None while
+    its source is not delivered yet (install reports that). No file is read.
+    """
+    for container, mounts in read(component).items():
+        for target, source in mounts.items():
+            reference = secret_reference(source)
+            if reference is None:
+                continue
+            secret_id, key = reference
+            available = keys.get(secret_id)
+            if available is None or key in available:
+                continue
+            raise common.DeployError(
+                f"components/{component}/config.defaults.yaml: "
+                f"MOUNTS.{container}.{target}: {secret_id} has no key {key}; it "
+                f"provides {', '.join(sorted(available)) or 'no keys'}. Fix the key, "
+                f"or deliver a file named {key} in {secret_id}'s source"
+            )
 
 
 def apply(documents, component, pods):

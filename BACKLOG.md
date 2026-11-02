@@ -69,6 +69,20 @@ acceptance harness: `whoami-chain-mounts` also requires both mounts to be
 read-only, with a local negative test. Lab: run `--whoami` (and the matrix,
 since app3's manifest changed).
 
+Review of `fb4f753` (2026-11-02), fixed with regression tests: a key no
+source provides was found only when `materialize` ran, after `prepare` had
+written dev config and removed registrations (1); its message named
+`config.yaml` and a generated volume instead of the `MOUNTS` line (2); the
+"before writes" and "without reading" tests did not prove either (3); and
+`test_whoami.py` ran its last class only through discovery (4). The key
+check (`deploy.check_selected_keys`) now runs in `prepare` and `install`
+right after the preflight and before the first write, and in `validate`; not
+in `init-config` or the dev preflight of `dev/demo-credentials.sh`, because a
+source that mixes generated and delivered files (app1's `credentials/todo`)
+cannot show its delivered keys before delivery. The tests compare the whole
+`build/` or `state/` tree before and after a refusal, and block opening the
+credential files during `validate`.
+
 Need: a component author mounts one file of a declared `SECRET_FILES` Secret
 into a container without writing `volumes` and `volumeMounts` in the
 manifest. Decided scope: the existing `MOUNTS` gets a second kind of source,

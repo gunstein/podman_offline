@@ -446,10 +446,6 @@ class WhoamiSessionTests(unittest.TestCase):
                 self.module.save(session, path)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ChainMountCheckTests(unittest.TestCase):
     """whoami-chain-mounts: the CA files' content and read-only mounts (backlogs 70, 80)."""
 
@@ -506,3 +502,7 @@ class ChainMountCheckTests(unittest.TestCase):
         result = self.check(other_ca=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("is not the environment CA", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
