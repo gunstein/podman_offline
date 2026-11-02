@@ -56,8 +56,10 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 80. Mount a declared secret file directly through MOUNTS
 
-Status: **implemented with local tests (2026-11-02); not lab-verified yet**
-(high priority, requested by the product owner). `deployment/mounts.py`:
+Status: **done and lab-verified** (2026-11-02, high priority, requested by
+the product owner): the matrix, `--status-retry` and `--host-setup` passed
+CLEAN PASS on `a6197bf` ([results](acceptance/RESULTS.md)), with the
+in-container check of app3's two secret files in `--whoami`. `deployment/mounts.py`:
 `secret_reference()` tells a secret file from a component file; a secret file
 adds the Pod volume `<secret-id>-mount` for the existing Secret, and the key
 check and the unused-secret check are the existing ones (`check_secret_keys`,
@@ -66,8 +68,7 @@ volumes. Product/unit tests: `test_mounts.py` (paths and volume written out,
 rendered and secret files in one container, init container, bytes of a PFX
 and a final newline, bundle install twice, uninstall, validate line, errors);
 acceptance harness: `whoami-chain-mounts` also requires both mounts to be
-read-only, with a local negative test. Lab: run `--whoami` (and the matrix,
-since app3's manifest changed).
+read-only, with a local negative test.
 
 Review of `fb4f753` (2026-11-02), fixed with regression tests: a key no
 source provides was found only when `materialize` ran, after `prepare` had
