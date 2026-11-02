@@ -997,15 +997,17 @@ run_admin() {
     printf '%s\n' "$admin_output"
     echo "admin exit=$admin_status"
 }
-# Run <product> as the runtime account with a plain login environment: no
-# XDG or Podman variables from the harness (the command and deploy.sh set
-# what they need), no terminal; keep its output and exit status for checks.
+# Run <product> as the runtime account with what a console or SSH login
+# gives: HOME, USER, LOGNAME, PATH and pam_systemd's XDG_RUNTIME_DIR; no XDG
+# config/data or Podman variables (deploy.sh sets those), no terminal. Keep
+# the output and exit status for checks.
 run_runtime() {
     local home
     home=$(getent passwd "$service_user" | cut -d: -f6)
     runtime_status=0
     runtime_output=$(sudo -n -u "$service_user" env -i HOME="$home" USER="$service_user" \
         LOGNAME="$service_user" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        XDG_RUNTIME_DIR="/run/user/$(id -u "$service_user")" \
         bash -c 'cd "$HOME" && exec "$@"' bash "$product_name" "$@" </dev/null 2>&1) \
         || runtime_status=$?
     printf '%s\n' "$runtime_output"
