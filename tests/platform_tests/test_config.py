@@ -18,7 +18,7 @@ class ConfigTests(ConfigFixture):
     def test_top_level_precedence_and_whole_mapping_list_replacement(self):
         """Every later layer replaces a whole value, including empty maps and lists."""
         common = self.write(
-            "config/common.defaults.yaml",
+            "layers/base.yaml",
             "HTTPS_PORT: 8443\nCHOICE: common\nSECRET_FILES:\n  platform-one:\n  - path: one\nVOLUME_FILES:\n  platform-old:\n  - path: .\n    generate:\n    - old\n",
         )
         component = self.write(

@@ -26,22 +26,21 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `c69c-whoami-14491ae` | 46 | CLEAN PASS |
-| normal | `c69c-normal-14491ae` | 117 | CLEAN PASS |
-| `--first-app app2` | `c69c-app2-14491ae` | 117 | CLEAN PASS |
-| `--identity-only` | `c69c-identity-14491ae` | 57 | CLEAN PASS |
-| `--help-only` | `c69c-help-14491ae` | 52 | CLEAN PASS |
-| `--platform-help-only` | `c69c-platform-help-14491ae` | 31 | CLEAN PASS |
-| `--renamed-product` | `c69c-renamed-14491ae` | 57 | CLEAN PASS |
+| `--whoami` | `c80-whoami-a6197bf` | 46 | CLEAN PASS |
+| normal | `c80-normal-a6197bf` | 117 | CLEAN PASS |
+| `--first-app app2` | `c80-app2-a6197bf` | 117 | CLEAN PASS |
+| `--identity-only` | `c80-identity-a6197bf` | 57 | CLEAN PASS |
+| `--help-only` | `c80-help-a6197bf` | 52 | CLEAN PASS |
+| `--platform-help-only` | `c80-platform-help-a6197bf` | 31 | CLEAN PASS |
+| `--renamed-product` | `c80-renamed-a6197bf` | 57 | CLEAN PASS |
 
-All on `14491ae` (2026-11-02), clean detached checkout, Oracle Linux Server
+All on `a6197bf` (2026-11-02), clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
-includes backlog 69 WP1/WP2 (`prepare-host.sh` creates `incoming/`) and the
-stricter checks of `14491ae`: the wrong report password must be refused by
-PostgreSQL, the inline endpoint is compared with the scenario's address, and
-`--renamed-product` asks the running Identity to refuse the removed client.
-An earlier attempt on this commit (`c69b-*`) stopped at `00-readiness`
-(DEV unreachable) before any VM change. The init Secret probe runs
+includes backlog 80: app3's trust chain is mounted from its Secret through
+`MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
+running backend with the environment's CA and as read-only mounts
+(`podman inspect`); the Secret key check now runs before the first write of
+`prepare` and `install`. The init Secret probe runs
 inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
 it. The harness defects found on the way to this matrix are listed in
 [backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
@@ -50,11 +49,13 @@ it. The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `c69c-status-retry-14491ae` | 118 | CLEAN PASS |
-| `--host-setup` | `c69c-host-setup-14491ae` | 36 | CLEAN PASS |
+| `--status-retry` | `c80-status-retry-a6197bf` | 118 | CLEAN PASS |
+| `--host-setup` | `c80-host-setup-a6197bf` | 36 | CLEAN PASS |
 | `--admin-rpm` | `c69c-admin-rpm-14491ae` | 20 | CLEAN PASS |
 
-Same commit, date, checkout, OS and Podman as the matrix. Status/retry: a
+Status/retry and host setup: same commit, date, checkout, OS and Podman as
+the matrix. Admin RPM: on `14491ae` (2026-11-02), before backlog 80 and WP3;
+not rerun since. Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
 procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog
