@@ -54,6 +54,94 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 81. Use a harmless production SQL file with an existing dev source override
+
+Status: **planned** (2026-11-02, decided by the product owner).
+
+Need: the `migration` init container must receive `populate.sql` at the same
+path in DEV and PROD. DEV needs the real seed SQL; PROD must not receive or
+execute that development seed content. Keep the existing volume and single-file
+mount in both environments. A harmless SQL file in PROD is acceptable.
+
+Decision: keep the harmless file in the release from the start, and select the
+real DEV file through the existing `config/dev.yaml` override. Do not empty,
+rewrite or conditionally replace SQL during bundling. This is a focused usage
+example and verification of the existing `VOLUME_FILES` mechanism from item 57,
+not a new deployment feature.
+
+Example for the owner's Identity layout:
+
+```sql
+-- components/identity/files/populate.sql
+-- No development seed data in production.
+```
+
+```yaml
+# components/identity/config.defaults.yaml
+VOLUME_FILES:
+  identity-seed-sql:
+  - component_file: populate.sql
+```
+
+```yaml
+# Existing, local config/dev.yaml; never included in a production bundle.
+VOLUME_FILES:
+  identity-seed-sql:
+  - path: ~/dev-inputs/identity/populate.sql
+```
+
+The real seed SQL lives at that external path, outside the component's `files/`
+tree: the entire tree is bundled, even when an entry is not selected in PROD.
+Both sources have the basename `populate.sql`. The existing manifest keeps its
+`seed-sql` volume referring to `identity-seed-sql` and, in `migration`:
+
+```yaml
+volumeMounts:
+- name: seed-sql
+  mountPath: /migrations/runAfterOtherAnyTimeScripts/9999_Populate.sql
+  subPath: populate.sql
+  readOnly: true
+```
+
+Implementation scope:
+
+- Document this complete example in the existing `docs/COMPONENTS.md`, including
+  which files the author/developer edits. Use existing example/test locations;
+  do not change the shipped Identity demo to impersonate an unavailable private
+  migration image. The container name and SQL execution path belong to the
+  consuming application.
+- Reuse the existing source-override and bundle logic. No new config files,
+  `DEV_MOUNTS`, per-component dev config, Jinja2, build switches, migration
+  framework or format changes. Component-file `MOUNTS` sources are not dev
+  overrides; this example deliberately uses `VOLUME_FILES`.
+- Verify that the actual migration tool accepts a comment-only SQL file. If
+  unavailable, leave that check explicitly outstanding; a successful `psql`
+  check does not establish another tool's behavior. If necessary, use a
+  harmless statement supported by that tool and document its exact behavior.
+- Explain existing limitations: a dev override replaces the declared ID's
+  entire source list, so retain any other required sources explicitly. Imported
+  volumes overwrite matching files but retain unlisted files; this pattern
+  does not clean a reused DEV database or remove other seed scripts. No new
+  cleanup or migration behavior is requested.
+
+Done when:
+
+- Focused product tests prove that DEV delivers the external seed bytes as
+  `populate.sql`, while an isolated production bundle delivers the harmless
+  file with the same basename and mounting path. Check the archive contents:
+  neither `config/dev.yaml` nor the real external seed content is shipped, even
+  when bundling from a checkout used for DEV. Building leaves the source files
+  unchanged. Expected seed markers and contents must be independent of the
+  implementation under test.
+- Extend relevant existing SQL acceptance coverage from item 57: the init
+  container inserts a distinctive DEV marker on a fresh DEV database; a fresh
+  PROD installation completes successfully with the harmless file present and
+  without that marker. Assert both file delivery and database outcome, so a
+  missing file or skipped migration cannot masquerade as a successful no-op.
+  Keep existing production reference-data and retry checks. Record actual
+  Podman results separately from harness tests and identify the migration tool
+  tested; retain any private-image verification gap explicitly.
+
 ## 79. Acceptance scenario for a product without a gateway or Identity
 
 Status: **planned, low priority** (2026-11-01, requested by the product owner).
