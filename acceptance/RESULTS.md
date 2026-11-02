@@ -51,11 +51,11 @@ it. The harness defects found on the way to this matrix are listed in
 | --- | --- | --- | --- |
 | `--status-retry` | `c80-status-retry-a6197bf` | 118 | CLEAN PASS |
 | `--host-setup` | `c80-host-setup-a6197bf` | 36 | CLEAN PASS |
-| `--admin-rpm` | `c69c-admin-rpm-14491ae` | 20 | CLEAN PASS |
+| `--admin-rpm` | `admin-rpm-14a8114` | 25 | CLEAN PASS |
 
 Status/retry and host setup: same commit, date, checkout, OS and Podman as
-the matrix. Admin RPM: on `14491ae` (2026-11-02), before backlog 80 and WP3;
-not rerun since. Status/retry: a
+the matrix. Admin RPM: on `14a8114` (2026-11-02, the RPM branch with main
+and backlog 80 merged; OL9.8, Podman 5.8.2). Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
 procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog
@@ -65,9 +65,15 @@ while the account was missing, then installed both releases in one offline
 transaction, prepared the host, ran each release as the runtime account
 (fapolicyd trust), repeated unchanged without options, copied credentials into
 `incoming/` as the account and refused a different file; `dnf remove` and
-`rpm -e` of a release and of the tools were refused; no FANOTIFY/AVC event.
-Not covered: the restart after newer tools, and any runtime installation
-(WP3).
+`rpm -e` of a release and of the tools were refused. Then, as the runtime
+account in a login-like environment (WP3), `myproduct` with
+`--public-origin`/`--ip-address` installed platform and help (`/livez` 204,
+`/help/` 200, the web certificate moved from `incoming/` to `state/`), an
+unchanged repeat restarted nothing, and `myproduct help` restarted only help;
+no FANOTIFY/AVC event. The first attempt on `8b23e4e` stopped at the final
+`status` because the harness gave no `XDG_RUNTIME_DIR` (a login has it); fixed
+in the harness. Not covered: the restart after newer tools, and a real SSH
+login running `myproduct` (WP6).
 
 The protected-release and production-layout matrices and the RPM prototype
 have no run on the current code; their last runs are in the git history. The

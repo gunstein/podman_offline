@@ -1152,9 +1152,9 @@ implemented with local tests on real RPM files and a fake host. WP1 and WP2
 passed on OL9 in `c69c-admin-rpm-14491ae` (2026-11-02, CLEAN PASS, with the
 full matrix on the same commit; [results](acceptance/RESULTS.md)).
 WP3 (the runtime command `<product>`, `tools/runtime.py`, and `deploy.sh
-init-config <component> --set KEY=VALUE` for the answers) is implemented with
-local tests and in the `--admin-rpm` lab scenario; no lab run yet. Retirement
-and the erase authorization are WP4, next.
+init-config <component> --set KEY=VALUE` for the answers) is implemented and
+passed on OL9 in `admin-rpm-14a8114` (2026-11-02, CLEAN PASS). Retirement and
+the erase authorization are WP4, next.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
