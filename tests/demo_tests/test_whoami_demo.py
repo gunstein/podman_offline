@@ -105,12 +105,16 @@ class WhoamiSourceTests(unittest.TestCase):
             client["certificate"], files["app3-client"][0]["path"] + "/client.crt"
         )
         self.assertEqual(files["app3-ingress-trust-chain"], [{"path": "cert"}])
+        # The trust chain's two files, mounted unchanged from their Secret (backlog 80).
+        self.assertEqual(
+            defaults["MOUNTS"]["backend"],
+            {
+                "/etc/ssl/certs/myproduct-root.pem": "@@secret:app3-ingress-trust-chain/root.crt@@",
+                "/etc/ssl/certs/myproduct-ca.pem": "@@secret:app3-ingress-trust-chain/ca.crt@@",
+            },
+        )
         pod, backend = backend_container()
         mounts = {m["mountPath"]: m for m in backend["volumeMounts"]}
-        self.assertEqual(
-            mounts["/etc/ssl/certs/myproduct-root.pem"]["subPath"], "root.crt"
-        )
-        self.assertEqual(mounts["/etc/ssl/certs/myproduct-ca.pem"]["subPath"], "ca.crt")
         program = (BACKEND / "Program.cs").read_text()
         secrets = mounts["/run/secrets/client"]["name"]
         volume = next(v for v in pod["spec"]["volumes"] if v["name"] == secrets)

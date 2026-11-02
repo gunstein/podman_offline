@@ -5,6 +5,7 @@ Renamed products and the minimal worker are covered by separate fixtures.
 """
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -68,14 +69,26 @@ def mark_installed(root, home, name, version, requirement=None):
 
 
 def demo_secret_keys(component):
-    """Secret name -> the keys the demo component's pods select (items[].key)."""
+    """Secret name -> the keys the demo component's pods select.
+
+    From the manifests (volumes[].secret.items[].key) and from MOUNTS secret
+    files ('@@secret:<id>/<key>@@' in config.defaults.yaml).
+    """
     keys = {}
-    for path in sorted((REPO / "components" / component / "manifests").glob("*.yaml")):
+    directory = REPO / "components" / component
+    for path in sorted((directory / "manifests").glob("*.yaml")):
         for doc in yaml.safe_load_all(path.read_text()):
             for volume in ((doc or {}).get("spec") or {}).get("volumes", []):
                 secret = volume.get("secret") or {}
                 for item in secret.get("items") or []:
                     keys.setdefault(secret["secretName"], set()).add(item["key"])
+    path = directory / "config.defaults.yaml"
+    defaults = (yaml.safe_load(path.read_text()) if path.is_file() else None) or {}
+    for mounts in (defaults.get("MOUNTS") or {}).values():
+        for source in mounts.values():
+            match = re.fullmatch(r"@@secret:([a-z0-9-]+)/([-._a-zA-Z0-9]+)@@", source)
+            if match:
+                keys.setdefault(match[1], set()).add(match[2])
     return keys
 
 

@@ -54,6 +54,53 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 80. Mount a declared secret file directly through MOUNTS
+
+Status: **implemented with local tests (2026-11-02); not lab-verified yet**
+(high priority, requested by the product owner). `deployment/mounts.py`:
+`secret_reference()` tells a secret file from a component file; a secret file
+adds the Pod volume `<secret-id>-mount` for the existing Secret, and the key
+check and the unused-secret check are the existing ones (`check_secret_keys`,
+`check_links`). Demo app3's trust chain now uses it instead of manifest
+volumes. Product/unit tests: `test_mounts.py` (paths and volume written out,
+rendered and secret files in one container, init container, bytes of a PFX
+and a final newline, bundle install twice, uninstall, validate line, errors);
+acceptance harness: `whoami-chain-mounts` also requires both mounts to be
+read-only, with a local negative test. Lab: run `--whoami` (and the matrix,
+since app3's manifest changed).
+
+Need: a component author mounts one file of a declared `SECRET_FILES` Secret
+into a container without writing `volumes` and `volumeMounts` in the
+manifest. Decided scope: the existing `MOUNTS` gets a second kind of source,
+exactly one whole reference `@@secret:<secret-id>/<key>@@` to one of the
+component's own `SECRET_FILES`; no new file, top-level field, syntax,
+folder or wildcard mounts, sharing rules, mode or volume-name settings,
+migration or framework. A component file under `files/` keeps today's
+rendering.
+
+```yaml
+SECRET_FILES:
+  app-ingress-trust-chain:
+  - path: cert
+MOUNTS:
+  app:
+    /sql/create-report-user.sql: sql/create-report-user.sql    # rendered file
+    /run/secrets/trust-chain/root.crt: '@@secret:app-ingress-trust-chain/root.crt@@'
+```
+
+Required behaviour: the platform mounts the existing Secret itself (no copy),
+each key read-only at its path, byte for byte (no substitution or decoding, so
+PFX works); regular and init containers by today's naming rules; component
+files and secret files together; the same file in several containers or
+paths; no volume name for the author to write. Validation: the whole
+reference, a declared own Secret, the key when the sources show it (not yet
+delivered or generated files keep today's handling), one container of that
+name, today's target path rules, no collision with a mount or volume of the
+Pod; `validate` reads no secret content and the mount counts as a use of the
+Secret. Lifecycle unchanged: `MOUNTS` stays in the release's
+`config.defaults.yaml`; init-config, validate, dev, bundle install, same
+version reinstall, retry and uninstall keep working without new state.
+
 ## 79. Acceptance scenario for a product without a gateway or Identity
 
 Status: **planned, low priority** (2026-11-01, requested by the product owner).

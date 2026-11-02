@@ -867,7 +867,7 @@ def check_links(docs, from_config, sources=None, recipe_references=()):
             raise common.DeployError(
                 f"{where} is not used by any manifest, ENVIRONMENT or MOUNTS file. "
                 "Check that the id matches secretName/claimName in a manifest or "
-                "@@secret:<id>/<key>@@ in ENVIRONMENT or a MOUNTS file"
+                "@@secret:<id>/<key>@@ in ENVIRONMENT, a MOUNTS file or a MOUNTS source"
             )
 
 
