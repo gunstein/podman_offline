@@ -371,9 +371,9 @@ Secret files:
   the component's own `SECRET_FILES`; nothing else may be around it. The
   existing Secret is mounted itself (no copy): no substitution, decoding or
   trimming, so a binary file such as a PFX or a final newline arrives as
-  delivered. The key is a file name of the source (or a `generate` name); a
-  file not delivered yet is reported by `validate` and `install` as for any
-  `SECRET_FILES` source, and `init-config` does not need it.
+  delivered. The key is a file name of the source (or a `generate` name).
+  `validate`, `prepare` and `install` check it before anything is written;
+  `init-config` does not, because credentials may be delivered after it.
 - Each Secret gets one Pod volume `<secret-id>-mount`, shared by the
   containers of that Pod; the same key may be mounted at several paths and in
   several containers. The mount counts as a use of the Secret.
@@ -394,8 +394,12 @@ the volume names. `validate` reads no secret content and shows:
   outside `files/` or missing, two files with the same file name in one
   container, unknown settings, undeclared or another component's secrets;
   for a secret file, text around the reference, a Secret not in
-  `SECRET_FILES`, another component's Secret, and a key its sources do not
-  provide.
+  `SECRET_FILES`, another component's Secret, and (from `validate`,
+  `prepare` and `install`) a key its sources do not provide:
+
+  ```text
+  components/orders/config.defaults.yaml: MOUNTS.web./etc/ssl/certs/orders-ca.pem: orders-trust-chain has no key ca.pem; it provides ca.crt. Fix the key, or deliver a file named ca.pem in orders-trust-chain's source
+  ```
 - The demo: app1's `seed-database` init container gets
   `/seed-secret/020-report-role.sql`, which creates the login `todo_report`
   with the generated `app1-report-password`; the acceptance run logs in with it.
@@ -516,11 +520,14 @@ the resource is inactive.
 
 ## Secret values in ENVIRONMENT and MOUNTS
 
-A secret reaches a container only through `@@secret:<id>/<key>@@` in an
-`ENVIRONMENT` line or a `MOUNTS` file; the platform renders the generated
-Secrets (`<component>-<container>-env-secret`, `<component>-<container>-files`).
-A manifest may also mount or reference a `SECRET_FILES` Secret directly
-(`secretName`, `secretKeyRef`). No config file can define other composed
+A secret reaches a container in one of three ways. `@@secret:<id>/<key>@@` in
+an `ENVIRONMENT` line or a `MOUNTS` component file is substituted into text
+that the platform renders into the generated Secrets
+(`<component>-<container>-env-secret`, `<component>-<container>-files`); the
+rules below apply to that value. A `MOUNTS` line whose whole source is
+`@@secret:<id>/<key>@@` mounts the `SECRET_FILES` Secret's file itself,
+unchanged; nothing below applies to it. A manifest may also mount or
+reference a `SECRET_FILES` Secret directly (`secretName`, `secretKeyRef`). No config file can define other composed
 Secrets: `SECRET_TEMPLATES` in a config file is refused.
 
 `@@NAME@@` reads this component's effective text or integer setting (including

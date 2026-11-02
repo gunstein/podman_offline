@@ -158,9 +158,8 @@ def check_images(documents):
 def check_sources(config, config_path, documents, imported=(), component=None):
     """Declared files and the database password; reads no file contents.
 
-    lifecycle: materialize (check_secret_keys, then load_file_group after
-    generation), and
-    database_preflight, which first asks Podman whether the volume exists.
+    lifecycle: check_manifests (check_selected_keys), materialize
+    (load_file_group after generation), and database_preflight, which first asks Podman whether the volume exists.
     Without that query a missing password can mean either case, so the
     message names both remedies.
     """
@@ -174,6 +173,6 @@ def check_sources(config, config_path, documents, imported=(), component=None):
                     f"{error}, or restore the password from backup if its "
                     "database volume already exists"
                 ) from None
-    # Same order as materialize: selected Secret keys, then the sources.
-    rendering.check_secret_keys(config, config_path, documents, component)
+    # Same order as prepare and install: selected Secret keys, then the sources.
+    deploy.check_selected_keys(config, config_path, documents, component)
     rendering.check_file_sources(config, config_path, imported, component)

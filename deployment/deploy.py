@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, health, layout, registrations, templates
+from . import catalog, common, health, layout, mounts, registrations, templates
 from . import render as rendering
 from .output import log
 
@@ -395,6 +395,21 @@ def check_manifests(
     return documents
 
 
+def check_selected_keys(config, config_path, documents, component=None):
+    """Every Secret key a pod selects must be one its sources provide; no file is read.
+
+    Run by validate and by prepare and install before their first write, once
+    every credential must be delivered; not by init-config or the dev
+    preflight of dev/demo-credentials.sh, which run before credentials exist.
+    A MOUNTS secret file is checked first, so its error names the MOUNTS line.
+    """
+    if component:
+        mounts.check_keys(
+            component, rendering.secret_keys(config, config_path, documents, component)
+        )
+    rendering.check_secret_keys(config, config_path, documents, component)
+
+
 def image_archive():
     """Return the bundle's image archive; checked before any secret is generated."""
     archive = common.ROOT / "images/images.tar"
@@ -429,6 +444,10 @@ def prepare_components():
     state = common.BUILD / "dev"
     known, settings_by_component = dev_settings()
     checked = check_dev_components(known, settings_by_component)
+    for component, (config, documents) in checked.items():
+        check_selected_keys(
+            config, state / component / "config.yaml", documents, component
+        )
     for name in catalog.ROLES:
         if (state / name).is_symlink():
             raise common.DeployError(
@@ -1002,6 +1021,7 @@ def install_components():
                 ),
             )
         }
+        check_selected_keys(effective, config_path, checked[name][1], name)
         install_component_plan(descriptor, checked, known, imports, updates, removals)
 
 
