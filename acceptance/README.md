@@ -24,8 +24,14 @@ preflight before any change while the runtime account is missing, then
 installs with `sudo myproduct-admin <delivery>`, repeats unchanged without
 options or terminal, receives credentials with `--credentials` (kept on a
 repeat, a different file refused) and refuses `dnf remove`/`rpm -e` of a
-release and of the tools. The audit check requires no FANOTIFY/AVC denial.
-There is no runtime install yet (WP3).
+release and of the tools. The credentials are the demo web certificate made
+on DEV in the delivery layout (`admin-medium`); only it and the public CA
+certificate reach PROD. The runtime account then runs `myproduct` (WP3) in a
+plain environment without terminal: the first run with
+`--public-origin`/`--ip-address` installs platform and help (`/livez` 204,
+`/help/` 200, credentials moved out of `incoming/`), an unchanged repeat
+restarts nothing (systemd invocation IDs), and `myproduct help` restarts only
+help. The audit check requires no FANOTIFY/AVC denial.
 
 Focused lab results, exact tested commits, the six conversion points and the
 public versus internal comparison are in [latest results](RESULTS.md).

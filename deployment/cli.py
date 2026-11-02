@@ -3,12 +3,13 @@
 argparse with one subcommand per command (backlog 73). Newer tools call older
 releases' deploy.sh, so the accepted forms are a release interface: validate,
 prepare, install, init-layout, uninstall [<component>] [--delete-data],
-init-config <component> and status [--json]. Usage errors exit 2 on stderr,
+init-config <component> [--set KEY=VALUE ...] and status [--json]. Usage errors exit 2 on stderr,
 --help exits 0 on stdout, failures exit 1. Operator messages follow
 deployment/output.py.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 
@@ -20,7 +21,8 @@ from .output import audit, configure, log
 
 USAGE = (
     "./deploy.sh validate|prepare|install|uninstall [<component>] "
-    "[--delete-data] | init-layout | init-config <component> | status [--json]"
+    "[--delete-data] | init-layout | init-config <component> [--set KEY=VALUE ...] "
+    "| status [--json]"
 )
 # Commands that change the target; each start and result goes to the journal.
 AUDITED = ("init-layout", "init-config", "install", "uninstall")
@@ -31,6 +33,14 @@ def component_id(value):
     if not common.ID.fullmatch(value):
         raise argparse.ArgumentTypeError(f"invalid component ID {value!r}")
     return value
+
+
+def setting(value):
+    """KEY=VALUE for init-config --set; the release decides which keys exist."""
+    key, separator, text = value.partition("=")
+    if not separator or not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+        raise argparse.ArgumentTypeError(f"expected KEY=VALUE, got {value!r}")
+    return key, text
 
 
 def parser():
@@ -82,9 +92,17 @@ def parser():
     init = command(
         "init-config",
         "create the component's persistent config",
-        "./deploy.sh init-config <component>",
+        "./deploy.sh init-config <component> [--set KEY=VALUE ...]",
     )
     init.add_argument("component", type=component_id)
+    init.add_argument(
+        "--set",
+        type=setting,
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="a setting for the new config (the runtime command's answers)",
+    )
     show = command("status", "show installed components", "./deploy.sh status [--json]")
     show.add_argument("--json", action=Once, default=False, help="machine output")
     return root
@@ -124,7 +142,10 @@ def run(args):
         if args.command == "status":
             return status.status(json_output=args.json), note
         if args.command == "init-config":
-            deploy.init_config(args.component)
+            settings = dict(args.set)
+            if len(settings) != len(args.set):
+                raise common.DeployError("--set names a setting more than once")
+            deploy.init_config(args.component, settings)
         elif args.command == "uninstall":
             removed = deploy.uninstall(args.component, args.delete_data)
             if removed:

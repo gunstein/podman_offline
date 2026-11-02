@@ -32,6 +32,17 @@ class ParserTests(DeployFixture):
             (["install"], {"command": "install"}),
             (["init-layout"], {"command": "init-layout"}),
             (["init-config", "app1"], {"command": "init-config", "component": "app1"}),
+            (
+                [
+                    "init-config",
+                    "app1",
+                    "--set",
+                    "IP_ADDRESS=192.0.2.1",
+                    "--set",
+                    "X=a=b",
+                ],
+                {"set": [("IP_ADDRESS", "192.0.2.1"), ("X", "a=b")]},
+            ),
             (["uninstall"], {"component": None, "delete_data": False}),
             (["uninstall", "app1"], {"component": "app1", "delete_data": False}),
             (["uninstall", "--delete-data"], {"component": None, "delete_data": True}),
@@ -63,6 +74,8 @@ class ParserTests(DeployFixture):
             ["init-config"],
             ["init-config", "app1", "app2"],
             ["init-config", "my_identity"],
+            ["init-config", "app1", "--set", "lower=1"],
+            ["init-config", "app1", "--set", "NOVALUE"],
             ["uninstall", "app1", "app2"],
             ["uninstall", "--delete-data", "--delete-data"],
             ["uninstall", "--delete"],
@@ -97,7 +110,10 @@ class ParserTests(DeployFixture):
             ("prepare", "./deploy.sh prepare"),
             ("install", "./deploy.sh install"),
             ("init-layout", "./deploy.sh init-layout"),
-            ("init-config", "./deploy.sh init-config <component>"),
+            (
+                "init-config",
+                "./deploy.sh init-config <component> [--set KEY=VALUE ...]",
+            ),
             ("uninstall", "./deploy.sh uninstall [<component>] [--delete-data]"),
             ("status", "./deploy.sh status [--json]"),
         ):

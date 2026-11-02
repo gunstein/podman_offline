@@ -1036,7 +1036,13 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
     def test_admin_rpm_scenario_installs_only_through_the_admin_command(self):
         """--admin-rpm (backlog 69 WP2): RPMs from DEV, every PROD change by RPM tools."""
         self.harness.admin_rpm = True
-        for name in ("readiness", "reset", "source", "transfer_rpms"):
+        for name in (
+            "readiness",
+            "reset",
+            "source",
+            "transfer_rpms",
+            "transfer_medium",
+        ):
             setattr(self.harness, name, mock.Mock())
         self.harness.guest = mock.Mock(return_value="")
         self.harness.execute()
@@ -1054,9 +1060,14 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
                 "admin-repeat",
                 "admin-credentials",
                 "admin-erase-guard",
+                "runtime-first",
+                "runtime-repeat",
+                "runtime-reinstall",
             ],
         )
+        self.harness.transfer_medium.assert_called_once_with()
         self.assertIn(("DEV", "rpms"), calls)
+        self.assertIn(("DEV", "admin-medium"), calls)
         self.assertLess(calls.index(("DEV", "bundle")), calls.index(("DEV", "rpms")))
         script = Path(__file__).with_name("remote.sh").read_text()
         for _, action in calls:

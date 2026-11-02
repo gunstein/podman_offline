@@ -474,6 +474,13 @@ reinstall of a damaged identical package, a failed host preparation and an
 untrusted release. The credential writer runs for real as the test user.
 Also skipped without `rpmbuild`.
 
+`test_runtime.py` (backlog 69 WP3) runs `<product>` against installed releases
+with real descriptors and a fake `deploy.sh`: dependency order, the gateway's
+answers written with its new config, prompts and their options, an unchanged
+repeat, resume after a failed install, upgrade, one named component, and the
+credential move from `incoming/` (identical kept, different refused before any
+copy, links and interrupted copies refused, contents never printed).
+
 `test_deploy.py` and `test_bundle.py` use only the standard library
 and PyYAML. `test_certificates.py` requires bash and OpenSSL,
 with all key material in a temporary directory. All paths point into `TemporaryDirectory`; Podman/systemd calls and the user check

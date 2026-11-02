@@ -741,9 +741,13 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    newest release as the account instead of the trust poll (decision 5);
    `--credentials` in the mirrored layout (decision 8). Signature
    verification is phase 2; retirement is WP4.
-3. `<product>` (item 66 orchestration, prompts, config written atomically
-   with the answers, copy from `incoming/`), tests. No interface 2,
-   `delivered`, answers file or lock (decisions 3, 8 and 9).
+3. `<product>`, **implemented 2026-11-02** (no lab run yet): `tools/runtime.py`
+   in the tools RPM as `/usr/bin/<product>`; newest release per component in
+   dependency order, each through its own `deploy.sh`; pending first, completed
+   skipped, `<product> <component>` installs one again (decision 6); the
+   gateway's answers written with its new config by `init-config --set`
+   (decision 9); credentials moved from `incoming/` (decision 8). No interface
+   2, `delivered`, answers file or lock (decisions 3, 8 and 9).
 4. Retirement: `retire-check`, authorization record, guard scriptlets,
    one-package removal, repair, tests.
 5. Manual rewrite (including tools repair) and the AI operator walkthrough

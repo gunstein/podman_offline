@@ -997,6 +997,27 @@ run_admin() {
     printf '%s\n' "$admin_output"
     echo "admin exit=$admin_status"
 }
+# Run <product> as the runtime account with a plain login environment: no
+# XDG or Podman variables from the harness (the command and deploy.sh set
+# what they need), no terminal; keep its output and exit status for checks.
+run_runtime() {
+    local home
+    home=$(getent passwd "$service_user" | cut -d: -f6)
+    runtime_status=0
+    runtime_output=$(sudo -n -u "$service_user" env -i HOME="$home" USER="$service_user" \
+        LOGNAME="$service_user" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        bash -c 'cd "$HOME" && exec "$@"' bash "$product_name" "$@" </dev/null 2>&1) \
+        || runtime_status=$?
+    printf '%s\n' "$runtime_output"
+    echo "runtime exit=$runtime_status"
+}
+# Each product unit with its systemd invocation ID, which changes on a restart.
+invocations() {
+    local unit
+    for unit in "$product_name-platform.service" "$product_name-help.service"; do
+        printf '%s %s\n' "$unit" "$(user_service show -p InvocationID --value "$unit")"
+    done
+}
 # A command expected to fail; its output is indented so that an "Error:" line
 # from dnf is evidence here, not a harness failure.
 expect_refusal() {
@@ -2785,25 +2806,35 @@ admin-repeat)
     done
     echo "PASS: unchanged repeat installed nothing and asked nothing"
     ;;
+admin-medium)
+    # Demo-only supplier credentials on DEV, already in the delivery layout
+    # <component>/credentials/...; never generated on the production host.
+    [[ $role == DEV ]]
+    bash "$src/dev/generate-certificates.sh" --root "$base/medium" platform "$prod_host"
+    (cd "$base/medium" && find . -type f | sort)
+    ;;
 admin-credentials)
-    medium="$base/credentials-medium"
-    mkdir -p "$medium/help/credentials/lab"
-    (umask 077; printf 'lab-credential-%s\n' "$run" > "$medium/help/credentials/lab/value")
-    target="$install_root/incoming/help/credentials/lab/value"
+    # The web certificate and key, as delivered on a medium (backlog 69, decision 8).
+    medium="$base/medium"
+    key=platform/credentials/web/web.key
+    test -f "$medium/$key"
+    target="$install_root/incoming/$key"
     run_admin --credentials "$medium"
     [[ $admin_status == 0 ]]
-    if grep -Fq "lab-credential-" <<< "$admin_output"; then echo "FAIL: credential content printed"; exit 1; fi
+    if grep -Fq "PRIVATE KEY" <<< "$admin_output"; then echo "FAIL: credential content printed"; exit 1; fi
     [[ $(sudo -n stat -c '%U %a' "$target") == "$service_user 600" ]]
-    [[ $(sudo -n stat -c '%U %a' "$install_root/incoming/help/credentials/lab") == "$service_user 700" ]]
-    sudo -n cmp "$target" "$medium/help/credentials/lab/value"
+    [[ $(sudo -n stat -c '%U %a' "${target%/*}") == "$service_user 700" ]]
+    sudo -n cmp "$target" "$medium/$key"
     run_admin --credentials "$medium"
     [[ $admin_status == 0 ]]
-    grep -Fq "incoming/help/credentials/lab/value is already there" <<< "$admin_output"
-    printf 'different\n' > "$medium/help/credentials/lab/value"
-    run_admin --credentials "$medium"
+    grep -Fq "incoming/$key is already there" <<< "$admin_output"
+    other="$base/other-medium"
+    mkdir -p "$other/${key%/*}"
+    (umask 077; printf 'different\n' > "$other/$key")
+    run_admin --credentials "$other"
     [[ $admin_status == 1 ]]
     grep -Fq "already exist with other content; nothing was copied" <<< "$admin_output"
-    sudo -n grep -Fqx "lab-credential-$run" "$target"
+    sudo -n cmp "$target" "$medium/$key"
     echo "PASS: credentials copied as $service_user, kept on a repeat, a different file refused"
     ;;
 admin-erase-guard)
@@ -2818,6 +2849,53 @@ admin-erase-guard)
     rpm -q "$name" "$product_name-tools"
     rpm -V "$name"
     echo "PASS: plain dnf remove and rpm -e refused; packages intact"
+    ;;
+runtime-first)
+    # Backlog 69 WP3: the runtime account's one command, with the harness's
+    # answers as options; the port comes from host.conf.
+    run_runtime --public-origin "https://$prod_host:$port" --ip-address "$prod_ip"
+    [[ $runtime_status == 0 ]]
+    grep -Fxq "PASS: $product_name completed" <<< "$runtime_output"
+    for component in platform help; do
+        grep -Eq "^\[OK\] $component [0-9.]+ installed$" <<< "$runtime_output"
+    done
+    remaining=$(sudo -n find "$install_root/incoming" -mindepth 1)
+    [[ -z $remaining ]] || { echo "FAIL: delivered credentials left in incoming/"; exit 1; }
+    [[ $(sudo -n stat -c '%U %a' "$state/platform/credentials/web/web.key") == "$service_user 600" ]]
+    sudo -n cmp "$state/platform/credentials/web/web.key" "$base/medium/platform/credentials/web/web.key"
+    sudo -n grep -Fxq "HTTPS_PORT: $port" "$state/platform/config.yaml"
+    for path_code in "livez 204" "help/ 200"; do
+        set -- $path_code
+        http=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
+            --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/$1")
+        [[ $http == "$2" ]] || { echo "FAIL: /$1 answered $http, expected $2"; exit 1; }
+    done
+    invocations > "$base/invocations-first"
+    echo "PASS: $product_name installed platform and help; /livez 204, /help/ 200"
+    ;;
+runtime-repeat)
+    # No options and no terminal: nothing is asked, installed or restarted.
+    run_runtime
+    [[ $runtime_status == 0 ]]
+    if grep -Eq '^\[OK\] [a-z0-9-]+ [0-9.]+ installed$' <<< "$runtime_output"; then
+        echo "FAIL: a repeat installed a component"; exit 1
+    fi
+    invocations | diff "$base/invocations-first" -
+    echo "PASS: unchanged repeat installed and restarted nothing"
+    ;;
+runtime-reinstall)
+    # Decision 6: <product> <component> installs that one again with its config.
+    run_runtime help
+    [[ $runtime_status == 0 ]]
+    grep -Eq "^\[OK\] help [0-9.]+ installed$" <<< "$runtime_output"
+    invocations > "$base/invocations-reinstall"
+    first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
+    first_help=$(grep "^$product_name-help.service " "$base/invocations-first")
+    grep -Fxq "$first_platform" "$base/invocations-reinstall" \
+        || { echo "FAIL: platform restarted"; exit 1; }
+    if grep -Fxq "$first_help" "$base/invocations-reinstall"; then echo "FAIL: help was not restarted"; exit 1; fi
+    echo "PASS: $product_name help restarted help only"
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;

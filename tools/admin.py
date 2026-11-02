@@ -38,34 +38,42 @@ import pwd
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
-from collections import namedtuple
 from pathlib import Path
 
+import host
 import yaml
+from host import (
+    QUERY,
+    RELEASE_PATH,
+    Package,
+    ToolError,
+    ask,
+    component_of,
+    configured_port,
+    host_conf,
+    installed,
+    newest_releases,
+    prepared_account,
+    product_name,
+    run,
+    version_key,
+)
 
 from deployment import arguments, output
 
 log = output.log
 
-TOOLS = Path(__file__).resolve().parent
 # Host paths; tests point them at temporary files.
-LIB = Path("/var/lib")
-ETC = Path("/etc")
 JOURNAL = Path("/var/log/journal")
 OS_RELEASE = Path("/etc/os-release")
 FAPOLICYD_CONF = Path("/etc/fapolicyd/fapolicyd.conf")
-# Where a release RPM installs its tree (rpms.py); release RPMs are recognised by it.
-RELEASE_PATH = "/var/lib/{product}/releases/{name}"
 
 DEFAULT_PORT = 8443
 TRUST_WAIT = 30  # seconds for fapolicyd to learn about newly installed files
 CREDENTIAL_LIMIT = 1024 * 1024  # bytes per credential file
-ID = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
-VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 PRIVILEGED_GROUPS = {"root", "wheel", "adm", "systemd-journal"}
 
 # Phase 1 delivers unsigned RPMs (backlog 69, 2026-10-26). This is the one
@@ -98,45 +106,6 @@ REQUIRED = {
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
-# One RPM file or installed package of this product. component is "" for the
-# tools package; file is the private copy, or None for an installed package.
-Package = namedtuple("Package", "name version component file")
-QUERY = "%{NAME} %{VERSION} %{FILENAMES}\n"
-
-
-class AdminError(Exception):
-    """Error shown as a single ERROR line without a traceback."""
-
-
-def run(command, check=True, capture=True, stdin=None):
-    """Run a host command in the C locale; return the CompletedProcess."""
-    log.debug("+ " + " ".join(command))
-    pipe = subprocess.PIPE if capture else None
-    result = subprocess.run(
-        command,
-        input=stdin,
-        stdout=pipe,
-        stderr=pipe,
-        universal_newlines=True,  # noqa: UP021 - text= needs Python 3.7
-        env=dict(os.environ, LC_ALL="C"),
-        check=False,
-    )
-    if check and result.returncode != 0:
-        detail = (result.stderr or "").strip().splitlines()
-        raise AdminError(
-            f"{command[0]} {command[1]} failed (exit {result.returncode})"
-            + (": " + detail[-1] if detail else "")
-        )
-    return result
-
-
-def product_name():
-    return yaml.safe_load((TOOLS / "bundle.yaml").read_text())["product"]
-
-
-def version_key(version):
-    return tuple(int(part) for part in version.split("."))
-
 
 def as_account(account):
     """Run the rest of a command as the runtime account, without any privilege."""
@@ -163,29 +132,6 @@ def port_number(value):
     return int(value)
 
 
-def ask(question, default, option):
-    """Ask on the terminal; without one, name the option that gives the value."""
-    if not sys.stdin.isatty():
-        raise AdminError(f"Give {option}; there is no terminal to ask")
-    prompt = f"{question} [{default}]: " if default else f"{question}: "
-    answer = input(prompt).strip() or default
-    if not answer:
-        raise AdminError(f"No answer; run again and answer, or give {option}")
-    return answer
-
-
-def host_conf(product):
-    return ETC / product / "host.conf"
-
-
-def prepared_account(product):
-    """The runtime account of a prepared host: the owner of state/, else None."""
-    state = LIB / product / "state"
-    if not state.is_dir() or state.is_symlink():
-        return None
-    return pwd.getpwuid(state.lstat().st_uid)
-
-
 def answers(product, args):
     """The runtime account and HTTPS port: from the host once prepared, else asked.
 
@@ -195,7 +141,7 @@ def answers(product, args):
     prepared = prepared_account(product)
     account = prepared.pw_name if prepared else None
     if account and args.user and args.user != account:
-        raise AdminError(
+        raise ToolError(
             f"{product} runs as {account} on this host; another account is not supported"
         )
     account = (
@@ -205,23 +151,16 @@ def answers(product, args):
             "Runtime account (an existing login account without sudo)", None, "--user"
         )
     )
-    port = None
-    if host_conf(product).exists():
-        match = re.search(
-            r"^HTTPS_PORT=([0-9]+)$", host_conf(product).read_text(), re.MULTILINE
-        )
-        if not match:
-            raise AdminError(f"{host_conf(product)} has no HTTPS_PORT line; inspect it")
-        port = int(match.group(1))
+    port = configured_port(product)
     if port and args.port and args.port != port:
-        raise AdminError(
+        raise ToolError(
             f"{product} uses HTTPS port {port} on this host; changing it is not supported"
         )
     if not port and not args.port:
         try:
             args.port = port_number(ask("HTTPS port", str(DEFAULT_PORT), "--port"))
         except ValueError:
-            raise AdminError("The HTTPS port must be a number 1024-65535") from None
+            raise ToolError("The HTTPS port must be a number 1024-65535") from None
     return account, port or args.port
 
 
@@ -234,13 +173,13 @@ def check_os():
         re.search(r"^ID=[\"']?ol[\"']?$", text, re.MULTILINE)
         and re.search(r"^VERSION_ID=[\"']?9(\.[0-9]+)?[\"']?$", text, re.MULTILINE)
     ):
-        raise AdminError("This host is not Oracle Linux 9; use a supported host")
+        raise ToolError("This host is not Oracle Linux 9; use a supported host")
 
 
 def check_selinux():
     mode = run(["getenforce"]).stdout.strip()
     if mode != "Enforcing":
-        raise AdminError(
+        raise ToolError(
             f"SELinux is {mode}; the system administrator sets it to Enforcing"
         )
 
@@ -249,7 +188,7 @@ def check_services():
     for service in ("firewalld", "fapolicyd"):
         state = run(["systemctl", "is-active", service], check=False).stdout.strip()
         if state != "active":
-            raise AdminError(
+            raise ToolError(
                 f"{service} is {state or 'not active'}; "
                 "the system administrator starts and enables it"
             )
@@ -264,18 +203,18 @@ def check_fapolicyd():
             settings[match.group(1)] = match.group(2)
     trust = [item.strip() for item in settings.get("trust", "rpmdb,file").split(",")]
     if "rpmdb" not in trust:
-        raise AdminError(
+        raise ToolError(
             f"fapolicyd does not trust the RPM database (trust = {settings['trust']} "
             f"in {FAPOLICYD_CONF}); the security administrator adds rpmdb"
         )
     cache = settings.get("subj_cache_size", "")
     if not cache.isdigit() or int(cache) < 16381:
-        raise AdminError(
+        raise ToolError(
             f"Set subj_cache_size = 16381 in {FAPOLICYD_CONF} and restart fapolicyd "
             "(security administrator); a smaller cache denies Podman at start"
         )
     if run(["rpm", "-q", "rpm-plugin-fapolicyd"], check=False).returncode != 0:
-        raise AdminError(
+        raise ToolError(
             "Install rpm-plugin-fapolicyd from the OS media (system administrator); "
             "without it fapolicyd does not trust newly installed RPM files"
         )
@@ -295,12 +234,12 @@ def check_journal():
             if key in values:
                 values[key] = value
     if values["Storage"] not in ("auto", "persistent"):
-        raise AdminError(
+        raise ToolError(
             f"journald has Storage={values['Storage']}; the system administrator "
             "allows persistent journals (Storage=auto or persistent)"
         )
     if values["SplitMode"] != "uid":
-        raise AdminError(
+        raise ToolError(
             f"journald has SplitMode={values['SplitMode']}; "
             "the system administrator sets SplitMode=uid"
         )
@@ -311,16 +250,16 @@ def check_account(name):
     try:
         account = pwd.getpwnam(name)
     except KeyError:
-        raise AdminError(
+        raise ToolError(
             f"Account {name} does not exist; create it with the organisation's "
             "normal procedure first"
         ) from None
     if account.pw_uid < 1000 or 61184 <= account.pw_uid <= 65535 or account.pw_gid == 0:
-        raise AdminError(
+        raise ToolError(
             f"{name} has UID {account.pw_uid}; use an ordinary login account (UID 1000 or higher)"
         )
     if account.pw_shell.endswith(("/nologin", "/false")):
-        raise AdminError(
+        raise ToolError(
             f"{name} cannot log in (shell {account.pw_shell}); use a login account"
         )
     groups = set()
@@ -331,7 +270,7 @@ def check_account(name):
             groups.add(str(gid))
     privileged = sorted(groups & PRIVILEGED_GROUPS)
     if privileged:
-        raise AdminError(
+        raise ToolError(
             f"{name} is in the privileged group(s) {', '.join(privileged)}; "
             "use an account without them"
         )
@@ -339,7 +278,7 @@ def check_account(name):
     # Only the complete denial proves no grants; OL9 may exit 0 either way.
     denial = r"User " + re.escape(name) + r" is not allowed to run sudo on [^\n]+\."
     if not re.fullmatch(denial, (result.stdout + result.stderr).strip()):
-        raise AdminError(
+        raise ToolError(
             f"{name} may use sudo, or its sudo rights could not be read "
             f"(sudo -l -U {name}); the runtime account must have no sudo rights"
         )
@@ -353,7 +292,7 @@ def preflight(account):
         if shutil.which(executable) is None
     ]
     if missing:
-        raise AdminError(
+        raise ToolError(
             "Preflight stopped before any change:\n- " + "\n- ".join(missing)
         )
     errors = []
@@ -367,10 +306,10 @@ def preflight(account):
     ):
         try:
             check()
-        except (AdminError, OSError) as error:
+        except (ToolError, OSError) as error:
             errors.append(str(error))
     if errors:
-        raise AdminError(
+        raise ToolError(
             "Preflight stopped before any change:\n- " + "\n- ".join(errors)
         )
     log.info("[OK] preflight")
@@ -379,45 +318,17 @@ def preflight(account):
 # Packages ----------------------------------------------------------------
 
 
-def component_of(product, name, version, first_file):
-    """'' for the tools package, the component for a release, None otherwise."""
-    if name == product + "-tools":
-        return ""
-    prefix, suffix = product + "-", "-" + version
-    if not (
-        VERSION.fullmatch(version) and name.startswith(prefix) and name.endswith(suffix)
-    ):
-        return None
-    component = name[len(prefix) : -len(suffix)]
-    if ID.fullmatch(component) and first_file == RELEASE_PATH.format(
-        product=product, name=name
-    ):
-        return component
-    return None
-
-
-def installed(product):
-    """This product's installed packages, from the RPM database."""
-    packages = []
-    for line in run(["rpm", "-qa", "--queryformat", QUERY]).stdout.splitlines():
-        name, version, first_file = (line.split(" ", 2) + ["", ""])[:3]
-        component = component_of(product, name, version, first_file)
-        if component is not None:
-            packages.append(Package(name, version, component, None))
-    return packages
-
-
 def copy_regular(source, target):
     """Copy a regular file without following a link or opening a device."""
     try:
         descriptor = os.open(str(source), FILE_FLAGS)
     except OSError as error:
-        raise AdminError(
+        raise ToolError(
             f"Cannot read {source} ({error.strerror}); deliver regular files"
         ) from None
     with os.fdopen(descriptor, "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            raise AdminError(f"{source} is not a regular file; deliver regular files")
+            raise ToolError(f"{source} is not a regular file; deliver regular files")
         with open(str(target), "xb") as copy:
             shutil.copyfileobj(stream, copy)
 
@@ -466,7 +377,7 @@ def select(product, delivery, packages):
         latest = max(versions, key=version_key) if versions else None
         if package.version in versions:
             if content("-qp", str(package.file)) != content("-q", package.name):
-                raise AdminError(
+                raise ToolError(
                     f"{package.file.name}: {package.name} {package.version} is installed "
                     "with other content; one version has one content, so ask the "
                     "supplier for a new version"
@@ -480,7 +391,7 @@ def select(product, delivery, packages):
             else:
                 log.info(f"[OK] {package.name} {package.version} is installed")
         elif latest and version_key(latest) > version_key(package.version):
-            raise AdminError(
+            raise ToolError(
                 f"{package.file.name} is older than the installed "
                 f"{component or 'tools'} {latest}; deliver {latest} or newer"
             )
@@ -503,7 +414,7 @@ def install_packages(product, args, account, port):
     """Steps 3 to 5; returns only when the newest tools are running."""
     directory = Path(args.directory)
     if not directory.is_dir():
-        raise AdminError(
+        raise ToolError(
             f"{directory} is not a directory; mount the medium or give the directory "
             "with the RPM files"
         )
@@ -541,14 +452,14 @@ def prepare_host(product, account, port):
         log.info(f"[OK] persistent journal enabled for the whole host ({JOURNAL})")
     run(["systemd-tmpfiles", "--create", "--prefix", str(JOURNAL)])
     run(["journalctl", "--flush"])
-    script = TOOLS / "scripts/prepare-host.sh"
+    script = host.TOOLS / "scripts/prepare-host.sh"
     command = ["bash", str(script), "--port", str(port), "--user", account.pw_name]
     if run(command, check=False, capture=False).returncode != 0:
-        raise AdminError(
+        raise ToolError(
             f"Host preparation stopped; fix what it names, then run sudo {product}-admin again"
         )
     # The one source of the port for the runtime command; public, root-owned.
-    directory = ETC / product
+    directory = host.ETC / product
     directory.mkdir(mode=0o755, exist_ok=True)
     partial = directory / "host.conf.partial"
     partial.write_text(
@@ -566,14 +477,7 @@ def check_trust(product, account, packages):
     denies to a non-root account unless it trusts the files. fapolicyd learns
     about new RPM files shortly after the transaction, so retry for a while.
     """
-    newest = {}
-    for package in packages:
-        current = newest.get(package.component)
-        if package.component and (
-            current is None
-            or version_key(package.version) > version_key(current.version)
-        ):
-            newest[package.component] = package
+    newest = newest_releases(packages)
     if not newest:
         log.warning(
             f"WARNING: no {product} release is installed yet; deliver the release RPMs"
@@ -597,7 +501,7 @@ def check_trust(product, account, packages):
                 break
             if time.monotonic() >= deadline:
                 detail = (result.stderr or "").strip().splitlines()
-                raise AdminError(
+                raise ToolError(
                     f"{account.pw_name} cannot run {release}/deploy.sh"
                     + (f" ({detail[-1]})" if detail else "")
                     + "; fapolicyd must trust RPM-installed files: the security "
@@ -617,7 +521,7 @@ def install(product, args):
     check_trust(product, account, installed(product))
     log.info(
         f"[OK] next: log in as {account_name} (at the console, or ssh "
-        f"{account_name}@<server>); releases are in {LIB / product / 'releases'}"
+        f"{account_name}@<server>); releases are in {host.LIB / product / 'releases'}"
     )
 
 
@@ -628,15 +532,13 @@ def read_file(parent, name, path):
     try:
         descriptor = os.open(name, FILE_FLAGS, dir_fd=parent)
     except OSError as error:
-        raise AdminError(f"Cannot read {path} ({error.strerror})") from None
+        raise ToolError(f"Cannot read {path} ({error.strerror})") from None
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode):
-            raise AdminError(
-                f"{path} is not a regular file; deliver regular files only"
-            )
+            raise ToolError(f"{path} is not a regular file; deliver regular files only")
         if info.st_size > CREDENTIAL_LIMIT:
-            raise AdminError(
+            raise ToolError(
                 f"{path} is larger than {CREDENTIAL_LIMIT} bytes; is it a credential?"
             )
         return stream.read()
@@ -657,7 +559,7 @@ def read_tree(parent, name, path, relative, files):
                     descriptor, entry, f"{path}/{entry}"
                 )
             else:
-                raise AdminError(
+                raise ToolError(
                     f"{path}/{entry} is a link or special file; deliver regular files only"
                 )
     finally:
@@ -678,7 +580,7 @@ def read_credentials(product, directory, components):
                 if "credentials" not in os.listdir(inner):
                     continue
                 if entry not in components:
-                    raise AdminError(
+                    raise ToolError(
                         f"{directory / entry}/credentials: no {product} release of "
                         f"{entry} is installed; check the directory name"
                     )
@@ -784,16 +686,16 @@ for path, data in sorted(files.items()):
 
 def hand_over_credentials(product, directory):
     """Copy delivered credentials into incoming/ as the runtime account."""
-    incoming = LIB / product / "incoming"
+    incoming = host.LIB / product / "incoming"
     account = prepared_account(product)
     if account is None or account.pw_uid == 0 or not incoming.is_dir():
-        raise AdminError(
+        raise ToolError(
             f"{incoming} is not prepared; first run sudo {product}-admin <delivery directory>"
         )
     components = {package.component for package in installed(product)}
     files = read_credentials(product, directory, components - {""})
     if not files:
-        raise AdminError(
+        raise ToolError(
             f"No <component>/credentials/ directory in {directory}; see the manual for the layout"
         )
     payload = json.dumps(
@@ -806,7 +708,7 @@ def hand_over_credentials(product, directory):
     for line in result.stdout.splitlines():
         log.info(line)
     if result.returncode != 0:
-        raise AdminError(
+        raise ToolError(
             result.stderr.strip().replace("ERROR: ", "", 1)
             or f"Copying into {incoming} failed (exit {result.returncode})"
         )
@@ -879,7 +781,7 @@ def main(command_line=None):
             hand_over_credentials(product, Path(args.directory))
         else:
             install(product, args)
-    except (AdminError, OSError, yaml.YAMLError) as error:
+    except (ToolError, OSError, yaml.YAMLError) as error:
         log.error(f"ERROR: {error}")
         output.audit(action + ": failed")
         return 1

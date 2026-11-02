@@ -13,8 +13,9 @@ An installed release can be erased only by the administrator command
 writes the authorization for one package and deletes it afterwards.
 
 The tools RPM, dist/rpm/<product>-tools-<version>-1.noarch.rpm, carries the
-administrator command /usr/sbin/<product>-admin (tools/admin.py) with the host
-preparation script and the two deployment modules it imports, under
+administrator command /usr/sbin/<product>-admin (tools/admin.py) and the
+runtime command /usr/bin/<product> (tools/runtime.py), with the host
+preparation script and the two deployment modules they import, under
 /usr/libexec/<product>-tools/. Its version is tools/VERSION: raise it whenever
 one of TOOLS_FILES changes. It has the same erase guard; an upgrade replaces it.
 
@@ -95,22 +96,25 @@ TOOLS_SPEC = (
 Name: {product}-tools
 Version: {version}
 Release: 1
-Summary: {product} administrator command
+Summary: {product} administrator and runtime commands
 License: Proprietary
 BuildArch: noarch
 AutoReqProv: no
 Requires: python3, python3-pyyaml, util-linux, rpm, dnf
 %description
-sudo {product}-admin installs delivered {product} RPMs and prepares the host.
+sudo {product}-admin installs delivered {product} RPMs and prepares the host;
+{product}, run by the runtime account, installs the {product} components.
 %install
-mkdir -p %{{buildroot}}/usr/sbin %{{buildroot}}/usr/libexec
+mkdir -p %{{buildroot}}/usr/sbin %{{buildroot}}/usr/bin %{{buildroot}}/usr/libexec
 cp -a {tree}/{product}-admin %{{buildroot}}/usr/sbin/{product}-admin
+cp -a {tree}/{product} %{{buildroot}}/usr/bin/{product}
 cp -a {tree}/{product}-tools %{{buildroot}}/usr/libexec/{product}-tools
 %preun
 {guard}
 %files
 %defattr(-,root,root,-)
 /usr/sbin/{product}-admin
+/usr/bin/{product}
 /usr/libexec/{product}-tools
 """
 )
@@ -118,17 +122,19 @@ cp -a {tree}/{product}-tools %{{buildroot}}/usr/libexec/{product}-tools
 # Source files of the tools RPM, below /usr/libexec/<product>-tools/.
 TOOLS_FILES = {
     "admin.py": "tools/admin.py",
+    "host.py": "tools/host.py",
+    "runtime.py": "tools/runtime.py",
     "scripts/prepare-host.sh": "scripts/prepare-host.sh",
     "deployment/__init__.py": "deployment/__init__.py",
     "deployment/arguments.py": "deployment/arguments.py",
     "deployment/output.py": "deployment/output.py",
 }
 
-# /usr/sbin/<product>-admin. -E -s keep the environment and user site out;
-# -B writes no bytecode next to the RPM's files.
+# /usr/sbin/<product>-admin and /usr/bin/<product>. -E -s keep the
+# environment and user site out; -B writes no bytecode next to the RPM's files.
 WRAPPER = """\
 #!/bin/sh
-exec /usr/bin/python3 -E -s -B /usr/libexec/{product}-tools/admin.py "$@"
+exec /usr/bin/python3 -E -s -B /usr/libexec/{product}-tools/{script} "$@"
 """
 
 
@@ -270,8 +276,12 @@ def build_tools(product, out):
             shutil.copyfile(str(ROOT / source), str(libexec / installed))
         # admin.py and prepare-host.sh read the product name here.
         (libexec / "bundle.yaml").write_text(yaml.safe_dump({"product": product}))
-        (tree / f"{product}-admin").write_text(WRAPPER.format(product=product))
-        (tree / f"{product}-admin").chmod(0o755)
+        for command, script in (
+            (f"{product}-admin", "admin.py"),
+            (product, "runtime.py"),
+        ):
+            (tree / command).write_text(WRAPPER.format(product=product, script=script))
+            (tree / command).chmod(0o755)
         (libexec / "scripts/prepare-host.sh").chmod(0o755)
         normalize_modes(tree)
         text = TOOLS_SPEC.format(
@@ -330,7 +340,7 @@ def parser():
         "--tools",
         action=arguments.Once,
         default=False,
-        help="build the tools RPM (the administrator command)",
+        help="build the tools RPM (the administrator and runtime commands)",
     )
     result.add_argument(
         "--verbose", action=arguments.Once, default=False, help="also show each command"

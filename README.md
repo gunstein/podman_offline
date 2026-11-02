@@ -415,8 +415,27 @@ preparation. `--credentials` copies `<directory>/<component>/credentials/...`
 into `/var/lib/<product>/incoming/` with the same layout as the runtime
 account (0600 files); a file that already exists with other content stops the
 copy. Signature checking is off in phase 1 (`DNF` in `tools/admin.py`).
-The runtime command (WP3) that uses `incoming/` and `host.conf` does not exist
-yet, and the production manual still describes the signed bundle flow.
+
+The runtime account then logs in (console or SSH) and runs one command, also
+after an interruption or a new delivery (WP3, `tools/runtime.py`):
+
+```sh
+myproduct                    # asks the public address and IP address once
+myproduct help               # installs one component again with its config
+```
+
+It uses the newest installed release of each component, in dependency order,
+each through its own `deploy.sh`: `init-layout`, then `status --json`; a
+pending component first, then every component not installed in its release's
+version (completed ones are skipped). A component without config gets one
+from `init-config`; for the gateway the answers and the port from `host.conf`
+are written into the new config in one step (`init-config <component> --set
+KEY=VALUE`), so an interruption before that asks again. Delivered credentials
+move from `incoming/<component>/` to `state/<component>/` (identical files
+kept, a different one stops, the incoming copy is removed once verified), then
+`deploy.sh install` and finally `status`. Without a terminal, a missing answer
+names its option (`--public-origin`, `--ip-address`). The production manual
+still describes the signed bundle flow until WP5.
 
 ### Installation compatibility
 

@@ -86,6 +86,60 @@ class ConfigTests(ConfigFixture):
         self.assertFalse((target.parent / "private").exists())
         self.process.assert_not_called()
 
+    def test_init_writes_set_values_with_the_defaults_in_one_step(self):
+        """--set: the runtime command's answers go into the new config, typed."""
+        shutil.rmtree(common.STATE / "platform")
+        self.write(
+            "components/platform/config.defaults.yaml",
+            "PUBLIC_ORIGIN: https://defaults.test:8443\nHTTPS_PORT: 8443\n"
+            "IP_ADDRESS: 127.0.0.1\nCHOICE: release\n",
+        )
+        self.select("platform")
+        settings = {
+            "PUBLIC_ORIGIN": "https://shop.example:9443",
+            "HTTPS_PORT": "9443",
+            "IP_ADDRESS": "192.0.2.10",
+        }
+        for key, value, cause in (
+            ("SECRET_FILES", "x", "not a setting of platform"),
+            ("UNKNOWN", "x", "not a setting of platform; settings: CHOICE, HTTPS_PORT"),
+            ("HTTPS_PORT", "high", "expected a number"),
+        ):
+            with self.subTest(key=key), self.assertRaisesRegex(
+                common.DeployError, cause
+            ):
+                deploy.init_config("platform", dict(settings, **{key: value}))
+            self.assertFalse((common.STATE / "platform/config.yaml").exists())
+        deploy.init_config("platform", settings)
+        target = common.STATE / "platform/config.yaml"
+        config = rendering.load_config(target)
+        self.assertEqual(config["PUBLIC_ORIGIN"], "https://shop.example:9443")
+        self.assertEqual(config["HTTPS_PORT"], 9443)
+        self.assertEqual(config["IP_ADDRESS"], "192.0.2.10")
+        self.assertEqual(config["CHOICE"], "release")
+        self.assertEqual(self.mode(target), 0o600)
+        self.assertEqual(
+            sorted(p.name for p in target.parent.iterdir()), ["config.yaml"]
+        )
+        # An existing config is never changed, and answers for it are refused.
+        before = target.read_bytes()
+        with self.assertRaisesRegex(common.DeployError, "--set only applies to a new"):
+            deploy.init_config("platform", {"IP_ADDRESS": "192.0.2.11"})
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_an_interrupted_init_leaves_no_config(self):
+        """A crash while writing leaves no config.yaml, so the next run asks again."""
+        shutil.rmtree(common.STATE / "platform")
+        self.select("platform")
+        with mock.patch.object(
+            deploy.os, "link", side_effect=OSError("interrupted")
+        ), self.assertRaisesRegex(OSError, "interrupted"):
+            deploy.init_config("platform")
+        directory = common.STATE / "platform"
+        self.assertEqual(list(directory.iterdir()), [])
+        deploy.init_config("platform")
+        self.assertTrue((directory / "config.yaml").is_file())
+
     def test_init_preserves_empty_invalid_and_valid_existing_files(self):
         """Existence wins over contents; ordinary install remains responsible for validation."""
         for contents in ("", "[invalid", "HTTPS_PORT: 9000\n"):

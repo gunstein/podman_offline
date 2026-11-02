@@ -1104,21 +1104,56 @@ class Run:
         self.meta["rpms"] = names
         self.write("rpms=" + json.dumps(names) + "\n")
 
+    def transfer_medium(self):
+        """The demo supplier's credential medium: DEV to PROD through private files.
+
+        Only platform/credentials/ (the delivery layout) and the public CA
+        certificate travel; the CA key stays on DEV.
+        """
+        assert self.private is not None
+        base = "podman-offline-acceptance/" + self.id
+        local = self.private / "medium"
+        (local / "PKI/private").mkdir(parents=True, mode=0o700)
+        self.command(
+            SCP + ["-r", self.host("DEV") + ":" + base + "/medium/platform", local]
+        )
+        self.command(
+            SCP
+            + [
+                self.host("DEV") + ":" + base + "/medium/PKI/private/ca.crt",
+                local / "PKI/private/ca.crt",
+            ]
+        )
+        self.ssh("PROD", "mkdir -m 700 " + shlex.quote(base + "/medium"))
+        self.command(
+            SCP
+            + [
+                "-r",
+                local / "platform",
+                local / "PKI",
+                self.host("PROD") + ":" + base + "/medium/",
+            ]
+        )
+        shutil.rmtree(str(local))
+
     def execute_admin_rpm(self):
         """Backlog 69 WP2 on a real host: the tools RPM and <product>-admin.
 
         A focused scenario outside the fixed matrix, until WP6 replaces the
         release.py flow. DEV builds the platform and help release RPMs and the
-        tools RPM; PROD installs the tools with dnf (the bootstrap), sees the
-        preflight stop before any change, then installs, repeats unchanged,
-        receives credentials and refuses a plain erase. No runtime install:
-        that is the runtime command of WP3.
+        tools RPM and the demo supplier's credential medium; PROD installs the
+        tools with dnf (the bootstrap), sees the preflight stop before any
+        change, then installs, repeats unchanged, receives credentials and
+        refuses a plain erase. The runtime account then runs <product> (WP3):
+        first installation, an unchanged repeat and one component again.
         """
         for action in ("build-images", "pull-images"):
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
         self.step("04-rpms", lambda: self.guest("DEV", "rpms"))
+        self.step("04-admin-medium", lambda: self.guest("DEV", "admin-medium"))
         self.step("05-transfer-rpms", self.transfer_rpms)
+        self.step("05-transfer-medium", self.transfer_medium)
         for action in (
             "admin-bootstrap",
             "admin-preflight-stop",
@@ -1129,6 +1164,8 @@ class Run:
             "admin-erase-guard",
         ):
             self.step("06-" + action, lambda a=action: self.guest("PROD", a))
+        for action in ("runtime-first", "runtime-repeat", "runtime-reinstall"):
+            self.step("07-" + action, lambda a=action: self.guest("PROD", a))
         self.finished = True
 
     def execute_whoami(self):

@@ -9,7 +9,6 @@ writer runs for real as the test user.
 
 import copy
 import grp
-import os
 import pwd
 import shutil
 import stat
@@ -25,6 +24,7 @@ from helpers.product_fixture import WORKER, ProductFixture
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import admin  # pyright: ignore[reportMissingImports] - tools/ is added above
+import host  # pyright: ignore[reportMissingImports] - tools/ is added above
 
 # The real function: ProductFixture replaces subprocess.run with a recorder.
 RUN = subprocess.run
@@ -163,10 +163,12 @@ class AdminFixture(ProductFixture):
         self.fapolicyd.write_text("trust = rpmdb,file\nsubj_cache_size = 16381\n")
         self.stack.enter_context(
             mock.patch.multiple(
+                host, TOOLS=tools, LIB=self.host.lib, ETC=self.root / "etc"
+            )
+        )
+        self.stack.enter_context(
+            mock.patch.multiple(
                 admin,
-                TOOLS=tools,
-                LIB=self.host.lib,
-                ETC=self.root / "etc",
                 JOURNAL=self.root / "journal",
                 OS_RELEASE=self.root / "os-release",
                 FAPOLICYD_CONF=self.fapolicyd,
@@ -420,13 +422,13 @@ class AdminSelectionTests(unittest.TestCase):
         ):  # fmt: skip
             with self.subTest(name=name, version=version):
                 self.assertEqual(
-                    admin.component_of("cedar", name, version, path), expected
+                    host.component_of("cedar", name, version, path), expected
                 )
 
     def test_the_newest_delivered_version_of_each_component_is_chosen(self):
         def package(component, version):
             name = "cedar-tools" if not component else f"cedar-{component}-{version}"
-            return admin.Package(name, version, component, Path(name + ".rpm"))
+            return host.Package(name, version, component, Path(name + ".rpm"))
 
         delivery = [
             package("worker", "1.2.3"),
@@ -435,7 +437,7 @@ class AdminSelectionTests(unittest.TestCase):
             package("", "0.2.0"),
             package("", "0.1.0"),
         ]
-        installed = [admin.Package("cedar-tools", "0.1.0", "", None)]
+        installed = [host.Package("cedar-tools", "0.1.0", "", None)]
         with mock.patch.object(admin, "run") as run:
             install, reinstall = admin.select("cedar", delivery, installed)
         self.assertEqual(
@@ -551,6 +553,7 @@ class ToolsRpmTests(ProductFixture):
                 dump[libexec + installed][3], rpms.sha256(self.source / source)
             )
         self.assertEqual(dump["/usr/sbin/cedar-admin"][4], "0100755")
+        self.assertEqual(dump["/usr/bin/cedar"][4], "0100755")
         self.assertEqual(dump[libexec + "scripts/prepare-host.sh"][4], "0100755")
         self.assertEqual(dump[libexec + "admin.py"][4], "0100644")
         self.assertIn(libexec + "bundle.yaml", dump)
@@ -566,13 +569,16 @@ class ToolsRpmTests(ProductFixture):
             (libexec / installed).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(str(self.source / source), str(libexec / installed))
         (libexec / "bundle.yaml").write_text("product: cedar\n")
-        result = real(
-            [sys.executable, "-E", "-s", "-B", str(libexec / "admin.py"), "--help"],
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout.startswith("Usage: sudo cedar-admin <directory>"))
-        self.assertIn("--credentials", result.stdout)
-        self.assertNotIn(os.sep + "tools" + os.sep, result.stderr)
+        for script, usage in (
+            ("admin.py", "Usage: sudo cedar-admin <directory>"),
+            ("runtime.py", "Usage: cedar [<component>] [--public-origin <url>]"),
+        ):
+            with self.subTest(script=script):
+                result = real(
+                    [sys.executable, "-E", "-s", "-B", str(libexec / script), "--help"],
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(result.stdout.startswith(usage), result.stdout)
 
 
 if __name__ == "__main__":

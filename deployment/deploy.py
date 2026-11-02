@@ -18,8 +18,44 @@ from . import render as rendering
 from .output import log
 
 
-def init_config(component):
-    """Exclusively materialize one bundled config; never create private input files."""
+def setting_values(component, settings):
+    """Typed values for init-config --set: only the release's own scalar settings.
+
+    A value takes the type of the release default (a number stays a number);
+    a file group, ENVIRONMENT or MOUNTS cannot be set this way.
+    """
+    defaults = catalog.release_defaults(component)
+    values = {}
+    for key, text in settings.items():
+        default = defaults.get(key)
+        if key not in defaults or isinstance(default, (dict, list)) or default is None:
+            raise common.DeployError(
+                f"--set {key}: not a setting of {component}; settings: "
+                + ", ".join(
+                    sorted(
+                        name
+                        for name, value in defaults.items()
+                        if not isinstance(value, (dict, list)) and value is not None
+                    )
+                )
+            )
+        if isinstance(default, bool) or not isinstance(default, int):
+            values[key] = text
+        elif text.isdigit():
+            values[key] = int(text)
+        else:
+            raise common.DeployError(f"--set {key}: expected a number")
+    return values
+
+
+def init_config(component, settings=None):
+    """Exclusively materialize one bundled config; never create private input files.
+
+    settings (KEY: text, from --set) are written into the new config with the
+    defaults, in one atomic step: the file appears complete or not at all, so
+    the runtime command asks again after an interruption (backlog 69,
+    decision 9). An existing config is never changed.
+    """
     production_environment()
     descriptor = bundle_descriptor()
     if component != descriptor["name"]:
@@ -33,14 +69,19 @@ def init_config(component):
         if path.is_symlink():
             raise common.DeployError(f"Refuse symlinked config path: {path}")
     if target.exists():
+        if settings:
+            raise common.DeployError(
+                f"{target} exists; --set only applies to a new config, edit it instead"
+            )
         log.info(
             f"[OK] Existing config retained unchanged: {target}; install validates it"
         )
         return
+    values = setting_values(component, settings or {})
     # The gateway's public settings complete the defaults for validation only;
     # they stay in the gateway's config.yaml, which install reads again.
     public = catalog.gateway_settings(descriptor["public_from"])
-    config = rendering.component_defaults(component, overrides=public)
+    config = rendering.component_defaults(component, overrides={**values, **public})
     # The release's own declarations (ENVIRONMENT, MOUNTS, manifests) are
     # checked as validate does, before the file exists; credentials may follow.
     validate_component(
@@ -54,10 +95,21 @@ def init_config(component):
     config = {key: value for key, value in config.items() if key not in public}
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
-    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # Written beside the target, then linked: link fails if the config exists,
+    # and a reader never sees a partly written file.
+    partial = target.with_name(target.name + ".partial")
+    if partial.is_symlink() or partial.exists():
+        partial.unlink()
+    fd = os.open(str(partial), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream, sort_keys=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        os.link(str(partial), str(target))
+    finally:
+        partial.unlink()
     log.info(
         f"[OK] Initialized {target}; edit config and prepare credentials before install"
     )
