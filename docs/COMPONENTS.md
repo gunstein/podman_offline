@@ -318,17 +318,37 @@ Rules, each refused before anything is written with the file and the next step:
 
 ### Files with secrets: `MOUNTS`
 
-A container that needs a file with a password in it (for example SQL that
-creates a role) gets it from `MOUNTS`. The file is a template under
-`components/<id>/files/`, shipped with the release:
+`MOUNTS` puts single files into a container without `volumes` or
+`volumeMounts` in the manifest. Each line is a path in the container and one
+of two kinds of source:
+
+| Source | Example | What arrives in the container |
+| --- | --- | --- |
+| Component file | `sql/10-roles.sql` | The file under `components/<id>/files/`, **rendered**: `@@...@@` is filled in at install |
+| Secret file | `'@@secret:orders-trust-chain/ca.crt@@'` | One key of the component's own `SECRET_FILES` Secret, **unchanged**: the same bytes as the delivered or generated file |
+
+A complete example: the `migrate` init container gets SQL that creates a
+role with a generated password (rendered) and the CA certificate it uses to
+reach the database (unchanged), and the `web` container gets the same CA
+certificate:
 
 ```yaml
 # components/orders/config.defaults.yaml
-# Files mounted into each container. They come with the release; @@...@@ is
-# filled in at install. Never copied to config.yaml.
+SECRET_FILES:
+  orders-database-password:
+  - path: credentials/database
+    generate:
+    - password
+  orders-trust-chain:
+  - path: cert                # <state>/orders/cert/ca.crt, delivered
+# Files mounted into each container. They come with the release; a component
+# file's @@...@@ is filled in at install. Never copied to config.yaml.
 MOUNTS:
   migrate:
-    /sql/10-roles.sql: sql/10-roles.sql      # path in the container: file under files/
+    /sql/10-roles.sql: sql/10-roles.sql                       # component file
+    /run/secrets/ca.crt: '@@secret:orders-trust-chain/ca.crt@@'  # secret file
+  web:
+    /etc/ssl/certs/orders-ca.pem: '@@secret:orders-trust-chain/ca.crt@@'
 ```
 
 ```sql
@@ -336,23 +356,50 @@ MOUNTS:
 ALTER ROLE @@DB_USER@@ PASSWORD '@@secret:orders-database-password/password@@';
 ```
 
+Component files:
+
 - The placeholders are those of `ENVIRONMENT`: a setting or this component's
   own declared secret, with the same text rules for the substituted value.
-  The rest of the file is copied as written.
-- A container's files go into the Secret `<component>-<container>-files`. The
-  platform adds the volume `<container>-files` to the Pod and mounts each file
-  read-only at its path; nobody writes those names. `validate` shows:
+  The rest of the file is copied as written; it must be UTF-8 text.
+- A container's component files go into the Secret
+  `<component>-<container>-files`, mounted from the Pod volume
+  `<container>-files`.
+
+Secret files:
+
+- The source is exactly one whole reference `@@secret:<secret-id>/<key>@@` to
+  the component's own `SECRET_FILES`; nothing else may be around it. The
+  existing Secret is mounted itself (no copy): no substitution, decoding or
+  trimming, so a binary file such as a PFX or a final newline arrives as
+  delivered. The key is a file name of the source (or a `generate` name).
+  `validate`, `prepare` and `install` check it before anything is written;
+  `init-config` does not, because credentials may be delivered after it.
+- Each Secret gets one Pod volume `<secret-id>-mount`, shared by the
+  containers of that Pod; the same key may be mounted at several paths and in
+  several containers. The mount counts as a use of the Secret.
+
+For both, the platform adds the volumes and mounts each file read-only
+(`subPath`) at its path, in regular and init containers alike; nobody writes
+the volume names. `validate` reads no secret content and shows:
+
+```text
+[OK] orders/migrate: MOUNTS -> /sql/10-roles.sql, /run/secrets/ca.crt (Secret orders-migrate-files: orders-database-password; unchanged from Secret orders-trust-chain)
+[OK] orders/web: MOUNTS -> /etc/ssl/certs/orders-ca.pem (unchanged from Secret orders-trust-chain)
+```
+
+- Refused before anything is written, naming the `MOUNTS` line: a container
+  that is not exactly one container of the component, a path that is not
+  absolute, a path the manifest already mounts, a Pod volume already named
+  `<container>-files` or `<secret-id>-mount`; for a component file, a file
+  outside `files/` or missing, two files with the same file name in one
+  container, unknown settings, undeclared or another component's secrets;
+  for a secret file, text around the reference, a Secret not in
+  `SECRET_FILES`, another component's Secret, and (from `validate`,
+  `prepare` and `install`) a key its sources do not provide:
 
   ```text
-  [OK] orders/migrate: MOUNTS -> /sql/10-roles.sql (Secret orders-migrate-files: orders-database-password)
+  components/orders/config.defaults.yaml: MOUNTS.web./etc/ssl/certs/orders-ca.pem: orders-trust-chain has no key ca.pem; it provides ca.crt. Fix the key, or deliver a file named ca.pem in orders-trust-chain's source
   ```
-
-- Refused before anything is written: a container that is not exactly one
-  container of the component, a path that is not absolute, a file outside
-  `files/` or missing, two files with the same file name in one container, a
-  path the manifest already mounts, a Pod volume already named
-  `<container>-files`, unknown settings, undeclared or another component's
-  secrets.
 - The demo: app1's `seed-database` init container gets
   `/seed-secret/020-report-role.sql`, which creates the login `todo_report`
   with the generated `app1-report-password`; the acceptance run logs in with it.
@@ -473,11 +520,14 @@ the resource is inactive.
 
 ## Secret values in ENVIRONMENT and MOUNTS
 
-A secret reaches a container only through `@@secret:<id>/<key>@@` in an
-`ENVIRONMENT` line or a `MOUNTS` file; the platform renders the generated
-Secrets (`<component>-<container>-env-secret`, `<component>-<container>-files`).
-A manifest may also mount or reference a `SECRET_FILES` Secret directly
-(`secretName`, `secretKeyRef`). No config file can define other composed
+A secret reaches a container in one of three ways. `@@secret:<id>/<key>@@` in
+an `ENVIRONMENT` line or a `MOUNTS` component file is substituted into text
+that the platform renders into the generated Secrets
+(`<component>-<container>-env-secret`, `<component>-<container>-files`); the
+rules below apply to that value. A `MOUNTS` line whose whole source is
+`@@secret:<id>/<key>@@` mounts the `SECRET_FILES` Secret's file itself,
+unchanged; nothing below applies to it. A manifest may also mount or
+reference a `SECRET_FILES` Secret directly (`secretName`, `secretKeyRef`). No config file can define other composed
 Secrets: `SECRET_TEMPLATES` in a config file is refused.
 
 `@@NAME@@` reads this component's effective text or integer setting (including
@@ -603,39 +653,21 @@ The chain holds public certificates only and signs nothing. Demo `app3`
 also records the internal alternative and what it needs.
 
 Component config (the Secret name must start with the component ID; the
-original `<product>-ingress-trust-chain` is refused):
+original `<product>-ingress-trust-chain` is refused). The two files are
+`MOUNTS` secret files of the `backend` container, so the manifest has no
+volume for them:
 
 ```yaml
 SECRET_FILES:
   billing-ingress-trust-chain:
   - path: cert            # <state>/billing/cert/root.crt and ca.crt
+MOUNTS:
+  backend:
+    /etc/ssl/certs/myproduct-root.pem: '@@secret:billing-ingress-trust-chain/root.crt@@'
+    /etc/ssl/certs/myproduct-ca.pem: '@@secret:billing-ingress-trust-chain/ca.crt@@'
 ```
 
-Backend container and volume:
-
-```yaml
-    volumeMounts:
-    - name: trust-chain
-      mountPath: /etc/ssl/certs/myproduct-root.pem
-      subPath: root.crt
-      readOnly: true
-    - name: trust-chain
-      mountPath: /etc/ssl/certs/myproduct-ca.pem
-      subPath: ca.crt
-      readOnly: true
-  volumes:
-  - name: trust-chain
-    secret:
-      secretName: billing-ingress-trust-chain
-      items:
-      - key: root.crt
-        path: root.crt
-      - key: ca.crt
-        path: ca.crt
-```
-
-`trust-chain` is local to the Pod: one volume, mounted twice. The mount file
-names are free text; only the Secret name has a prefix rule.
+The mount file names are free text; only the Secret name has a prefix rule.
 
 Provide the files from the **environment's own CA**, never from the source
 checkout. `dev/generate-certificates.sh` creates one CA per root, and the demo

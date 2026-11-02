@@ -446,5 +446,63 @@ class WhoamiSessionTests(unittest.TestCase):
                 self.module.save(session, path)
 
 
+class ChainMountCheckTests(unittest.TestCase):
+    """whoami-chain-mounts: the CA files' content and read-only mounts (backlogs 70, 80)."""
+
+    def check(self, writable_root=False, other_ca=False):
+        """Run the check's in-account script with podman answering from a fixture."""
+        body = REMOTE[REMOTE.index("whoami-chain-mounts)") :]
+        script = body[
+            body.index("as_product bash -c '") + len("as_product bash -c '") :
+        ]
+        script = script[: script.index("\n    ' bash ")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "PKI/private").mkdir(parents=True)
+            (root / "PKI/private/ca.crt").write_text("environment CA\n")
+            stub = root / "podman"
+            stub.write_text(
+                "#!/bin/bash\n"
+                'case "$1 $2" in\n'
+                '  "exec app3-whoami-backend")\n'
+                '    if [[ $3 == cat ]]; then printf "%s" "$CA"; else echo 140; fi;;\n'
+                '  "inspect app3-whoami-backend") printf "%s" "$MOUNTS";;\n'
+                "esac\n"
+            )
+            stub.chmod(0o755)
+            mounts = (
+                "/etc/hosts false\n"
+                f"/etc/ssl/certs/myproduct-root.pem {str(writable_root).lower()}\n"
+                "/etc/ssl/certs/myproduct-ca.pem false\n"
+            )
+            return subprocess.run(
+                ["bash", "-c", script, "bash", "myproduct", str(root)],
+                env=dict(
+                    os.environ,
+                    PATH=directory + os.pathsep + os.environ["PATH"],
+                    CA="unrelated CA\n" if other_ca else "environment CA\n",
+                    MOUNTS=mounts,
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    def test_read_only_files_with_the_environment_ca_pass(self):
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "PASS: read-only subPath files hold the environment CA", result.stdout
+        )
+
+    def test_a_writable_mount_or_another_ca_fails(self):
+        result = self.check(writable_root=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("myproduct-root.pem is not a read-only mount", result.stdout)
+        result = self.check(other_ca=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not the environment CA", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

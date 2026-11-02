@@ -1,22 +1,28 @@
-"""MOUNTS in config.defaults.yaml: release files mounted into containers (backlog 77).
+"""MOUNTS in config.defaults.yaml: files mounted into containers (backlogs 77, 80).
 
-MOUNTS maps a container name to the files it gets:
+MOUNTS maps a container name to its files, each a path in the container and
+one of two kinds of source:
 
     MOUNTS:
       migrate:
-        /sql/10-roles.sql: sql/10-roles.sql   # path in the container: file under files/
+        /sql/10-roles.sql: sql/10-roles.sql                      # 1. component file
+        /run/secrets/ca.crt: '@@secret:shop-trust-chain/ca.crt@@'  # 2. secret file
 
-The file is a template under components/<id>/files/. @@NAME@@ (a setting) and
-@@secret:<id>/<key>@@ (the component's own SECRET_FILES) are filled in at
-install, as in ENVIRONMENT. Like ENVIRONMENT, MOUNTS ships with the release and
-is never copied to the operator's config.yaml (render.merge_config).
+1. A component file is a template under components/<id>/files/. @@NAME@@ (a
+   setting) and @@secret:<id>/<key>@@ (the component's own SECRET_FILES) are
+   filled in at install, as in ENVIRONMENT. The rendered files of one container
+   go into the generated Secret <component>-<container>-files, because they may
+   hold a password: an internal SECRET_TEMPLATES recipe that exists only in the
+   transient effective config (with_recipes).
+2. A secret file is exactly one whole reference to a key of one of the
+   component's own SECRET_FILES. Nothing is rendered: the existing Secret is
+   mounted itself, so the bytes arrive unchanged (a PFX or a trailing newline
+   too).
 
-The rendered files of one container go into the generated Secret
-<component>-<container>-files, because they may hold a password. The platform
-adds a volume to the container's Pod and mounts each file read-only at its path.
-As with ENVIRONMENT, the Secret is an internal SECRET_TEMPLATES recipe that
-exists only in the transient effective config (with_recipes), and the volume is
-added to the effective documents (apply) before the usual link checks.
+secret_reference() tells the two apart. For both, the platform adds a volume
+to the container's Pod and mounts each file read-only at its path (apply),
+before the usual link and key checks. Like ENVIRONMENT, MOUNTS ships with the
+release and is never copied to the operator's config.yaml (render.merge_config).
 """
 
 import posixpath
@@ -35,8 +41,29 @@ def volume_name(container):
     return f"{container}-files"
 
 
+def secret_volume_name(secret_id):
+    """The Pod volume of a SECRET_FILES Secret mounted through MOUNTS."""
+    return f"{secret_id}-mount"
+
+
+def secret_reference(source):
+    """(secret ID, key) when source is exactly @@secret:<id>/<key>@@, else None.
+
+    None means a component file under files/ (read_defaults checks it).
+    """
+    if not (
+        isinstance(source, str) and source.startswith("@@") and source.endswith("@@")
+    ):
+        return None
+    match = templates.SECRET_REF.fullmatch(source[2:-2])
+    return (match[1], match[2]) if match else None
+
+
 def read(component):
-    """Return {container: {container path: file under files/}}; nothing rendered."""
+    """Return {container: {container path: source}}; nothing read or rendered.
+
+    A source is a file under files/ or a secret file (secret_reference).
+    """
     return read_defaults(environment.defaults_path(component), component)
 
 
@@ -61,6 +88,7 @@ def read_defaults(path, component):
             )
         names = {}
         for target, source in mounts.items():
+            reference = secret_reference(source)
             if (
                 not target.startswith("/")
                 or posixpath.normpath(target) != target
@@ -69,6 +97,20 @@ def read_defaults(path, component):
             ):
                 raise common.DeployError(
                     f"{here}: {target!r} is not an absolute path in the container"
+                )
+            if reference:
+                if not reference[0].startswith(component + "-"):
+                    raise common.DeployError(
+                        f"{here}.{target}: {reference[0]} is another component's "
+                        f"secret; mount only {component}'s own SECRET_FILES"
+                    )
+                continue
+            if isinstance(source, str) and "@@" in source:
+                raise common.DeployError(
+                    f"{here}.{target}: a secret file is exactly one whole reference "
+                    f"'@@secret:<secret-id>/<key>@@' to {component}'s own SECRET_FILES; "
+                    "anything else is a file under "
+                    f"components/{component}/files/"
                 )
             if (
                 not isinstance(source, str)
@@ -123,6 +165,17 @@ def with_recipes(config, component):
                 f"components/{component}/config.defaults.yaml: "
                 f"MOUNTS.{container}.{target}"
             )
+            reference = secret_reference(source)
+            if reference:
+                # A secret file is mounted from its own Secret by apply();
+                # it is never read or rendered here.
+                if reference[0] not in declared:
+                    raise common.DeployError(
+                        f"{where}: SECRET_FILES has no {reference[0]}; declared: "
+                        + (", ".join(declared) or "none")
+                        + ". Declare it in SECRET_FILES or fix the ID"
+                    )
+                continue
             text = file_text(component, source, where)
             for match, group, field in templates.tokens(text, f"{where}: {source}"):
                 if group is None:
@@ -142,17 +195,45 @@ def with_recipes(config, component):
                         + (", ".join(declared) or "none")
                     )
             recipe[posixpath.basename(source)] = text
-        recipes[secret_name(component, container)] = recipe
+        if recipe:
+            recipes[secret_name(component, container)] = recipe
     result = dict(config)
     result[common.SECRET_TEMPLATES] = recipes
     return result
 
 
+def check_keys(component, keys):
+    """A secret file's key must be one its Secret provides.
+
+    keys is render.secret_keys(): the keys each Secret provides, or None while
+    its source is not delivered yet (install reports that). No file is read.
+    """
+    for container, mounts in read(component).items():
+        for target, source in mounts.items():
+            reference = secret_reference(source)
+            if reference is None:
+                continue
+            secret_id, key = reference
+            available = keys.get(secret_id)
+            if available is None or key in available:
+                continue
+            raise common.DeployError(
+                f"components/{component}/config.defaults.yaml: "
+                f"MOUNTS.{container}.{target}: {secret_id} has no key {key}; it "
+                f"provides {', '.join(sorted(available)) or 'no keys'}. Fix the key, "
+                f"or deliver a file named {key} in {secret_id}'s source"
+            )
+
+
 def apply(documents, component, pods):
-    """Add each MOUNTS container's volume and read-only file mounts in place.
+    """Add each MOUNTS container's volumes and read-only file mounts in place.
 
     pods maps each container name to the matching (pod spec, container) pairs.
+    Component files come from the container's generated Secret; a secret file
+    comes from its own SECRET_FILES Secret, one volume per Secret and Pod,
+    shared by the containers of that Pod that mount it.
     """
+    added = {}  # (id of the Pod spec, volume name) -> volume this function added
     for container_name, mounts in read(component).items():
         where = f"components/{component}/config.defaults.yaml: MOUNTS.{container_name}"
         matches = pods.get(container_name, [])
@@ -162,34 +243,73 @@ def apply(documents, component, pods):
                 f"{container_name}; it has {len(matches)}"
             )
         spec, container = matches[0]
-        volume = volume_name(container_name)
-        if any(item.get("name") == volume for item in spec.get("volumes", [])):
-            raise common.DeployError(
-                f"{where}: the Pod already has a volume named {volume}; rename it"
-            )
         used = {item.get("mountPath") for item in container.get("volumeMounts", [])}
-        keys = []
-        for target, source in mounts.items():
+        for target in mounts:
             if target in used:
                 raise common.DeployError(
-                    f"{where}: {target} is also a volumeMount in the manifest"
+                    f"{where}: {target} is also a volumeMount in the manifest; "
+                    "remove one of them"
                 )
-            key = posixpath.basename(source)
-            if key not in keys:
-                keys.append(key)
-            container.setdefault("volumeMounts", []).append(
-                {"name": volume, "mountPath": target, "subPath": key, "readOnly": True}
+        files = {
+            target: source
+            for target, source in mounts.items()
+            if secret_reference(source) is None
+        }
+        if files:
+            add_component_files(
+                spec, container, component, container_name, files, where
             )
-        spec.setdefault("volumes", []).append(
-            {
-                "name": volume,
-                "secret": {
-                    "secretName": secret_name(component, container_name),
-                    "items": [{"key": key, "path": key} for key in keys],
-                },
-            }
-        )
+        for target, source in mounts.items():
+            reference = secret_reference(source)
+            if reference is None:
+                continue
+            secret_id, key = reference
+            name = secret_volume_name(secret_id)
+            volume = added.get((id(spec), name))
+            if volume is None:
+                if any(item.get("name") == name for item in spec.get("volumes", [])):
+                    raise common.DeployError(
+                        f"{where}: the Pod already has a volume named {name}; rename it"
+                    )
+                volume = {
+                    "name": name,
+                    "secret": {"secretName": secret_id, "items": []},
+                }
+                spec.setdefault("volumes", []).append(volume)
+                added[(id(spec), name)] = volume
+            items = volume["secret"]["items"]
+            if {"key": key, "path": key} not in items:
+                items.append({"key": key, "path": key})
+            container.setdefault("volumeMounts", []).append(
+                {"name": name, "mountPath": target, "subPath": key, "readOnly": True}
+            )
     return documents
+
+
+def add_component_files(spec, container, component, container_name, files, where):
+    """Mount a container's rendered component files from its generated Secret."""
+    volume = volume_name(container_name)
+    if any(item.get("name") == volume for item in spec.get("volumes", [])):
+        raise common.DeployError(
+            f"{where}: the Pod already has a volume named {volume}; rename it"
+        )
+    keys = []
+    for target, source in files.items():
+        key = posixpath.basename(source)
+        if key not in keys:
+            keys.append(key)
+        container.setdefault("volumeMounts", []).append(
+            {"name": volume, "mountPath": target, "subPath": key, "readOnly": True}
+        )
+    spec.setdefault("volumes", []).append(
+        {
+            "name": volume,
+            "secret": {
+                "secretName": secret_name(component, container_name),
+                "items": [{"key": key, "path": key} for key in keys],
+            },
+        }
+    )
 
 
 def summary(component, config):
@@ -201,8 +321,14 @@ def summary(component, config):
         used = sorted(
             {group for text in texts for group in environment.secret_ids(text)}
         )
+        references = [secret_reference(source) for source in mounts.values()]
+        parts = []
+        if None in references:  # at least one component file
+            parts.append(f"Secret {name}" + (f": {', '.join(used)}" if used else ""))
+        direct = sorted({reference[0] for reference in references if reference})
+        if direct:
+            parts.append("unchanged from Secret " + ", ".join(direct))
         lines.append(
-            f"{component}/{container}: MOUNTS -> {', '.join(mounts)} "
-            f"(Secret {name}" + (f": {', '.join(used)})" if used else ")")
+            f"{component}/{container}: MOUNTS -> {', '.join(mounts)} ({'; '.join(parts)})"
         )
     return lines

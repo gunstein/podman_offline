@@ -26,17 +26,21 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `c77g-whoami-7f58936` | 46 | CLEAN PASS |
-| normal | `c77g-normal-7f58936` | 117 | CLEAN PASS |
-| `--first-app app2` | `c77g-app2-7f58936` | 117 | CLEAN PASS |
-| `--identity-only` | `c77g-identity-7f58936` | 57 | CLEAN PASS |
-| `--help-only` | `c77g-help-7f58936` | 52 | CLEAN PASS |
-| `--platform-help-only` | `c77g-platform-help-7f58936` | 31 | CLEAN PASS |
-| `--renamed-product` | `c77g-renamed-7f58936` | 57 | CLEAN PASS |
+| `--whoami` | `c80-whoami-a6197bf` | 46 | CLEAN PASS |
+| normal | `c80-normal-a6197bf` | 117 | CLEAN PASS |
+| `--first-app app2` | `c80-app2-a6197bf` | 117 | CLEAN PASS |
+| `--identity-only` | `c80-identity-a6197bf` | 57 | CLEAN PASS |
+| `--help-only` | `c80-help-a6197bf` | 52 | CLEAN PASS |
+| `--platform-help-only` | `c80-platform-help-a6197bf` | 31 | CLEAN PASS |
+| `--renamed-product` | `c80-renamed-a6197bf` | 57 | CLEAN PASS |
 
-All on `7f58936` (2026-11-01), clean detached checkout, Oracle Linux Server
-9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. Later
-commits up to `f7b237c` change only `BACKLOG.md`. The init Secret probe runs
+All on `a6197bf` (2026-11-02), clean detached checkout, Oracle Linux Server
+9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
+includes backlog 80: app3's trust chain is mounted from its Secret through
+`MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
+running backend with the environment's CA and as read-only mounts
+(`podman inspect`); the Secret key check now runs before the first write of
+`prepare` and `install`. The init Secret probe runs
 inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
 it. The harness defects found on the way to this matrix are listed in
 [backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
@@ -45,8 +49,8 @@ it. The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `c77g-status-retry-7f58936` | 118 | CLEAN PASS |
-| `--host-setup` | `c77g-host-setup-7f58936` | 36 | CLEAN PASS |
+| `--status-retry` | `c80-status-retry-a6197bf` | 118 | CLEAN PASS |
+| `--host-setup` | `c80-host-setup-a6197bf` | 36 | CLEAN PASS |
 
 Same commit, date, checkout, OS and Podman as the matrix. Status/retry: a
 same-version failure stays pending with the old container active, a plain

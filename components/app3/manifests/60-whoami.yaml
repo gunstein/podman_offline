@@ -27,15 +27,7 @@ spec:
       readOnly: true
     - name: protection
       mountPath: /data/protection
-    # Backlog 70: the environment's CA as two single files beside the image's own CAs.
-    - name: trust-chain
-      mountPath: /etc/ssl/certs/myproduct-root.pem
-      subPath: root.crt
-      readOnly: true
-    - name: trust-chain
-      mountPath: /etc/ssl/certs/myproduct-ca.pem
-      subPath: ca.crt
-      readOnly: true
+    # The environment's CA files: MOUNTS in config.defaults.yaml.
   - name: frontend
     image: localhost/demo-whoami-frontend:0.1.0
     imagePullPolicy: Never
@@ -64,11 +56,3 @@ spec:
   - name: protection
     persistentVolumeClaim:
       claimName: app3-protection
-  - name: trust-chain
-    secret:
-      secretName: app3-ingress-trust-chain
-      items:
-      - key: root.crt
-        path: root.crt
-      - key: ca.crt
-        path: ca.crt
