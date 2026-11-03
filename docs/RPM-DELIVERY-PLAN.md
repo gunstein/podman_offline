@@ -741,7 +741,7 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    newest release as the account instead of the trust poll (decision 5);
    `--credentials` in the mirrored layout (decision 8). Signature
    verification is phase 2; retirement is WP4.
-3. `<product>`, **implemented 2026-11-02**, lab-verified in `admin-rpm-14a8114`: `tools/runtime.py`
+3. `<product>`, **implemented 2026-11-02**, lab-verified in `n69-admin-rpm-f5b217b`: `tools/runtime.py`
    in the tools RPM as `/usr/bin/<product>`; newest release per component in
    dependency order, each through its own `deploy.sh`; pending first, completed
    skipped, `<product> <component>` installs one again (decision 6); the

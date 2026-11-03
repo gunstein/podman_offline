@@ -1153,7 +1153,7 @@ passed on OL9 in `c69c-admin-rpm-14491ae` (2026-11-02, CLEAN PASS, with the
 full matrix on the same commit; [results](acceptance/RESULTS.md)).
 WP3 (the runtime command `<product>`, `tools/runtime.py`, and `deploy.sh
 init-config <component> --set KEY=VALUE` for the answers) is implemented and
-passed on OL9 in `admin-rpm-14a8114` (2026-11-02, CLEAN PASS). Retirement and
+passed on OL9 in `n69-admin-rpm-f5b217b` (2026-11-03, CLEAN PASS, with the full matrix). Retirement and
 the erase authorization are WP4, next.
 
 Many customers install in a closed server lab, often from a **printed manual**,

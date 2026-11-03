@@ -26,17 +26,17 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `c80-whoami-a6197bf` | 46 | CLEAN PASS |
-| normal | `c80-normal-a6197bf` | 117 | CLEAN PASS |
-| `--first-app app2` | `c80-app2-a6197bf` | 117 | CLEAN PASS |
-| `--identity-only` | `c80-identity-a6197bf` | 57 | CLEAN PASS |
-| `--help-only` | `c80-help-a6197bf` | 52 | CLEAN PASS |
-| `--platform-help-only` | `c80-platform-help-a6197bf` | 31 | CLEAN PASS |
-| `--renamed-product` | `c80-renamed-a6197bf` | 57 | CLEAN PASS |
+| `--whoami` | `n69-whoami-f5b217b` | 46 | CLEAN PASS |
+| normal | `n69-normal-f5b217b` | 117 | CLEAN PASS |
+| `--first-app app2` | `n69-app2-f5b217b` | 117 | CLEAN PASS |
+| `--identity-only` | `n69-identity-f5b217b` | 57 | CLEAN PASS |
+| `--help-only` | `n69-help-f5b217b` | 52 | CLEAN PASS |
+| `--platform-help-only` | `n69-platform-help-f5b217b` | 31 | CLEAN PASS |
+| `--renamed-product` | `n69-renamed-f5b217b` | 57 | CLEAN PASS |
 
-All on `a6197bf` (2026-11-02), clean detached checkout, Oracle Linux Server
+All on `f5b217b` (2026-11-03), clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
-includes backlog 80: app3's trust chain is mounted from its Secret through
+is the RPM branch (backlog 69 WP1-WP3) with main merged, and includes backlog 80: app3's trust chain is mounted from its Secret through
 `MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
 running backend with the environment's CA and as read-only mounts
 (`podman inspect`); the Secret key check now runs before the first write of
@@ -49,13 +49,12 @@ it. The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `c80-status-retry-a6197bf` | 118 | CLEAN PASS |
-| `--host-setup` | `c80-host-setup-a6197bf` | 36 | CLEAN PASS |
-| `--admin-rpm` | `admin-rpm-14a8114` | 25 | CLEAN PASS |
+| `--status-retry` | `n69-status-retry-f5b217b` | 118 | CLEAN PASS |
+| `--host-setup` | `n69-host-setup-f5b217b` | 36 | CLEAN PASS |
+| `--admin-rpm` | `n69-admin-rpm-f5b217b` | 25 | CLEAN PASS |
 
 Status/retry and host setup: same commit, date, checkout, OS and Podman as
-the matrix. Admin RPM: on `14a8114` (2026-11-02, the RPM branch with main
-and backlog 80 merged; OL9.8, Podman 5.8.2). Status/retry: a
+the matrix, as is admin RPM. Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
 procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog
