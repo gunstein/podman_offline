@@ -56,8 +56,9 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 82. Mount a PostgreSQL password through MOUNTS
 
-Status: **implemented with local tests (2026-11-03); lab verification
-outstanding** (product owner request). A `MOUNTS` secret file at the path in
+Status: **done and lab-verified** (2026-11-03, product owner request): the
+matrix, `--status-retry` and `--host-setup` passed CLEAN PASS on `53d4591`
+([results](acceptance/RESULTS.md)). A `MOUNTS` secret file at the path in
 `POSTGRES_PASSWORD_FILE` was refused with "Unsupported PostgreSQL
 password/data mounts": `deploy.postgres_binding` looked the password volume
 up only at the file's directory, so the single-file mount `MOUNTS` creates

@@ -26,21 +26,25 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `c80-whoami-a6197bf` | 46 | CLEAN PASS |
-| normal | `c80-normal-a6197bf` | 117 | CLEAN PASS |
-| `--first-app app2` | `c80-app2-a6197bf` | 117 | CLEAN PASS |
-| `--identity-only` | `c80-identity-a6197bf` | 57 | CLEAN PASS |
-| `--help-only` | `c80-help-a6197bf` | 52 | CLEAN PASS |
-| `--platform-help-only` | `c80-platform-help-a6197bf` | 31 | CLEAN PASS |
-| `--renamed-product` | `c80-renamed-a6197bf` | 57 | CLEAN PASS |
+| `--whoami` | `c82-whoami-53d4591` | 46 | CLEAN PASS |
+| normal | `c82-normal-53d4591` | 118 | CLEAN PASS |
+| `--first-app app2` | `c82-app2-53d4591` | 118 | CLEAN PASS |
+| `--identity-only` | `c82-identity-53d4591` | 58 | CLEAN PASS |
+| `--help-only` | `c82-help-53d4591` | 52 | CLEAN PASS |
+| `--platform-help-only` | `c82-platform-help-53d4591` | 31 | CLEAN PASS |
+| `--renamed-product` | `c82-renamed-53d4591` | 57 | CLEAN PASS |
 
-All on `a6197bf` (2026-11-02), clean detached checkout, Oracle Linux Server
+All on `53d4591` (2026-11-03), clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
 includes backlog 80: app3's trust chain is mounted from its Secret through
 `MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
 running backend with the environment's CA and as read-only mounts
 (`podman inspect`); the Secret key check now runs before the first write of
-`prepare` and `install`. The init Secret probe runs
+`prepare` and `install`. It also includes backlog 82: app2's database reads
+its password from a `MOUNTS` secret file (app1 keeps the directory mount);
+`07-database-auth` connected with it, and the new `07-password-guard`
+(normal, app2, identity) found that install stops for the kept `app2-data`
+volume without the password file and generates none. The init Secret probe runs
 inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
 it. The harness defects found on the way to this matrix are listed in
 [backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
@@ -49,8 +53,8 @@ it. The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `c80-status-retry-a6197bf` | 118 | CLEAN PASS |
-| `--host-setup` | `c80-host-setup-a6197bf` | 36 | CLEAN PASS |
+| `--status-retry` | `c82-status-retry-53d4591` | 119 | CLEAN PASS |
+| `--host-setup` | `c82-host-setup-53d4591` | 36 | CLEAN PASS |
 
 Same commit, date, checkout, OS and Podman as the matrix. Status/retry: a
 same-version failure stays pending with the old container active, a plain
