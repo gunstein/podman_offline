@@ -54,6 +54,27 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 82. Mount a PostgreSQL password through MOUNTS
+
+Status: **implemented with local tests (2026-11-03); lab verification
+outstanding** (product owner request). A `MOUNTS` secret file at the path in
+`POSTGRES_PASSWORD_FILE` was refused with "Unsupported PostgreSQL
+password/data mounts": `deploy.postgres_binding` looked the password volume
+up only at the file's directory, so the single-file mount `MOUNTS` creates
+(`mountPath` the file, `subPath` the Secret item) was never found. It now
+accepts exactly one of the two mounts and reads the key from `items[].key`
+(path and key may differ); anything else, both at once, a wrong `subPath` or
+no matching item is refused. The password guard is unchanged: the binding
+feeds the same `database_bindings`, `database_password_path`,
+`database_preflight` and `check_database_volume_absent`. Demo app2's database
+uses it (app1 keeps the directory mount), and the matrix's new
+`07-password-guard` step moves app2's password file aside on PROD and
+requires install to stop for the kept `app2-data` volume without generating
+a password. Product tests in `test_database_preflight.py`; harness test
+`PasswordGuardCheckTests`. The renamed-product generator now renames a
+`MOUNTS` secret file's reference instead of reading it as a file (missed in
+backlog 80, whose only user, app3, is not renamed).
+
 ## 81. Use a harmless production SQL file with an existing dev source override
 
 Status: **planned** (2026-11-02, decided by the product owner).

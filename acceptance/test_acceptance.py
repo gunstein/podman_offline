@@ -1136,9 +1136,7 @@ install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash 
             "07-healthy-host-repeat",
         ):
             self.assertIn(step, records)
-        self.assertLess(
-            records.index("03-registry-test"), records.index("03-dev-down")
-        )
+        self.assertLess(records.index("03-registry-test"), records.index("03-dev-down"))
         self.assertLess(
             records.index("06-install-help"), records.index("07-registry-offline")
         )
@@ -1306,7 +1304,9 @@ as_product() {
                         "checksums verified from archive streams", result.stdout
                     )
                     self.assertTrue(
-                        (registry / "myproduct-registry-0.0.0/images/images.tar").is_file()
+                        (
+                            registry / "myproduct-registry-0.0.0/images/images.tar"
+                        ).is_file()
                     )
                     self.assertFalse(
                         (registry / "myproduct-registry-0.0.0/scripts").exists()
@@ -1727,14 +1727,18 @@ class LauncherDiagnosticsTests(unittest.TestCase):
     def test_large_journal_message_is_read_without_printing_private_content(self):
         """Persistent journals retain long messages that JSON otherwise makes null."""
         private = "private-secret-value" * 500
-        message = private + " Failed at step EXEC spawning /usr/bin/podman: Permission denied"
+        message = (
+            private + " Failed at step EXEC spawning /usr/bin/podman: Permission denied"
+        )
 
         def command(arguments):
             if arguments[0] == "journalctl":
                 if "--list-boots" in arguments:
                     return "0 boot-id\n"
                 # Match journalctl's default omission of oversized fields.
-                return json.dumps({"MESSAGE": message if "--all" in arguments else None})
+                return json.dumps(
+                    {"MESSAGE": message if "--all" in arguments else None}
+                )
             return ""
 
         self.namespace["command"] = command
@@ -1747,7 +1751,9 @@ class LauncherDiagnosticsTests(unittest.TestCase):
         ):
             self.namespace["main"]()
         self.assertIn("Permission denied", output.getvalue())
-        self.assertIn("PASS: read-only launcher diagnostics collected", output.getvalue())
+        self.assertIn(
+            "PASS: read-only launcher diagnostics collected", output.getvalue()
+        )
         self.assertNotIn("private-secret-value", output.getvalue())
 
     def test_unit_properties_log_only_the_expected_healthcheck_arguments(self):
@@ -2810,6 +2816,66 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("disable --now fapolicyd", commands.call_args_list[0].args[1])
         self.assertNotIn("disable --now firewalld", commands.call_args_list[0].args[1])
         self.assertIn("getenforce", commands.call_args_list[1].args[1])
+
+
+class PasswordGuardCheckTests(unittest.TestCase):
+    """password-guard (backlog 82): a stop without a new password, proven."""
+
+    def run_check(self, install):
+        """Run the action with as_product on local files and a scripted install."""
+        script = Path(__file__).with_name("remote.sh").read_text()
+        body = script[script.index("password-guard)\n") + len("password-guard)\n") :]
+        body = body[: body.index("\n    ;;\n")]
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            password = state / "app2/credentials/database/password"
+            password.parent.mkdir(parents=True)
+            password.write_text("kept-password\n")
+            stubs = (
+                "as_product() {\n"
+                '  case "$1" in\n'
+                "    podman) return 0;;\n"
+                "    bash) " + install + ";;\n"
+                '    *) "$@";;\n'
+                "  esac\n"
+                "}\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + stubs + body],
+                env=dict(
+                    os.environ,
+                    state=str(state),
+                    bundle="app2",
+                    product=str(state / "release"),
+                    PASSWORD=str(password),
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            kept = password.read_text() if password.exists() else None
+        return result, kept
+
+    def test_a_stop_for_the_kept_volume_passes_and_restores_the_file(self):
+        result, kept = self.run_check(
+            'echo "ERROR: Missing database password file x with existing volume '
+            'app2-data; no password generated"; return 1'
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: kept volume app2-data", result.stdout)
+        self.assertEqual(kept, "kept-password\n")
+
+    def test_a_new_password_an_install_or_another_stop_fails(self):
+        for install, cause in (
+            ('printf new > "$PASSWORD"; return 0', "generated a new database password"),
+            ("return 0", "install did not stop"),
+            ('echo "ERROR: image missing"; return 1', "stopped for another reason"),
+        ):
+            with self.subTest(cause=cause):
+                result, kept = self.run_check(install)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(cause, result.stdout)
+                self.assertEqual(kept, "kept-password\n")
 
 
 if __name__ == "__main__":

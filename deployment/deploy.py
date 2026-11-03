@@ -169,16 +169,31 @@ def postgres_binding(pod, spec, group, container):
     ):
         raise common.DeployError(f"Invalid POSTGRES_PASSWORD_FILE in {where}")
     password_file = Path(reference)
-    mounts = {
-        mount.get("mountPath"): mount.get("name")
-        for mount in container.get("volumeMounts", [])
-        if isinstance(mount, dict)
-    }
-    secret_volume = mounts.get(str(password_file.parent))
-    data_volume = mounts.get(POSTGRES_DATA)
-    if not secret_volume or not data_volume:
+    mounts = [m for m in container.get("volumeMounts", []) if isinstance(m, dict)]
+    data_volume = next(
+        (m.get("name") for m in mounts if m.get("mountPath") == POSTGRES_DATA), None
+    )
+    # The password file is either inside a Secret mounted as its directory
+    # (the file name is items[].path), or mounted alone at its own path, as
+    # MOUNTS does (subPath names items[].path). Exactly one of the two.
+    directory = [m for m in mounts if m.get("mountPath") == str(password_file.parent)]
+    single = [m for m in mounts if m.get("mountPath") == str(password_file)]
+    secret_volume = item_path = None
+    if single:
+        secret_volume, item_path = single[0].get("name"), single[0].get("subPath")
+    elif directory:
+        secret_volume, item_path = directory[0].get("name"), password_file.name
+    if (
+        len(directory) + len(single) != 1
+        or not data_volume
+        or not secret_volume
+        or not isinstance(item_path, str)
+    ):
         raise common.DeployError(
-            f"Unsupported PostgreSQL password/data mounts in {where}"
+            f"Unsupported PostgreSQL password/data mounts in {where}: mount the "
+            f"password Secret either as the directory {password_file.parent} or "
+            f"as the single file {password_file} with subPath (MOUNTS does this), "
+            f"and a PersistentVolumeClaim at {POSTGRES_DATA}"
         )
     volumes = {
         volume.get("name"): volume
@@ -189,9 +204,7 @@ def postgres_binding(pod, spec, group, container):
         secret = volumes[secret_volume]["secret"]
         claim = volumes[data_volume]["persistentVolumeClaim"]["claimName"]
         keys = [
-            item["key"]
-            for item in secret.get("items", [])
-            if item["path"] == password_file.name
+            item["key"] for item in secret.get("items", []) if item["path"] == item_path
         ]
         if len(keys) != 1 or not isinstance(claim, str):
             raise KeyError("password key")

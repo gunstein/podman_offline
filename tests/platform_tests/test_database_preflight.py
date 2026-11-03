@@ -197,3 +197,159 @@ class DataDirectoryDetectionTests(ProductFixture):
                     deploy.prepare()
                 self.assertEqual(self.commands(), [])
                 self.assertFalse((common.BUILD / "dev").exists())
+
+
+def mounted_orders():
+    """orders with its password mounted as one file through MOUNTS (backlog 82).
+
+    The manifest keeps POSTGRES_PASSWORD_FILE and the data PVC; the password
+    Secret's volume and mount are gone and come from MOUNTS instead.
+    """
+    product = copy.deepcopy(RENAMED)
+    orders = product["orders"]
+    spec = orders["manifests"][1]["spec"]
+    db = spec["containers"][0]
+    db["volumeMounts"] = [
+        m for m in db["volumeMounts"] if m["mountPath"] != "/run/secrets/database"
+    ]
+    spec["volumes"] = [v for v in spec["volumes"] if "secret" not in v]
+    orders["mounts"] = {
+        "db": {
+            "/run/secrets/database/password": "@@secret:orders-database-password/password@@"
+        }
+    }
+    return product
+
+
+def binding(mounts, items):
+    """postgres_binding for one db container with the given mounts and Secret items."""
+    pod = {"metadata": {"name": "orders-postgres"}}
+    container = {
+        "name": "db",
+        "env": [
+            {
+                "name": "POSTGRES_PASSWORD_FILE",
+                "value": "/run/secrets/database/password",
+            }
+        ],
+        "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}]
+        + mounts,
+    }
+    spec = {
+        "volumes": [
+            {"name": "data", "persistentVolumeClaim": {"claimName": "orders-data"}},
+            {
+                "name": "pw",
+                "secret": {"secretName": "orders-database-password", "items": items},
+            },
+        ]
+    }
+    return deploy.postgres_binding(pod, spec, "containers", container)
+
+
+class MountedPasswordTests(ProductFixture):
+    """The database password as a MOUNTS secret file keeps the password guard."""
+
+    def setUp(self):
+        super().setUp()
+        self.product = mounted_orders()
+        self.write_product(self.product)
+        self.dev = common.BUILD / "dev"
+        self.provide_credentials(self.product, self.dev)
+        self.password = self.dev / "orders/credentials/database/password"
+
+    def volume_checks(self):
+        return [args for args in self.commands() if args[:2] == ["podman", "volume"]]
+
+    def test_new_database_generates_once_and_keeps_the_password(self):
+        deploy.prepare()
+        self.assertEqual(
+            self.volume_checks(), [["podman", "volume", "exists", "orders-data"]]
+        )
+        before = self.password.read_bytes()
+        self.assertEqual(len(before), 32)
+        self.process.reset_mock()
+        deploy.prepare()
+        self.assertEqual(self.password.read_bytes(), before)
+        self.assertEqual(self.volume_checks(), [])
+
+    def test_existing_volume_without_password_stops_before_generation(self):
+        self.volumes.add("orders-data")
+        before = self.files_under(self.dev)
+        with self.assertRaisesRegex(
+            common.DeployError, "with existing volume orders-data; .*no password"
+        ):
+            deploy.prepare()
+        self.assertFalse(self.password.exists())
+        self.assertEqual(self.files_under(self.dev), before)
+
+
+class PasswordMountShapeTests(ProductFixture):
+    """Both mount shapes name the same claim, Secret and key; others are refused."""
+
+    def test_directory_and_single_file_mounts(self):
+        for label, mounts, items in (
+            (
+                "directory",
+                [{"name": "pw", "mountPath": "/run/secrets/database"}],
+                [{"key": "password", "path": "password"}],
+            ),
+            (
+                "directory, key differs from path",
+                [{"name": "pw", "mountPath": "/run/secrets/database"}],
+                [{"key": "db-admin", "path": "password"}],
+            ),
+            (
+                "single file",
+                [
+                    {
+                        "name": "pw",
+                        "mountPath": "/run/secrets/database/password",
+                        "subPath": "password",
+                        "readOnly": True,
+                    }
+                ],
+                [{"key": "password", "path": "password"}],
+            ),
+            (
+                "single file, key differs from path",
+                [
+                    {
+                        "name": "pw",
+                        "mountPath": "/run/secrets/database/password",
+                        "subPath": "pw.txt",
+                    }
+                ],
+                [
+                    {"key": "other", "path": "other.txt"},
+                    {"key": "db-admin", "path": "pw.txt"},
+                ],
+            ),
+        ):
+            with self.subTest(label):
+                expected_key = "db-admin" if "differs" in label else "password"
+                self.assertEqual(
+                    binding(mounts, items),
+                    ("orders-data", "orders-database-password", expected_key),
+                )
+
+    def test_wrong_mounts_are_refused_without_guessing(self):
+        single = {"name": "pw", "mountPath": "/run/secrets/database/password"}
+        items = [{"key": "password", "path": "password"}]
+        for label, mounts, secret_items, pattern in (
+            ("wrong subPath", [dict(single, subPath="pass")], items, "Secret/PVC binding"),
+            ("no subPath", [single], items, "with subPath"),
+            ("no matching item", [dict(single, subPath="password")],
+             [{"key": "password", "path": "other"}], "Secret/PVC binding"),
+            ("wrong target", [{"name": "pw", "mountPath": "/run/secrets/db/password",
+                               "subPath": "password"}], items,
+             "single file /run/secrets/database/password with subPath"),
+            ("both shapes", [dict(single, subPath="password"),
+                             {"name": "pw", "mountPath": "/run/secrets/database"}],
+             items, "either as the directory /run/secrets/database"),
+        ):  # fmt: skip
+            with self.subTest(label), self.assertRaisesRegex(
+                common.DeployError, pattern
+            ) as failure:
+                binding(mounts, secret_items)
+            self.assertIn("container 'db'", str(failure.exception))

@@ -488,7 +488,37 @@ the resource is inactive.
    at the top, each container's variables under `ENVIRONMENT` (with
    `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` for an app with `client.yaml`), and
    files with passwords under `MOUNTS`. Keep `POSTGRES_PASSWORD*` in the
-   manifest's `env`.
+   manifest's `env`. A PostgreSQL password file may be a `MOUNTS` secret file
+   (backlog 82; demo app2), while `POSTGRES_PASSWORD_FILE` stays in the
+   manifest:
+
+   ```yaml
+   # config.defaults.yaml
+   SECRET_FILES:
+     orders-database-password:
+     - path: credentials/database
+       generate:
+       - password
+   MOUNTS:
+     db:
+       /run/secrets/database/password: '@@secret:orders-database-password/password@@'
+   ```
+
+   ```yaml
+   # manifests/40-postgres.yaml, container db (no volume for the password)
+   env:
+   - name: POSTGRES_PASSWORD_FILE
+     value: /run/secrets/database/password
+   volumeMounts:
+   - name: data
+     mountPath: /var/lib/postgresql/data      # a PersistentVolumeClaim
+   ```
+
+   The database checks follow either mount to the same claim, Secret and key
+   (`deploy.postgres_binding`): an existing database volume without the
+   password file still stops before a new password is generated. Mounting the
+   Secret as the directory `/run/secrets/database` in the manifest (demo app1)
+   works as before.
 3. Declare each secret in `SECRET_FILES` with its path (and `generate:` for a
    generated one) and use `@@secret:<id>/<key>@@`.
 4. Add `route.conf` for a path behind the gateway, `client.yaml` for OIDC

@@ -31,19 +31,12 @@ spec:
       value: /run/secrets/database/password
     - name: PGDATA
       value: /var/lib/postgresql/data/pgdata
+    # The file POSTGRES_PASSWORD_FILE names is a MOUNTS secret file in
+    # config.defaults.yaml (backlog 82); app1 mounts its Secret as a directory.
     volumeMounts:
     - name: data
       mountPath: /var/lib/postgresql/data
-    - name: password
-      mountPath: /run/secrets/database
-      readOnly: true
   volumes:
   - name: data
     persistentVolumeClaim:
       claimName: app2-data
-  - name: password
-    secret:
-      secretName: app2-database-password
-      items:
-      - key: password
-        path: password

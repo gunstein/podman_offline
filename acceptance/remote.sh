@@ -2675,6 +2675,28 @@ audit|audit-check|launch-audit-check)
     fi
     test "$diagnostic_status" = 0
     ;;
+password-guard)
+    # Backlog 82: the component's database password is a MOUNTS secret file.
+    # With the database volume kept and the password file gone, install must
+    # stop before generating a new password. The file is moved aside and back,
+    # never printed; install output never contains a password.
+    password="$state/$bundle/credentials/database/password"
+    aside="$state/$bundle/credentials/password-guard-aside"
+    as_product test -f "$password"
+    as_product podman volume exists "$bundle-data"
+    as_product mv "$password" "$aside"
+    guard_status=0
+    guard_output=$(as_product bash "$product/deploy.sh" install 2>&1) || guard_status=$?
+    generated=0
+    as_product test ! -e "$password" || generated=1
+    as_product mv -f "$aside" "$password"
+    printf '%s\n' "$guard_output"
+    [[ $generated == 0 ]] || { echo "FAIL: install generated a new database password"; exit 1; }
+    [[ $guard_status != 0 ]] || { echo "FAIL: install did not stop"; exit 1; }
+    grep -Fq "existing volume $bundle-data" <<< "$guard_output" \
+        || { echo "FAIL: install stopped for another reason"; exit 1; }
+    echo "PASS: kept volume $bundle-data and no password file: install stopped, nothing generated"
+    ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;
 esac

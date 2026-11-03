@@ -203,10 +203,17 @@ def generate(source, target):
         if defaults.exists():
             with defaults.open(encoding="utf-8") as stream:
                 values = rename_defaults(yaml.safe_load(stream))
+            # A MOUNTS secret file names its Secret in the line itself.
+            for mounts in (values.get("MOUNTS") or {}).values():
+                for path_in_container, mount_source in mounts.items():
+                    if mount_source.startswith("@@"):
+                        mounts[path_in_container] = rename_secrets(mount_source)
             dump(destination / defaults.name, values)
             # MOUNTS templates name the component's secrets as well.
             for mounts in (values.get("MOUNTS") or {}).values():
                 for relative in mounts.values():
+                    if relative.startswith("@@"):
+                        continue
                     path = destination / "files" / relative
                     path.write_text(
                         rename_secrets(path.read_text(encoding="utf-8")),

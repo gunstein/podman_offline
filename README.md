@@ -853,7 +853,9 @@ database password with an existing database volume stops installation; deploy
 does not invent a replacement password for retained database state. A container
 that sets any `POSTGRES_PASSWORD*` variable or mounts `/var/lib/postgresql/data`
 counts as a database container and must use `POSTGRES_PASSWORD_FILE` with a
-mounted Secret; any other password layout is refused before generation.
+mounted Secret; any other password layout is refused before generation. The
+Secret may be mounted as the file's directory in the manifest, or as the single
+file through `MOUNTS` (backlog 82, [example](docs/COMPONENTS.md#converting-a-service)).
 
 The session key is an application-wide signing key, not a per-user password or
 the key used to authenticate the app to Identity. Flask stores signed session

@@ -28,6 +28,12 @@ from helpers.render_helper import materialize_and_render
 REPO = Path(__file__).resolve().parents[2]
 
 
+def config_defaults(component):
+    return yaml.safe_load(
+        (REPO / "components" / component / "config.defaults.yaml").read_text()
+    )
+
+
 class DatabaseTests(DeployFixture):
     """Use actual database manifests and disposable component secret state."""
 
@@ -302,7 +308,19 @@ class DatabaseTests(DeployFixture):
             self.assertEqual(server_env["PGPORT"], client_env["DB_PORT"])
             for value in client_env.values():
                 self.assertIsInstance(value, str)
-            for pod in (server,) if component == "identity" else (server, client):
+            pods = (server,) if component == "identity" else (server, client)
+            if component == "app2":
+                # app2's database gets its password file through MOUNTS (backlog 82).
+                self.assertEqual(
+                    config_defaults(component)["MOUNTS"]["db"],
+                    {
+                        "/run/secrets/database/password": (
+                            "@@secret:app2-database-password/password@@"
+                        )
+                    },
+                )
+                pods = (client,)
+            for pod in pods:
                 volume = next(
                     v for v in pod["spec"]["volumes"] if v["name"] == "password"
                 )
