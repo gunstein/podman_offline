@@ -1054,6 +1054,8 @@ database-runtime)
     cd "$src"
     python3 acceptance/secret_templates_test.py
     python3 acceptance/init_secret_test.py
+    # A new ENVIRONMENT variable reaches the container on the next dev up.
+    python3 acceptance/environment_update_test.py
     if ! test -e apps/identity/DatabaseEnvironment.cs; then python3 acceptance/database_test.py; fi
     ;;
 pull-images) cd "$src"; ./dev/pull-images.sh;;

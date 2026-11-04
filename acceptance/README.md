@@ -43,6 +43,22 @@ Production lab steps use the shared authenticated root helper and protected
 `07-release-safety` probe; current-change OL9 verification is pending. Read
 [bootstrap, failure/retry contracts, local evidence and matrix commands](RESULTS.md).
 
+# A new ENVIRONMENT variable on the next dev up
+
+The `database-runtime` step on DEV (`03-database-runtime` in normal,
+`--first-app app2`, `--identity-only`, `--help-only` and
+`--platform-help-only`) also runs `environment_update_test.py`. It builds a
+disposable one-component product from this checkout's tool files and an
+existing local image, runs `./dev/dev.sh up`, adds `ADDED_SETTING` under
+`ENVIRONMENT` in the component's `config.defaults.yaml` and runs
+`./dev/dev.sh up` again, with `build/`, containers and credentials left in
+place. It passes only if the first container lacks the variable, the second
+`up` replaced the container, `ADDED_SETTING` and `EXISTING_SETTING` have
+their exact values inside the running container, and the generated secret is
+unchanged byte for byte. Only those two variables are read; only the probe's
+own pod, volumes, network and image alias are removed. `test_environment_update.py`
+checks that each wrong observation fails.
+
 # Secret-derived init environment (backlog 61)
 
 The normal `database-runtime` and renamed-product dev flows now run
