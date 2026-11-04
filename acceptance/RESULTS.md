@@ -27,14 +27,14 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--whoami` | `c82-whoami-53d4591` | 46 | CLEAN PASS |
-| normal | `c82-normal-53d4591` | 118 | CLEAN PASS |
+| normal | `envup-6a0f319` | 118 | CLEAN PASS |
 | `--first-app app2` | `c82-app2-53d4591` | 118 | CLEAN PASS |
 | `--identity-only` | `c82-identity-53d4591` | 58 | CLEAN PASS |
 | `--help-only` | `c82-help-53d4591` | 52 | CLEAN PASS |
 | `--platform-help-only` | `c82-platform-help-53d4591` | 31 | CLEAN PASS |
 | `--renamed-product` | `c82-renamed-53d4591` | 57 | CLEAN PASS |
 
-All on `53d4591` (2026-11-03), clean detached checkout, Oracle Linux Server
+Normal on `6a0f319` (2026-11-04), the others on `53d4591` (2026-11-03); `6a0f319` adds only the harness probe below. Clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
 includes backlog 80: app3's trust chain is mounted from its Secret through
 `MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
@@ -44,7 +44,10 @@ running backend with the environment's CA and as read-only mounts
 its password from a `MOUNTS` secret file (app1 keeps the directory mount);
 `07-database-auth` connected with it, and the new `07-password-guard`
 (normal, app2, identity) found that install stops for the kept `app2-data`
-volume without the password file and generates none. The init Secret probe runs
+volume without the password file and generates none. In `envup-6a0f319`,
+`03-database-runtime` also ran `environment_update_test.py`: after a second
+`./dev/dev.sh up` the new container had the added `ENVIRONMENT` variable with
+its exact value, the existing one unchanged and the generated secret kept. The init Secret probe runs
 inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
 it. The harness defects found on the way to this matrix are listed in
 [backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
