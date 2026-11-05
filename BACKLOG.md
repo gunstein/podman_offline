@@ -54,6 +54,112 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 83. Allow POSTGRES_PASSWORD_FILE under ENVIRONMENT
+
+Status: **planned, high priority** (2026-11-05, decided by the product owner).
+Not implemented.
+
+Need: the operator keeps a component's secret declarations and their use
+together in its `config.defaults.yaml`; secret values stay in external or
+generated credential files. Both places for the variable are supported (no
+migration):
+
+```yaml
+ENVIRONMENT:
+  db:
+    POSTGRES_PASSWORD_FILE: /run/secrets/database/password
+MOUNTS:
+  db:
+    /run/secrets/database/password: '@@secret:app1-db-admin-password/password@@'
+```
+
+or, as today, in the manifest's container `env`. The placement is optional;
+the database password protection is mandatory.
+
+Current code (checked on `88a86ff`, all in `deployment/deploy.py` unless
+named):
+
+- `postgres_binding` finds a database container (a `POSTGRES_PASSWORD*`
+  variable or a mount of the PostgreSQL data directory), requires exactly
+  `POSTGRES_PASSWORD_FILE` with an absolute path, and follows it to the
+  Secret mount (directory or single file), the Secret name and key, and the
+  data PVC. It reads only the container's manifest `env`.
+- `database_bindings` maps that to the credential file; `database_preflight`
+  protects it before generation (`check_database_password`,
+  `check_database_volume_absent`, `check_password_provided`). Both receive
+  the effective documents, after `environment.apply` has added the generated
+  ConfigMap `<component>-<container>-env` (public values) and
+  `<component>-<container>-env-secret` (secret lines) with `envFrom`.
+- `deployment/environment.py` refuses every `ENVIRONMENT` key starting with
+  `POSTGRES_PASSWORD` (`DATABASE_PREFIX`) only because the database check
+  does not see `ENVIRONMENT`.
+- A variable in both `ENVIRONMENT` and the manifest `env` of one container is
+  already refused (case-insensitive).
+
+Decision: no new rule for this variable. The one database rule that exists
+applies to the container's effective environment, wherever a variable is
+declared:
+
+1. `postgres_binding` reads the container's effective environment: its
+   manifest `env`, the values in the platform's generated ConfigMap and the
+   key names in its generated env Secret (never Secret values). Everything
+   after it is unchanged.
+2. The `POSTGRES_PASSWORD*` refusal in `environment.py` is removed. The
+   protection is not weakened: a database container whose password comes
+   another way (`POSTGRES_PASSWORD`, or `POSTGRES_PASSWORD_FILE` from a
+   `@@secret:` line, which lands in the env Secret) is still refused by the
+   existing check, now wherever it is declared.
+3. Both places at once is refused by the existing duplicate check; no
+   precedence rule. The path is checked after setting substitution, so the
+   check sees what the container gets.
+4. The protection, for both placements (existing behaviour):
+
+   | State | Result |
+   | --- | --- |
+   | Valid password file | Used unchanged |
+   | Existing file empty, unreadable or invalid (a delivered file, or a generated one truncated later) | Stop; never regenerate |
+   | File missing, database volume exists | Stop before generating |
+   | File missing, no volume | Generate only if declared |
+   | Podman cannot tell whether the volume exists | Stop, generate nothing |
+
+   A newly generated password is never empty; the second row is about a
+   file that already exists.
+
+No database login, rotation or data change. No new file, field, flag, mount
+mode, separate protection path, Podman lookup of other ConfigMaps or
+Secrets, rewriting of operator config or migration.
+
+Tests when implemented (extend `tests/platform_tests/test_database_preflight.py`
+and the environment tests): `ENVIRONMENT` placement with a `MOUNTS` secret
+file; manifest `env` and the directory mount still work; both places refused;
+relative path refused; `POSTGRES_PASSWORD` and a `@@secret:` value still
+refused, now also from `ENVIRONMENT`; every row of the table for both
+placements, with explicit claim, Secret and key (no component names in the
+code); no password content in any message. Lifecycle: `validate` and
+`init-config` still work without credential files or Podman; dev `prepare`
+/ `dev/dev.sh up` and an isolated bundle install run the runtime check
+before generation.
+
+Lab (existing fixtures): app2's database uses the `MOUNTS` secret file with
+`POSTGRES_PASSWORD_FILE` in the manifest (backlog 82), app1 the directory
+mount; `07-database-auth` connects with the password, the markers prove data
+across restarts and reboot, and `07-password-guard` (normal, app2, identity)
+proves the stop when app2's file is missing and its volume kept. Move app2's
+`POSTGRES_PASSWORD_FILE` into `ENVIRONMENT` and keep app1 in the manifest.
+Extend `password-guard` so that after restoring the original file the same
+install succeeds and app2's data is kept (it now only proves the stop).
+Harness tests must refuse missing or wrong runtime evidence; nothing may log
+credentials or a full container inspect.
+
+Documentation: `docs/COMPONENTS.md` gets the example and the rule "Declare
+`POSTGRES_PASSWORD_FILE` either in `ENVIRONMENT` or in the container's
+manifest `env`, never both. The same database password protection applies in
+both cases.", and separates the file's path from the password.
+
+Done when both placements work with the protection unchanged, the tests are
+green and a real lab run is recorded; product, harness and Podman/systemd
+results reported separately.
+
 ## 82. Mount a PostgreSQL password through MOUNTS
 
 Status: **done and lab-verified** (2026-11-03, product owner request): the
