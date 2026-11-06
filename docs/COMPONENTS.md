@@ -313,8 +313,10 @@ Rules, each refused before anything is written with the file and the next step:
 - Values follow the [secret value](#secret-values-in-environment-and-mounts) text rules: no
   surrounding spaces, quotes, `;`, control characters or `@@` in a substituted
   value. A secret that does not fit uses `secretKeyRef` in the manifest.
-- Every `POSTGRES_PASSWORD*` variable stays in the manifest's `env`: the
-  platform's database check reads it there.
+- `POSTGRES_PASSWORD_FILE` may be an `ENVIRONMENT` line (backlog 83): the
+  platform's database check reads the container's effective environment.
+  Declare it either in `ENVIRONMENT` or in the container's manifest `env`,
+  never both. The same database password protection applies in both cases.
 
 ### Files with secrets: `MOUNTS`
 
@@ -487,10 +489,11 @@ the resource is inactive.
 2. Write `components/<id>/config.defaults.yaml`: settings and `SECRET_FILES`
    at the top, each container's variables under `ENVIRONMENT` (with
    `@@CLIENT_ID@@`/`@@CLIENT_BASE_PATH@@` for an app with `client.yaml`), and
-   files with passwords under `MOUNTS`. Keep `POSTGRES_PASSWORD*` in the
-   manifest's `env`. A PostgreSQL password file may be a `MOUNTS` secret file
-   (backlog 82; demo app2), while `POSTGRES_PASSWORD_FILE` stays in the
-   manifest:
+   files with passwords under `MOUNTS`. A PostgreSQL database reads its
+   password from the file `POSTGRES_PASSWORD_FILE` names: the variable holds a
+   public path, never the password, which stays in a `SECRET_FILES` file. Both
+   the variable and the file can be declared in `config.defaults.yaml`
+   (backlogs 82 and 83; demo app2):
 
    ```yaml
    # config.defaults.yaml
@@ -499,22 +502,24 @@ the resource is inactive.
      - path: credentials/database
        generate:
        - password
+   ENVIRONMENT:
+     db:
+       POSTGRES_PASSWORD_FILE: /run/secrets/database/password
    MOUNTS:
      db:
        /run/secrets/database/password: '@@secret:orders-database-password/password@@'
    ```
 
    ```yaml
-   # manifests/40-postgres.yaml, container db (no volume for the password)
-   env:
-   - name: POSTGRES_PASSWORD_FILE
-     value: /run/secrets/database/password
+   # manifests/40-postgres.yaml, container db (no password variable or volume)
    volumeMounts:
    - name: data
      mountPath: /var/lib/postgresql/data      # a PersistentVolumeClaim
    ```
 
-   The database checks follow either mount to the same claim, Secret and key
+   Declare `POSTGRES_PASSWORD_FILE` either in `ENVIRONMENT` or in the
+   container's manifest `env`, never both. The same database password
+   protection applies in both cases. The database checks follow either mount to the same claim, Secret and key
    (`deploy.postgres_binding`): an existing database volume without the
    password file still stops before a new password is generated. Mounting the
    Secret as the directory `/run/secrets/database` in the manifest (demo app1)

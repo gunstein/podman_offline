@@ -9,6 +9,7 @@ import copy
 import shutil
 import subprocess
 
+import yaml
 from deployment import common, deploy
 
 from helpers.product_fixture import RENAMED, ProductFixture
@@ -282,6 +283,133 @@ class MountedPasswordTests(ProductFixture):
             deploy.prepare()
         self.assertFalse(self.password.exists())
         self.assertEqual(self.files_under(self.dev), before)
+
+    def test_an_existing_invalid_password_file_stops(self):
+        self.password.parent.mkdir(parents=True)
+        self.password.write_bytes(b"")
+        with self.assertRaisesRegex(
+            common.DeployError, "Empty or invalid database password file"
+        ):
+            deploy.prepare()
+        self.assertEqual(self.password.read_bytes(), b"")
+
+    def test_an_unanswered_volume_question_generates_nothing(self):
+        def failing(arguments, **kwargs):
+            if list(arguments)[:3] == ["podman", "volume", "exists"]:
+                return subprocess.CompletedProcess(arguments, 125, b"", b"")
+            return self.host_command(arguments, **kwargs)
+
+        self.process.side_effect = failing
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Cannot check database volume orders-data; no password generated",
+        ):
+            deploy.prepare()
+        self.assertFalse(self.password.exists())
+
+
+def environment_orders(value="/run/secrets/database/password"):
+    """mounted_orders with POSTGRES_PASSWORD_FILE under ENVIRONMENT (backlog 83)."""
+    product = mounted_orders()
+    orders = product["orders"]
+    db = orders["manifests"][1]["spec"]["containers"][0]
+    db["env"] = [e for e in db["env"] if e["name"] != "POSTGRES_PASSWORD_FILE"]
+    orders["env"] = dict(orders["env"], db={"POSTGRES_PASSWORD_FILE": value})
+    return product
+
+
+class EnvironmentPasswordTests(MountedPasswordTests):
+    """The same protection with POSTGRES_PASSWORD_FILE in ENVIRONMENT."""
+
+    def setUp(self):
+        ProductFixture.setUp(self)
+        self.product = environment_orders()
+        self.write_product(self.product)
+        self.dev = common.BUILD / "dev"
+        self.provide_credentials(self.product, self.dev)
+        self.password = self.dev / "orders/credentials/database/password"
+
+    def rewrite(self, product):
+        """Replace the source product; its dev credentials are delivered again."""
+        shutil.rmtree(self.source)
+        self.write_product(product)
+        self.provide_credentials(product, self.dev)
+
+    def refused(self, change, pattern):
+        product = environment_orders()
+        change(product["orders"])
+        self.rewrite(product)
+        before = self.files_under(self.dev)
+        with self.assertRaisesRegex(common.DeployError, pattern) as failure:
+            deploy.prepare()
+        self.assertEqual(self.files_under(self.dev), before)
+        return str(failure.exception)
+
+    def test_the_path_reaches_the_container_through_its_configmap(self):
+        deploy.prepare()
+        documents = [
+            doc
+            for doc in yaml.safe_load_all((common.BUILD / "install.yaml").read_text())
+            if doc
+        ]
+        config_map = next(
+            doc for doc in documents if doc["metadata"]["name"] == "orders-db-env"
+        )
+        self.assertEqual(
+            config_map["data"]["POSTGRES_PASSWORD_FILE"],
+            "/run/secrets/database/password",
+        )
+
+    def test_a_setting_in_the_path_is_checked_after_substitution(self):
+        def setting(orders):
+            orders["defaults"]["DB_PASSWORD_FILE"] = "/run/secrets/database/password"
+            orders["env"]["db"]["POSTGRES_PASSWORD_FILE"] = "@@DB_PASSWORD_FILE@@"
+
+        product = environment_orders()
+        setting(product["orders"])
+        self.rewrite(product)
+        deploy.prepare()
+        self.assertTrue(self.password.is_file())
+        self.refused(
+            lambda orders: (
+                setting(orders),
+                orders["defaults"].update(DB_PASSWORD_FILE="/run/secrets/db/password"),
+            ),
+            "single file /run/secrets/db/password with subPath",
+        )
+
+    def test_other_forms_and_both_places_are_refused(self):
+        def both(orders):
+            db = orders["manifests"][1]["spec"]["containers"][0]
+            db["env"].append(
+                {
+                    "name": "POSTGRES_PASSWORD_FILE",
+                    "value": "/run/secrets/database/password",
+                }
+            )
+
+        def from_secret(orders):
+            orders["env"]["db"]["POSTGRES_PASSWORD_FILE"] = (
+                "@@secret:orders-database-password/password@@"
+            )
+
+        def plain_password(orders):
+            orders["env"]["db"] = {
+                "POSTGRES_PASSWORD": "@@secret:orders-database-password/password@@"
+            }
+
+        for label, change, pattern in (
+            ("both places", both, "also set in the manifest's env"),
+            ("relative path", lambda o: o["env"]["db"].update(
+                POSTGRES_PASSWORD_FILE="secrets/password"), "Invalid POSTGRES_PASSWORD_FILE"),
+            ("path from a secret", from_secret, "Invalid POSTGRES_PASSWORD_FILE"),
+            ("password itself", plain_password,
+             "Unsupported PostgreSQL password setting POSTGRES_PASSWORD "),
+        ):  # fmt: skip
+            with self.subTest(label):
+                message = self.refused(change, pattern)
+                if label != "both places":  # that one names the ENVIRONMENT line
+                    self.assertIn("container 'db'", message)
 
 
 class PasswordMountShapeTests(ProductFixture):

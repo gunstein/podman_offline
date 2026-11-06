@@ -20,10 +20,13 @@ ENVIRONMENT:
     BASE_PATH: '@@CLIENT_BASE_PATH@@'
     PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
     HTTPS_PORT: '@@HTTPS_PORT@@'
+  # The database reads its password from this file (backlog 83). The path is
+  # public; the password stays in the Secret mounted below.
+  db:
+    POSTGRES_PASSWORD_FILE: /run/secrets/database/password
 
-# Files mounted read-only into a container. The database reads its password
-# from POSTGRES_PASSWORD_FILE in the manifest; the file comes unchanged from
-# the app2-database-password Secret.
+# Files mounted read-only into a container: the database password file comes
+# unchanged from the app2-database-password Secret.
 MOUNTS:
   db:
     /run/secrets/database/password: '@@secret:app2-database-password/password@@'

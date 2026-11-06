@@ -851,9 +851,9 @@ flowchart TD
 before generation, on the effective manifest (placeholders replaced). A missing
 database password with an existing database volume stops installation; deploy
 does not invent a replacement password for retained database state. A container
-that sets any `POSTGRES_PASSWORD*` variable or mounts `/var/lib/postgresql/data`
-counts as a database container and must use `POSTGRES_PASSWORD_FILE` with a
-mounted Secret; any other password layout is refused before generation. The
+that sets any `POSTGRES_PASSWORD*` variable (in its manifest `env` or through
+`ENVIRONMENT`, backlog 83) or mounts `/var/lib/postgresql/data` counts as a
+database container and must use `POSTGRES_PASSWORD_FILE` with a mounted Secret; any other password layout is refused before generation. The
 Secret may be mounted as the file's directory in the manifest, or as the single
 file through `MOUNTS` (backlog 82, [example](docs/COMPONENTS.md#converting-a-service)).
 

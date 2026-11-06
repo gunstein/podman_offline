@@ -2697,7 +2697,15 @@ password-guard)
     [[ $guard_status != 0 ]] || { echo "FAIL: install did not stop"; exit 1; }
     grep -Fq "existing volume $bundle-data" <<< "$guard_output" \
         || { echo "FAIL: install stopped for another reason"; exit 1; }
-    echo "PASS: kept volume $bundle-data and no password file: install stopped, nothing generated"
+    # With the original file back, the same install succeeds (backlog 83);
+    # later steps check the data and the password login.
+    retry_status=0
+    retry_output=$(as_product bash "$product/deploy.sh" install 2>&1) || retry_status=$?
+    printf '%s\n' "$retry_output"
+    [[ $retry_status == 0 ]] || { echo "FAIL: install after restoring the password file failed"; exit 1; }
+    grep -Fxq "PASS: ./deploy.sh install completed" <<< "$retry_output" \
+        || { echo "FAIL: install after restoring the password file did not complete"; exit 1; }
+    echo "PASS: kept volume $bundle-data and no password file: install stopped, nothing generated; restored file: install completed"
     ;;
 cleanup) rm -rf -- "$private"; test ! -e "$private";;
 *) echo "Unknown action: $action" >&2; exit 2;;

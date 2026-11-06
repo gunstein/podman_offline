@@ -2821,7 +2821,9 @@ class SnapshotTests(unittest.TestCase):
 class PasswordGuardCheckTests(unittest.TestCase):
     """password-guard (backlog 82): a stop without a new password, proven."""
 
-    def run_check(self, install):
+    def run_check(
+        self, install, retry='echo "PASS: ./deploy.sh install completed"; return 0'
+    ):
         """Run the action with as_product on local files and a scripted install."""
         script = Path(__file__).with_name("remote.sh").read_text()
         body = script[script.index("password-guard)\n") + len("password-guard)\n") :]
@@ -2835,7 +2837,10 @@ class PasswordGuardCheckTests(unittest.TestCase):
                 "as_product() {\n"
                 '  case "$1" in\n'
                 "    podman) return 0;;\n"
-                "    bash) " + install + ";;\n"
+                '    bash) if [[ -e "$state/installed-once" ]]; then '
+                + retry
+                + "; fi\n"
+                '      touch "$state/installed-once"; ' + install + ";;\n"
                 '    *) "$@";;\n'
                 "  esac\n"
                 "}\n"
@@ -2863,6 +2868,15 @@ class PasswordGuardCheckTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS: kept volume app2-data", result.stdout)
+        self.assertEqual(kept, "kept-password\n")
+
+    def test_a_failed_install_after_restoring_the_file_fails(self):
+        result, kept = self.run_check(
+            'echo "ERROR: x with existing volume app2-data; no password"; return 1',
+            retry='echo "ERROR: still broken"; return 1',
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("install after restoring the password file failed", result.stdout)
         self.assertEqual(kept, "kept-password\n")
 
     def test_a_new_password_an_install_or_another_stop_fails(self):

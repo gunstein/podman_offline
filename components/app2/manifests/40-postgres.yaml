@@ -27,8 +27,8 @@ spec:
       value: '@@DB_USER@@'
     - name: PGPORT
       value: '@@DB_PORT@@'
-    - name: POSTGRES_PASSWORD_FILE
-      value: /run/secrets/database/password
+    # POSTGRES_PASSWORD_FILE is under ENVIRONMENT in config.defaults.yaml
+    # (backlog 83); app1 keeps it here.
     - name: PGDATA
       value: /var/lib/postgresql/data/pgdata
     # The file POSTGRES_PASSWORD_FILE names is a MOUNTS secret file in

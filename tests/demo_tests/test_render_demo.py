@@ -93,7 +93,12 @@ class DemoRenderTests(DeployFixture):
         self.assertIn("ALTER ROLE todo_report PASSWORD '", text)
         self.assertNotIn("@@", text)
         self.assertEqual(kinds.count("PersistentVolumeClaim"), 8)
-        self.assertEqual(kinds.count("ConfigMap"), 6)
+        self.assertEqual(kinds.count("ConfigMap"), 7)
+        # app2's database gets POSTGRES_PASSWORD_FILE from ENVIRONMENT (backlog 83).
+        db_env = next(doc for doc in docs if doc["metadata"]["name"] == "app2-db-env")
+        self.assertEqual(
+            db_env["data"], {"POSTGRES_PASSWORD_FILE": "/run/secrets/database/password"}
+        )
         self.assertEqual(len(rendering.find_images(docs)), 8)
         rendering.check_links(docs, {})
         self.process.assert_not_called()

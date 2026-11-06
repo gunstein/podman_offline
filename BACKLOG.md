@@ -56,8 +56,15 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 83. Allow POSTGRES_PASSWORD_FILE under ENVIRONMENT
 
-Status: **planned, high priority** (2026-11-05, decided by the product owner).
-Not implemented.
+Status: **implemented with local tests (2026-11-06); lab verification
+outstanding** (high priority). `deploy.environment_entries` gives
+`postgres_binding` the container's `ENVIRONMENT` entries (ConfigMap values,
+Secret recipe key names); the `POSTGRES_PASSWORD*` refusal in
+`environment.py` is removed. Demo app2 declares `POSTGRES_PASSWORD_FILE` in
+`ENVIRONMENT` (app1 in the manifest), and `password-guard` now also requires
+the install to complete after the original file is restored. Tests:
+`EnvironmentPasswordTests` in `test_database_preflight.py` (every table row
+by inheritance plus the refusals), `PasswordGuardCheckTests`.
 
 Need: the operator keeps a component's secret declarations and their use
 together in its `config.defaults.yaml`; secret values stay in external or
