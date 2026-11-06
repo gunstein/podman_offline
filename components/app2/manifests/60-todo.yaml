@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: backend
-    image: localhost/demo-todo-backend:0.2.2
+    image: '@@LOCAL_REGISTRY@@/demo-todo-backend:@@TODO_BACKEND_VER@@'
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 10
@@ -38,7 +38,7 @@ spec:
       mountPath: /run/secrets/database
       readOnly: true
   - name: frontend
-    image: localhost/demo-todo-frontend:0.2.0
+    image: '@@LOCAL_REGISTRY@@/demo-todo-frontend:@@TODO_FRONTEND_VER@@'
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 10

@@ -857,6 +857,24 @@ def states(expected, init):
     return found
 
 
+def check_images(paths):
+    """Each app container runs the image its installed YAML names (backlog 63)."""
+    expected = {}
+    for path in paths:
+        for doc in yaml.safe_load_all(path.read_text()):
+            if not isinstance(doc, dict) or doc.get("kind") != "Pod":
+                continue
+            for container in doc["spec"].get("containers", []):
+                expected[doc["metadata"]["name"] + "-" + container["name"]] = container["image"]
+    # Only Name and ImageName are read; inspect output is never printed.
+    rows = json.loads(podman(["inspect", "--format", "json"] + sorted(expected)))
+    running = {row["Name"]: row["ImageName"] for row in rows}
+    for name, image in sorted(expected.items()):
+        if running.get(name) != image:
+            raise RuntimeError("Container " + name + " does not run " + image)
+    print("PASS: each of {} app containers runs the image its installed YAML names".format(len(expected)))
+
+
 def check_configmap_inline(paths):
     """Verify the demo's public inline value inside its actual consumer container."""
     checked = 0
@@ -905,6 +923,7 @@ def main():
             if running != "running" or health == "unhealthy":
                 raise RuntimeError("Container is not healthy: " + name)
         if all(health == "healthy" for _, health in current.values()):
+            check_images(paths)
             check_configmap_inline(paths)
             print("PASS: all {} app containers are running and healthy".format(len(expected)))
             return
@@ -921,6 +940,21 @@ if __name__ == "__main__":
 HEALTHY
     config_layers prod
     seed_content prod
+}
+# The bundle's installed YAML names this image for one of its app containers.
+expected_image() {
+    as_product python3 - "$install_root/config/containers/systemd/$product_name-$bundle.yaml" "$1" <<'EXPECTED_IMAGE'
+import sys
+import yaml
+
+with open(sys.argv[1]) as stream:
+    images = [container["image"] for doc in yaml.safe_load_all(stream)
+              if isinstance(doc, dict) and doc.get("kind") == "Pod"
+              for container in doc["spec"].get("containers", [])]
+if sys.argv[2] not in images:
+    raise SystemExit("FAIL: the installed YAML does not name " + sys.argv[2])
+print("PASS: the installed YAML names " + sys.argv[2])
+EXPECTED_IMAGE
 }
 # Wait for the backend through the HTTPS proxy before authenticated marker checks.
 wait_backend() {
@@ -1307,7 +1341,6 @@ help-upgrade-bundle|platform-upgrade-bundle|identity-upgrade-bundle)
     export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle" SOURCE_REVISION="$revision"
     python3 - <<'HELP_BUILD'
 import os
-import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -1322,13 +1355,10 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
     # The tested revision, not HEAD: the Identity scenario commits an older baseline on top.
     subprocess.run(["git", "-C", str(release), "checkout", "-q", "--detach", os.environ["SOURCE_REVISION"]], check=True)
     kind = os.environ["RELEASE_KIND"]
+    # Help and Identity tag their image @@COMPONENT_VERSION@@, so VERSION is the
+    # only release file that changes.
     (release / "components" / kind / "VERSION").write_text(version + "\n")
     if kind == "help":
-        manifest = next((release / "components/help/manifests").glob("*.yaml"))
-        text, count = re.subn(r"localhost/demo-help:[0-9]+\.[0-9]+\.[0-9]+", "localhost/demo-help:" + version, manifest.read_text())
-        if count != 1:
-            raise SystemExit("FAIL: expected exactly one help image")
-        manifest.write_text(text)
         content = release / "apps/help/index.html"
         if "</body>" not in content.read_text():
             raise SystemExit("FAIL: missing help content insertion point")
@@ -1341,11 +1371,6 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
         if program.read_text().count(marker) != 1:
             raise SystemExit("FAIL: expected one Identity health marker")
         program.write_text(program.read_text().replace(marker, 'new { status = "ok", release = "' + version + '" }'))
-        manifest = release / "components/identity/manifests/50-identity.yaml"
-        text, count = re.subn(r"localhost/demo-identity:[0-9]+\.[0-9]+\.[0-9]+", "localhost/demo-identity:" + version, manifest.read_text())
-        if count != 1:
-            raise SystemExit("FAIL: expected one Identity image")
-        manifest.write_text(text)
         subprocess.run(["podman", "build", "-t", "localhost/demo-identity:" + version,
                         "-f", str(release / "apps/identity/Containerfile"), str(release / "apps/identity")], check=True)
     bundle.ROOT = release
@@ -1366,6 +1391,11 @@ help-upgrade|platform-upgrade|identity-upgrade)
     healthy
     wait_trust "$product/deployment/"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
+    # Help and Identity tag their image @@COMPONENT_VERSION@@; healthy has
+    # checked that the running container uses the installed YAML's image.
+    if [[ $bundle == help || $bundle == identity ]]; then
+        expected_image "localhost/demo-$bundle:$requested_version"
+    fi
     ;;
 identity-before|identity-after)
     as_product python3 - "$action" "$requested_version" <<'IDENTITY_STATE'

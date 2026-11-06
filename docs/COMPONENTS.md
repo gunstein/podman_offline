@@ -206,7 +206,11 @@ redirect URIs, so they cannot be renamed:
 | `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values |
 | `SECRET_TEMPLATES` | Refused in every config file; the platform's internal name for the Secrets it renders from `ENVIRONMENT` and `MOUNTS` |
 | `ENVIRONMENT`, `MOUNTS` | Each container's environment and mounted files; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
+| `COMPONENT_VERSION` | Only in a container `image`: the component's `VERSION` ([image versions](#image-versions-configimagesyaml)) |
 | Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@` in its own component |
+
+A name in `config/images.yaml` is an image variable and cannot also be a
+setting in a component's `config.defaults.yaml`.
 
 A `PUBLIC_` prefix has no meaning of its own. `catalog.PUBLIC_KEYS` holds the
 two public names in code.
@@ -791,6 +795,54 @@ rendered value and `printenv PUBLIC_ENDPOINT` inside the consuming proxy. It
 follows the ConfigMap reference, so the same check covers the renamed `shop`
 gateway and all six scenarios without generic deploy-code changes.
 
+## Image versions: `config/images.yaml`
+
+Shared registry addresses and image versions are set in one file at the root
+of the source checkout, and each manifest says where it uses them:
+
+```yaml
+# config/images.yaml
+ARTIFACTORY_1: artifactory1.example.test/docker
+ARTIFACTORY_2: artifactory2.example.test:8443/docker-remote
+POSTGRES_VER: '17.11'
+```
+
+```yaml
+# components/orders/manifests/40-postgres.yaml
+    image: '@@ARTIFACTORY_1@@/postgres:@@POSTGRES_VER@@'
+# components/orders/manifests/60-web.yaml
+    image: '@@ARTIFACTORY_2@@/team/orders:@@COMPONENT_VERSION@@'
+```
+
+- Names use `A-Z`, `0-9` and `_` and start with a letter; the
+  [reserved configuration names](#reserved-configuration-names) are refused.
+  Values are
+  nonempty text: quote a value YAML would read as a number (`'17.11'`). A
+  value may hold a registry host with port and path, not only a tag.
+- `@@COMPONENT_VERSION@@` is built in: the component's own `VERSION`, for an
+  image released together with its component.
+- Several registries are ordinary variables. Changing one changes only the
+  images that use it; literal images are never changed.
+- Placeholders work only in the `image` of `containers` and
+  `initContainers`. An image variable anywhere else in a manifest is refused,
+  and so is an image name that is not in `config/images.yaml`: settings,
+  `config/dev.yaml` and the operator's `config.yaml` never fill an image.
+  Plain literal images need no variables and no file.
+- The resolved image must not contain `@@`, whitespace or a URL scheme
+  (`https://`); give only the registry host and path.
+- Every reader of source manifests resolves the same way: `./deploy.sh
+  validate`, `prepare`, `dev/dev.sh up`, `dev/pull-images.sh`,
+  `dev/build-images.sh` and `./build-bundle.sh`. A bundle's manifests are
+  written from the resolved documents (YAML comments are not kept) and its
+  `images.txt` lists the same images. `config/images.yaml` is not shipped;
+  production config never holds image values.
+
+To change an image, edit `config/images.yaml` (or `VERSION` for a
+`@@COMPONENT_VERSION@@` image), then run `dev/pull-images.sh` and
+`dev/dev.sh up`. A release whose images changed is delivered with a new
+component `VERSION`: the publication refuses a changed archive for a version
+that already exists.
+
 ## Manifest resource kinds
 
 A component's `manifests/*.yaml` may contain only `Pod`, `ConfigMap`,
@@ -880,6 +932,9 @@ spec:
     image: registry.example.com/team/reports:1.4.0
     imagePullPolicy: Never
 ```
+
+The image may use [image variables](#image-versions-configimagesyaml)
+instead, such as `'@@REGISTRY@@/team/reports:@@COMPONENT_VERSION@@'`.
 
 Add `components/reports/route.conf`:
 

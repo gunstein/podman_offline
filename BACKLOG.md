@@ -3919,9 +3919,17 @@ validation; it does not establish the cause of the remaining private Grate failu
 
 ## 63. Parameterise image versions with build-time variables
 
-Status: **planned, high priority; ready for implementation** (revised
-2026-11-03 against `53d4591`). Not implemented: no code reads
-`config/images.yaml` or `@@COMPONENT_VERSION@@` today.
+Status: **implemented on branch `claude/backlog-63-image-variables`;
+product, unit and harness tests pass; real lab verification outstanding**
+(the matrix below). The resolver is `render.load_manifest`: it takes the
+component and the product root from the manifest's place
+(`<root>/components/<id>/manifests/`), so a release builder that points
+`bundle.ROOT` at another checkout resolves that checkout's files. The
+collision with a setting is checked against the manifest's own component;
+`validate` reads every catalog component. The lab's `healthy` step checks
+that every app container runs the image its installed YAML names, and the
+help and identity upgrades check the image tagged with the new `VERSION`.
+[Contract](docs/COMPONENTS.md#image-versions-configimagesyaml).
 
 ### Need and decisions
 

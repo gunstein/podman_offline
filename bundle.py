@@ -60,10 +60,27 @@ def owner_root(info):
     return info
 
 
+def resolved_manifests(paths):
+    """{path: documents} with image variables resolved (render.load_manifest).
+
+    The component is the directory above manifests/ (components/<id>/manifests).
+    """
+    result = {}
+    try:
+        for path in paths:
+            documents = rendering.load_manifest(path)
+            rendering.pod_specs(documents, str(path))  # Kinds, named by file.
+            result[path] = documents
+    except common.DeployError as error:
+        raise BundleError(str(error)) from None
+    return result
+
+
 def manifest_images(manifests=None):
     """Find images in the given manifests, or in every catalog component.
 
     Directories under components/ that the catalog does not list are never read.
+    Image variables are resolved, so pull, build and bundle see the same names.
     """
     documents = []
     if manifests:
@@ -80,11 +97,9 @@ def manifest_images(manifests=None):
                 (ROOT / "components" / name / "manifests").glob("*.yaml")
             )
         ]
+    for path_documents in resolved_manifests(paths).values():
+        documents.extend(path_documents)
     try:
-        for path in paths:
-            path_documents = rendering.load_yaml_all(path)
-            rendering.pod_specs(path_documents, str(path))
-            documents.extend(path_documents)
         return rendering.find_images(documents)
     except common.DeployError as error:
         raise BundleError(str(error)) from None
@@ -197,7 +212,14 @@ def build_release(version, descriptor):
     target = STAGE / name
 
     directory = ROOT / "components" / component
-    images = manifest_images(directory / "manifests")
+    # One resolution for the image list and the shipped manifests.
+    manifests = resolved_manifests(sorted((directory / "manifests").glob("*.yaml")))
+    try:
+        images = rendering.find_images(
+            [doc for documents in manifests.values() for doc in documents]
+        )
+    except common.DeployError as error:
+        raise BundleError(str(error)) from None
     guard = generated_secret_guard(guarded_directories())
     guard(ROOT, ["deploy.sh", "deployment", "README.md", "scripts", "quadlet"])
 
@@ -210,8 +232,17 @@ def build_release(version, descriptor):
 
     destination = target / "components" / component
     destination.mkdir(parents=True)
+    guard(directory, ["manifests"])
+    (destination / "manifests").mkdir()
+    for path, documents in manifests.items():
+        # Literal images only; config/images.yaml is not shipped.
+        (destination / "manifests" / path.name).write_text(
+            yaml.safe_dump_all(
+                [doc for doc in documents if doc is not None], sort_keys=False
+            ),
+            encoding="utf-8",
+        )
     for entry in (
-        "manifests",
         "config.defaults.yaml",
         "route.conf",
         "client.yaml",

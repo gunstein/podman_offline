@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: nginx
-    image: docker.io/library/nginx:1.28-alpine
+    image: '@@REGISTRY@@/library/nginx:@@NGINX_VER@@'
     imagePullPolicy: Never
     command:
     - /bin/sh

@@ -214,6 +214,7 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
                     "containers": [
                         {
                             "name": "nginx",
+                            "image": "localhost/proxy:1",
                             "envFrom": [
                                 {"configMapRef": {"name": component + "-settings"}}
                             ],
@@ -272,6 +273,7 @@ class ConfigMapInlineHarnessTests(unittest.TestCase):
             self.fixture(folder)
             row = {
                 "Name": "platform-proxy-nginx",
+                "ImageName": "localhost/proxy:1",
                 "IsInfra": False,
                 "IsService": False,
                 "State": {"Status": "running", "Health": {"Status": "healthy"}},

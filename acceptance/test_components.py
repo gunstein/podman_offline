@@ -344,6 +344,7 @@ class ComponentObservationTests(unittest.TestCase):
     def test_inventory_combines_installed_component_manifests(self):
         """Require all containers across separate installed YAML files to be healthy."""
         code = guest_code("HEALTHY")
+        code["check_images"] = lambda paths: None
         code["check_configmap_inline"] = lambda paths: None
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

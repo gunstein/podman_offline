@@ -38,6 +38,153 @@ class UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
+# Build-time image variables (backlog 63): config/images.yaml, used only in the
+# image field of containers and initContainers, plus the built-in
+# COMPONENT_VERSION. Bundles ship the resolved, literal references.
+IMAGE_VARIABLES = "config/images.yaml"
+IMAGE_NAME = re.compile(r"[A-Z][A-Z0-9_]*\Z")
+IMAGE_TOKEN = re.compile(r"@@([^@]*)@@")
+# Names that already mean something else: reserved or derived config names.
+IMAGE_RESERVED = (
+    "COMPONENT_VERSION",
+    "PUBLIC_HOSTNAME",
+    "CLIENT_ID",
+    "CLIENT_BASE_PATH",
+    common.SECRET_FILES,
+    common.VOLUME_FILES,
+    common.SECRET_TEMPLATES,
+    common.ENVIRONMENT,
+    common.MOUNTS,
+)
+
+
+def image_variables(root):
+    """The variables of root/config/images.yaml; {} without the file.
+
+    A release has no such file: its manifests hold literal references.
+    """
+    path = root / IMAGE_VARIABLES
+    if not path.is_file():
+        return {}
+    data = load_yaml(path)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise common.DeployError(f"{path} must map NAME: value")
+    for name, value in data.items():
+        if not isinstance(name, str) or not IMAGE_NAME.fullmatch(name):
+            raise common.DeployError(
+                f"{path}: {name!r} is not a variable name; use A-Z, 0-9 and _"
+            )
+        if name in IMAGE_RESERVED:
+            raise common.DeployError(f"{path}: {name} is a reserved name; rename it")
+        if not isinstance(value, str) or not value:
+            raise common.DeployError(
+                f"{path}: {name} must be a nonempty text value; quote numbers "
+                "such as '17.11'"
+            )
+    return data
+
+
+def load_manifest(path):
+    """A component manifest with its image fields resolved (backlog 63).
+
+    Every reader of component manifests uses this before anything else reads
+    them, so pull, build, dev, validate and the bundle see the same images.
+    The manifest's place, <root>/components/<id>/manifests/, gives the
+    component's VERSION and config.defaults.yaml and the root's
+    config/images.yaml.
+    """
+    component = path.parent.parent
+    variables = image_variables(component.parent.parent)
+    return resolve_images(load_yaml_all(path), variables, component, path)
+
+
+def resolve_images(documents, variables, component, path):
+    """Replace @@NAME@@ in each container image; refuse image variables elsewhere."""
+    defaults = component / "config.defaults.yaml"
+    settings = load_yaml(defaults) if defaults.is_file() else None
+    for name in sorted(set(variables) & set(settings or {})):
+        raise common.DeployError(
+            f"{name} is both an image variable ({IMAGE_VARIABLES}) and a setting in "
+            f"{defaults}; rename one"
+        )
+    # Tolerant of malformed documents: their shape is reported by the usual
+    # checks (pod_specs) as validate findings.
+    pods = [
+        doc.get("spec")
+        for doc in documents
+        if isinstance(doc, dict) and doc.get("kind") == "Pod"
+    ]
+    for spec in pods:
+        groups = (
+            [spec.get(group) for group in ("containers", "initContainers")]
+            if isinstance(spec, dict)
+            else []
+        )
+        for container in [
+            c for group in groups if isinstance(group, list) for c in group
+        ]:
+            image = container.get("image") if isinstance(container, dict) else None
+            if not isinstance(image, str) or "@@" not in image:
+                continue
+            where = f"{path}: container {container.get('name')!r}"
+
+            def value(match, where=where):
+                name = match[1]
+                if name == "COMPONENT_VERSION":
+                    return component_version(component, where)
+                if name not in variables:
+                    raise common.DeployError(
+                        f"{where}: image uses @@{name}@@, which is not in "
+                        f"{IMAGE_VARIABLES}; add it there or fix the name"
+                    )
+                return variables[name]
+
+            resolved = IMAGE_TOKEN.sub(value, image)
+            if "@@" in resolved or any(c.isspace() for c in resolved):
+                raise common.DeployError(
+                    f"{where}: image {resolved!r} is not a valid reference after "
+                    f"{IMAGE_VARIABLES}; check its values"
+                )
+            if "://" in resolved:
+                raise common.DeployError(
+                    f"{where}: image {resolved!r} has a URL scheme; give only the "
+                    f"registry host and path in {IMAGE_VARIABLES}"
+                )
+            container["image"] = resolved
+    for name in sorted(set(variables) & placeholders_outside_images(documents)):
+        raise common.DeployError(
+            f"{path}: @@{name}@@ is an image variable ({IMAGE_VARIABLES}); use it "
+            "only in a container image"
+        )
+    return documents
+
+
+def component_version(component, where):
+    path = component / "VERSION"
+    if not path.is_file():
+        raise common.DeployError(
+            f"{where}: @@COMPONENT_VERSION@@ needs the component's VERSION file"
+        )
+    return path.read_text(encoding="utf-8").strip()
+
+
+def placeholders_outside_images(value, key=None):
+    """Every @@NAME@@ name in the documents except in image fields."""
+    found = set()
+    if isinstance(value, dict):
+        for item_key, item in value.items():
+            if item_key != "image":
+                found |= placeholders_outside_images(item, item_key)
+    elif isinstance(value, list):
+        for item in value:
+            found |= placeholders_outside_images(item)
+    elif isinstance(value, str):
+        found = {match[1] for match in IMAGE_TOKEN.finditer(value)}
+    return found
+
+
 def load_yaml(path):
     """Read one YAML document safely and reject duplicate keys."""
     try:
@@ -244,7 +391,7 @@ def validate_component_config(config, component, path):
     for manifest in sorted(
         (common.ROOT / "components" / component / "manifests").glob("*.yaml")
     ):
-        documents = load_yaml_all(manifest)
+        documents = load_manifest(manifest)
         collect(documents)
         configmaps.extend(
             doc
@@ -1129,7 +1276,7 @@ def effective_documents(
     check_templates(config, path, component)
     documents, sources = [], []
     for manifest in sorted(manifests.glob("*.yaml")):
-        original = load_yaml_all(manifest)
+        original = load_manifest(manifest)
         check_kinds(original, manifest)
         original = [document for document in original if document is not None]
         try:

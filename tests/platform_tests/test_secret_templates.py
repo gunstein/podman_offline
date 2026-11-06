@@ -622,7 +622,14 @@ class ConfigMapTemplateTests(DeployFixture):
                     }
                 ]
             self.write("manifests/pod.yaml", yaml.safe_dump(current))
-            with self.assertRaisesRegex(common.DeployError, "Only whole values"):
+            # A setting is never an image value (backlog 63): only
+            # config/images.yaml variables may stand in an image.
+            pattern = (
+                "@@HOST@@, which is not in config/images.yaml"
+                if field == "image"
+                else "Only whole values"
+            )
+            with self.assertRaisesRegex(common.DeployError, pattern):
                 self.checked()
         ((common.ROOT / "manifests") / "pod.yaml").unlink()
         self.write_map({"text": "public"}, metadata={"name": "settings-@@HOST@@"})

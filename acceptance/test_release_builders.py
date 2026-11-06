@@ -1,7 +1,8 @@
 """The lab's release builders on the real product, with only git and Podman stubbed (backlog 78).
 
 The help, identity and platform upgrade builders in remote.sh (HELP_BUILD) edit
-a checkout of the product and build one bundle. These tests run that code on a
+a checkout of the product and build one bundle. They change VERSION, never a
+manifest: help and identity tag their image @@COMPONENT_VERSION@@ (backlog 63). These tests run that code on a
 copy of the files Git tracks, so a builder that no longer fits the product's
 manifests, catalog or bundle format fails here instead of in the lab.
 """
@@ -123,6 +124,47 @@ class ReleaseBuilderTests(unittest.TestCase):
         self.assertEqual(
             yaml.safe_load((release / "bundle.yaml").read_text())["version"], "9.9.9"
         )
+
+
+class ExpectedImageTests(unittest.TestCase):
+    """help-upgrade/identity-upgrade: the installed YAML names the new VERSION's image."""
+
+    def run_check(self, image):
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        units = directory / "config/containers/systemd"
+        units.mkdir(parents=True)
+        (units / "myproduct-help.yaml").write_text(
+            "kind: Pod\nmetadata: {name: help}\nspec:\n"
+            "  containers: [{name: web, image: 'localhost/demo-help:9.9.9'}]\n"
+        )
+        script = (
+            'as_product() { "$@"; }\n'
+            + base.shell_code(
+                Path(__file__).with_name("remote.sh").read_text(),
+                function="expected_image",
+            )
+            + '\nexpected_image "$1"\n'
+        )
+        return subprocess.run(
+            ["bash", "-c", script, "-", image],
+            env=dict(
+                os.environ,
+                install_root=str(directory),
+                product_name="myproduct",
+                bundle="help",
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_new_version_image_passes_and_old_one_fails(self):
+        result = self.run_check("localhost/demo-help:9.9.9")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PASS: the installed YAML names", result.stdout)
+        result = self.run_check("localhost/demo-help:9.9.8")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAIL: the installed YAML does not name", result.stderr)
 
 
 if __name__ == "__main__":

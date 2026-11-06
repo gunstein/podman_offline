@@ -1589,7 +1589,8 @@ class HealthTests(unittest.TestCase):
     def run_health(self, rows, exit_code=0):
         """Run the wait loop with stubbed inventory, stdout and stderr."""
         self.namespace["expected_containers"] = lambda path: ({"pod-app"}, set())
-        # ConfigMap runtime delivery has separate focused assertions.
+        # Image and ConfigMap runtime checks have separate focused assertions.
+        self.namespace["check_images"] = lambda paths: None
         self.namespace["check_configmap_inline"] = lambda paths: None
 
         def run(arguments, **kwargs):
@@ -1648,6 +1649,44 @@ class HealthTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.run_health([{}])
         self.assertEqual(self.now, 0)
+
+    def check_images(self, text, rows):
+        """Run check_images on one installed YAML with stubbed inspect rows."""
+        calls = []
+
+        def podman(arguments):
+            calls.append(arguments)
+            return json.dumps(rows)
+
+        self.namespace["podman"] = podman
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "myproduct-help.yaml"
+            path.write_text(text)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.namespace["check_images"]([path])
+        return output.getvalue(), calls
+
+    def test_running_image_must_match_installed_yaml(self):
+        """Backlog 63: the running container uses the literal installed image."""
+        text = (
+            "kind: Pod\nmetadata: {name: help}\nspec:\n"
+            "  initContainers: [{name: init, image: localhost/init:1}]\n"
+            "  containers: [{name: web, image: 'localhost/demo-help:2.0.0'}]\n"
+        )
+        row = dict(self.row("help-web"), ImageName="localhost/demo-help:2.0.0")
+        output, calls = self.check_images(text, [row])
+        self.assertEqual(calls, [["inspect", "--format", "json", "help-web"]])
+        self.assertIn("PASS: each of 1 app containers runs", output)
+        self.assertNotIn("DO_NOT_LOG", output)
+        for rows in (
+            [dict(row, ImageName="localhost/demo-help:1.0.0")],
+            [dict(row, Name="other")],
+        ):
+            with (
+                self.subTest(rows=rows),
+                self.assertRaisesRegex(RuntimeError, "does not run"),
+            ):
+                self.check_images(text, rows)
 
     def test_expected_names_follow_manifest_including_new_app(self):
         """Read names from the real manifests and include a new app automatically."""

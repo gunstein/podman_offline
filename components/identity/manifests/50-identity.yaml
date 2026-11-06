@@ -6,7 +6,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: app
-    image: localhost/demo-identity:0.2.4
+    image: localhost/demo-identity:@@COMPONENT_VERSION@@
     imagePullPolicy: Never
     livenessProbe:
       initialDelaySeconds: 10

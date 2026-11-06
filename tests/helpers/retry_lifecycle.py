@@ -103,6 +103,9 @@ class RetryFixture(ComponentFixture):
         manifests = self.root / "components/app1/manifests"
         shutil.rmtree(manifests)
         shutil.copytree(repo / "components/app1/manifests", manifests)
+        if (repo / "config/images.yaml").exists():
+            (self.root / "config").mkdir(exist_ok=True)
+            shutil.copy2(repo / "config/images.yaml", self.root / "config/images.yaml")
         if (repo / "components/app1/files").exists():
             shutil.copytree(
                 repo / "components/app1/files", self.root / "components/app1/files"

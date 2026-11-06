@@ -7,6 +7,7 @@ catalog instead.
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import yaml
@@ -59,6 +60,12 @@ def demo_descriptor(root, name, requirement=None, version=None):
         if not (directory / filename).is_file():
             descriptor[role] = None
     return descriptor
+
+
+def copy_image_variables(root):
+    """Copy the demo's config/images.yaml, which its manifests' image fields use."""
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO / "config/images.yaml", root / "config/images.yaml")
 
 
 def write_descriptor(root, name, requirement=None, **changes):
