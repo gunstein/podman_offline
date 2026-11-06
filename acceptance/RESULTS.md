@@ -27,14 +27,14 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--whoami` | `c82-whoami-53d4591` | 46 | CLEAN PASS |
-| normal | `envup-6a0f319` | 118 | CLEAN PASS |
-| `--first-app app2` | `c82-app2-53d4591` | 118 | CLEAN PASS |
-| `--identity-only` | `c82-identity-53d4591` | 58 | CLEAN PASS |
+| normal | `c83b-normal-df929ac` | 118 | CLEAN PASS |
+| `--first-app app2` | `c83b-app2-df929ac` | 118 | CLEAN PASS |
+| `--identity-only` | `c83b-identity-df929ac` | 58 | CLEAN PASS |
 | `--help-only` | `c82-help-53d4591` | 52 | CLEAN PASS |
 | `--platform-help-only` | `c82-platform-help-53d4591` | 31 | CLEAN PASS |
-| `--renamed-product` | `c82-renamed-53d4591` | 57 | CLEAN PASS |
+| `--renamed-product` | `c83b-renamed-df929ac` | 57 | CLEAN PASS |
 
-Normal on `6a0f319` (2026-11-04), the others on `53d4591` (2026-11-03); `6a0f319` adds only the harness probe below. Clean detached checkout, Oracle Linux Server
+Normal, app2, identity, renamed and status-retry on `df929ac` (2026-11-06, backlog 83), the others on `53d4591` (2026-11-03); later commits add only harness checks and backlog 83. Clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
 includes backlog 80: app3's trust chain is mounted from its Secret through
 `MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
@@ -47,7 +47,11 @@ its password from a `MOUNTS` secret file (app1 keeps the directory mount);
 volume without the password file and generates none. In `envup-6a0f319`,
 `03-database-runtime` also ran `environment_update_test.py`: after a second
 `./dev/dev.sh up` the new container had the added `ENVIRONMENT` variable with
-its exact value, the existing one unchanged and the generated secret kept. The init Secret probe runs
+its exact value, the existing one unchanged and the generated secret kept.
+On `df929ac` (backlog 83) app2's database takes `POSTGRES_PASSWORD_FILE` from
+`ENVIRONMENT` (app1 from the manifest): `07-database-auth` connected, and
+`07-password-guard` stopped for the kept volume without generating, then
+completed the same install once the original file was back. The init Secret probe runs
 inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
 it. The harness defects found on the way to this matrix are listed in
 [backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
@@ -56,7 +60,7 @@ it. The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `c82-status-retry-53d4591` | 119 | CLEAN PASS |
+| `--status-retry` | `c83b-status-retry-df929ac` | 119 | CLEAN PASS |
 | `--host-setup` | `c82-host-setup-53d4591` | 36 | CLEAN PASS |
 
 Same commit, date, checkout, OS and Podman as the matrix. Status/retry: a

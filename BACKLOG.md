@@ -56,8 +56,9 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 83. Allow POSTGRES_PASSWORD_FILE under ENVIRONMENT
 
-Status: **implemented with local tests (2026-11-06); lab verification
-outstanding** (high priority). `deploy.environment_entries` gives
+Status: **done and lab-verified** (2026-11-06, high priority): normal, app2,
+identity, renamed and status-retry passed CLEAN PASS on `df929ac`
+([results](acceptance/RESULTS.md)). `deploy.environment_entries` gives
 `postgres_binding` the container's `ENVIRONMENT` entries (ConfigMap values,
 Secret recipe key names); the `POSTGRES_PASSWORD*` refusal in
 `environment.py` is removed. Demo app2 declares `POSTGRES_PASSWORD_FILE` in
