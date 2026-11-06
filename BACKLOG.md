@@ -3986,6 +3986,21 @@ Decided in this revision (product owner, 2026-11-03):
   `@`). No expressions, defaults, nesting, recursion or environment overrides;
   no automatic registry prefix. Literal and templated references may be mixed
   in one Pod.
+- Several registries are ordinary variables (product owner, 2026-11-06): an
+  image can come from either of two or more Artifactory instances, and each
+  reference names its own. Changing one address changes only the images that
+  use that variable:
+
+  ```yaml
+  # config/images.yaml
+  ARTIFACTORY_1: artifactory1.example.test/docker
+  ARTIFACTORY_2: artifactory2.example.test:8443/docker-remote
+  ```
+
+  ```yaml
+  image: '@@ARTIFACTORY_1@@/postgres:@@POSTGRES_VER@@'
+  image: '@@ARTIFACTORY_2@@/team/backend:1.4.0'
+  ```
 - An `image` placeholder is looked up only in `config/images.yaml` and
   `COMPONENT_VERSION`; never in `config/dev.yaml`, component settings or the
   production `config.yaml`.
@@ -4026,9 +4041,11 @@ Decided in this revision (product owner, 2026-11-03):
 5. Demo adoption (all forms exercised): help and identity
    `@@COMPONENT_VERSION@@`; todo backend and frontend shared variables (app1
    and app2 use the same images at different component versions); PostgreSQL
-   `POSTGRES_VER` in identity, app1 and app2; platform nginx
-   `@@REGISTRY@@/library/nginx:@@NGINX_VER@@` (demo `REGISTRY: docker.io`);
-   app3's whoami images stay literal. Check that `dev/build-images.sh`'s
+   `POSTGRES_VER` in identity, app1 and app2; two registry variables with
+   different values: platform nginx
+   `@@REGISTRY@@/library/nginx:@@NGINX_VER@@` (demo `REGISTRY: docker.io`) and
+   the locally built todo images `@@LOCAL_REGISTRY@@/demo-todo-backend:...`
+   (demo `LOCAL_REGISTRY: localhost`); app3's whoami images stay literal. Check that `dev/build-images.sh`'s
    `localhost/demo-postgres` mapping and its builds work on resolved names.
 6. Harness: the help and identity upgrade builders in `acceptance/remote.sh`
    (`HELP_BUILD`) set only `VERSION` (plus content and markers) and build the
@@ -4050,6 +4067,8 @@ computed with the resolver):
 - several variables in one reference, including a registry with port and
   repository path; one version variable used by several components; regular
   and init containers; `COMPONENT_VERSION` from the right component;
+- two registry variables in one product: changing one changes exactly the
+  images that use it, not those of the other registry or literal ones;
 - literal references alone and mixed with templated ones;
 - missing file (with and without placeholders), unknown name, duplicate key,
   non-string value, invalid resolved reference (scheme, whitespace, leftover
@@ -4081,8 +4100,9 @@ separately.
 
 - Changing a value in `config/images.yaml` (or a `VERSION` for
   `COMPONENT_VERSION` images) changes the pulled, bundled, installed and
-  running image with no manifest edit; changing `REGISTRY` changes every
-  image that uses it and no literal one.
+  running image with no manifest edit; changing one registry variable
+  changes every image that uses it, and no image of another registry and no
+  literal one.
 - The developer with prebuilt images edits `config/images.yaml`, runs
   `dev/pull-images.sh` and `dev/dev.sh up`; certificate provisioning stays
   the existing separate step.
