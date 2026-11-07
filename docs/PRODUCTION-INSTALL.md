@@ -5,11 +5,12 @@ ordinary task is here, in the order you do it, and the commands are short
 enough to type from a printed copy. Design explanations are in the
 [README](../README.md).
 
-**Status:** RPM delivery, backlog 69 phase 1 (unsigned RPMs). Steps 2, 3, 4
-and 6 and the upgrade passed the automated OL9 lab scenario `--admin-rpm`,
-with the answers given as options. The lab scenario `--rpm-manual` runs this
-manual's command blocks literally, with typed answers and the tools repair;
-it has no lab run yet. Mounting is not part of either. The AI
+**Status:** RPM delivery, backlog 69 phase 1 (unsigned RPMs). The automated
+OL9 lab scenario `--rpm-manual` runs this manual's command blocks literally,
+with typed answers, a real SSH login, its stops, an interruption, an upgrade
+and the tools repair; it passed on the default and the strict fapolicyd
+profile. Mounting a medium is not part of it (the lab copies the delivery to
+a directory). The AI
 walkthrough is in `acceptance/OPERATOR-REVIEW.md`. A test with a person
 following this manual alone is still outstanding (backlog 68).
 

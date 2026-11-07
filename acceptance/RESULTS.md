@@ -65,40 +65,41 @@ The harness defects found on the way to this matrix are listed in
 | --- | --- | --- | --- |
 | `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
 | `--host-setup` | `c63b-host-setup-d111718` | 36 | CLEAN PASS |
-| `--admin-rpm` | `m69-admin-rpm-b5b86d9` | 31 | CLEAN PASS |
-| `--rpm-manual` (P1, P2) | none yet | | outstanding |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-3bff57b` | 58 | CLEAN PASS |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-3bff57b` | 59 | CLEAN PASS |
 
 Status/retry and host setup: on `d111718`, with the matrix rows from main.
-Admin RPM: the WP2-WP5 scenario, replaced by `--rpm-manual` (backlog 69 WP6), which has no run yet; on `b5b86d9` (2026-11-07), clean detached checkout, Oracle Linux
-Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step; this
-commit adds backlog 69 WP5 (the RPM manual) to `30704b3`, including the
-changed `prepare-host.sh` and admin/runtime messages, which the normal run
-does not cover. Status/retry: a
+Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
-procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog
-69 WP2): DEV built the platform, help and tools RPMs; on PROD the tools
-installed with `dnf`, `myproduct-admin` stopped in preflight before any change
-while the account was missing, then installed both releases in one offline
-transaction, prepared the host, ran each release as the runtime account
-(fapolicyd trust), repeated unchanged without options, copied credentials into
-`incoming/` as the account and refused a different file; `dnf remove` and
-`rpm -e` of a release and of the tools were refused. Then, as the runtime
-account in a login-like environment (WP3), `myproduct` with
-`--public-origin`/`--ip-address` installed platform and help (`/livez` 204,
-`/help/` 200, the web certificate moved from `incoming/` to `state/`), an
-unchanged repeat restarted nothing, and `myproduct help` restarted only help;
-no FANOTIFY/AVC event. Retirement (WP4): DEV built help 0.4.14 and its RPM;
-`myproduct-admin` installed it and kept `myproduct-help-0.4.13` as the
-installed version (read from the newest release's `status --json` as the
-runtime account), `myproduct` installed help 0.4.14 without restarting
-platform and `/help/` served the new content, and the next
-`myproduct-admin` removed `myproduct-help-0.4.13` and its tree, left no erase
-authorization, removed nothing on a repeat, and a plain `rpm -e` of 0.4.14
-was still refused. The first attempt on `f09d677` stopped at
-`09-runtime-upgrade` on a harness defect (`invocations | grep -q` under
-`pipefail`), fixed in `30704b3` with a regression test. Not covered: the restart after newer tools, and a real SSH
-login running `myproduct` (WP6).
+procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md).
+
+RPM manual (backlog 69 WP6): both on `3bff57b` (2026-11-07), clean detached
+checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed
+or skipped step; P1 is `clean-agent`, P2 the strict WP0 profile applied after
+the reset (`strict_fapolicyd: true`). This commit is the RPM branch (backlog
+69 WP1-WP6 part 1) with main merged. Every operator step ran the command
+block of `docs/PRODUCTION-INSTALL.md` literally (only its example values
+replaced), with the answers typed at the prompts and the runtime user logged
+in over real SSH without sudo: the tools with `dnf`; the admin command
+stopping in preflight with nothing changed while the account was missing,
+then installing and preparing the host, and an unchanged repeat; plain
+`dnf remove`/`rpm -e` refused; `myproduct` stopping on the missing web
+credentials, `--credentials` (kept on a repeat, a different file refused),
+then platform and help installed without new questions (`/livez` 204,
+`/help/` 200), a repeat restarting nothing and `myproduct help` restarting
+only help; credentials sent with `scp`, the warning of plain `myproduct` and
+`myproduct platform` taking them; help 0.4.14 delivered and the older help
+kept, `myproduct` interrupted once podman had loaded the new image (help
+still completed at 0.4.13) and completed in a fresh login with platform
+running; the next admin run removing help 0.4.13 and its tree with the guard
+still closed; with a tools module removed, the documented symptom, `rpm -q`,
+the documented reinstall and a working admin command; the journal lines for
+sharing; no FANOTIFY/AVC event. Earlier attempts: `edd3be5` stopped at the
+interruption (its stop text is printed only by `validate`), `2fdd633` at the
+check after the upgrade (credentials for an installed component were left
+unused without a word; fixed in the runtime command and the manual). Not
+covered: mounting a medium, the restart after newer tools.
 
 The protected-release and production-layout matrices and the RPM prototype
 have no run on the current code; their last runs are in the git history. The

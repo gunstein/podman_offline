@@ -3,7 +3,7 @@
 ## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
 
 Manual: [docs/PRODUCTION-INSTALL.md](../docs/PRODUCTION-INSTALL.md), SHA256
-`043eef55131536a446a60d46a8b04185b5fc217bc40e736f6a2e07004abbd9f1`, on the
+`fc1fedf4a463be302b42731b7c3f036fea7c7342f4d34743b217055d17fca877`, on the
 RPM branch (backlog 69 WP1-WP6). WP6 added step IDs for the lab, the `/mnt`
 row of the example table and blocks for the `scp` alternative and the tools
 reinstall, which were inline text, and the note and stop row for delivered
@@ -20,7 +20,7 @@ refer to that earlier manual.
 | AI literal walkthrough | Findings; seven fixed in this change, five open (below) | First installation, credentials, upgrade, retirement, status/reboot, setting change, interruption and the stops table, tools repair |
 | Human trial without oral assistance | **Not performed; outstanding verification** (backlog 68) | Printed manual only, fresh OL9 VM, one person holding both accounts, console and SSH variants |
 | Product/unit tests | `test_manual` (commands parse with the real parsers, prompts are the tools' questions, cited sections exist, the admin "next" line) and the existing admin/runtime tests | Drift between manual and tools; not the procedure |
-| Real lab evidence | `m69-admin-rpm-b5b86d9` (the WP5 manual's commit) ran steps 2, 3, 4 and 6 and the upgrade/retirement with answers as options | Not mounting, typed prompts, `umount` or the tools repair |
+| Real lab evidence | `rpm-manual-3bff57b` (P1) and `rpm-manual-p2-3bff57b` (P2) ran every executed manual block literally, with typed answers and a real SSH login, including the stops, an interruption, upgrade, retirement and the tools repair | Not mounting a medium or `umount` (the lab copies the delivery to a directory) |
 
 Method: static reading of the manual from its stated prerequisites, in
 order, without filling gaps from source code or earlier chat; the expected
@@ -81,9 +81,9 @@ identity; the RPM manual's counts do not grow with the number of components.
 4. "Install the named package from the OS media" assumes the system
    administrator can do that offline; the manual only declares it as that
    person's prerequisite.
-5. Not verified on a host: the typed prompts, mounting, the tools repair
-   (`dnf reinstall` of the tools) and a real SSH login running `myproduct`
-   (WP6).
+5. Not verified on a host: mounting a medium and `umount`. The typed
+   prompts, the tools repair and a real SSH login running `myproduct`
+   passed in `--rpm-manual` (WP6).
 
 Interruption/retry trace: every numbered step is safe to repeat. `dnf install`
 of installed tools does nothing, the admin command installs only what is

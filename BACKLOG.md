@@ -1324,7 +1324,10 @@ replaced, prompts typed in a pseudo-terminal, the runtime user through a real
 SSH login), with the stops of the manual (missing account, missing
 credentials, a different credential), an interruption continued in a fresh
 login, upgrade, retirement and the tools repair; local checks in
-`acceptance/test_manual_run.py`. It replaces `--admin-rpm`; no lab run yet.
+`acceptance/test_manual_run.py`. It replaces `--admin-rpm`; CLEAN PASS on OL9
+on P1 and P2 (`rpm-manual-3bff57b`, `rpm-manual-p2-3bff57b`, 2026-11-07;
+[results](acceptance/RESULTS.md)), after two runs that found a harness
+defect and a silent case in `<product>` (fixed).
 Scope finding: every fixed-matrix scenario still publishes its PROD releases
 with `release.py` (`prepare_release`, `wait_trust`, `retire` in
 `acceptance/remote.sh`), so removing the `release.py` flow means moving the
