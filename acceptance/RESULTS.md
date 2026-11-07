@@ -26,35 +26,47 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `n69-whoami-f5b217b` | 46 | CLEAN PASS |
-| normal | `n69-normal-f5b217b` | 117 | CLEAN PASS |
-| `--first-app app2` | `n69-app2-f5b217b` | 117 | CLEAN PASS |
-| `--identity-only` | `n69-identity-f5b217b` | 57 | CLEAN PASS |
-| `--help-only` | `n69-help-f5b217b` | 52 | CLEAN PASS |
-| `--platform-help-only` | `n69-platform-help-f5b217b` | 31 | CLEAN PASS |
-| `--renamed-product` | `n69-renamed-f5b217b` | 57 | CLEAN PASS |
+| `--whoami` | `c63b-whoami-d111718` | 46 | CLEAN PASS |
+| normal | `c63b-normal-d111718` | 118 | CLEAN PASS |
+| `--first-app app2` | `c63b-app2-d111718` | 118 | CLEAN PASS |
+| `--identity-only` | `c63b-identity-d111718` | 58 | CLEAN PASS |
+| `--help-only` | `c63b-help-d111718` | 52 | CLEAN PASS |
+| `--platform-help-only` | `c63b-platform-help-d111718` | 31 | CLEAN PASS |
+| `--renamed-product` | `c63b-renamed-d111718` | 57 | CLEAN PASS |
 
-All on `f5b217b` (2026-11-03), clean detached checkout, Oracle Linux Server
-9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit
-is the RPM branch (backlog 69 WP1-WP3) with main merged, and includes backlog 80: app3's trust chain is mounted from its Secret through
-`MOUNTS` secret files, and `07-whoami-chain-mounts` found both files in the
-running backend with the environment's CA and as read-only mounts
-(`podman inspect`); the Secret key check now runs before the first write of
-`prepare` and `install`. The init Secret probe runs
-inside `03-database-runtime` and `03-renamed-generate`, so these runs cover
-it. The harness defects found on the way to this matrix are listed in
+All runs on `d111718` (2026-11-07, backlog 63), clean detached checkout,
+Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or
+skipped step. Backlog 63: the demo manifests take their images from
+`config/images.yaml` (`REGISTRY`, `LOCAL_REGISTRY` and version variables) and
+help and identity from `@@COMPONENT_VERSION@@`. Every health step checked
+that each app container runs the image its installed YAML names (`podman
+inspect`, `ImageName` only), and the help and identity upgrades found the
+image tagged with the new `VERSION` (`localhost/demo-help:0.4.15`,
+`localhost/demo-identity:0.4.16`); the release builders changed only
+`VERSION`. These runs also cover the earlier items: app3's trust chain through
+`MOUNTS` secret files (`07-whoami-chain-mounts`, backlog 80); app2's database
+password from a `MOUNTS` secret file with `POSTGRES_PASSWORD_FILE` in
+`ENVIRONMENT` (`07-database-auth`, backlogs 82 and 83); install stopping for
+a kept database volume without its password file, and completing once it is
+back (`07-password-guard`); and, in `03-database-runtime`, the init Secret
+probe and `environment_update_test.py` (a new `ENVIRONMENT` variable reaches
+the container on the next `./dev/dev.sh up`). The first attempt (`c63`) stopped at
+`03-database-runtime` because `database_test.py` read source manifests
+without resolving image variables; fixed in `d111718` with a regression test.
+The harness defects found on the way to this matrix are listed in
 [backlog 78](../BACKLOG.md#78-keep-the-acceptance-harness-in-step-with-the-product).
 
 ## Other scenarios
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `n69-status-retry-f5b217b` | 118 | CLEAN PASS |
-| `--host-setup` | `n69-host-setup-f5b217b` | 36 | CLEAN PASS |
+| `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
+| `--host-setup` | `c63b-host-setup-d111718` | 36 | CLEAN PASS |
 | `--admin-rpm` | `n69-admin-rpm-f5b217b` | 25 | CLEAN PASS |
 
 Status/retry and host setup: same commit, date, checkout, OS and Podman as
-the matrix, as is admin RPM. Status/retry: a
+the matrix. Admin RPM: on `f5b217b` (2026-11-03, the RPM branch before
+backlogs 82, 83 and 63); not rerun since. Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
 procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog

@@ -1,0 +1,10 @@
+# Build-time image variables (backlog 63). Used only in the image field of
+# containers and initContainers as @@NAME@@; bundles ship the resolved names.
+# @@COMPONENT_VERSION@@ is built in: the component's VERSION. Quote every
+# value YAML would read as a number.
+REGISTRY: docker.io
+LOCAL_REGISTRY: localhost
+NGINX_VER: '1.28-alpine'
+POSTGRES_VER: '17.11'
+TODO_BACKEND_VER: '0.2.2'
+TODO_FRONTEND_VER: '0.2.0'

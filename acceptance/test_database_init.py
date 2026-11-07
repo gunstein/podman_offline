@@ -3,14 +3,20 @@
 import contextlib
 import copy
 import io
+import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
-import database_test
 import yaml
+
+import database_test
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bundle.py
+
+import bundle
 
 
 class DatabaseInitHarnessTests(unittest.TestCase):
@@ -92,6 +98,7 @@ class DatabaseInitHarnessTests(unittest.TestCase):
         init = first["spec"]["initContainers"][0]
         self.assertEqual(init["command"], ["python", "/app/schema.py"])
         self.assertEqual(init["image"], database_test.image("app1", "backend"))
+        self.assertIn(init["image"], bundle.manifest_images())
         self.assertEqual(init["env"], original["spec"]["containers"][0]["env"])
         self.assertEqual(first["spec"]["volumes"], original["spec"]["volumes"])
         for document in manifests:
@@ -106,6 +113,19 @@ class DatabaseInitHarnessTests(unittest.TestCase):
         self.assertIn("INSERT INTO todos", initial)
         self.assertIn("retained todo", replay)
         self.assertNotIn("INSERT INTO todos", replay)
+
+    def test_probe_images_are_the_resolved_product_images(self):
+        """Backlog 63: never a source manifest's @@NAME@@ (c63 lab failure)."""
+        images = bundle.manifest_images()
+        for component, container in (
+            ("app1", "backend"),
+            ("app1", "db"),
+            ("identity", "app"),
+        ):
+            with self.subTest(component=component, container=container):
+                image = database_test.image(component, container)
+                self.assertNotIn("@@", image)
+                self.assertIn(image, images)
 
     def test_kube_failure_identifies_fixture_without_private_diagnostics(self):
         """Distinguish schema probes from Identity without printing Podman stderr."""

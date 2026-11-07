@@ -176,9 +176,11 @@ class EnvironmentTests(ProductFixture):
             ),
             ("empty container", replace_env({}), "ENVIRONMENT.main must hold"),
             (
-                "database variable",
+                # Allowed in ENVIRONMENT (backlog 83); the database check still
+                # refuses it without a mounted Secret and data PVC.
+                "database variable without its mounts",
                 env(POSTGRES_PASSWORD_FILE="/x"),
-                "keep it in the manifest's env",
+                "Unsupported PostgreSQL password/data mounts",
             ),
             ("case duplicate", env(port=1), "PORT and port differ only in case"),
             (

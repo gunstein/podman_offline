@@ -37,9 +37,6 @@ KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*\Z")
 API_SECRET_KEY = re.compile(r"ApiResources__(0|[1-9][0-9]*)__ApiSecrets__0__Value\Z")
 # Its value: exactly one secret reference, @@secret:<id>/<key>@@.
 WHOLE_SECRET = re.compile(r"@@secret:([a-z0-9-]+/[-._a-zA-Z0-9]+)@@\Z")
-# The platform reads these from a container's manifest env, never from envFrom:
-# the PostgreSQL layout check (deploy.postgres_binding).
-DATABASE_PREFIX = "POSTGRES_PASSWORD"
 
 # Settings derived from client.yaml (render.with_client_settings).
 CLIENT_SETTINGS = {"CLIENT_ID": "id", "CLIENT_BASE_PATH": "base_path"}
@@ -173,11 +170,6 @@ def check_values(values, where):
                     f"{where}: {key}: unknown or nested placeholder; use "
                     "@@NAME@@ for a setting or @@secret:<id>/<key>@@ for a secret"
                 )
-        if key.startswith(DATABASE_PREFIX):
-            raise common.DeployError(
-                f"{where}: {key} is checked by the platform's database layout "
-                "check; keep it in the manifest's env"
-            )
     return values
 
 

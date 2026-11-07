@@ -1632,7 +1632,8 @@ class HealthTests(unittest.TestCase):
     def run_health(self, rows, exit_code=0):
         """Run the wait loop with stubbed inventory, stdout and stderr."""
         self.namespace["expected_containers"] = lambda path: ({"pod-app"}, set())
-        # ConfigMap runtime delivery has separate focused assertions.
+        # Image and ConfigMap runtime checks have separate focused assertions.
+        self.namespace["check_images"] = lambda paths: None
         self.namespace["check_configmap_inline"] = lambda paths: None
 
         def run(arguments, **kwargs):
@@ -1691,6 +1692,44 @@ class HealthTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.run_health([{}])
         self.assertEqual(self.now, 0)
+
+    def check_images(self, text, rows):
+        """Run check_images on one installed YAML with stubbed inspect rows."""
+        calls = []
+
+        def podman(arguments):
+            calls.append(arguments)
+            return json.dumps(rows)
+
+        self.namespace["podman"] = podman
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "myproduct-help.yaml"
+            path.write_text(text)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.namespace["check_images"]([path])
+        return output.getvalue(), calls
+
+    def test_running_image_must_match_installed_yaml(self):
+        """Backlog 63: the running container uses the literal installed image."""
+        text = (
+            "kind: Pod\nmetadata: {name: help}\nspec:\n"
+            "  initContainers: [{name: init, image: localhost/init:1}]\n"
+            "  containers: [{name: web, image: 'localhost/demo-help:2.0.0'}]\n"
+        )
+        row = dict(self.row("help-web"), ImageName="localhost/demo-help:2.0.0")
+        output, calls = self.check_images(text, [row])
+        self.assertEqual(calls, [["inspect", "--format", "json", "help-web"]])
+        self.assertIn("PASS: each of 1 app containers runs", output)
+        self.assertNotIn("DO_NOT_LOG", output)
+        for rows in (
+            [dict(row, ImageName="localhost/demo-help:1.0.0")],
+            [dict(row, Name="other")],
+        ):
+            with (
+                self.subTest(rows=rows),
+                self.assertRaisesRegex(RuntimeError, "does not run"),
+            ):
+                self.check_images(text, rows)
 
     def test_expected_names_follow_manifest_including_new_app(self):
         """Read names from the real manifests and include a new app automatically."""
@@ -2859,6 +2898,80 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("disable --now fapolicyd", commands.call_args_list[0].args[1])
         self.assertNotIn("disable --now firewalld", commands.call_args_list[0].args[1])
         self.assertIn("getenforce", commands.call_args_list[1].args[1])
+
+
+class PasswordGuardCheckTests(unittest.TestCase):
+    """password-guard (backlog 82): a stop without a new password, proven."""
+
+    def run_check(
+        self, install, retry='echo "PASS: ./deploy.sh install completed"; return 0'
+    ):
+        """Run the action with as_product on local files and a scripted install."""
+        script = Path(__file__).with_name("remote.sh").read_text()
+        body = script[script.index("password-guard)\n") + len("password-guard)\n") :]
+        body = body[: body.index("\n    ;;\n")]
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            password = state / "app2/credentials/database/password"
+            password.parent.mkdir(parents=True)
+            password.write_text("kept-password\n")
+            stubs = (
+                "as_product() {\n"
+                '  case "$1" in\n'
+                "    podman) return 0;;\n"
+                '    bash) if [[ -e "$state/installed-once" ]]; then '
+                + retry
+                + "; fi\n"
+                '      touch "$state/installed-once"; ' + install + ";;\n"
+                '    *) "$@";;\n'
+                "  esac\n"
+                "}\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + stubs + body],
+                env=dict(
+                    os.environ,
+                    state=str(state),
+                    bundle="app2",
+                    product=str(state / "release"),
+                    PASSWORD=str(password),
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            kept = password.read_text() if password.exists() else None
+        return result, kept
+
+    def test_a_stop_for_the_kept_volume_passes_and_restores_the_file(self):
+        result, kept = self.run_check(
+            'echo "ERROR: Missing database password file x with existing volume '
+            'app2-data; no password generated"; return 1'
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: kept volume app2-data", result.stdout)
+        self.assertEqual(kept, "kept-password\n")
+
+    def test_a_failed_install_after_restoring_the_file_fails(self):
+        result, kept = self.run_check(
+            'echo "ERROR: x with existing volume app2-data; no password"; return 1',
+            retry='echo "ERROR: still broken"; return 1',
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("install after restoring the password file failed", result.stdout)
+        self.assertEqual(kept, "kept-password\n")
+
+    def test_a_new_password_an_install_or_another_stop_fails(self):
+        for install, cause in (
+            ('printf new > "$PASSWORD"; return 0', "generated a new database password"),
+            ("return 0", "install did not stop"),
+            ('echo "ERROR: image missing"; return 1', "stopped for another reason"),
+        ):
+            with self.subTest(cause=cause):
+                result, kept = self.run_check(install)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(cause, result.stdout)
+                self.assertEqual(kept, "kept-password\n")
 
 
 if __name__ == "__main__":

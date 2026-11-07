@@ -3,6 +3,7 @@
 import shutil
 from pathlib import Path
 
+from demo_tests.demo_fixture import copy_image_variables
 from helpers.image_fixture import ImageHelperFixture
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,11 +39,12 @@ class DemoImageHelperTests(ImageHelperFixture):
     def test_actual_product_builds_unchanged_apps_and_pulls_stock_nginx(self):
         """Exercise the existing helpers against the actual product manifest image set."""
         shutil.copytree(ROOT / "components", self.root / "components")
+        copy_image_variables(self.root)
         for name in ("bundles.yaml",):
             shutil.copy2(ROOT / name, self.root / name)
         recipes = (
-            ("help", "localhost/demo-help:0.2.0"),
-            ("identity", "localhost/demo-identity:0.2.4"),
+            ("help", "localhost/demo-help:0.4.13"),
+            ("identity", "localhost/demo-identity:0.4.15"),
             ("todo-backend", "localhost/demo-todo-backend:0.2.2"),
             ("todo-frontend", "localhost/demo-todo-frontend:0.2.0"),
             ("whoami-backend", "localhost/demo-whoami-backend:0.1.1"),

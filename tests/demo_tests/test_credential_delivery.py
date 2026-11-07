@@ -115,10 +115,19 @@ class CredentialDeliveryTests(DeployFixture):
                 if doc["metadata"]["name"] == component + "-postgres"
             )
             for spec in (pod["spec"], database["spec"]):
-                password = next(v for v in spec["volumes"] if v["name"] == "password")
-                self.assertEqual(
-                    password["secret"]["secretName"], component + "-database-password"
-                )
+                secret_names = [
+                    (v.get("secret") or {}).get("secretName") for v in spec["volumes"]
+                ]
+                self.assertIn(component + "-database-password", secret_names)
+            # The database container mounts it at POSTGRES_PASSWORD_FILE: as the
+            # directory (app1) or as the file itself through MOUNTS (app2).
+            db = database["spec"]["containers"][0]
+            mounted = {m["mountPath"]: m for m in db["volumeMounts"]}
+            expected = {
+                "app1": ("/run/secrets/database", None),
+                "app2": ("/run/secrets/database/password", "password"),
+            }[component]
+            self.assertEqual(mounted[expected[0]].get("subPath"), expected[1])
             self.assertEqual(render(), yaml.safe_dump_all(documents, sort_keys=False))
             for name, value in before.items():
                 self.assertEqual(

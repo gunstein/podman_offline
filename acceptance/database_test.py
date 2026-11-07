@@ -36,9 +36,9 @@ def podman(arguments, expected=0):
 
 
 def image(component, container_name):
-    """Use the release manifest rather than hardcoded test image versions."""
+    """Use the source manifest's resolved image rather than a hardcoded version."""
     for path in (ROOT / "components" / component / "manifests").glob("*.yaml"):
-        for doc in yaml.safe_load_all(path.read_text()):
+        for doc in rendering.load_manifest(path):
             if doc.get("kind") == "Pod":
                 for container in doc["spec"]["containers"]:
                     if container["name"] == container_name:
@@ -95,7 +95,7 @@ def init_schema_check(base, network, client):
     probe["metadata"]["annotations"] = {
         "io.podman.annotations.init.container.type": "always"
     }
-    source = rendering.load_yaml_all(ROOT / "components/app1/manifests/60-todo.yaml")[
+    source = rendering.load_manifest(ROOT / "components/app1/manifests/60-todo.yaml")[
         0
     ]["spec"]["initContainers"][0]
     init = copy.deepcopy(source)
@@ -148,7 +148,7 @@ def init_schema_check(base, network, client):
 
 def seed_retry_check(base, network, client):
     """Fail the actual SQL init after a committed step, then repair/reimport/replay."""
-    source = rendering.load_yaml_all(ROOT / "components/app1/manifests/60-todo.yaml")[0]
+    source = rendering.load_manifest(ROOT / "components/app1/manifests/60-todo.yaml")[0]
     probe = copy.deepcopy(client)
     name = client["metadata"]["name"] + "-seed"
     claim = name + "-input"

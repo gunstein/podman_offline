@@ -334,7 +334,15 @@ still needs a browser check; this is an HTTP integration test.
 
 Manifests are the only image list. The build reads containers/initContainers
 structurally, deduplicates and sorts full names. Every container must use
-`imagePullPolicy: Never`; image placeholders and short names are rejected.
+`imagePullPolicy: Never`; short names are rejected. Registry addresses and
+shared versions may come from `config/images.yaml` and `@@COMPONENT_VERSION@@`
+from the component's `VERSION`, only in `image` fields and resolved at build
+time ([image versions](docs/COMPONENTS.md#image-versions-configimagesyaml));
+a bundle contains only literal images.
+
+To change an image: edit `config/images.yaml` (or the component's `VERSION`),
+run `./dev/pull-images.sh` and `./dev/dev.sh up`. A release with other images
+is delivered with a new component `VERSION`.
 
 - `localhost/<name>:<tag>` is prepared locally before bundling. The demo build
   helper discovers `localhost/demo-<app>:<tag>` from manifests and builds
@@ -916,9 +924,11 @@ flowchart TD
 before generation, on the effective manifest (placeholders replaced). A missing
 database password with an existing database volume stops installation; deploy
 does not invent a replacement password for retained database state. A container
-that sets any `POSTGRES_PASSWORD*` variable or mounts `/var/lib/postgresql/data`
-counts as a database container and must use `POSTGRES_PASSWORD_FILE` with a
-mounted Secret; any other password layout is refused before generation.
+that sets any `POSTGRES_PASSWORD*` variable (in its manifest `env` or through
+`ENVIRONMENT`, backlog 83) or mounts `/var/lib/postgresql/data` counts as a
+database container and must use `POSTGRES_PASSWORD_FILE` with a mounted Secret; any other password layout is refused before generation. The
+Secret may be mounted as the file's directory in the manifest, or as the single
+file through `MOUNTS` (backlog 82, [example](docs/COMPONENTS.md#converting-a-service)).
 
 The session key is an application-wide signing key, not a per-user password or
 the key used to authenticate the app to Identity. Flask stores signed session
@@ -1485,7 +1495,7 @@ changes. For a new demo-style app also consider:
 
 | Need | Files and changes |
 | --- | --- |
-| Image | A full registry tag in the manifest, or `apps/<app>/Containerfile` for a local `localhost/demo-<app>` demo image. |
+| Image | A full registry tag in the manifest (optionally with variables from `config/images.yaml`), or `apps/<app>/Containerfile` for a local `localhost/demo-<app>` demo image. |
 | Config | `components/<id>/config.defaults.yaml` for initialization and dev. Operators explicitly edit existing prod config; never overwrite credentials. |
 | Pod/health | Prefixed Pod/Secret/PVC/ConfigMap names, Never pull policy, Always restart and the agreed exec liveness timings. |
 | Database | Own PostgreSQL pod/PVC/password; do not reuse another app's cluster/password. |

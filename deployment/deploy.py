@@ -164,7 +164,13 @@ def database_bindings(config, config_path, documents):
     bindings = []
     for pod, spec in rendering.pod_specs(documents):
         for group, container in rendering.containers(spec):
-            binding = postgres_binding(pod, spec, group, container)
+            binding = postgres_binding(
+                pod,
+                spec,
+                group,
+                container,
+                environment_entries(container, documents, config),
+            )
             if binding is None:
                 continue
             claim, secret_name, key = binding
@@ -183,18 +189,51 @@ def check_password_provided(config, config_path, password):
         )
 
 
-def postgres_binding(pod, spec, group, container):
+def environment_entries(container, documents, config):
+    """The variables a container gets through envFrom, as env entries.
+
+    From a ConfigMap in the effective documents (ENVIRONMENT's public values,
+    already substituted) with their values; from an ENVIRONMENT Secret recipe
+    by name only, never its value. The database check reads them like the
+    manifest's env, so POSTGRES_PASSWORD_FILE may be declared in either place.
+    """
+    maps = {
+        (doc.get("metadata") or {}).get("name"): doc.get("data") or {}
+        for doc in documents
+        if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"
+    }
+    recipes = config.get(common.SECRET_TEMPLATES) or {}
+    entries = []
+    for source in container.get("envFrom", []):
+        if not isinstance(source, dict):
+            continue
+        name = (source.get("configMapRef") or {}).get("name")
+        if name in maps:
+            entries += [
+                {"name": key, "value": value} for key, value in maps[name].items()
+            ]
+        name = (source.get("secretRef") or {}).get("name")
+        if name in recipes:
+            entries += [
+                {"name": key, "valueFrom": {"secret": name}} for key in recipes[name]
+            ]
+    return entries
+
+
+def postgres_binding(pod, spec, group, container, environment=()):
     """Return (data claim, password Secret, Secret key) or None for a non-database container.
 
     A container is a database container when it sets any POSTGRES_PASSWORD*
-    variable or mounts the PostgreSQL data directory. Only the
-    POSTGRES_PASSWORD_FILE layout with a mounted Secret and a PVC at the data
-    directory is supported; anything else (another password form, envFrom, no
-    password setting) is refused so a lost password can never be replaced
+    variable, in its manifest env or through environment (environment_entries),
+    or mounts the PostgreSQL data directory. Only the POSTGRES_PASSWORD_FILE
+    layout with a public path, a mounted Secret and a PVC at the data directory
+    is supported; anything else (another password form, a path from a Secret,
+    no password setting) is refused so a lost password can never be replaced
     silently (item 7).
     """
     where = f"container {container.get('name', '<unnamed>')!r} ({group}) of Pod {pod.get('metadata', {}).get('name')!r}"
     env = [entry for entry in container.get("env", []) if isinstance(entry, dict)]
+    env += list(environment)
     names = sorted(
         entry["name"]
         for entry in env
@@ -221,16 +260,31 @@ def postgres_binding(pod, spec, group, container):
     ):
         raise common.DeployError(f"Invalid POSTGRES_PASSWORD_FILE in {where}")
     password_file = Path(reference)
-    mounts = {
-        mount.get("mountPath"): mount.get("name")
-        for mount in container.get("volumeMounts", [])
-        if isinstance(mount, dict)
-    }
-    secret_volume = mounts.get(str(password_file.parent))
-    data_volume = mounts.get(POSTGRES_DATA)
-    if not secret_volume or not data_volume:
+    mounts = [m for m in container.get("volumeMounts", []) if isinstance(m, dict)]
+    data_volume = next(
+        (m.get("name") for m in mounts if m.get("mountPath") == POSTGRES_DATA), None
+    )
+    # The password file is either inside a Secret mounted as its directory
+    # (the file name is items[].path), or mounted alone at its own path, as
+    # MOUNTS does (subPath names items[].path). Exactly one of the two.
+    directory = [m for m in mounts if m.get("mountPath") == str(password_file.parent)]
+    single = [m for m in mounts if m.get("mountPath") == str(password_file)]
+    secret_volume = item_path = None
+    if single:
+        secret_volume, item_path = single[0].get("name"), single[0].get("subPath")
+    elif directory:
+        secret_volume, item_path = directory[0].get("name"), password_file.name
+    if (
+        len(directory) + len(single) != 1
+        or not data_volume
+        or not secret_volume
+        or not isinstance(item_path, str)
+    ):
         raise common.DeployError(
-            f"Unsupported PostgreSQL password/data mounts in {where}"
+            f"Unsupported PostgreSQL password/data mounts in {where}: mount the "
+            f"password Secret either as the directory {password_file.parent} or "
+            f"as the single file {password_file} with subPath (MOUNTS does this), "
+            f"and a PersistentVolumeClaim at {POSTGRES_DATA}"
         )
     volumes = {
         volume.get("name"): volume
@@ -241,9 +295,7 @@ def postgres_binding(pod, spec, group, container):
         secret = volumes[secret_volume]["secret"]
         claim = volumes[data_volume]["persistentVolumeClaim"]["claimName"]
         keys = [
-            item["key"]
-            for item in secret.get("items", [])
-            if item["path"] == password_file.name
+            item["key"] for item in secret.get("items", []) if item["path"] == item_path
         ]
         if len(keys) != 1 or not isinstance(claim, str):
             raise KeyError("password key")

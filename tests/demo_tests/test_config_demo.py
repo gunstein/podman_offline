@@ -6,7 +6,12 @@ from pathlib import Path
 from deployment import common, deploy
 from deployment import render as rendering
 
-from demo_tests.demo_fixture import DEMO_COMPONENTS, DEMO_PUBLIC, write_descriptor
+from demo_tests.demo_fixture import (
+    DEMO_COMPONENTS,
+    DEMO_PUBLIC,
+    copy_image_variables,
+    write_descriptor,
+)
 from helpers.config_fixture import ConfigFixture
 
 
@@ -14,6 +19,7 @@ class DemoConfigTests(ConfigFixture):
     def test_real_defaults_initialize_component_credentials_in_dev_and_production(self):
         """The same shipped host paths resolve beneath each fresh component state."""
         repo = Path(__file__).resolve().parents[2]
+        copy_image_variables(self.root)
         for component in DEMO_COMPONENTS:
             source = repo / "components" / component / "config.defaults.yaml"
             if (source.parent / "files").exists():

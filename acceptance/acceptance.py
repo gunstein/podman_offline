@@ -923,6 +923,12 @@ class Run:
         self.step("07-registry-offline", lambda: self.guest("PROD", "registry-offline"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step("07-database-auth", lambda: self.guest("PROD", "database-auth"))
+        if not self.help_only:
+            # app2's database password is a MOUNTS secret file (backlog 82).
+            self.step(
+                "07-password-guard",
+                lambda: self.guest("PROD", "password-guard", bundle="app2"),
+            )
         self.step("07-persistent-before", lambda: self.persistent_state("before"))
         self.step("08-credentials", self.credentials)
         if self.help_only:

@@ -10,6 +10,7 @@ from pathlib import Path
 import bundle
 import yaml
 
+from demo_tests.demo_fixture import copy_image_variables
 from helpers.bundle_fixture import BundleFixture
 
 
@@ -23,6 +24,7 @@ class DemoBundleTests(BundleFixture):
             "product: myproduct\ngateway: platform\ncomponents: [platform]\n",
         )
         shutil.copytree(repo / "components/platform", self.root / "components/platform")
+        copy_image_variables(self.root)
         self.write("components/platform/VERSION", "1.2.4\n")
         bundle.build()
         image = "docker.io/library/nginx:1.28-alpine"
@@ -60,6 +62,7 @@ class DemoBundleTests(BundleFixture):
         # Only the app1 manifests matter here, so the catalog has no registrations.
         self.write("bundles.yaml", "product: myproduct\ncomponents: [app1]\n")
         shutil.copytree(repo / "components/app1", self.root / "components/app1")
+        copy_image_variables(self.root)
         for name in ("route.conf", "client.yaml"):
             (self.root / "components/app1" / name).unlink()
         self.write("components/app1/VERSION", "1.2.3\n")
