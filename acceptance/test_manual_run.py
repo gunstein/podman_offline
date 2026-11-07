@@ -277,10 +277,15 @@ class ScenarioTests(unittest.TestCase):
         )
         self.assertLess(names.index("07-manual-runtime-no-credentials"),
                         names.index("07-manual-credentials"))  # fmt: skip
+        self.assertLess(names.index("09-manual-runtime-interrupted"),
+                        names.index("09-left-unfinished"))  # fmt: skip
+        self.assertLess(names.index("09-left-unfinished"),
+                        names.index("09-manual-runtime-resumed"))  # fmt: skip
         self.assertTrue(run.finished)
         for name in ("rpm-nothing-changed", "rpm-host-check", "rpm-other-medium",
                      "rpm-credentials-check", "rpm-runtime-check", "rpm-no-restart",
-                     "rpm-reinstall-check", "rpm-upgrade-check", "rpm-retire-check",
+                     "rpm-reinstall-check", "rpm-interrupted-check", "rpm-upgrade-check",
+                     "rpm-retire-check",
                      "rpm-tools-damage", "rpm-tools-intact", "admin-baseline",
                      "admin-erase-guard", "admin-medium", "rpms", "rpm-upgrade",
                      "help-upgrade-bundle"):  # fmt: skip
@@ -401,6 +406,14 @@ class HostCheckTests(unittest.TestCase):
             ("", "help was not restarted"),
             (('printf "myproduct-platform.service p9\\nmyproduct-help.service h2\\n"'
               ' > "$root/invocations-now"'), "platform restarted"),
+        ])  # fmt: skip
+
+    def test_interrupted_check(self):
+        old = 'state="$root/state"; mkdir -p "$state/installed"; echo 0.4.13 > "$state/installed/help"'
+        result = self.run_action("rpm-interrupted-check", setup=old)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.expect("rpm-interrupted-check", [
+            (old.replace("0.4.13", "0.4.14"), "help is completed at 0.4.14, not left at 0.4.13"),
         ])  # fmt: skip
 
     def test_nothing_changed_after_the_preflight_stop(self):

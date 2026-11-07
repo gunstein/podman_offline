@@ -45,13 +45,17 @@ another medium is refused) and the next `myproduct` installs platform and
 help without asking again (`/livez` 204, `/help/` 200); a repeat restarts
 nothing and `myproduct help` restarts only help. A newer help release and
 credentials sent with `scp` follow: the admin command keeps the older help,
-`myproduct` is interrupted (terminal closed after help's validation) and a
-fresh login completes it, platform keeps running, and the next admin run
+`myproduct` is interrupted (the terminal closes once podman has loaded the
+new help image; help is checked to be still completed at the old version)
+and a fresh login completes it, platform keeps running, and the next admin run
 removes the older release while a plain `rpm -e` stays refused. Last, with a
 tools module removed, the admin command fails with the documented symptom,
 `rpm -q` names the delivered version, the documented reinstall repairs it,
 and the journal lines for sharing are checked. The audit check requires no
 FANOTIFY/AVC denial. Local checks: `acceptance/test_manual_run.py`.
+The interruption comes before the install records its pending attempt (it
+logs nothing between that record and its health line); resuming a recorded
+attempt is covered by `--status-retry` and the platform tests.
 
 Focused lab results, exact tested commits, the six conversion points and the
 public versus internal comparison are in [latest results](RESULTS.md).

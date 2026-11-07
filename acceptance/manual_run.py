@@ -501,7 +501,11 @@ def execute(run, strict=False):
         "09-manual-admin-upgrade",
         lambda out: check_admin_upgrade(out, values, new, old),
     )
-    runtime("09-manual-runtime-interrupted", stop="[OK] validated help;", expect=129)
+    # The terminal closes once podman has loaded the new help image, before
+    # the new version is completed; a fresh login then completes it.
+    runtime("09-manual-runtime-interrupted", stop="Loaded image:", expect=129)
+    run.step("09-left-unfinished",
+             lambda: run.guest("PROD", "rpm-interrupted-check", new, old_version=old))  # fmt: skip
     runtime("09-manual-runtime-resumed",
             lambda out: check_runtime(out, values, {"help": new}))  # fmt: skip
     run.step(

@@ -2888,6 +2888,14 @@ rpm-reinstall-check)
     if grep -Fxq "$first_help" <<< "$now"; then echo "FAIL: help was not restarted"; exit 1; fi
     echo "PASS: only help restarted"
     ;;
+rpm-interrupted-check)
+    # The closed terminal left the upgrade unfinished: help still completed at
+    # the old version.
+    marker=$(sudo -n cat "$state/installed/help")
+    [[ $marker == "$old_version" ]] \
+        || { echo "FAIL: help is completed at $marker, not left at $old_version"; exit 1; }
+    echo "PASS: the interrupted upgrade left help at $old_version"
+    ;;
 rpm-upgrade-check)
     # The newer help serves its content; platform kept running; incoming/ consumed.
     first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
