@@ -488,6 +488,26 @@ def execute(run, strict=False):
     runtime("07-manual-runtime-help", lambda out: check_runtime(out, values, {"help": old}),
             component="help")  # fmt: skip
     run.step("07-help-restarted-only", lambda: run.guest("PROD", "rpm-reinstall-check"))
+    # The scp alternative: credentials for the installed platform. Plain
+    # myproduct says they wait; myproduct platform takes them.
+    run.step("08-manual-credentials-scp",
+             lambda: laptop_step(run, "credentials-scp", values, run.private / "medium"))  # fmt: skip
+    waiting = (f"/var/lib/{product}/incoming/platform holds delivered files that platform "
+               f"does not use yet; run {product} platform")  # fmt: skip
+    runtime("08-manual-runtime-waiting",
+            lambda out: (check_runtime(out, values, {}), require(waiting in out, "no warning")))  # fmt: skip
+
+    def taken(out):
+        delivered = [
+            p for p in (run.private / "medium/platform").rglob("*") if p.is_file()
+        ]
+        check_runtime(out, values, {"platform": platform})
+        require(f"[OK] platform: {len(delivered)} delivered credential file(s) in "
+                f"/var/lib/{product}/state/platform" in lines(out),
+                "the delivered files were not taken")  # fmt: skip
+
+    runtime("08-manual-runtime-platform", taken, component="platform")
+    run.step("08-credentials-taken", lambda: run.guest("PROD", "rpm-before-upgrade"))
     # A new delivery: the newer help release, credentials through scp.
     run.step(
         "08-help-build",
@@ -495,8 +515,6 @@ def execute(run, strict=False):
     )
     run.step("08-help-rpm", lambda: run.guest("DEV", "rpm-upgrade", new, bundle="help"))
     run.step("08-transfer-rpms", run.transfer_rpms)
-    run.step("08-manual-credentials-scp",
-             lambda: laptop_step(run, "credentials-scp", values, run.private / "medium"))  # fmt: skip
     admin(
         "09-manual-admin-upgrade",
         lambda out: check_admin_upgrade(out, values, new, old),

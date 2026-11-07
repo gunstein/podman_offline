@@ -3,11 +3,13 @@
 ## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
 
 Manual: [docs/PRODUCTION-INSTALL.md](../docs/PRODUCTION-INSTALL.md), SHA256
-`d793a49b74bb84ebc9dcd4aeffa7eb0bee1f9f3045c043c7a0c9467865e3a212`, on the
+`043eef55131536a446a60d46a8b04185b5fc217bc40e736f6a2e07004abbd9f1`, on the
 RPM branch (backlog 69 WP1-WP6). WP6 added step IDs for the lab, the `/mnt`
 row of the example table and blocks for the `scp` alternative and the tools
-reinstall, which were inline text; the commands, counts and findings below
-are unchanged. This replaces the `release.py` manual for
+reinstall, which were inline text, and the note and stop row for delivered
+credentials of an installed component (`myproduct <component>`, found by
+the first `--rpm-manual` runs); the commands, counts and findings below are
+unchanged. This replaces the `release.py` manual for
 operators; that procedure is kept unchanged in
 [docs/RELEASE-PY-INSTALL.md](../docs/RELEASE-PY-INSTALL.md) only as input
 for `--host-setup` until WP6. The sections after this one are historical and

@@ -310,6 +310,23 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(new.exists())
         self.assertNotIn("install", self.releases.commands())
 
+    def test_files_for_a_component_not_installed_now_are_named(self):
+        self.first_run()
+        self.deliver("worker", "credentials/token/value", "token\n")
+        self.assertEqual(self.run_command(), 0)
+        self.assertIn(
+            "holds delivered files that worker does not use yet; run cedar worker",
+            self.stderr.getvalue(),
+        )
+        self.assertTrue(
+            (self.lib / "cedar/incoming/worker/credentials/token/value").exists()
+        )
+        # cedar worker takes them; then nothing is waiting and nothing is said.
+        self.assertEqual(self.run_command("worker"), 0)
+        self.assertFalse((self.lib / "cedar/incoming/worker").exists())
+        self.assertEqual(self.run_command(), 0)
+        self.assertNotIn("does not use yet", self.stderr.getvalue())
+
     def test_identical_credentials_are_kept_and_links_and_partial_copies_refused(self):
         self.first_run()
         self.deliver("worker", "credentials/token/value", "token\n")

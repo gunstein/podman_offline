@@ -2896,9 +2896,17 @@ rpm-interrupted-check)
         || { echo "FAIL: help is completed at $marker, not left at $old_version"; exit 1; }
     echo "PASS: the interrupted upgrade left help at $old_version"
     ;;
+rpm-before-upgrade)
+    # myproduct platform took the credentials sent with scp; record the
+    # services as they run before the upgrade.
+    remaining=$(sudo -n find "$install_root/incoming" -mindepth 1)
+    [[ -z $remaining ]] || { echo "FAIL: credentials sent with scp left in incoming/"; exit 1; }
+    invocations > "$base/invocations-before-upgrade"
+    echo "PASS: incoming/ empty; services recorded before the upgrade"
+    ;;
 rpm-upgrade-check)
-    # The newer help serves its content; platform kept running; incoming/ consumed.
-    first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
+    # The newer help serves its content; platform kept running.
+    first_platform=$(grep "^$product_name-platform.service " "$base/invocations-before-upgrade")
     now=$(invocations)
     grep -Fxq "$first_platform" <<< "$now" || { echo "FAIL: platform restarted"; exit 1; }
     body=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
@@ -2906,9 +2914,7 @@ rpm-upgrade-check)
         "https://$prod_host:$port/help/")
     grep -Fq "help-release-$requested_version" <<< "$body" \
         || { echo "FAIL: /help/ does not serve help $requested_version"; exit 1; }
-    remaining=$(sudo -n find "$install_root/incoming" -mindepth 1)
-    [[ -z $remaining ]] || { echo "FAIL: credentials sent with scp left in incoming/"; exit 1; }
-    echo "PASS: help $requested_version served; platform not restarted; incoming/ empty"
+    echo "PASS: help $requested_version served; platform not restarted"
     ;;
 rpm-retire-check)
     # Decision 3: the older release is gone with its tree; the guard stays closed.

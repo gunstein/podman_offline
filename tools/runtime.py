@@ -25,7 +25,9 @@ across releases):
    different one stops before anything is copied, and the incoming copy is
    removed once the state copy is verified.
 6. deploy.sh install. A failure stops; the next run resumes it first.
-7. deploy.sh status.
+7. A warning names each component that is not installed now but has
+   delivered files waiting in incoming/ (<product> <component> takes them).
+8. deploy.sh status.
 """
 
 import json
@@ -294,6 +296,15 @@ def install(product, args):
         move_credentials(product, component)
         deployed(path, "install")
         log.info(f"[OK] {component} {package.version} installed")
+    # Delivered credentials are taken only by an install of their component;
+    # say so instead of leaving them unused without a word.
+    for component in order:
+        incoming = host.LIB / product / "incoming" / component
+        if component not in targets and incoming.is_dir() and any(incoming.iterdir()):
+            log.warning(
+                f"WARNING: {incoming} holds delivered files that {component} does not "
+                f"use yet; run {product} {component} to install it with them"
+            )
     if deploy(found[order[-1]][1], "status").returncode != 0:
         raise ToolError(
             f"status reports an incomplete or inactive component; run {product} again, "

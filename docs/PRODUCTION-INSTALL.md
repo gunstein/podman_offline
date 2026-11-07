@@ -159,7 +159,9 @@ sudo myproduct-admin --credentials /mnt
 **Expected:** one `[OK] incoming/...` line per file, then
 `[OK] credentials are in /var/lib/myproduct/incoming for produser` and
 `PASS: myproduct-admin completed`. The files are copied for the runtime user;
-their contents are never shown. A repeat says `is already there`.
+their contents are never shown. A repeat says `is already there`. The
+runtime user's next installation of that component takes them (step 6); for
+a component that is already installed, that is `myproduct <component>`.
 
 Then remove the medium:
 
@@ -247,6 +249,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `status reports an incomplete or inactive component` (step 6) | runtime user | Run `myproduct` again a minute later; a service may still be starting. If it stays, ask for help (see below). |
 | `deploy.sh ... stopped; fix what it names` (step 6) | runtime user | The `ERROR:` line above it names the cause. The next `myproduct` resumes the unfinished component first. |
 | `WARNING: older releases kept ...` | nobody | Normal before the runtime user's first `myproduct`; a later step 3 removes them. |
+| `WARNING: ... holds delivered files that <component> does not use yet` | runtime user | Run the command it names, `myproduct <component>`. |
 | `... is left after removing ...` | administrator, supplier | Files that no package owns remain in a removed release's folder. Ask the supplier before deleting anything. |
 
 ### Repair the tools

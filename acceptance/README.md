@@ -43,8 +43,11 @@ answers typed at its prompts) and an unchanged repeat installs nothing; plain
 `--credentials` delivers them (a repeat keeps them, a different file on
 another medium is refused) and the next `myproduct` installs platform and
 help without asking again (`/livez` 204, `/help/` 200); a repeat restarts
-nothing and `myproduct help` restarts only help. A newer help release and
-credentials sent with `scp` follow: the admin command keeps the older help,
+nothing and `myproduct help` restarts only help. The platform credentials,
+sent again with `scp` from the controller as the runtime user's laptop, make
+plain `myproduct` warn that platform does not use them yet, and `myproduct
+platform` takes them. A newer help release follows: the admin command keeps
+the older help,
 `myproduct` is interrupted (the terminal closes once podman has loaded the
 new help image; help is checked to be still completed at the old version)
 and a fresh login completes it, platform keeps running, and the next admin run

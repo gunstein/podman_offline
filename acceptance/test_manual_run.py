@@ -267,7 +267,8 @@ class ScenarioTests(unittest.TestCase):
             "06-manual-tools", "06-manual-admin-no-account", "06-manual-admin",
             "07-manual-runtime-no-credentials", "07-manual-credentials",
             "07-manual-credentials-other", "07-manual-runtime", "07-manual-runtime-repeat",
-            "08-manual-credentials-scp", "09-manual-runtime-interrupted",
+            "08-manual-credentials-scp", "08-manual-runtime-waiting",
+            "08-manual-runtime-platform", "09-manual-runtime-interrupted",
             "09-manual-runtime-resumed", "09-manual-admin-retire",
             "10-manual-tools-version", "10-manual-tools-reinstall", "10-manual-help-journal",
         ):  # fmt: skip
@@ -284,7 +285,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(run.finished)
         for name in ("rpm-nothing-changed", "rpm-host-check", "rpm-other-medium",
                      "rpm-credentials-check", "rpm-runtime-check", "rpm-no-restart",
-                     "rpm-reinstall-check", "rpm-interrupted-check", "rpm-upgrade-check",
+                     "rpm-reinstall-check", "rpm-before-upgrade", "rpm-interrupted-check",
+                     "rpm-upgrade-check",
                      "rpm-retire-check",
                      "rpm-tools-damage", "rpm-tools-intact", "admin-baseline",
                      "admin-erase-guard", "admin-medium", "rpms", "rpm-upgrade",
@@ -310,9 +312,10 @@ class HostCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "db").write_text("".join(name + "\n" for name in installed))
-            (root / "invocations-first").write_text(
-                "myproduct-platform.service p1\nmyproduct-help.service h1\n"
-            )
+            for name in ("invocations-first", "invocations-before-upgrade"):
+                (root / name).write_text(
+                    "myproduct-platform.service p1\nmyproduct-help.service h1\n"
+                )
             (root / "invocations-now").write_text(
                 "myproduct-platform.service p1\nmyproduct-help.service h1\n"
             )
@@ -392,7 +395,6 @@ class HostCheckTests(unittest.TestCase):
         self.expect("rpm-upgrade-check", [
             (restarted, "platform restarted"),
             ('echo old > "$root/help-page"', "/help/ does not serve help 0.4.14"),
-            ('mkdir -p "$install_root/incoming/platform"', "credentials sent with scp left"),
         ])  # fmt: skip
         self.expect("rpm-no-restart", [(restarted, "a service restarted")])
         help_restarted = (
@@ -406,6 +408,13 @@ class HostCheckTests(unittest.TestCase):
             ("", "help was not restarted"),
             (('printf "myproduct-platform.service p9\\nmyproduct-help.service h2\\n"'
               ' > "$root/invocations-now"'), "platform restarted"),
+        ])  # fmt: skip
+
+    def test_before_upgrade_requires_the_credentials_taken(self):
+        result = self.run_action("rpm-before-upgrade")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.expect("rpm-before-upgrade", [
+            ('mkdir -p "$install_root/incoming/platform"', "credentials sent with scp left"),
         ])  # fmt: skip
 
     def test_interrupted_check(self):
