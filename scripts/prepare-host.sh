@@ -341,5 +341,3 @@ firewall-cmd --permanent --add-port="$port/tcp"
 firewall-cmd --reload
 printf '[OK] account %s (home %s unchanged): product %s under %s, linger enabled, HTTPS port %s/tcp open\n' \
     "$user" "$account_home" "$product" "$install_root" "$port"
-printf '[OK] next, as %s: create %s/.%s/%s.env (0700/0600) with INSTALL_ROOT=%s\n' \
-    "$user" "$account_home" "$product" "$product" "$install_root"

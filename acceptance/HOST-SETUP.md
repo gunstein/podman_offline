@@ -148,7 +148,7 @@ creation, package download, key rotation or runtime installation is added.
 
 The separately authenticated gzip/stdin helper remains the sole release engine.
 Its canonical initial bootstrap is the `tool-bootstrap` block in
-[the production manual](../docs/PRODUCTION-INSTALL.md), executed in regression
+[the retired release.py procedure](../docs/RELEASE-PY-INSTALL.md), executed in regression
 coverage. It snapshots the candidate into an exclusive file under validated
 root-protected ancestors, hashes that exact copy, retains the old helper on
 mismatch, and fsyncs/atomically publishes only matching bytes. No unverified code

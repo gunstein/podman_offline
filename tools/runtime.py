@@ -297,7 +297,7 @@ def install(product, args):
     if deploy(found[order[-1]][1], "status").returncode != 0:
         raise ToolError(
             f"status reports an incomplete or inactive component; run {product} again, "
-            "or see the troubleshooting section of the manual"
+            'or see "If a command stops" in the manual'
         )
 
 

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def bootstrap_source():
-    manual = (ROOT / "docs/PRODUCTION-INSTALL.md").read_text()
+    manual = (ROOT / "docs/RELEASE-PY-INSTALL.md").read_text()
     match = re.search(
         r"<!-- operator: tool-bootstrap -->\n```sh\n[^\n]+<<'PY'\n(.*?)\nPY\n```",
         manual,
@@ -159,4 +159,5 @@ class OperatorBundleDocsTests(ProductFixture):
                 self.assertTrue(
                     (manual.parent / target.split("#")[0]).is_file(), target
                 )
-        self.assertIn("init-layout", manual.read_text())
+        # The RPM operator manual, not the retired release.py procedure.
+        self.assertIn("sudo myproduct-admin /mnt", manual.read_text())

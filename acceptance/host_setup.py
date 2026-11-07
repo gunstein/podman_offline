@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MANUAL = ROOT / "docs/PRODUCTION-INSTALL.md"
+MANUAL = ROOT / "docs/RELEASE-PY-INSTALL.md"  # retired flow, removed in WP6
 # The manifest is also a drift gate: required operator steps cannot disappear.
 STEPS = (
     "values",

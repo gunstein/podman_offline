@@ -681,7 +681,7 @@ def install(product, args):
     retire(product, account)
     log.info(
         f"[OK] next: log in as {account_name} (at the console, or ssh "
-        f"{account_name}@<server>); releases are in {host.LIB / product / 'releases'}"
+        f"{account_name}@<server>) and run {product}"
     )
 
 
@@ -856,7 +856,7 @@ def hand_over_credentials(product, directory):
     files = read_credentials(product, directory, components - {""})
     if not files:
         raise ToolError(
-            f"No <component>/credentials/ directory in {directory}; see the manual for the layout"
+            f'No <component>/credentials/ directory in {directory}; see "Before you begin" in the manual for the layout'
         )
     payload = json.dumps(
         {path: base64.b64encode(data).decode("ascii") for path, data in files.items()}

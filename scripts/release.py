@@ -1456,7 +1456,7 @@ def main():
             raise ReleaseError(
                 "setup: "
                 + error_message(error)
-                + "; fix the named step using docs/PRODUCTION-INSTALL.md, then rerun the same administrator setup command (completed releases are retained)"
+                + "; fix the named step using docs/RELEASE-PY-INSTALL.md, then rerun the same administrator setup command (completed releases are retained)"
             ) from None
         return
     require(os.geteuid() == 0, "root required")

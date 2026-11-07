@@ -458,8 +458,8 @@ KEY=VALUE`), so an interruption before that asks again. Delivered credentials
 move from `incoming/<component>/` to `state/<component>/` (identical files
 kept, a different one stops, the incoming copy is removed once verified), then
 `deploy.sh install` and finally `status`. Without a terminal, a missing answer
-names its option (`--public-origin`, `--ip-address`). The production manual
-still describes the signed bundle flow until WP5.
+names its option (`--public-origin`, `--ip-address`). The
+[production manual](docs/PRODUCTION-INSTALL.md) describes this flow (WP5).
 
 ### Installation compatibility
 
@@ -1104,14 +1104,20 @@ socket the commands work as before.
 
 ## First production installation
 
-**Operator guide:** follow the short Norwegian
-[production installation guide](docs/PRODUCTION-INSTALL.md) (backlog 64). It
-installs as an existing login account whose home only holds
-`~/.<product>/<product>.env`; everything else lives under `/var/lib/<product>`.
-This section is the reference behind it. The full automated OL9 matrix passed
-CLEAN and a manual ssh run without sudo worked, but only with extensive help;
-simpler host preparation is backlog 65. See
+**Operator guide:** follow the
+[production installation manual](docs/PRODUCTION-INSTALL.md) (backlog 69,
+RPM delivery): the administrator installs the tools RPM once, then runs
+`sudo <product>-admin <directory>` for every delivery and `--credentials` for
+credentials on a medium; the runtime account logs in and runs `<product>`
+(see [Release RPMs](#release-rpms-backlog-69-phase-1)). It installs as an
+existing login account whose home only holds `~/.<product>/<product>.env`;
+everything else lives under `/var/lib/<product>`. See
 [verification](acceptance/RESULTS.md).
+
+The rest of this section describes the earlier `release.py` flow, which
+backlog 69 WP6 removes; its procedure is kept in
+[docs/RELEASE-PY-INSTALL.md](docs/RELEASE-PY-INSTALL.md) only for the
+`--host-setup` lab scenario.
 
 Prerequisite for `journalctl --user` as the runtime account: a persistent
 journal. A fresh OL9 host has no `/var/log/journal`; create it once with
@@ -1119,15 +1125,14 @@ journal. A fresh OL9 host has no `/var/log/journal`; create it once with
 /var/log/journal` and `sudo journalctl --flush`. Do not add the account to
 `systemd-journal` or `adm` instead.
 
-Follow the complete [production installation manual](docs/PRODUCTION-INSTALL.md).
-It gives machine/account/access, copyable commands, expected results and recovery
-in one sequence. The administrator authenticates and installs `release.py.gz`,
+The retired procedure gives machine/account/access, copyable commands, expected
+results and recovery in one sequence. The administrator authenticates and installs `release.py.gz`,
 then runs its `setup` operation with explicit release selections and a host release.
 The runtime account logs in itself over SSH without sudo and runs `deploy.sh
 init-layout`, config/credential steps, validate and install. Multiple-component
 runtime orchestration remains backlog 66.
 
-The manual's `tool-bootstrap` block is the canonical initial tool installation
+The retired procedure's `tool-bootstrap` block is the canonical initial tool installation
 procedure and is executed by its regression tests. It snapshots the compressed
 candidate into a root-protected location, verifies the independently delivered
 SHA256 on those exact bytes, fsyncs and atomically publishes the helper before

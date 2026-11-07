@@ -1,5 +1,93 @@
 # Operator review baseline for backlog 65–67
 
+## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
+
+Manual: [docs/PRODUCTION-INSTALL.md](../docs/PRODUCTION-INSTALL.md), SHA256
+`6de42a91cb86cb45d10044d069454f4b8fcf828d2ec738e172206046fa0ab274`, on the
+RPM branch (backlog 69 WP1-WP5). This replaces the `release.py` manual for
+operators; that procedure is kept unchanged in
+[docs/RELEASE-PY-INSTALL.md](../docs/RELEASE-PY-INSTALL.md) only as input
+for `--host-setup` until WP6. The sections after this one are historical and
+refer to that earlier manual.
+
+| Assessment | Result | Scope |
+| --- | --- | --- |
+| AI literal walkthrough | Findings; seven fixed in this change, five open (below) | First installation, credentials, upgrade, retirement, status/reboot, setting change, interruption and the stops table, tools repair |
+| Human trial without oral assistance | **Not performed; outstanding verification** (backlog 68) | Printed manual only, fresh OL9 VM, one person holding both accounts, console and SSH variants |
+| Product/unit tests | `test_manual` (commands parse with the real parsers, prompts are the tools' questions, cited sections exist, the admin "next" line) and the existing admin/runtime tests | Drift between manual and tools; not the procedure |
+| Real lab evidence | `m69-admin-rpm-30704b3` ran steps 2, 3, 4 and 6 and the upgrade/retirement with answers as options | Not mounting, typed prompts, `umount` or the tools repair |
+
+Method: static reading of the manual from its stated prerequisites, in
+order, without filling gaps from source code or earlier chat; the expected
+lines and messages were then compared with the tools' code. No command was
+executed on a host for this walkthrough.
+
+**Counts** (typed characters include Enter; the example values; accepting
+every suggestion):
+
+| Task | Commands | Typed characters | Account switches | Medium |
+| --- | ---: | ---: | ---: | --- |
+| First installation on a new server, two roles | 10 | 282 | 1 | mount, umount |
+| Upgrade with a new delivery, no new credentials | 8 | 137 | 1 | mount, umount |
+| Remove old releases right after an upgrade | 5 | 89 | 0 | mount, umount |
+| Status check, also after a reboot | 1 | 10 | 0 | none |
+| Fix the fapolicyd cache stop, then repeat step 3 | 3 + a `vi` edit | 97 + the edit | 0 | none |
+| Tools repair (same version), then repeat step 3 | 3 | 144 | 0 | mounted |
+
+Manual edits: none for ordinary tasks; one `vi` edit to change a setting or
+for the cache stop. If the public-address suggestion is wrong, typing it adds
+about 32 characters. The longest line is the one-time tools installation (90
+characters with `'*'`). For comparison, the `release.py` manual's operator
+blocks were 8 811 characters in 186 lines, mostly pasted, for platform and
+identity; the RPM manual's counts do not grow with the number of components.
+
+**Findings fixed in this change:**
+
+1. `prepare-host.sh` printed `[OK] next, as <account>: create
+   ~/.<product>/<product>.env ...`, a manual step that `<product>` now does
+   itself (`init-layout`); an operator would have created the file by hand.
+   Removed.
+2. The admin command's last line named the releases directory but not the
+   command to run; it now ends `and run <product>`, as the manual shows.
+3. `<product>` sent the operator to "the troubleshooting section of the
+   manual", which does not exist; it now names "If a command stops", and the
+   stops table has its row (`status reports an incomplete or inactive
+   component`).
+4. Messages name the system, security and account administrator, roles the
+   manual did not define; "Who does what" now does.
+5. The prerequisites did not say that the runtime user must know how to log
+   in (password or SSH key).
+6. `mount` on a medium that is already mounted prints an error; the manual
+   now says to continue.
+7. Step 3 gave no expectation of duration; it now says large releases can
+   take several minutes. The root and wrong-account messages of `<product>`
+   share one row in the stops table.
+
+**Open findings (not fixed here):**
+
+1. Finding the medium with `lsblk` needs judgement (size, `sdb1` versus
+   `sr0`). Remedy candidate: the supplier labels the medium, and the manual
+   shows a sample `lsblk` output.
+2. The one-time tools command is 90 characters with quoting and a glob;
+   phase 2 adds key import. Mistyping is safe (dnf stops) but likely.
+3. Changing a setting needs `vi` and YAML (`config.yaml`), beyond the target
+   audience. Remedy candidate: a command for the one setting that changes in
+   practice; needs a product-owner decision.
+4. "Install the named package from the OS media" assumes the system
+   administrator can do that offline; the manual only declares it as that
+   person's prerequisite.
+5. Not verified on a host: the typed prompts, mounting, the tools repair
+   (`dnf reinstall` of the tools) and a real SSH login running `myproduct`
+   (WP6).
+
+Interruption/retry trace: every numbered step is safe to repeat. `dnf install`
+of installed tools does nothing, the admin command installs only what is
+missing and repeats host preparation idempotently, `--credentials` keeps
+identical files and refuses different ones before copying, and `<product>`
+resumes the pending component first. A failure names who acts and the
+repeated command. Diagnostics to share are the printed `[OK]`/`WARNING:`/
+`ERROR:` lines and `journalctl -t myproduct` (start and result lines only).
+
 Historical baseline date: 2026-10-24. The first table refers to `7ef9671`;
 the current item 65 assessment is recorded separately below. This is **not a lab
 run**. Requirements are in the separate

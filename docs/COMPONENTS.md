@@ -868,7 +868,7 @@ would pass some checks and skip others.
 
 Quadlets live in `/var/lib/<product>/config/containers/systemd/` and Podman
 storage in `/var/lib/<product>/storage/`; see
-[the production layout](PRODUCTION-INSTALL.md).
+[the production layout](../README.md#config-secrets-and-persistence).
 
 `installed/<id>` without `metadata/<id>.json` is an error. Metadata without the
 marker is an unfinished install that a retry completes. Removing a component

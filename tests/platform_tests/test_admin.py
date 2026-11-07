@@ -73,9 +73,10 @@ class FakeHost:
         self.prepared = []
         self.trust_runs = []
         # deploy.sh status --json: a report, raw text, or None for a failing status.
-        self.status: "dict | str | None" = None
+        self.status = None  # type: dict | str | None
         self.status_runs = []
-        self.remove_failure: "str | None" = None  # stderr of one failing dnf remove
+        # stderr of one failing dnf remove
+        self.remove_failure = None  # type: str | None
 
     def install(self, path):
         name = real(["rpm", "-qp", "--queryformat", "%{NAME}", str(path)]).stdout
@@ -278,6 +279,12 @@ class AdminInstallTests(AdminFixture):
         self.assertEqual(run[-2:], [RELEASE + "/deploy.sh", "--help"])
         self.assertIn(
             "[OK] operator-a can run cedar-worker-1.2.3", self.stdout.getvalue()
+        )
+        # The line the production manual shows (test_manual).
+        self.assertIn(
+            "[OK] next: log in as operator-a (at the console, or ssh "
+            "operator-a@<server>) and run cedar\n",
+            self.stdout.getvalue(),
         )
         self.assertTrue(
             self.stdout.getvalue().endswith("PASS: cedar-admin completed\n")

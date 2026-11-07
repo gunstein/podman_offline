@@ -1301,7 +1301,16 @@ record for it, read from the newest release's `deploy.sh status --json` as
 the runtime account; the newest release of a component is never removed. One
 `dnf remove` per package, allowed by the single-use authorization; a repeat
 completes an interrupted removal. No `retire-check` command, operation lock or
-separate retirement command (decision 3). Next: WP5, the manual.
+separate retirement command (decision 3).
+Status 2026-11-07: WP5 done. [docs/PRODUCTION-INSTALL.md](docs/PRODUCTION-INSTALL.md)
+is the RPM manual for paper (one example, short typed commands, expected
+output, a stops table and the tools repair); `test_manual` keeps its commands,
+prompts and cited sections in step with `tools/`. The AI walkthrough
+([OPERATOR-REVIEW.md](acceptance/OPERATOR-REVIEW.md)) counts 10 commands and
+282 typed characters for a first installation with both roles; it fixed seven
+findings and lists five open ones. The `release.py` procedure moved
+unchanged to `docs/RELEASE-PY-INSTALL.md` as input for `--host-setup` only.
+Human trial: outstanding (item 68). Next: WP6.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the

@@ -767,7 +767,10 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    repeat removes a package an interrupted removal left installed; files left
    in a removed tree stop the command and are named.
 5. Manual rewrite (including tools repair) and the AI operator walkthrough
-   with full counts.
+   with full counts, **done 2026-11-07**: `docs/PRODUCTION-INSTALL.md`,
+   walkthrough in `acceptance/OPERATOR-REVIEW.md`, drift test
+   `tests/platform_tests/test_manual.py`; the `release.py` procedure is kept
+   in `docs/RELEASE-PY-INSTALL.md` for `--host-setup` until WP6.
 6. Harness scenario on P1 and P2 with the drift mapping; remove the
    `release.py` flow, its tests and manual sections; rewrite the contracts
    above and item 65/66 references.

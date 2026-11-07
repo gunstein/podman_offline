@@ -1,540 +1,269 @@
 # Production installation
 
-For administrators and installers with limited Linux experience. All required
-steps are here, in execution order. Design explanations are in [README](../README.md).
-**Status:** the item 65 implementation passed the focused OL9 scenarios and full
-regression matrix at `2d36d71`. This English translation is a later documentation
-change. Unassisted human testing remains outstanding. The verification report
-is `acceptance/HOST-SETUP.md` in the source repository.
+For administrators and installers with limited Linux experience. Every
+ordinary task is here, in the order you do it, and the commands are short
+enough to type from a printed copy. Design explanations are in the
+[README](../README.md).
+
+**Status:** RPM delivery, backlog 69 phase 1 (unsigned RPMs). Steps 2, 3, 4
+and 6 and the upgrade passed the automated OL9 lab scenario `--admin-rpm`,
+with the answers given as options instead of typed at the prompts; mounting,
+the prompts and the tools repair were not part of that run. The AI
+walkthrough is in `acceptance/OPERATOR-REVIEW.md`. A test with a person
+following this manual alone is still outstanding (backlog 68).
+
+## Who does what
+
+| Role | Account | Does |
+| --- | --- | --- |
+| Administrator | your own account, with `sudo` | installs the tools once, then every delivery and the credentials |
+| Runtime user | the product's login account, **without** `sudo` | runs the product's one command, `myproduct` |
+
+One person may hold both accounts. Switch between them by logging in (step 5),
+never with `su` or `sudo -u`. Messages may also name the **system**,
+**security** or **account administrator**: your organisation's people for the
+operating system, for SELinux and fapolicyd, and for login accounts. Often
+that is the administrator.
+
+## The example used in this manual
+
+Replace these example values with your own wherever they appear. Nothing else
+in the commands changes.
+
+| Example | Meaning |
+| --- | --- |
+| `myproduct` | the product name the supplier gave you |
+| `produser` | the runtime user's login account |
+| `server1.example.org` | the name users type in the browser; the web certificate is for this name |
+| `192.0.2.10` | the server's IP address |
+| `8443` | the HTTPS port |
+| `/dev/sdb1` | the delivery medium (USB stick or DVD); step 1 shows how to find it |
 
 ## Before you begin
 
-You need an Oracle Linux 9 server with SELinux Enforcing, active fapolicyd and
-firewalld. Your organisation's administrator provides an existing login account,
-`produser`, without sudo access or membership in wheel, adm or systemd-journal.
-Its home and shell are retained. Python 3, python3-pyyaml, Podman, gnupg2,
-fapolicyd, firewalld, policycoreutils-python-utils, acl, util-linux, shadow-utils
-and sudo must be installed from your organisation's approved offline repository.
-`setup` checks the commands and names the package if something is missing.
-No command downloads packages.
+The administrator's preflight (step 3) checks all of this and names what is
+missing and who fixes it, so you can also start and let it tell you.
 
-**Two accounts:** The administrator uses sudo to prepare the host, publish
-releases and retire releases. The runtime user logs in directly over SSH and
-never uses sudo. Product files go under `/var/lib/myproduct`; only
-`~/.myproduct/myproduct.env` is created in the home directory. SSH keys belong
-to the ordinary login setup.
+- **Server:** Oracle Linux 9 with SELinux `Enforcing`, and `firewalld` and
+  `fapolicyd` running.
+- **OS packages**, installed from your organisation's OS media or repository:
+  `python3`, `python3-pyyaml`, `podman`, `fapolicyd`, `rpm-plugin-fapolicyd`,
+  `firewalld`, `policycoreutils`, `policycoreutils-python-utils`,
+  `libselinux-utils`, `shadow-utils`, `shadow-utils-subid`, `acl`,
+  `util-linux` and `sudo`. Nothing is downloaded during installation.
+- **fapolicyd setting:** `subj_cache_size = 16381` or more in
+  `/etc/fapolicyd/fapolicyd.conf` (the security administrator; see "If a
+  command stops").
+- **Runtime user:** an ordinary login account (UID 1000 or higher, a login
+  shell), with no `sudo` rights and not a member of `wheel`, `adm` or
+  `systemd-journal`. Create it with your organisation's normal procedure; its
+  user knows how to log in (password or SSH key).
+- **Someone with `sudo`** for every delivery. The runtime user never installs
+  packages.
+- **The delivery** from the supplier, on a medium or copied to the server:
+  - `myproduct-tools-<version>-1.noarch.rpm` (the commands),
+  - one `myproduct-<component>-<version>-<version>-1.noarch.rpm` per component,
+  - the credentials (certificates, keys, passwords), in folders named
+    `<component>/credentials/...`, for example
+    `platform/credentials/web/web.crt` and `platform/credentials/web/web.key`.
+    The supplier tells you which files each component needs; you do not
+    rename or move them.
 
-Obtain the following delivery from the supplier before changing the server:
+**Security in phase 1:** the RPMs are not signed yet. Whoever can change a
+delivery can run code on the server as administrator. Accept deliveries only
+on media from the supplier that stayed in trusted hands.
 
-- This manual from a trusted source, `release.py.gz`, `bundle-signing.gpg`, the
-  selected `<product>-<component>-<version>-offline.tar.gz` files and their `.asc`
-  files. Signatures are mandatory; `.sha256` files may accompany them to check
-  transfer integrity.
-- **Two SHA256 values through a separate authenticated channel:** one for
-  `release.py.gz` and one for `bundle-signing.gpg`. A checksum file next to the
-  upload is not sufficient.
-- For the platform and identity example: `web.crt`, `web.key`, `identity.crt`,
-  `identity.key`, `alice-password`, `bob-password` and the public `ca.crt`.
-  The web certificate must cover the hostname in `public_origin`. Deliver these
-  files privately to the runtime user. The two password files belong to demo
-  users; your organisation's components need their own delivery list. The PFX
-  variant instead needs `signing-cert.pfx` and the private, single-line
-  `pfx-password` file.
+## 1. Mount the delivery
 
-Ask the administrator to prepare the server/account if these prerequisites are
-missing. Do not generate credentials from dev or use an unsigned archive as a
-shortcut. For the supplier: create `release.py.gz` using
-`gzip -n -c scripts/release.py > release.py.gz` from the separately reviewed
-source commit that the tool is intended to represent. Do not produce the tool
-from an unverified bundle.
+**Server, administrator.** Insert the medium, then list the disks:
 
-### Values to replace once
-
-Copy the following block into the terminal on each machine and in each new
-login session where you follow these steps. Replace **only the values between
-single quotes**, using the table. These are public settings; never put passwords
-or private keys in this block. Do not include single quotes or line breaks in a
-value. Take versions from the delivery filenames; they need not match.
-
-| Value | Meaning |
-| --- | --- |
-| `server`, `admin`, `runtime` | Server address and the two login accounts |
-| `product` | Supplier's product name; `myproduct` in this example |
-| `gateway`, `login_component` | Component names; `platform` and `identity` in this example |
-| `gateway_version`, `login_version` | Versions in the delivery, not an assumed latest version |
-| `old_gateway_version` | Previously installed gateway version, used only for retirement after upgrade |
-| `port`, `public_origin`, `bind_ip` | HTTPS port and server address that the service will use |
-| `upload` | Upload directory on the server, outside the home directory |
-| `credentials` | Runtime user's private delivery directory on the server |
-| `helper_sha256`, `key_sha256` | Replace the text with the two independently received 64-character values |
-| `credential_format` | `pem` for the demo; `pfx` only for a delivered component declaring `credentials/signing/signing-cert.pfx` |
-| `discovery_path` | Supplier's actual discovery path, as in this example |
-| `with_identity` | `yes` for this example; `no` for gateway only, without Identity or a database |
-
-<!-- operator: values -->
 ```sh
-server='192.168.0.108'
-admin='gunstein'
-runtime='produser'
-product='myproduct'
-gateway='platform'
-login_component='identity'
-gateway_version='0.4.12'
-old_gateway_version='0.4.11'
-login_version='0.4.12'
-port='8443'
-public_origin='https://myproduct-proxy:8443'
-bind_ip='192.168.0.108'
-upload='/var/tmp/myproduct-upload'
-credentials='/var/tmp/myproduct-credentials'
-helper_sha256='REPLACE_WITH_INDEPENDENT_TOOL_SHA256'
-key_sha256='REPLACE_WITH_INDEPENDENT_KEY_SHA256'
-with_identity='yes'
-credential_format='pem'
-discovery_path='/identity/.well-known/openid-configuration'
+lsblk
 ```
 
-## 1. Transfer the delivery
+**Expected:** a list of disks. The medium is the one you just inserted, for
+example `sdb1` (USB, size of the stick) or `sr0` (DVD). Mount it read-only:
 
-**Machine:** laptop. **User:** administrator's login account. Run the values
-block, then log in to the server:
-
-<!-- operator: admin-login -->
 ```sh
-ssh "$admin@$server"
+sudo mount -o ro /dev/sdb1 /mnt
+ls /mnt
 ```
 
-**Expected:** the server's shell prompt. Run the values block in this new session too.
+If `mount` says the medium is already mounted, continue.
+**Expected:** the RPM files and the component folders with credentials. If
+the delivery was copied to the server instead (for example with `scp`), use
+that directory wherever this manual says `/mnt`.
 
-**Machine:** server. **User:** administrator, without sudo for this step. Run
-the values block first. Create a private directory owned by your account;
-an additional copy into a root-only directory is not required.
+## 2. Install the tools (once per server)
 
-<!-- operator: upload-directory -->
+**Server, administrator.**
+
 ```sh
-install -d -m 0700 "$upload"
+sudo dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 install /mnt/myproduct-tools-*.rpm
 ```
 
-**Machine:** laptop. **User:** administrator. Run the values block here too,
-and work from the directory containing the public delivery. Private credential
-files are transferred later using the runtime account.
+Answer `y` when dnf asks. **Expected:** `Complete!`. If dnf names a missing
+package, install that package from the OS media and repeat this command.
+`--setopt=localpkg_gpgcheck=0` is needed because phase 1 RPMs are unsigned.
+Later deliveries update the tools by themselves in step 3.
 
-<!-- operator: transfer -->
+## 3. Install the delivery (every delivery)
+
+**Server, administrator.**
+
 ```sh
-(
-set -eu
-scp release.py.gz bundle-signing.gpg "$product-$gateway-$gateway_version-offline.tar.gz" "$product-$gateway-$gateway_version-offline.tar.gz.asc" "$admin@$server:$upload/"
-if [ "$with_identity" = yes ]; then
-  scp "$product-$login_component-$login_version-offline.tar.gz" "$product-$login_component-$login_version-offline.tar.gz.asc" "$admin@$server:$upload/"
-fi
-)
+sudo myproduct-admin /mnt
 ```
 
-**Expected:** scp completes without errors. If a file is missing, obtain it from
-the supplier, repeat the same transfer, then continue with step 2.
+The first time it asks two questions; later it asks nothing:
 
-## 2. Install the trusted tool
-
-**Machine:** server. **User:** administrator with sudo. Run the values block
-after a new login. Copy the entire block. It checks the independent checksum
-against a protected copy before the tool can run. An older copy is retained on
-failure. Do not edit the Python code. You can repeat this step with the same delivery.
-
-<!-- operator: tool-bootstrap -->
-```sh
-sudo python3 -I -B - "$upload/release.py.gz" "$helper_sha256" <<'PY'
-import errno, hashlib, os, stat, sys, tempfile
-from pathlib import Path
-
-def protected(path, directory):
-    info = path.lstat()
-    if info.st_uid != 0 or info.st_mode & 0o022 or not (
-        stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-    ):
-        raise ValueError('Unsafe protected path; ask administrator to inspect: ' + str(path))
-    for key in ('system.posix_acl_access', 'system.posix_acl_default'):
-        try:
-            os.getxattr(str(path), key, follow_symlinks=False)
-        except OSError as error:
-            if error.errno not in (errno.ENODATA, errno.ENOTSUP):
-                raise
-        else:
-            raise ValueError('ACL on protected path; ask administrator to inspect: ' + str(path))
-
-source, expected = sys.argv[1:]
-target = Path('/usr/local/libexec/podman-offline-release.py.gz')
-if os.geteuid() != 0 or len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected):
-    raise SystemExit('ERROR: administrator access and independent SHA256 required; repeat bootstrap with correct inputs')
-temporary = None
-try:
-    for parent in reversed((target.parent,) + tuple(target.parent.parents)):
-        if not os.path.lexists(str(parent)):
-            parent.mkdir(mode=0o755)
-        protected(parent, True)
-    if os.path.lexists(str(target)):
-        protected(target, False)
-    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, 'rb') as incoming:
-        if not stat.S_ISREG(os.fstat(incoming.fileno()).st_mode):
-            raise ValueError('Helper upload must be a regular file')
-        with tempfile.NamedTemporaryFile(dir=str(target.parent), prefix='.bootstrap-', delete=False) as out:
-            temporary = Path(out.name)
-            value = hashlib.sha256()
-            for block in iter(lambda: incoming.read(1024 * 1024), b''):
-                value.update(block)
-                out.write(block)
-            if value.hexdigest() != expected:
-                raise ValueError('Helper SHA256 mismatch; obtain correct file/digest, then repeat bootstrap')
-            out.flush()
-            os.fchmod(out.fileno(), 0o644)
-            os.fsync(out.fileno())
-    os.replace(str(temporary), str(target))
-    fd = os.open(str(target.parent), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    print('PASS: authenticated release tool installed; continue with setup')
-except (OSError, ValueError) as error:
-    if isinstance(error, ValueError):
-        raise SystemExit('ERROR: ' + str(error)) from None
-    raise SystemExit('ERROR: bootstrap I/O failure; administrator must inspect upload/target permissions and space, then repeat bootstrap') from None
-finally:
-    if temporary is not None and temporary.exists():
-        temporary.unlink()
-PY
+```text
+Runtime account (an existing login account without sudo): produser
+HTTPS port [8443]:
 ```
 
-**Expected:** `PASS: authenticated release tool installed`.
-For a SHA256 mismatch, obtain the correct tool/values through the trusted channel,
-update the values block and repeat step 2. For ownership/ACL errors, the
-administrator must inspect the named system path; do not run recursive chmod/chown.
+Press Enter to accept a value in brackets. Installing large releases can take
+several minutes. **Expected:** lines starting with
+`[OK]`, among them `[OK] preflight`, `[OK] installed myproduct-...` for each
+new component and `[OK] produser can run ...`, and finally:
 
-## 3. Prepare the server and selected releases
-
-**Machine:** server. **User:** administrator with sudo. Copy the entire block.
-Only the components explicitly selected here are processed. Other files in the
-directory are ignored.
-
-<!-- operator: setup -->
-```sh
-(
-set -euo pipefail
-set -- --release "$gateway@$gateway_version"
-if [ "$with_identity" = yes ]; then
-  set -- "$@" --release "$login_component@$login_version"
-fi
-gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - setup \
-  --product "$product" --user "$runtime" --port "$port" \
-  --input-dir "$upload" --keyring "$upload/bundle-signing.gpg" --key-sha256 "$key_sha256" \
-  "$@" --host-release "$gateway@$gateway_version"
-)
+```text
+[OK] next: log in as produser (at the console, or ssh produser@<server>) and run myproduct
+PASS: myproduct-admin completed
 ```
 
-**Expected:** `PASS: setup preflight`, one `PASS: release ready` per component,
-and finally `PASS: host setup`. The tool prints the next command for the runtime
-user. This publishes the releases and prepares the host; applications are not
-yet installed. No installation receipt is created on their behalf.
+If it prints `Preflight stopped before any change:`, nothing was changed.
+Each line below it names what is missing and who fixes it; when that is done,
+run the same command again.
 
-The command checks the OS, packages, account, sudo policy, security services,
-key, journal policy and space before product changes. Archive contents and
-extracted size can only be validated after signature verification. Failure in
-a later bundle can therefore leave earlier verified releases in place, but does
-not run the host script. Space checks are lower bounds with 1 GiB reserved per
-filesystem; the administrator must also size storage for images and databases.
-On standard OL9, `/var/log/journal` is created and journald is flushed to disk.
-This makes the **entire host's** journal persistent and requires space under
-`/var/log`. Explicit conflicting journal policy is not overwritten. The runtime
-user receives no additional group memberships.
+The command also removes old releases that the runtime user no longer uses,
+and says so (`[OK] removed ...`). An older release that is still in use is
+listed as `kept`; that is normal.
 
-### If preflight stops
+## 4. Deliver the credentials
 
-**Same server and administrator account.** Follow the named error, then repeat
-all of step 3. For a missing command, install the named package from your
-organisation's offline repository. For a sudo grant, use an account without
-grants; do not give the product sudo access. For a `Storage`/`SplitMode` conflict,
-the system administrator must first approve persistent journaling with
-`Storage=auto` or `persistent` and `SplitMode=uid`; do not bypass policy with groups.
+**Server, administrator**, when the delivery contains credentials (the first
+installation, and when the supplier sends new ones):
 
-For standard OL9 with an undersized fapolicyd cache, check that the setting
-exists and apply this exact remedy. It changes cache size, not trust rules.
-If the first command fails, stop and ask the system administrator to prepare
-the baseline.
-
-<!-- operator: cache-remedy -->
 ```sh
-if sudo grep -Eq '^[[:space:]]*subj_cache_size[[:space:]]*=' /etc/fapolicyd/fapolicyd.conf; then
-  sudo sed -i -E 's/^[[:space:]]*subj_cache_size[[:space:]]*=.*/subj_cache_size = 16381/' /etc/fapolicyd/fapolicyd.conf &&
-  sudo systemctl restart fapolicyd
-else
-  printf 'STOP: subj_cache_size is missing; ask the system administrator to prepare the OL9 baseline before repeating step 3.\n' >&2
-  false
-fi
+sudo myproduct-admin --credentials /mnt
 ```
 
-**Expected:** no errors. Then repeat step 3. For another preflight failure,
-follow its stated remedy; do not use the cache remedy as a general repair.
+**Expected:** one `[OK] incoming/...` line per file, then
+`[OK] credentials are in /var/lib/myproduct/incoming for produser` and
+`PASS: myproduct-admin completed`. The files are copied for the runtime user;
+their contents are never shown. A repeat says `is already there`.
 
-## 4. Log in as the runtime user
+Then remove the medium:
 
-**Machine:** laptop. **User:** runtime login account, without sudo.
-
-<!-- operator: login -->
 ```sh
-ssh "$runtime@$server"
+sudo umount /mnt
 ```
 
-**Machine:** server, in the new SSH session. **User:** runtime user without sudo.
-Run the values block again, then create the product's settings file:
+**Alternative without a medium:** the runtime user copies the credential
+folders from a laptop, for example
+`scp -r platform produser@server1.example.org:/var/lib/myproduct/incoming/`.
 
-<!-- operator: init-layout -->
+## 5. Log in as the runtime user
+
+Log out of the administrator account (`exit`), then log in as `produser`:
+
+- **at the console:** at the login prompt;
+- **from a laptop:** `ssh produser@server1.example.org`.
+
+Do not use `su` or `sudo` to become the runtime user.
+
+## 6. Install the components
+
+**Server, runtime user.**
+
 ```sh
-bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" init-layout
+myproduct
 ```
 
-**Expected:** `[OK] Bootstrap ready` or `[OK] Existing bootstrap retained`.
-You can repeat this step; existing valid settings are retained. For a conflict,
-ask the administrator to check the product/account association, then continue
-with the same command. Do not delete or overwrite an existing settings file.
-After interruption, run the same `init-layout` command again as the runtime user.
-An unfinished temporary file is not used and does not block the next attempt.
+The first time it asks two questions:
 
-## 5. Configuration and private credentials
-
-**Machine:** server. **User:** runtime user without sudo. Initialise the gateway:
-
-<!-- operator: gateway-config -->
-```sh
-(
-set -eu
-bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" init-config "$gateway"
-python3 - "$product" "$gateway" "$public_origin" "$port" "$bind_ip" <<'PY'
-from pathlib import Path
-import sys, yaml
-product, component, origin, port, address = sys.argv[1:]
-p = Path('/var/lib') / product / 'state' / component / 'config.yaml'
-v = yaml.safe_load(p.read_text())
-v.update(PUBLIC_ORIGIN=origin, HTTPS_PORT=int(port), IP_ADDRESS=address)
-p.write_text(yaml.safe_dump(v))
-print('OK: public gateway settings saved; continue with credentials')
-PY
-install -d -m 0700 "$credentials"
-)
+```text
+Public address (https://<host name>:<port>) [https://server1.example.org:8443]:
+IP address the server listens on [192.0.2.10]:
 ```
 
-**Expected:** init-config reports that config was created or retained, followed
-by `OK: public gateway settings saved`. Settings come from the values block.
-This is an explicit editing step: during ordinary retry/upgrade, do not repeat
-the editing step with old values.
-The block stops at the first failure. If `init-config` fails, existing config
-is not edited. Correct the reported cause, check the values block and repeat
-this block as the runtime user on the server before continuing.
+The public address is what users type in the browser; it must match the web
+certificate. Press Enter to accept a suggestion. **Expected:** the
+installation of each component, with `[OK] <component> <version> installed`,
+then a status table in which every component is `active` and `installed`,
+`Pending: none`, and finally `PASS: myproduct completed`. The first
+installation takes a few minutes.
 
-**Machine:** laptop. **User:** runtime login account. Work from the directory
-containing the supplier's private files. Run the values block on the laptop first.
+Open `https://server1.example.org:8443/` in a browser on a computer that
+trusts your organisation's certificates to check it from the user's side.
 
-<!-- operator: credentials-transfer -->
-```sh
-(
-set -eu
-scp web.crt web.key ca.crt "$runtime@$server:$credentials/"
-if [ "$with_identity" = yes ]; then
-  case "$credential_format" in
-    pem) scp identity.crt identity.key alice-password bob-password "$runtime@$server:$credentials/";;
-    pfx) scp signing-cert.pfx pfx-password "$runtime@$server:$credentials/";;
-    *) printf 'STOP: credential_format must be pem or pfx from the supplier values list.\n' >&2; false;;
-  esac
-fi
-)
-```
+## 7. Everyday tasks
 
-**Expected:** no scp errors. Never use chat, terminal output or Git to send these
-files. Private files must be owned by the runtime user with mode 0600.
-On the **server as the runtime user**, install only the gateway files:
-
-<!-- operator: gateway-credentials -->
-```sh
-(
-set -e
-install -d -m 0700 "/var/lib/$product/state/$gateway/credentials/web"
-for name in web.crt web.key; do
-  destination="/var/lib/$product/state/$gateway/credentials/web/$name"
-  if [ -e "$destination" ] || [ -L "$destination" ]; then
-    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credential conflict for %s; retain the file and contact the credential provider, then repeat this step.\n' "$name" >&2; exit 1; }
-  else
-    install -m 0600 "$credentials/$name" "$destination" || exit 1
-  fi
-done
-)
-```
-
-**Expected:** no errors; identical existing files are retained. For a conflict,
-stop and ask the credential provider to confirm the correct set. Do not overwrite
-retained keys.
-
-## 6. Install and check the gateway
-
-**Machine:** server. **User:** runtime user without sudo.
-
-<!-- operator: gateway-install -->
-```sh
-bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" validate &&
-bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" install
-```
-
-**Expected:** validated, followed by a healthy service and containers reported Up.
-For a failure, follow "Upgrade and failure/interruption" below and repeat the
-same block. After success:
-
-<!-- operator: gateway-check -->
-```sh
-curl --cacert "$credentials/ca.crt" --resolve "$(printf '%s' "$public_origin" | sed -E 's@https://([^:/]+).*@\1@'):$port:$bind_ip" -sS -o /dev/null -w '%{http_code}\n' "$public_origin/livez"
-```
-
-**Expected:** `204`. Do not bypass certificate verification with curl's `-k`.
-If `with_identity=no`, skip to step 8. The gateway alone needs no Identity,
-database or demo users.
-
-## 7. Install identity when selected
-
-**Machine:** server. **User:** runtime user without sudo. The gateway must
-already be installed. The supplier selects the credential variant in the values block:
-
-| Variant | Private delivery | Destination under the component's `credentials/` |
+| Task | Who | What to do |
 | --- | --- | --- |
-| `pem` (demo) | `identity.crt`, `identity.key`, `alice-password`, `bob-password` | Certificate/key in `identity/`, demo passwords in `users/` |
-| `pfx` (separately supplied Identity) | `signing-cert.pfx`, `pfx-password` | Both in `signing/`; the component's supplied config must already declare the PFX reference |
+| Check the status | runtime user | `myproduct`. When nothing is new it installs nothing, restarts nothing and shows the status table. |
+| After a reboot | nobody | The services start by themselves. Check with `myproduct` as the runtime user. |
+| New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3 (and 4 if it contains credentials), then steps 5 and 6. Settings, credentials and data are kept, and nothing is asked again. |
+| Remove old releases | administrator | Nothing extra: step 3 removes them once the runtime user has installed the newer version. To do it right after an upgrade, repeat step 3. |
+| Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. The HTTPS port cannot be changed after installation. |
 
-The password file contains one nonempty line. Never put passwords in command-line
-arguments. The supplier must clarify whether the application needs the password
-as a separate Secret; provisioning files are never delivered implicitly. Do not
-change the demo's PEM config by guessing PFX settings. Copy the same block for
-either variant:
+## If a command stops
 
-<!-- operator: identity-config -->
-```sh
-(
-set -e
-bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" init-config "$login_component"
-case "$credential_format" in
-  pem) names='identity.crt identity.key alice-password bob-password';;
-  pfx) names='signing-cert.pfx pfx-password';;
-  *) printf 'STOP: credential_format must be pem or pfx from the supplier values list.\n' >&2; exit 1;;
-esac
-for name in $names; do
-  case "$name" in
-    signing-cert.pfx|pfx-password) group=signing;;
-    *-password) group=users;;
-    identity.*) group=identity;;
-    *) group=signing;;
-  esac
-  install -d -m 0700 "/var/lib/$product/state/$login_component/credentials/$group"
-  destination="/var/lib/$product/state/$login_component/credentials/$group/$name"
-  if [ -e "$destination" ] || [ -L "$destination" ]; then
-    test ! -L "$destination" && cmp -s "$credentials/$name" "$destination" || { printf 'STOP: credential conflict for %s; retain the file and contact the credential provider, then repeat this step.\n' "$name" >&2; exit 1; }
-  else
-    install -m 0600 "$credentials/$name" "$destination" || exit 1
-  fi
-done
-)
-```
+Every command in this manual can be repeated. After an interruption (power
+loss, a closed session, Ctrl+C) or after fixing the cause, run **the same
+command again**; finished work is kept and not done twice.
 
-**Expected:** initialised or retained config, no copy errors. Files are retained
-on repeat. Install generates a database password if declared; an existing
-password is retained. Install:
+The message starts with `ERROR:` and says what to do. The common ones:
 
-<!-- operator: identity-install -->
-```sh
-bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" validate &&
-bash "/var/lib/$product/releases/$product-$login_component-$login_version/deploy.sh" install
-```
+| Message (beginning) | Who | What to do, then repeat the same command |
+| --- | --- | --- |
+| dnf: `nothing provides ...` (step 2) | administrator | Install the named OS package from the OS media. |
+| `Preflight stopped before any change:` | the person named in each line | Fix each line. |
+| `- Account produser does not exist` | account administrator | Create the account. |
+| `- Set subj_cache_size = 16381 ...` | security administrator | `sudo vi /etc/fapolicyd/fapolicyd.conf`, set the line `subj_cache_size = 16381`, save, then `sudo systemctl restart fapolicyd`. |
+| `... is older than the installed ...` | supplier | Deliver the current version or a newer one. |
+| `... is installed with other content ...` | supplier | Deliver a new version; one version always has one content. |
+| `produser cannot run ...; fapolicyd must trust ...` | security administrator | Check that `rpm-plugin-fapolicyd` is installed and fapolicyd trusts the RPM database. |
+| `Host preparation stopped` | administrator | The lines above it say what failed. |
+| `... already exist with other content; nothing was copied` (step 4) | credential provider | Confirm which file is right. If the delivered file is right, the runtime user removes the old one, for example `rm /var/lib/myproduct/incoming/platform/credentials/web/web.key`. |
+| `No <component>/credentials/ directory in /mnt` (step 4) | supplier | The medium has no credentials in the layout under "Before you begin". |
+| `This host is not prepared for myproduct` | administrator | Step 3 first. |
+| `myproduct runs as produser on this host`, or `Run myproduct as the runtime account, not as root` | you | Log in as the runtime user (step 5). |
+| `... differ from the files in /var/lib/myproduct/state/...` (step 6) | credential provider | A newly delivered credential differs from the one in use. Nothing was copied. Confirm which is right; the runtime user removes the wrong copy in `/var/lib/myproduct/incoming/...`. |
+| `status reports an incomplete or inactive component` (step 6) | runtime user | Run `myproduct` again a minute later; a service may still be starting. If it stays, ask for help (see below). |
+| `deploy.sh ... stopped; fix what it names` (step 6) | runtime user | The `ERROR:` line above it names the cause. The next `myproduct` resumes the unfinished component first. |
+| `WARNING: older releases kept ...` | nobody | Normal before the runtime user's first `myproduct`; a later step 3 removes them. |
+| `... is left after removing ...` | administrator, supplier | Files that no package owns remain in a removed release's folder. Ask the supplier before deleting anything. |
 
-**Expected:** both services healthy. Check with:
+### Repair the tools
 
-<!-- operator: identity-check -->
-```sh
-curl --cacert "$credentials/ca.crt" --resolve "$(printf '%s' "$public_origin" | sed -E 's@https://([^:/]+).*@\1@'):$port:$bind_ip" -sS -o /dev/null -w '%{http_code}\n' "$public_origin$discovery_path"
-```
-
-**Expected:** `200`. The demo's `/identity/` is not a valid success check
-(it returns 404). The supplier must provide the actual endpoint for its component.
-Issuing/converting your own certificates is an advanced supplier task, described
-in [PFX design and provisioning](PFX-CREDENTIALS.md). `generate-certificates.sh`
-is not included in the bundles; external PEM/PFX delivery above does not need it.
-
-## 8. Operations, fresh login and reboot
-
-**Machine:** server. **User:** runtime user without sudo. Run the values block
-again after each new login. All paths are absolute; no remembered shell functions
-or manual XDG exports are needed.
-
-<!-- operator: status -->
-```sh
-(
-set -eu
-bash "/var/lib/$product/releases/$product-$gateway-$gateway_version/deploy.sh" status
-systemctl --user is-active "$product-$gateway.service"
-journalctl --user -u "$product-$gateway.service" -b -n 10 --no-pager --output=json --output-fields=__REALTIME_TIMESTAMP,_SYSTEMD_USER_UNIT,USER_UNIT,PRIORITY
-)
-```
-
-**Expected:** status shows complete/active with no pending work, is-active shows
-`active`, and the journal contains JSON entries with timestamps and unit names.
-This demonstrates read access without printing message contents (`MESSAGE`).
-Do not share raw journal text containing passwords, tokens or connection strings;
-see the safe error-reporting instructions below.
-
-Log out as the runtime user (`exit`). The **administrator on the server with sudo**
-runs `sudo reboot`. After boot, the administrator logs in again and runs the values
-block and the check below **before the runtime user logs in**:
-
-<!-- operator: boot-check -->
-```sh
-set -- "$product-$gateway.service"
-if [ "$with_identity" = yes ]; then set -- "$@" "$product-$login_component.service"; fi
-sudo systemctl --user -M "$runtime@" is-active "$@"
-```
-
-**Expected:** `active` for each selected service. Then log in again as the runtime
-user using step 4, run the values block and step 8. Expect the same status and
-readable journal without sudo.
-
-## 9. Upgrade and failure/interruption
-
-For an upgrade, the administrator transfers the new delivery (step 1), changes
-only the delivered versions in the values block and runs step 3. Updating the
-tool requires new independent verification in step 2. The runtime user logs in,
-uses the new versions in the values block and runs validate/install in steps 6/7.
-Skip editing and credential copying; existing config, keys and data are retained.
-
-Once functional checks pass, the administrator can retire an old release. Copy
-the block on the **server as administrator with sudo** after setting
-`old_gateway_version` to the version that was actually replaced:
+Only when `sudo myproduct-admin` itself does not start (for example
+`command not found`, or a Python error instead of `ERROR:`). With the
+delivery mounted (step 1):
 
 ```sh
-(
-set -euo pipefail
-gzip -dc /usr/local/libexec/podman-offline-release.py.gz | sudo python3 -I -B - retire \
-  --product "$product" --component "$gateway" --version "$gateway_version" --old-version "$old_gateway_version"
-)
+rpm -q myproduct-tools
 ```
 
-**Expected:** `PASS: protected release retire`. Old releases are never deleted
-as automatic failure cleanup.
-
-| Event | Action and command to continue |
+| It prints | Then |
 | --- | --- |
-| Interrupted tool bootstrap | Administrator repeats step 2 with the same trusted SHA256. The old tool copy is retained on failure. |
-| Interrupted setup, signature/trust failure | Administrator corrects the named file/baseline error and repeats all of step 3. Previously approved releases are retained; an invalid signature never authorises code. |
-| Setup stops after journal/drop-in changes | Administrator repeats step 3. It checks the actual manager/journal/firewall, not just file existence. |
-| New SSH session | Run the values block again. `init-layout` can be repeated and retains a valid file. |
-| Install fails | Runtime user runs status from step 8; the component should be incomplete/pending. Correct the named config/credential error using the delivery's public fields/filenames, then repeat the same validate/install block. Do not edit the pending record. |
-| Existing credentials differ | Stop copying, retain the files and ask the credential provider to confirm the set. Repeat the credential step only when the delivery is correct. No secret values need to be shared. |
-| Missing journal or manager environment | Administrator repeats step 3. Do not add the runtime user to privileged groups or export XDG manually. |
-| Unexpected error without a concrete remedy | Stop. Send only the step name, public component/version and fixed error message; do not dump config, environment, inspect or journal. The supplier must provide a safe remedy and next command before you continue. |
+| `package myproduct-tools is not installed` | step 2 |
+| the same version as the file in `/mnt` | `sudo dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 reinstall /mnt/myproduct-tools-*.rpm` |
+| an older version than the file in `/mnt` | step 2 |
+| two lines, or a newer version than the file in `/mnt` | stop; ask the supplier |
 
-Steps 2, 3, init-layout, init-config and identical credential copying can be repeated.
-An install attempt can safely be completed with the same command and retained
-settings; every install renders again and restarts the selected service. Do not
-repeat config editing with old values or retire a different version.
-Run only one setup/install/upgrade/retire operation at a time.
+Then repeat step 3.
+
+## Asking for help
+
+Send the step number, the command and the `[OK]`, `WARNING:` and `ERROR:`
+lines it printed; they never contain passwords or keys. The administrator can
+add the product's start and result lines:
+
+```sh
+sudo journalctl -t myproduct -n 30 --no-pager
+```
+
+Do not send `config.yaml`, credential files, the output of `podman inspect`
+or a complete journal.
