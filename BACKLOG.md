@@ -1294,7 +1294,8 @@ Status 2026-11-07: WP4 (retirement, decision 3) is implemented with local
 tests (`AdminRetirementTests`, the real erase guard from the built package)
 and added to `--admin-rpm` (`08-help-*`, `09-admin-upgrade`,
 `09-runtime-upgrade`, `09-admin-retire`, checked by `RetirementCheckTests`);
-not yet run on OL9. Each `sudo <product>-admin <directory>` ends by removing
+passed on OL9 in `m69-admin-rpm-30704b3` (2026-11-07, CLEAN PASS, with the
+normal scenario on the same commit; [results](acceptance/RESULTS.md)). Each `sudo <product>-admin <directory>` ends by removing
 the releases older than the component's completed version without a pending
 record for it, read from the newest release's `deploy.sh status --json` as
 the runtime account; the newest release of a component is never removed. One

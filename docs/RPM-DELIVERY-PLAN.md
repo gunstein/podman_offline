@@ -752,8 +752,8 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    gateway's answers written with its new config by `init-config --set`
    (decision 9); credentials moved from `incoming/` (decision 8). No interface
    2, `delivered`, answers file or lock (decisions 3, 8 and 9).
-4. Retirement, **implemented 2026-11-07 within decision 3** (not yet run on
-   OL9): the last step of every `sudo <product>-admin <directory>`
+4. Retirement, **implemented 2026-11-07 within decision 3**, lab-verified
+   in `m69-admin-rpm-30704b3`: the last step of every `sudo <product>-admin <directory>`
    (`retire` in `tools/admin.py`). Instead of a `retire-check` command, the
    newest release's own `deploy.sh status --json` runs as the account
    (`setpriv`, cleared environment) and root reads only its bounded, checked

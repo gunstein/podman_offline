@@ -27,16 +27,19 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--whoami` | `c63b-whoami-d111718` | 46 | CLEAN PASS |
-| normal | `c63b-normal-d111718` | 118 | CLEAN PASS |
+| normal | `m69-normal-30704b3` | 118 | CLEAN PASS |
 | `--first-app app2` | `c63b-app2-d111718` | 118 | CLEAN PASS |
 | `--identity-only` | `c63b-identity-d111718` | 58 | CLEAN PASS |
 | `--help-only` | `c63b-help-d111718` | 52 | CLEAN PASS |
 | `--platform-help-only` | `c63b-platform-help-d111718` | 31 | CLEAN PASS |
 | `--renamed-product` | `c63b-renamed-d111718` | 57 | CLEAN PASS |
 
-All runs on `d111718` (2026-11-07, backlog 63), clean detached checkout,
-Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or
-skipped step. Backlog 63: the demo manifests take their images from
+Normal: on `30704b3` (2026-11-07), the RPM branch (backlog 69 WP1-WP4)
+with main (backlogs 82, 83 and 63) merged; clean detached checkout, Oracle
+Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step.
+The other rows: on `d111718` (main, 2026-11-07, backlog 63), same checkout
+rules, OS and Podman, no failed or skipped step; not rerun on the RPM
+branch, whose WP4 change touches no deploy code. Backlog 63: the demo manifests take their images from
 `config/images.yaml` (`REGISTRY`, `LOCAL_REGISTRY` and version variables) and
 help and identity from `@@COMPONENT_VERSION@@`. Every health step checked
 that each app container runs the image its installed YAML names (`podman
@@ -62,11 +65,11 @@ The harness defects found on the way to this matrix are listed in
 | --- | --- | --- | --- |
 | `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
 | `--host-setup` | `c63b-host-setup-d111718` | 36 | CLEAN PASS |
-| `--admin-rpm` | `n69-admin-rpm-f5b217b` | 25 | CLEAN PASS |
+| `--admin-rpm` | `m69-admin-rpm-30704b3` | 31 | CLEAN PASS |
 
-Status/retry and host setup: same commit, date, checkout, OS and Podman as
-the matrix. Admin RPM: on `f5b217b` (2026-11-03, the RPM branch before
-backlogs 82, 83 and 63); not rerun since. Status/retry: a
+Status/retry and host setup: on `d111718`, with the matrix rows from main.
+Admin RPM: on `30704b3` (2026-11-07), the same commit, checkout, OS and
+Podman as the normal run. Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
 procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog
@@ -81,9 +84,16 @@ account in a login-like environment (WP3), `myproduct` with
 `--public-origin`/`--ip-address` installed platform and help (`/livez` 204,
 `/help/` 200, the web certificate moved from `incoming/` to `state/`), an
 unchanged repeat restarted nothing, and `myproduct help` restarted only help;
-no FANOTIFY/AVC event. The first attempt on `8b23e4e` stopped at the final
-`status` because the harness gave no `XDG_RUNTIME_DIR` (a login has it); fixed
-in the harness. Not covered: the restart after newer tools, and a real SSH
+no FANOTIFY/AVC event. Retirement (WP4): DEV built help 0.4.14 and its RPM;
+`myproduct-admin` installed it and kept `myproduct-help-0.4.13` as the
+installed version (read from the newest release's `status --json` as the
+runtime account), `myproduct` installed help 0.4.14 without restarting
+platform and `/help/` served the new content, and the next
+`myproduct-admin` removed `myproduct-help-0.4.13` and its tree, left no erase
+authorization, removed nothing on a repeat, and a plain `rpm -e` of 0.4.14
+was still refused. The first attempt on `f09d677` stopped at
+`09-runtime-upgrade` on a harness defect (`invocations | grep -q` under
+`pipefail`), fixed in `30704b3` with a regression test. Not covered: the restart after newer tools, and a real SSH
 login running `myproduct` (WP6).
 
 The protected-release and production-layout matrices and the RPM prototype
