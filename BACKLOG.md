@@ -1310,6 +1310,7 @@ prompts and cited sections in step with `tools/`. The AI walkthrough
 282 typed characters for a first installation with both roles; it fixed seven
 findings and lists five open ones. The `release.py` procedure moved
 unchanged to `docs/RELEASE-PY-INSTALL.md` as input for `--host-setup` only.
+`--admin-rpm` passed on OL9 on the WP5 commit (`m69-admin-rpm-b5b86d9`).
 Human trial: outstanding (item 68). Next: WP6.
 
 Many customers install in a closed server lab, often from a **printed manual**,

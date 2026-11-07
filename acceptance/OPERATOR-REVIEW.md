@@ -15,7 +15,7 @@ refer to that earlier manual.
 | AI literal walkthrough | Findings; seven fixed in this change, five open (below) | First installation, credentials, upgrade, retirement, status/reboot, setting change, interruption and the stops table, tools repair |
 | Human trial without oral assistance | **Not performed; outstanding verification** (backlog 68) | Printed manual only, fresh OL9 VM, one person holding both accounts, console and SSH variants |
 | Product/unit tests | `test_manual` (commands parse with the real parsers, prompts are the tools' questions, cited sections exist, the admin "next" line) and the existing admin/runtime tests | Drift between manual and tools; not the procedure |
-| Real lab evidence | `m69-admin-rpm-30704b3` ran steps 2, 3, 4 and 6 and the upgrade/retirement with answers as options | Not mounting, typed prompts, `umount` or the tools repair |
+| Real lab evidence | `m69-admin-rpm-b5b86d9` (this manual's commit) ran steps 2, 3, 4 and 6 and the upgrade/retirement with answers as options | Not mounting, typed prompts, `umount` or the tools repair |
 
 Method: static reading of the manual from its stated prerequisites, in
 order, without filling gaps from source code or earlier chat; the expected

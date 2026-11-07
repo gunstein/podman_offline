@@ -65,11 +65,14 @@ The harness defects found on the way to this matrix are listed in
 | --- | --- | --- | --- |
 | `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
 | `--host-setup` | `c63b-host-setup-d111718` | 36 | CLEAN PASS |
-| `--admin-rpm` | `m69-admin-rpm-30704b3` | 31 | CLEAN PASS |
+| `--admin-rpm` | `m69-admin-rpm-b5b86d9` | 31 | CLEAN PASS |
 
 Status/retry and host setup: on `d111718`, with the matrix rows from main.
-Admin RPM: on `30704b3` (2026-11-07), the same commit, checkout, OS and
-Podman as the normal run. Status/retry: a
+Admin RPM: on `b5b86d9` (2026-11-07), clean detached checkout, Oracle Linux
+Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step; this
+commit adds backlog 69 WP5 (the RPM manual) to `30704b3`, including the
+changed `prepare-host.sh` and admin/runtime messages, which the normal run
+does not cover. Status/retry: a
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. Host setup:
 procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md). Admin RPM (backlog
