@@ -2969,7 +2969,10 @@ runtime-upgrade)
     grep -Fxq "[OK] help $requested_version installed" <<< "$runtime_output" \
         || { echo "FAIL: help $requested_version was not installed"; exit 1; }
     first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
-    invocations | grep -Fxq "$first_platform" || { echo "FAIL: platform restarted"; exit 1; }
+    # Capture first: grep -q stops reading at the first line, and under
+    # pipefail the writer's SIGPIPE would read as a failed check.
+    now=$(invocations)
+    grep -Fxq "$first_platform" <<< "$now" || { echo "FAIL: platform restarted"; exit 1; }
     body=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
         --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
         "https://$prod_host:$port/help/")

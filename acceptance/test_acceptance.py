@@ -3020,7 +3020,10 @@ class RetirementCheckTests(unittest.TestCase):
                 " calls=$((calls + 1)); }\n"
                 'run_runtime() { runtime_output=$(cat "$root/output-$calls"); runtime_status=0;'
                 " calls=$((calls + 1)); }\n"
-                'invocations() { cat "$root/invocations-now"; }\n'
+                # As on the VM: one line at a time, with a pause between them,
+                # so a reader that stops early makes the writer hit SIGPIPE.
+                'invocations() { while IFS= read -r line; do printf "%s\\n" "$line";'
+                ' sleep 0.2; done < "$root/invocations-now"; }\n'
                 'curl() { cat "$root/help-page"; }\n'
                 'sudo() { [[ $1 == -n ]] && shift; "$@"; }\n'
                 "rpm() {\n"
