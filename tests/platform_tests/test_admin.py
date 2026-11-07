@@ -4,11 +4,14 @@ Skipped where rpmbuild is not installed. The release and tools RPMs are built
 for real and read with real rpm -qp; FakeHost stands in for everything that
 reads or changes the host: the RPM database (a set of installed RPM files),
 dnf, SELinux, systemd, sudo, prepare-host.sh and setpriv. The credential
-writer runs for real as the test user.
+writer runs for real as the test user, and dnf remove runs the package's real
+%preun erase guard against the test's /run.
 """
 
 import copy
 import grp
+import json
+import os
 import pwd
 import shutil
 import stat
@@ -55,6 +58,8 @@ class FakeHost:
     def __init__(self, root, build_command):
         self.build_command = build_command  # Podman for bundle builds
         self.lib = root / "var-lib"
+        self.run = root / "run"
+        self.run.mkdir()
         self.rpmdb = root / "rpmdb"
         self.rpmdb.mkdir()
         self.installed = {}  # package name -> installed RPM file
@@ -67,6 +72,10 @@ class FakeHost:
         self.transactions = []
         self.prepared = []
         self.trust_runs = []
+        # deploy.sh status --json: a report, raw text, or None for a failing status.
+        self.status: "dict | str | None" = None
+        self.status_runs = []
+        self.remove_failure: "str | None" = None  # stderr of one failing dnf remove
 
     def install(self, path):
         name = real(["rpm", "-qp", "--queryformat", "%{NAME}", str(path)]).stdout
@@ -94,6 +103,8 @@ class FakeHost:
             return done("".join(lines + self.extra_installed))
         if args[:3] == ["rpm", "-q", "--dump"]:
             return real(["rpm", "-qp", "--dump", str(self.installed[args[3]])])
+        if args[:3] == ["rpm", "-q", "--queryformat"]:
+            return real(["rpm", "-qp", *args[2:4], str(self.installed[args[4]])])
         if args[:2] == ["rpm", "-V"]:
             return done(status=1 if args[2] in self.damaged else 0)
         if args == ["rpm", "-q", "rpm-plugin-fapolicyd"]:
@@ -101,6 +112,8 @@ class FakeHost:
         if args[: len(admin.DNF)] == admin.DNF:
             operation, files = args[len(admin.DNF)], args[len(admin.DNF) + 1 :]
             self.transactions.append((operation, [Path(f).name for f in files]))
+            if operation == "remove":
+                return self.remove(files, done)
             for path in files:
                 self.install(path)
             return done()
@@ -122,6 +135,16 @@ class FakeHost:
             return done(status=self.prepare_status)
         if args[0] == "setpriv":
             rest = args[args.index("--") + 1 :]
+            if rest[-2:] == ["status", "--json"]:
+                self.status_runs.append(args)
+                if self.status is None:
+                    return done(status=1, stderr="ERROR: Missing bootstrap file\n")
+                text = (
+                    self.status
+                    if isinstance(self.status, str)
+                    else json.dumps(self.status)
+                )
+                return done(text + "\n", status=1)
             if rest[-1] == "--help":
                 self.trust_runs.append(args)
                 if self.trusted:
@@ -130,6 +153,28 @@ class FakeHost:
             if rest[0] == "python3":
                 return real(rest, stdin=stdin)
         raise AssertionError("Unexpected host command: " + str(args))
+
+    def remove(self, names, done):
+        """dnf remove: each package's real %preun decides, with this test's /run."""
+        if self.remove_failure:
+            stderr, self.remove_failure = self.remove_failure, None
+            return done(status=1, stderr=stderr)
+        for name in names:
+            script = real(
+                ["rpm", "-qp", "--queryformat", "%{PREUN}", str(self.installed[name])]
+            ).stdout
+            # The guard requires a root-owned authorization; the test user owns it here.
+            owner = '"$(stat -c %u "$auth")" != 0'
+            assert owner in script and "/run/cedar/" in script, script
+            script = script.replace("/run/cedar", str(self.run / "cedar")).replace(
+                owner, f'"$(stat -c %u "$auth")" != {os.getuid()}'
+            )
+            guard = real(["sh", "-c", script, "preun", "0"])
+            if guard.returncode != 0:
+                return done(status=1, stderr=guard.stderr)
+        for name in names:
+            del self.installed[name]
+        return done()
 
 
 @unittest.skipUnless(shutil.which("rpmbuild"), "rpmbuild is not installed")
@@ -173,6 +218,7 @@ class AdminFixture(ProductFixture):
                 OS_RELEASE=self.root / "os-release",
                 FAPOLICYD_CONF=self.fapolicyd,
                 TRUST_WAIT=0,
+                RUN=self.host.run,
             )
         )
         self.euid.return_value = 0
@@ -407,6 +453,170 @@ class AdminInstallTests(AdminFixture):
         self.assertIn(
             "ERROR: Run it as administrator: sudo cedar-admin", self.stderr.getvalue()
         )
+
+
+def report(completed, recorded=None, pending=None):
+    """deploy.sh status --json for the worker, as the runtime account would print it."""
+    return {
+        "product": "cedar",
+        "components": [
+            {
+                "name": "worker",
+                "version": completed,
+                "recorded_version": recorded or completed or "1.2.3",
+                "unit": "cedar-worker.service",
+                "complete": completed is not None and pending is None,
+                "state": "unavailable",
+            }
+        ],
+        "pending": pending
+        and {"operation": "install", "component": pending, "owners": []},
+    }
+
+
+class AdminRetirementTests(AdminFixture):
+    """Step 8 (backlog 69 WP4, decision 3): worker 1.2.3 is installed, 1.3.0 delivered."""
+
+    def setUp(self):
+        super().setUp()
+        self.first_install()
+        (self.source / "components/worker/VERSION").write_text("1.3.0\n")
+        self.build_and_unpack()
+        (self.newer_rpm,) = rpms.build(["worker"])
+        shutil.copyfile(str(self.newer_rpm), str(self.delivery / self.newer_rpm.name))
+        self.record = self.host.run / "cedar/erase-authorization"
+
+    def removals(self):
+        return [
+            names
+            for operation, names in self.host.transactions
+            if operation == "remove"
+        ]
+
+    def installed(self):
+        return sorted(self.host.installed)
+
+    def test_an_older_release_is_removed_once_the_newer_one_is_completed(self):
+        self.host.status = report("1.2.3")
+        self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+        self.assertEqual(self.host.transactions[-1], ("install", [self.newer_rpm.name]))
+        self.assertIn(
+            "[OK] cedar-worker-1.2.3 kept: worker 1.2.3 is the installed version",
+            self.stdout.getvalue(),
+        )
+        # The runtime account has installed 1.3.0; the next run removes 1.2.3.
+        self.host.status = report("1.3.0")
+        self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+        self.assertEqual(self.removals(), [["cedar-worker-1.2.3"]])
+        self.assertEqual(self.installed(), ["cedar-tools", "cedar-worker-1.3.0"])
+        self.assertIn(
+            "[OK] removed cedar-worker-1.2.3, which operator-a no longer uses",
+            self.stdout.getvalue(),
+        )
+        self.assertFalse(self.record.exists())
+        status = self.host.status_runs[-1]
+        self.assertEqual(status[:3], ["setpriv", "--reuid=1000", "--regid=1000"])
+        self.assertEqual(
+            status[status.index("--") + 1 :],
+            ["env", "-i", "HOME=/home/operator-a", "PATH=/usr/bin:/bin", "LANG=C.UTF-8",
+             "bash", "/var/lib/cedar/releases/cedar-worker-1.3.0/deploy.sh",
+             "status", "--json"],
+        )  # fmt: skip
+        # Nothing older is left: a repeat asks the account nothing.
+        runs = len(self.host.status_runs)
+        self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+        self.assertEqual(len(self.host.status_runs), runs)
+
+    def test_an_unfinished_or_missing_installation_keeps_the_older_release(self):
+        for status, reason in (
+            (report("1.3.0", pending="worker"), "an installation of worker is unfinished"),
+            (report(None), "worker is not installed"),
+            (report("1.3.0", recorded="1.2.3"), "worker 1.2.3 is the installed version"),
+            (report("1.1.0"), "it is newer than the installed worker 1.1.0"),
+            ({"product": "cedar", "components": [], "pending": None}, "worker is not installed"),
+        ):  # fmt: skip
+            with self.subTest(reason=reason, status=status):
+                self.host.status = status
+                self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+                self.assertIn(
+                    f"[OK] cedar-worker-1.2.3 kept: {reason}", self.stdout.getvalue()
+                )
+                self.assertEqual(self.removals(), [])
+
+    def test_an_unreadable_state_keeps_every_older_release(self):
+        long_name = report("1.3.0")
+        long_name["components"][0]["name"] = "x" * admin.REPORT_LIMIT
+        for status, detail in (
+            (None, "ERROR: Missing bootstrap file"),
+            ("not json", "no valid status --json output"),
+            (report("1.3.0; rm -rf /"), "no valid status --json output"),
+            ({"components": [{"name": "../worker", "version": "1.3.0",
+                              "recorded_version": "1.3.0"}], "pending": None},
+             "no valid status --json output"),
+            ({"components": [], "pending": "worker"}, "no valid status --json output"),
+            (long_name, "no valid status --json output"),
+        ):  # fmt: skip
+            with self.subTest(detail=detail, status=str(status)[:60]):
+                self.host.status = status
+                self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+                self.assertIn(
+                    "WARNING: older releases kept (cedar-worker-1.2.3): the installation "
+                    f"state of operator-a could not be read ({detail}); a later sudo "
+                    "cedar-admin removes them once operator-a has run cedar",
+                    self.stderr.getvalue(),
+                )
+                self.assertEqual(self.removals(), [])
+
+    def test_the_newest_release_is_never_removed(self):
+        # The account's own state claims a version newer than any release.
+        self.host.status = report("9.0.0")
+        self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+        self.assertEqual(self.installed(), ["cedar-tools", "cedar-worker-1.3.0"])
+
+    def test_the_guard_refuses_an_authorization_for_another_package(self):
+        self.host.status = report("1.3.0")
+        real_run = admin.run
+
+        def run(command, **kwargs):
+            result = real_run(command, **kwargs)
+            if command[:3] == ["rpm", "-q", "--queryformat"]:
+                result.stdout = "cedar-worker-1.3.0-1.3.0-1"
+            return result
+
+        with mock.patch.object(admin, "run", side_effect=run):
+            self.assertEqual(self.admin(self.delivery), 1)
+        self.assertIn(
+            "ERROR: dnf remove cedar-worker-1.2.3 failed (exit 1): cedar: removing "
+            "cedar-worker-1.2.3 is refused; use: sudo cedar-admin",
+            self.stderr.getvalue(),
+        )
+        self.assertIn("cedar-worker-1.2.3", self.installed())
+        self.assertFalse(self.record.exists())
+
+    def test_an_interrupted_removal_is_completed_by_a_repeat(self):
+        self.host.status = report("1.3.0")
+        self.host.remove_failure = "error: transaction interrupted\n"
+        self.assertEqual(self.admin(self.delivery), 1)
+        self.assertIn("dnf remove cedar-worker-1.2.3 failed (exit 1): error: transaction "
+                      "interrupted; run sudo cedar-admin again",
+                      self.stderr.getvalue())  # fmt: skip
+        self.assertFalse(self.record.exists())
+        self.assertIn("cedar-worker-1.2.3", self.installed())
+        self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+        self.assertEqual(self.installed(), ["cedar-tools", "cedar-worker-1.3.0"])
+
+    def test_files_left_in_the_release_tree_stop_the_command(self):
+        self.host.status = report("1.3.0")
+        left = self.host.lib / "cedar/releases/cedar-worker-1.2.3"
+        left.mkdir(parents=True)
+        (left / "unowned.txt").write_text("not from the package\n")
+        self.assertEqual(self.admin(self.delivery), 1)
+        self.assertIn(
+            f"ERROR: {left} is left after removing cedar-worker-1.2.3: no package owns "
+            "its files",
+            self.stderr.getvalue(),
+        )
+        self.assertNotIn("PASS:", self.stdout.getvalue())
 
 
 class AdminSelectionTests(unittest.TestCase):

@@ -1289,8 +1289,18 @@ passed on OL9 in `c69c-admin-rpm-14491ae` (2026-11-02, CLEAN PASS, with the
 full matrix on the same commit; [results](acceptance/RESULTS.md)).
 WP3 (the runtime command `<product>`, `tools/runtime.py`, and `deploy.sh
 init-config <component> --set KEY=VALUE` for the answers) is implemented and
-passed on OL9 in `n69-admin-rpm-f5b217b` (2026-11-03, CLEAN PASS, with the full matrix). Retirement and
-the erase authorization are WP4, next.
+passed on OL9 in `n69-admin-rpm-f5b217b` (2026-11-03, CLEAN PASS, with the full matrix).
+Status 2026-11-07: WP4 (retirement, decision 3) is implemented with local
+tests (`AdminRetirementTests`, the real erase guard from the built package)
+and added to `--admin-rpm` (`08-help-*`, `09-admin-upgrade`,
+`09-runtime-upgrade`, `09-admin-retire`, checked by `RetirementCheckTests`);
+not yet run on OL9. Each `sudo <product>-admin <directory>` ends by removing
+the releases older than the component's completed version without a pending
+record for it, read from the newest release's `deploy.sh status --json` as
+the runtime account; the newest release of a component is never removed. One
+`dnf remove` per package, allowed by the single-use authorization; a repeat
+completes an interrupted removal. No `retire-check` command, operation lock or
+separate retirement command (decision 3). Next: WP5, the manual.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the

@@ -393,7 +393,8 @@ is part of the package name, so versions install side by side. fapolicyd
 trusts the files through the RPM database. The RPM has no generated
 dependencies and no scriptlet except the erase guard: a plain `dnf remove` or
 `rpm -e` is refused unless `/run/<product>/erase-authorization` names exactly
-that package (written by the administrator command, backlog 69 WP2). A version
+that package (written by the administrator command for one removal, backlog
+69 WP4). A version
 is built once; an existing RPM of the same name is never replaced, so a changed
 release needs a new `VERSION`.
 
@@ -425,6 +426,19 @@ preparation. `--credentials` copies `<directory>/<component>/credentials/...`
 into `/var/lib/<product>/incoming/` with the same layout as the runtime
 account (0600 files); a file that already exists with other content stops the
 copy. Signature checking is off in phase 1 (`DNF` in `tools/admin.py`).
+
+Last, each run removes the older releases the runtime account no longer needs
+(WP4): a release older than the component's completed version, when no
+unfinished installation of the component is pending. The newest release of a
+component is never removed. The newest release's `deploy.sh status --json`,
+run as the runtime account, gives those versions; root reads only that output,
+and a release stays (with a `WARNING:`) when it cannot be read, for example
+before the runtime account's first run. Each removal is its own `dnf remove`,
+allowed by a single-use authorization for exactly that package; the command
+then checks that only that package and its tree are gone. So after an upgrade
+the older release stays until the next `sudo myproduct-admin /mnt` (a repeat
+is safe and installs nothing new); an interrupted removal is completed by a
+repeat.
 
 The runtime account then logs in (console or SSH) and runs one command, also
 after an interruption or a new delivery (WP3, `tools/runtime.py`):

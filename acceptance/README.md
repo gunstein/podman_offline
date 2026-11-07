@@ -31,7 +31,13 @@ plain environment without terminal: the first run with
 `--public-origin`/`--ip-address` installs platform and help (`/livez` 204,
 `/help/` 200, credentials moved out of `incoming/`), an unchanged repeat
 restarts nothing (systemd invocation IDs), and `myproduct help` restarts only
-help. The audit check requires no FANOTIFY/AVC denial.
+help. Then retirement (WP4): DEV builds the next help patch version and its
+RPM; `myproduct-admin` installs it and keeps the older help release while it
+is the completed version; `myproduct` installs the newer help (platform not
+restarted, `/help/` serves the new content); the next `myproduct-admin`
+removes the older release and its tree, leaves no authorization, removes
+nothing on a repeat, and a plain `rpm -e` of the newer release is still
+refused. The audit check requires no FANOTIFY/AVC denial.
 
 Focused lab results, exact tested commits, the six conversion points and the
 public versus internal comparison are in [latest results](RESULTS.md).

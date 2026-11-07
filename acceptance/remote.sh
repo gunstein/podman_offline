@@ -33,6 +33,7 @@ renamed="$base/renamed"
 version=$requested_version
 if [[ -z $version && -f $base/version-$bundle ]]; then version=$(cat "$base/version-$bundle"); fi
 release_root="$install_root/releases"
+erase_authorization="/run/$product_name/erase-authorization"
 product="$release_root/$product_name-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
 # Run commands as the runtime account from its login home with the right
@@ -2937,6 +2938,67 @@ runtime-reinstall)
         || { echo "FAIL: platform restarted"; exit 1; }
     if grep -Fxq "$first_help" "$base/invocations-reinstall"; then echo "FAIL: help was not restarted"; exit 1; fi
     echo "PASS: $product_name help restarted help only"
+    ;;
+rpm-upgrade)
+    # Backlog 69 WP4: the RPM of the newer release help-upgrade-bundle just
+    # built, beside the first RPMs in dist/rpm, as a supplier would deliver it.
+    cd "$src"
+    archive="$product_name-$bundle-$requested_version-offline.tar.gz"
+    (cd dist && sha256sum -c "$archive.sha256")
+    python3 -B -c 'import sys; from pathlib import Path; import rpms
+rpms.build_rpm(Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], Path("dist/rpm"))' \
+        "dist/$archive" "$product_name" "$bundle" "$requested_version"
+    ls -l dist/rpm
+    ;;
+admin-upgrade)
+    # The newer help release is installed; the older one is still in use.
+    old="$product_name-help-$old_version" new="$product_name-help-$requested_version"
+    run_admin "$base/delivery"
+    [[ $admin_status == 0 ]] || { echo "FAIL: $product_name-admin failed"; exit 1; }
+    grep -Fxq "[OK] installed $new" <<< "$admin_output" \
+        || { echo "FAIL: $new was not installed"; exit 1; }
+    grep -Fxq "[OK] $old kept: help $old_version is the installed version" \
+        <<< "$admin_output" || { echo "FAIL: $old was not kept as the installed version"; exit 1; }
+    rpm -q "$old" "$new" || { echo "FAIL: both help releases must be installed"; exit 1; }
+    echo "PASS: $new installed; $old kept while $service_user uses help $old_version"
+    ;;
+runtime-upgrade)
+    # The runtime account installs the newer help; platform keeps running.
+    run_runtime
+    [[ $runtime_status == 0 ]] || { echo "FAIL: $product_name failed"; exit 1; }
+    grep -Fxq "[OK] help $requested_version installed" <<< "$runtime_output" \
+        || { echo "FAIL: help $requested_version was not installed"; exit 1; }
+    first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
+    invocations | grep -Fxq "$first_platform" || { echo "FAIL: platform restarted"; exit 1; }
+    body=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
+        --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+        "https://$prod_host:$port/help/")
+    grep -Fq "help-release-$requested_version" <<< "$body" \
+        || { echo "FAIL: /help/ does not serve help $requested_version"; exit 1; }
+    echo "PASS: $product_name installed help $requested_version; platform not restarted"
+    ;;
+admin-retire)
+    # Decision 3: the older release goes once the newer one is completed; the
+    # erase guard stays closed afterwards and a repeat removes nothing.
+    old="$product_name-help-$old_version" new="$product_name-help-$requested_version"
+    run_admin "$base/delivery"
+    [[ $admin_status == 0 ]] || { echo "FAIL: $product_name-admin failed"; exit 1; }
+    grep -Fxq "[OK] removed $old, which $service_user no longer uses" <<< "$admin_output" \
+        || { echo "FAIL: $old was not removed"; exit 1; }
+    if rpm -q "$old" >/dev/null 2>&1; then echo "FAIL: $old is still installed"; exit 1; fi
+    sudo -n test ! -e "$release_root/$old" || { echo "FAIL: $release_root/$old is left"; exit 1; }
+    sudo -n test ! -e "$erase_authorization" || { echo "FAIL: the erase authorization is left"; exit 1; }
+    platform=$(rpm -qa "$product_name-platform-*" --queryformat '%{NAME}\n')
+    rpm -V "$new" "$platform" "$product_name-tools" \
+        || { echo "FAIL: a remaining package is damaged"; exit 1; }
+    run_admin "$base/delivery"
+    [[ $admin_status == 0 ]] || { echo "FAIL: the repeat failed"; exit 1; }
+    if grep -Fq "[OK] removed" <<< "$admin_output"; then echo "FAIL: a repeat removed a release"; exit 1; fi
+    expect_refusal sudo -n rpm -e "$new"
+    grep -Fq "removing $new is refused" <<< "$refusal_output" \
+        || { echo "FAIL: rpm -e $new was not refused by the guard"; exit 1; }
+    rpm -q "$new" || { echo "FAIL: $new is gone"; exit 1; }
+    echo "PASS: $old removed with its tree, $new and the others intact, a plain erase still refused"
     ;;
 password-guard)
     # Backlog 82: the component's database password is a MOUNTS secret file.

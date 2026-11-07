@@ -23,6 +23,12 @@ Install, in this order, each step only after the previous one succeeded:
 6. Host preparation: persistent journal, prepare-host.sh, host.conf.
 7. Run the newest release of each component once as the runtime account, so a
    release fapolicyd does not trust stops here and not in the runtime command.
+8. Retirement (decision 3): remove an older release once the runtime account
+   has completed a newer version of its component and has no unfinished
+   installation of it. The newest release's own deploy.sh status --json,
+   run as the account, says so; root reads only that bounded JSON. Each
+   release is removed in its own dnf transaction, allowed by a single-use
+   authorization the package's erase guard reads (rpms.py).
 
 Credentials: copy <directory>/<component>/credentials/... into
 /var/lib/<product>/incoming/ with the same layout. Root reads the delivery; a
@@ -68,11 +74,13 @@ log = output.log
 
 # Host paths; tests point them at temporary files.
 JOURNAL = Path("/var/log/journal")
+RUN = Path("/run")
 OS_RELEASE = Path("/etc/os-release")
 FAPOLICYD_CONF = Path("/etc/fapolicyd/fapolicyd.conf")
 
 DEFAULT_PORT = 8443
 TRUST_WAIT = 30  # seconds for fapolicyd to learn about newly installed files
+REPORT_LIMIT = 64 * 1024  # bytes of status JSON read from the runtime account
 CREDENTIAL_LIMIT = 1024 * 1024  # bytes per credential file
 PRIVILEGED_GROUPS = {"root", "wheel", "adm", "systemd-journal"}
 
@@ -120,6 +128,25 @@ def as_account(account):
         "--no-new-privs",
         "--",
     ]
+
+
+def run_release(account, release, *arguments):
+    """deploy.sh of an installed release as the account, in a cleared environment."""
+    return as_account(account) + [
+        "env",
+        "-i",
+        f"HOME={account.pw_dir}",
+        "PATH=/usr/bin:/bin",
+        "LANG=C.UTF-8",
+        "bash",
+        str(release / "deploy.sh"),
+        *arguments,
+    ]
+
+
+def last_line(result):
+    detail = (result.stderr or "").strip().splitlines()
+    return detail[-1] if detail else ""
 
 
 # Answers -----------------------------------------------------------------
@@ -484,32 +511,164 @@ def check_trust(product, account, packages):
         )
     for _, package in sorted(newest.items()):
         release = Path(RELEASE_PATH.format(product=product, name=package.name))
-        command = as_account(account) + [
-            "env",
-            "-i",
-            f"HOME={account.pw_dir}",
-            "PATH=/usr/bin:/bin",
-            "LANG=C.UTF-8",
-            "bash",
-            str(release / "deploy.sh"),
-            "--help",
-        ]
+        command = run_release(account, release, "--help")
         deadline = time.monotonic() + TRUST_WAIT
         while True:
             result = run(command, check=False)
             if result.returncode == 0:
                 break
             if time.monotonic() >= deadline:
-                detail = (result.stderr or "").strip().splitlines()
+                detail = last_line(result)
                 raise ToolError(
                     f"{account.pw_name} cannot run {release}/deploy.sh"
-                    + (f" ({detail[-1]})" if detail else "")
+                    + (f" ({detail})" if detail else "")
                     + "; fapolicyd must trust RPM-installed files: the security "
                     "administrator checks fapolicyd-cli --list and the audit log, "
                     f"then run sudo {product}-admin again"
                 )
             time.sleep(1)
         log.info(f"[OK] {account.pw_name} can run {package.name}")
+
+
+# Retirement --------------------------------------------------------------
+
+
+def runtime_report(product, account, release):
+    """{component: (completed version, recorded version)} and the pending component.
+
+    From the release's own deploy.sh status --json as the account: it reads
+    the installed markers, installed metadata and pending record (and refuses
+    links or invalid markers), so root never opens the account's files. The
+    JSON comes from the account and is checked before any decision. Its exit
+    status only says whether every unit is active, which retirement ignores.
+    """
+    result = run(run_release(account, release, "status", "--json"), check=False)
+    try:
+        if len(result.stdout) > REPORT_LIMIT:
+            raise ValueError("too long")
+        report = json.loads(result.stdout)
+        versions = {}
+        for item in report["components"]:
+            name, completed, recorded = (
+                item["name"], item["version"], item["recorded_version"],
+            )  # fmt: skip
+            if not (
+                isinstance(name, str)
+                and host.ID.fullmatch(name)
+                and (completed is None or host.VERSION.fullmatch(completed))
+                and host.VERSION.fullmatch(recorded)
+            ):
+                raise ValueError("invalid component")
+            versions[name] = (completed, recorded)
+        pending = report["pending"]
+        if pending is not None and not isinstance(pending["component"], str):
+            raise ValueError("invalid pending record")
+    except (ValueError, TypeError, KeyError):
+        detail = last_line(result) or "no valid status --json output"
+        raise ToolError(
+            f"the installation state of {account.pw_name} could not be read ({detail})"
+        ) from None
+    return versions, pending and pending["component"]
+
+
+def keep_reason(package, versions, pending):
+    """Why an older release stays, or None when it may be removed (decision 3)."""
+    component = package.component
+    if component == pending:
+        return f"an installation of {component} is unfinished"
+    completed, recorded = versions.get(component, (None, None))
+    if completed is None:
+        return f"{component} is not installed"
+    for version in (completed, recorded):
+        if package.version == version:
+            return f"{component} {version} is the installed version"
+        if version_key(package.version) > version_key(version):
+            return f"it is newer than the installed {component} {version}"
+    return None
+
+
+def remove(product, package):
+    """Remove one release package: authorize exactly it, dnf, then check the result.
+
+    The authorization is the package's name-version-release in a root-only
+    file under /run; the package's %preun allows the erase only for that
+    content (rpms.GUARD), and it is deleted as soon as dnf returns. After an
+    interruption the package is either gone or still installed; a repeat
+    then checks it again and removes it, also with files already missing.
+    """
+    others = {p.name for p in installed(product)} - {package.name}
+    identity = run(
+        ["rpm", "-q", "--queryformat", "%{NAME}-%{VERSION}-%{RELEASE}", package.name]
+    ).stdout.strip()
+    record = RUN / product / "erase-authorization"
+    record.parent.mkdir(mode=0o700, exist_ok=True)
+    partial = record.with_name(record.name + ".partial")
+    partial.write_text(identity + "\n")
+    os.replace(str(partial), str(record))
+    try:
+        result = run(DNF + ["remove", package.name], check=False)
+    finally:
+        try:
+            record.unlink()
+        except FileNotFoundError:
+            pass
+    if result.returncode != 0:
+        detail = last_line(result)
+        raise ToolError(
+            f"dnf remove {package.name} failed (exit {result.returncode})"
+            + (f": {detail}" if detail else "")
+            + f"; run sudo {product}-admin again"
+        )
+    left = {p.name for p in installed(product)}
+    if package.name in left:
+        raise ToolError(
+            f"{package.name} is still installed after dnf remove; run sudo "
+            f"{product}-admin again"
+        )
+    if left != others:
+        raise ToolError(
+            f"dnf remove {package.name} also removed {', '.join(sorted(others - left))}; "
+            f"deliver them again with sudo {product}-admin <delivery directory>"
+        )
+    tree = host.release_path(product, package)
+    if tree.exists() or tree.is_symlink():
+        raise ToolError(
+            f"{tree} is left after removing {package.name}: no package owns its "
+            "files. Inspect it and remove it as administrator"
+        )
+
+
+def retire(product, account):
+    """Step 8: remove the releases the runtime account no longer needs."""
+    packages = installed(product)
+    newest = newest_releases(packages)
+    older = sorted(
+        (p for p in packages if p.component and p != newest[p.component]),
+        key=lambda p: (p.component, version_key(p.version)),
+    )
+    if not older:
+        return
+    release = Path(
+        RELEASE_PATH.format(product=product, name=newest[older[0].component].name)
+    )
+    try:
+        versions, pending = runtime_report(product, account, release)
+    except ToolError as error:
+        log.warning(
+            f"WARNING: older releases kept ({', '.join(p.name for p in older)}): "
+            f"{error}; a later sudo {product}-admin removes them once "
+            f"{account.pw_name} has run {product}"
+        )
+        return
+    for package in older:
+        reason = keep_reason(package, versions, pending)
+        if reason:
+            log.info(f"[OK] {package.name} kept: {reason}")
+        else:
+            remove(product, package)
+            log.info(
+                f"[OK] removed {package.name}, which {account.pw_name} no longer uses"
+            )
 
 
 def install(product, args):
@@ -519,6 +678,7 @@ def install(product, args):
     install_packages(product, args, account_name, port)
     prepare_host(product, account, port)
     check_trust(product, account, installed(product))
+    retire(product, account)
     log.info(
         f"[OK] next: log in as {account_name} (at the console, or ssh "
         f"{account_name}@<server>); releases are in {host.LIB / product / 'releases'}"

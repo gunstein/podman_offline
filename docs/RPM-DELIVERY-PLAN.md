@@ -231,6 +231,10 @@ A signer Key ID comparison is not an automatic replacement.
 
 ## Retirement
 
+Superseded where it differs by decisions 3 and 7 (2026-11-01) and the WP4
+implementation (work package 4 below): no operation lock, `SCM_RIGHTS`,
+`retire-check` command or process checks in the guard.
+
 **Rule:** plain `dnf remove` or `rpm -e` of any product package is refused.
 Only `<product>-admin` removes a release, one package per transaction, when
 the check below allows it.
@@ -748,8 +752,20 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
    gateway's answers written with its new config by `init-config --set`
    (decision 9); credentials moved from `incoming/` (decision 8). No interface
    2, `delivered`, answers file or lock (decisions 3, 8 and 9).
-4. Retirement: `retire-check`, authorization record, guard scriptlets,
-   one-package removal, repair, tests.
+4. Retirement, **implemented 2026-11-07 within decision 3** (not yet run on
+   OL9): the last step of every `sudo <product>-admin <directory>`
+   (`retire` in `tools/admin.py`). Instead of a `retire-check` command, the
+   newest release's own `deploy.sh status --json` runs as the account
+   (`setpriv`, cleared environment) and root reads only its bounded, checked
+   JSON; a failure keeps every release with a `WARNING:`. Removable: older
+   than the component's completed and recorded versions, no pending record
+   for the component, never the newest release. Authorization: the package's
+   name-version-release in `/run/<product>/erase-authorization`, written
+   before one `dnf remove` and deleted when it returns (the WP1 guard). No
+   lock, boot ID, PID or ancestry check (decisions 3 and 7). Postcondition:
+   only that package left the RPM database and its tree is gone. Repair: a
+   repeat removes a package an interrupted removal left installed; files left
+   in a removed tree stop the command and are named.
 5. Manual rewrite (including tools repair) and the AI operator walkthrough
    with full counts.
 6. Harness scenario on P1 and P2 with the drift mapping; remove the

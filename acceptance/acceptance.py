@@ -1152,6 +1152,7 @@ class Run:
         change, then installs, repeats unchanged, receives credentials and
         refuses a plain erase. The runtime account then runs <product> (WP3):
         first installation, an unchanged repeat and one component again.
+        Last, retirement (WP4) of the help release after a newer one.
         """
         for action in ("build-images", "pull-images"):
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
@@ -1172,7 +1173,33 @@ class Run:
             self.step("06-" + action, lambda a=action: self.guest("PROD", a))
         for action in ("runtime-first", "runtime-repeat", "runtime-reinstall"):
             self.step("07-" + action, lambda a=action: self.guest("PROD", a))
+        self.retire_help()
         self.finished = True
+
+    def retire_help(self):
+        """Backlog 69 WP4: a newer help release, then retirement of the older one.
+
+        The administrator installs the newer RPM (the older one stays in use),
+        the runtime account installs it, and the next administrator run removes
+        the older release.
+        """
+        old = (ROOT / "components/help/VERSION").read_text().strip()
+        major, minor, patch = old.split(".")
+        new = f"{major}.{minor}.{int(patch) + 1}"
+        self.meta["help_retire_versions"] = [old, new]
+        self.step(
+            "08-help-build",
+            lambda: self.guest("DEV", "help-upgrade-bundle", new, bundle="help"),
+        )
+        self.step(
+            "08-help-rpm", lambda: self.guest("DEV", "rpm-upgrade", new, bundle="help")
+        )
+        self.step("08-transfer-rpms", self.transfer_rpms)
+        for action in ("admin-upgrade", "runtime-upgrade", "admin-retire"):
+            self.step(
+                "09-" + action,
+                lambda a=action: self.guest("PROD", a, new, old_version=old),
+            )
 
     def execute_whoami(self):
         """Install the .NET/TypeScript demo app3 offline and check its conversion risks.
