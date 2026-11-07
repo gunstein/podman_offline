@@ -4,7 +4,7 @@ The account's registered home (common.HOME) only identifies the user and holds
 the small bootstrap file ~/.<product>/<product>.env. Everything else the
 product keeps lives under the root-owned installation root /var/lib/<product>:
 
-    releases/   root-owned, published by scripts/release.py
+    releases/   root-owned, one RPM-installed tree per release (backlog 69)
     state/      component config, credentials, metadata, registrations, retry record
     config/     XDG_CONFIG_HOME of Podman and the user's systemd manager (Quadlets)
     storage/    XDG_DATA_HOME of Podman (images, volumes, caches)

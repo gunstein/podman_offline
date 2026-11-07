@@ -222,7 +222,7 @@ class FapolicydDeliveryTests(unittest.TestCase):
                 for path in SCRIPT.parent.iterdir()
                 if path.name != "__pycache__"
             ),
-            ["prepare-host.sh", "release.py"],
+            ["prepare-host.sh"],
         )
 
     def test_embedded_helper_fits_a_pipe(self):

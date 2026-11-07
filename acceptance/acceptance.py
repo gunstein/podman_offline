@@ -17,7 +17,6 @@ import tempfile
 import time
 from pathlib import Path
 
-import host_setup as operator_flow
 import manual_run
 from pve import Proxmox, env_file
 
@@ -119,7 +118,6 @@ class Run:
         self.platform_help_only = False
         self.renamed_product = False
         self.status_retry = False
-        self.host_setup = False
         self.whoami = False
         self.rpm_manual = False
         self.strict_fapolicyd = False
@@ -228,21 +226,6 @@ class Run:
             self.product,
         ]
         script = (ROOT / "acceptance/remote.sh").read_text()
-        safety = (
-            (ROOT / "acceptance/release_safety_test.py")
-            .read_text()
-            .replace(
-                'HELPER_SOURCE = ""  # RELEASE_HELPER_SOURCE',
-                "HELPER_SOURCE = " + repr((ROOT / "scripts/release.py").read_text()),
-            )
-        )
-        script = script.replace(
-            "# RELEASE_SAFETY_BODY", "printf '%s\\n' " + shlex.quote(safety)
-        )
-        script = script.replace(
-            "# RELEASE_HELPER_BODY",
-            "printf '%s\\n' " + shlex.quote((ROOT / "scripts/release.py").read_text()),
-        )
         script = script.replace(
             "# STATUS_RETRY_BODY",
             "printf '%s\\n' "
@@ -288,9 +271,7 @@ class Run:
         """Check a clean checkout, lab access and profiles before the VMs change."""
         self.cfg = env_file(self.config_file)
         validate(self.cfg)
-        programs = ("git", "ssh", "scp") + (
-            ("ssh-keygen",) if self.host_setup or self.rpm_manual else ()
-        )
+        programs = ("git", "ssh", "scp") + (("ssh-keygen",) if self.rpm_manual else ())
         for program in programs:
             if not shutil.which(program):
                 raise RuntimeError("Missing controller tool: " + program)
@@ -304,7 +285,6 @@ class Run:
             identity_version=(ROOT / "components/identity/VERSION").read_text().strip(),
             first_app=self.first_app,
             status_retry=self.status_retry,
-            host_setup=self.host_setup,
             whoami=self.whoami,
             rpm_manual=self.rpm_manual,
             strict_fapolicyd=self.strict_fapolicyd,
@@ -407,7 +387,7 @@ class Run:
         self.guest("DEV", "clone")
 
     def transfer(self, version=None, bundle="app1", tree="src", publish=True):
-        """Transfer the chosen product bundle through the controller and record SHA256."""
+        """Transfer the chosen bundle's release RPM through the controller; record SHA256."""
         base = "podman-offline-acceptance/" + self.id
         version = version or self.meta["bundles_built"][bundle]
         archive = self.product + "-" + bundle + "-" + version + "-offline.tar.gz"
@@ -432,21 +412,38 @@ class Run:
         self.command(
             SCP + [probe, self.host("PROD") + ":" + base + "/prepare_host_test.py.gz"]
         )
-        # The archive, its checksum and its signature, then the lab build's
-        # public key: PROD trusts only that key (backlog 38).
-        for source, name in [
-            (base + "/" + tree + "/dist/" + archive + suffix, archive + suffix)
-            for suffix in ("", ".sha256", ".asc")
-        ] + [(base + "/bundle-signing.gpg", "bundle-signing.gpg")]:
+        # Backlog 69: the release RPM of this bundle, built on DEV, in its own
+        # delivery directory, and the tools RPM of the same tree.
+        self.guest("DEV", "release-rpm", version, bundle=bundle)
+        rpm = archive[: -len("-offline.tar.gz")] + "-" + version + "-1.noarch.rpm"
+        tools = self.ssh(
+            "DEV",
+            "cd " + shlex.quote(base + "/" + tree + "/dist/rpm")
+            + " && ls " + shlex.quote(self.product) + "-tools-*.noarch.rpm",
+        ).split()  # fmt: skip
+        if len(tools) != 1 or not re.fullmatch(r"[a-z0-9.-]+\.noarch\.rpm", tools[0]):
+            raise RuntimeError("Unexpected tools RPM on DEV: " + repr(tools))
+        delivery = base + "/rpm-" + bundle + "-" + version
+        self.ssh(
+            "PROD",
+            "mkdir -p " + shlex.quote(delivery) + " " + shlex.quote(base + "/tools"),
+        )
+        for name, target in ((rpm, delivery), (tools[0], base + "/tools")):
             local = self.folder / name
-            self.command(SCP + [self.host("DEV") + ":" + source, local])
-            self.command(SCP + [local, self.host("PROD") + ":" + base + "/" + name])
-        with (self.folder / archive).open("rb") as stream:
+            self.command(
+                SCP
+                + [
+                    self.host("DEV") + ":" + base + "/" + tree + "/dist/rpm/" + name,
+                    local,
+                ]
+            )
+            self.command(SCP + [local, self.host("PROD") + ":" + target + "/" + name])
+        with (self.folder / rpm).open("rb") as stream:
             digest = hashlib.sha256()
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        self.meta.setdefault("bundles", {})[bundle + "-" + version] = digest.hexdigest()
-        self.write("bundle_sha256=" + digest.hexdigest() + "\n")
+        self.meta.setdefault("rpms_sha256", {})[rpm] = digest.hexdigest()
+        self.write("rpm_sha256=" + digest.hexdigest() + "\n")
         if publish:
             self.guest("PROD", "publish-release", version, bundle=bundle)
 
@@ -817,8 +814,6 @@ class Run:
     def cleanup(self):
         """Delete transferred runtime secrets, even when the remote cleanup fails."""
         try:
-            if self.host_setup:
-                operator_flow.cleanup(self)
             if self.dev_private:
                 self.guest("DEV", "cleanup")
         finally:
@@ -855,9 +850,6 @@ class Run:
         self.step("02-isolate-prod", lambda: self.guest("PROD", "isolate"))
         self.step("03-source", self.source)
         self.step("03-host-path-safety", lambda: self.guest("DEV", "host-path-safety"))
-        if self.host_setup:
-            operator_flow.execute(self)
-            return
         if self.renamed_product:
             self.execute_renamed()
             return
@@ -907,10 +899,6 @@ class Run:
         self.step(
             "07-host-path-safety",
             lambda: self.guest("PROD", "host-path-safety", bundle="help"),
-        )
-        self.step(
-            "07-release-safety",
-            lambda: self.guest("PROD", "release-safety", bundle="platform"),
         )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         if self.status_retry:
@@ -1021,10 +1009,6 @@ class Run:
         self.step(
             "07-host-path-safety",
             lambda: self.guest("PROD", "host-path-safety", bundle="gateway"),
-        )
-        self.step(
-            "07-release-safety",
-            lambda: self.guest("PROD", "release-safety", bundle="gateway"),
         )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         self.step("07-init-check", lambda: self.guest("PROD", "renamed-init-check"))
@@ -1174,9 +1158,6 @@ class Run:
         self.step(
             "06-prepare-host",
             lambda: self.guest("PROD", "prepare-host", bundle="platform"),
-        )
-        self.step(
-            "06-persistent-journal", lambda: self.guest("PROD", "persistent-journal")
         )
         for name in order:
             self.step(
@@ -1356,11 +1337,6 @@ def main():
         help="Inject a same-version install failure and verify status/retry on disposable PROD",
     )
     parser.add_argument(
-        "--host-setup",
-        action="store_true",
-        help="Run the focused manual-matched item 65 setup/SSH scenario",
-    )
-    parser.add_argument(
         "--whoami",
         action="store_true",
         help="Install platform, identity and the .NET/TypeScript app3 and check backlog 71",
@@ -1376,16 +1352,12 @@ def main():
         help="With --rpm-manual: apply the strict fapolicyd profile P2 first",
     )
     args = parser.parse_args()
-    if args.whoami and (args.status_retry or args.host_setup):
+    if args.whoami and args.status_retry:
         parser.error("--whoami is a separate focused scenario")
-    if args.rpm_manual and (args.status_retry or args.host_setup):
+    if args.rpm_manual and args.status_retry:
         parser.error("--rpm-manual is a separate focused scenario")
     if args.strict_fapolicyd and not args.rpm_manual:
         parser.error("--strict-fapolicyd applies only to --rpm-manual")
-    if args.host_setup and (args.status_retry or args.identity_only or args.help_only):
-        parser.error(
-            "--host-setup is a separate focused scenario; choose normal, renamed or platform-only"
-        )
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", args.run):
         parser.error("Invalid run ID")
     if (
@@ -1411,7 +1383,6 @@ def main():
     run.platform_help_only = args.platform_help_only
     run.renamed_product = args.renamed_product
     run.status_retry = args.status_retry
-    run.host_setup = args.host_setup
     run.whoami = args.whoami
     run.rpm_manual = args.rpm_manual
     run.strict_fapolicyd = args.strict_fapolicyd

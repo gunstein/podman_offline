@@ -150,42 +150,24 @@ def main():
 main()
 INSTALLED
 }
-# Lab bundle signing key on DEV (backlog 38): created once per run, used by every
-# build through BUNDLE_SIGNING_KEY; its public key goes to PROD as the trusted keyring.
-lab_signing_key() {
-    export GNUPGHOME="$base/gnupg"
-    if [[ ! -d $GNUPGHOME ]]; then
-        install -d -m 700 "$GNUPGHOME"
-        gpg --batch --pinentry-mode loopback --passphrase '' \
-            --quick-gen-key "Acceptance bundle signing $run <lab@invalid>" ed25519 sign never
-    fi
-    BUNDLE_SIGNING_KEY=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
-    export BUNDLE_SIGNING_KEY
-    [[ -n $BUNDLE_SIGNING_KEY ]]
-    gpg --batch --export "$BUNDLE_SIGNING_KEY" > "$base/bundle-signing.gpg"
-}
-# Authenticated controller code is sent over the existing SSH channel, never
-# loaded as root from the incoming archive or service-owned filesystem.
-release_source() {
-# RELEASE_HELPER_BODY
-    :
-}
-release_safety_source() {
-# RELEASE_SAFETY_BODY
-    :
-}
-release_tool() {
-    release_source | sudo -n python3 -I -B - "$@"
+# Backlog 69: releases reach PROD as RPMs (built on DEV by release-rpm) and
+# are installed by the administrator command, as in the production manual;
+# the account and port are given as options instead of typed.
+tools_installed() {
+    rpm -q "$product_name-tools" >/dev/null 2>&1 && return 0
+    local tools=("$base/tools/$product_name"-tools-*.noarch.rpm)
+    [[ ${#tools[@]} == 1 && -f ${tools[0]} ]]
+    sudo -n dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 -y -q install "${tools[0]}"
 }
 prepare_release() {
-    # The lab operator's private transfer tree is independent of the service UID.
-    local key_sha256
-    key_sha256=$(sha256sum "$base/bundle-signing.gpg")
-    key_sha256=${key_sha256%% *}
-    release_tool provision-key --product "$product_name" --keyring "$base/bundle-signing.gpg" --key-sha256 "$key_sha256"
-    release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-        --archive "$base/$product_name-$bundle-$version-offline.tar.gz" \
-        --signature "$base/$product_name-$bundle-$version-offline.tar.gz.asc"
+    tools_installed
+    sudo -n "$product_name-admin" "$base/rpm-$bundle-$version" \
+        --user "$service_user" --port "$port" </dev/null
+    test -d "$product"
+}
+# The administrator command removes a release once a newer one is completed.
+retire_release() {
+    sudo -n "$product_name-admin" "$base/rpm-$bundle-$version" </dev/null
 }
 # ./deploy.sh validate must pass for this release before it is installed (backlog 23).
 validate_release() {
@@ -475,30 +457,11 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: " + str(error))
 LAUNCH_DIAGNOSTICS
 }
-# Authenticated inventory supplies exact paths, sizes and SHA256 values.
-wait_trust() {
-    local wanted=${1%/} removed=${2:-} release component wanted_version
-    release=${wanted%/deployment}
-    component=${release##*/}
-    component=${component#"$product_name-"}
-    wanted_version=${component##*-}
-    component=${component%-*}
-    local arguments=(wait --product "$product_name" --component "$component" --version "$wanted_version")
-    if [[ -n $removed ]]; then
-        removed=${removed%/}; removed=${removed%/deployment}; removed=${removed##*-}
-        arguments+=(--old-version "$removed")
-    fi
-    [[ $release == "$release_root/$product_name-$component-$wanted_version" ]] || return 1
-    release_tool "${arguments[@]}"
-}
 # Name, type, size and mode of every login-home entry; never file contents.
 home_inventory() {
     local home
     home=$(getent passwd "$service_user" | cut -d: -f6)
     sudo -n find "$home" -xdev -printf '%P %y %s %m\n' | LC_ALL=C sort
-}
-retire_release() {
-    release_tool retire --product "$product_name" --component "$bundle" --version "$version" --old-version "$old_version"
 }
 
 # Validate the VM role's fapolicyd, SELinux and firewalld profile.
@@ -985,7 +948,6 @@ wait_backend() {
     return 1
 }
 # Every DEV build after the source clone signs its bundles with the lab key.
-if [[ $role == DEV && -d $src/.git ]]; then lab_signing_key; fi
 # The documented host baseline (README, fapolicyd): a subject cache large
 # enough that starting processes are not evicted (backlog 29), and an existing
 # ordinary login account (home under /home, bash), created here only because
@@ -1128,11 +1090,7 @@ clone)
     git rev-parse HEAD
     cat components/app1/VERSION
     ;;
-# The product tests must not see the lab signing key exported above.
-unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B tests/run.py all;;
-release-safety)
-    release_safety_source | sudo -n python3 -I -B - "$product" "$product_name" "$base/$product_name-$bundle-$version-offline.tar.gz" "$service_user"
-    ;;
+unit) cd "$src"; python3 -B tests/run.py all;;
 status-retry)
     status_retry_source | as_product python3 -I -B - "$product" "$bundle"
     ;;
@@ -1367,7 +1325,6 @@ renamed-uninstall)
         *) echo "Unsupported renamed uninstall: $bundle" >&2; exit 2;;
     esac
     sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh uninstall' bash "$product"
-    release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
     sudo -n test ! -e "$state/installed/$bundle"
     sudo -n test ! -e "$state/metadata/$bundle.json"
     sudo -n test ! -e "$state/routes/$bundle.conf"
@@ -1456,7 +1413,6 @@ help-upgrade|platform-upgrade|identity-upgrade)
     validate_release
     install_checked
     healthy
-    wait_trust "$product/deployment/"
     if [[ $bundle == help ]]; then test "$(as_product cat "$state/installed/help")" = "$requested_version"; fi
     # Help and Identity tag their image @@COMPONENT_VERSION@@; healthy has
     # checked that the running container uses the installed YAML's image.
@@ -1644,8 +1600,9 @@ prepare-host)
     lab_host_baseline
     account_home=$(getent passwd "$service_user" | cut -d: -f6)
     [[ $account_home == /home/* ]]
+    # The administrator command prepares the host (prepare-host.sh) with the
+    # first release it installs.
     prepare_release
-    sudo -n bash "$product/scripts/prepare-host.sh" --port "$port" --user "$service_user"
     # The documented bootstrap file, written by the account itself.
     sudo -n -H -u "$service_user" bash -c '
         umask 077
@@ -1736,9 +1693,11 @@ main()
 HASHES
     ;;
 publish-release)
-    prepare_release
-    cat "$product/VERSION" > "$base/version-$bundle"
-    test "$(cat "$base/version-$bundle")" = "$requested_version"
+    # The transferred RPM becomes this bundle's current version; the install
+    # step installs it with the administrator command.
+    rpm_files=("$base/rpm-$bundle-$requested_version/"*.noarch.rpm)
+    [[ ${#rpm_files[@]} == 1 && -f ${rpm_files[0]} ]]
+    printf '%s\n' "$requested_version" > "$base/version-$bundle"
     cat "$base/version-$bundle"
     ;;
 registry-offline)
@@ -1940,18 +1899,6 @@ if __name__ == "__main__":
 DATABASE_JOURNAL
     ;;
 health) healthy;;
-persistent-journal)
-    # The production host setup (release.py setup) makes the journal persistent
-    # before prepare-host; the fixed matrix's prepare-host does not. Containers
-    # log to the journal, so app3's log checks need it (backlog 71 lab finding).
-    # Same controller-supplied helper as release_tool, loaded without its main().
-    release_source | sudo -n python3 -I -B -c '
-import sys
-namespace = {"__name__": "release_helper"}
-exec(compile(sys.stdin.read(), "release.py", "exec"), namespace)
-namespace["prepare_persistent_journal"]()
-'
-    ;;
 whoami-chain-mounts)
     # Backlog 70's lab check in the running backend: both single-file subPath
     # mounts hold the environment's CA and the image's own CA files remain.
@@ -2678,8 +2625,9 @@ def observe():
         if not match:
             raise SystemExit("FAIL: invalid sibling trust entry")
         trusted.append(match.group(1))
-    if set(trusted) != expected or len(trusted) != len(expected):
-        raise SystemExit("FAIL: expected exact package trust for sibling bundles")
+    # Trust comes from the RPM database: every file of each installed release.
+    if not expected <= set(trusted):
+        raise SystemExit("FAIL: a sibling's installed release package is not trusted")
     versions = {name: (HOME / "installed" / name).read_text()
                 for name in components}
     result = {"containers": observed, "trust": records, "versions": versions}
@@ -2722,9 +2670,6 @@ SIBLINGS
     ;;
 uninstall)
     sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh uninstall' bash "$product"
-    release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"
-    app2_version=$(sudo -n -H -u "$service_user" cat "$state/installed/app2")
-    wait_trust "$release_root/$product_name-app2-$app2_version/deployment/" "$product/deployment/"
     sudo -n test ! -e "$state/installed/app1"
     sudo -n test ! -e "$state/routes/app1.conf"
     sudo -n test ! -e "$state/clients/app1"
@@ -2792,16 +2737,24 @@ admin-erase-guard)
     rpm -V "$name"
     echo "PASS: plain dnf remove and rpm -e refused; packages intact"
     ;;
-rpm-upgrade)
-    # Backlog 69 WP4: the RPM of the newer release help-upgrade-bundle just
-    # built, beside the first RPMs in dist/rpm, as a supplier would deliver it.
-    cd "$src"
+release-rpm)
+    # Backlog 69: the RPM of one built bundle, beside the others in dist/rpm,
+    # and the tools RPM of the same tree, as a supplier would deliver them.
+    command -v rpmbuild >/dev/null || sudo -n dnf -y -q install rpm-build
     archive="$product_name-$bundle-$requested_version-offline.tar.gz"
+    tree=$src
+    if [[ -f $renamed/dist/$archive ]]; then tree=$renamed; fi
+    cd "$tree"
     (cd dist && sha256sum -c "$archive.sha256")
-    python3 -B -c 'import sys; from pathlib import Path; import rpms
+    rpm_file="dist/rpm/$product_name-$bundle-$requested_version-$requested_version-1.noarch.rpm"
+    if [[ ! -f $rpm_file ]]; then
+        python3 -B -c 'import sys; from pathlib import Path; import rpms
 rpms.build_rpm(Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], Path("dist/rpm"))' \
-        "dist/$archive" "$product_name" "$bundle" "$requested_version"
-    ls -l dist/rpm
+            "dist/$archive" "$product_name" "$bundle" "$requested_version"
+    fi
+    tools=(dist/rpm/"$product_name"-tools-*.noarch.rpm)
+    [[ -f ${tools[0]} ]] || ./build-rpms.sh --tools
+    ls dist/rpm
     ;;
 rpm-nothing-changed)
     # After the preflight stop (backlog 69 WP6): only the tools are installed.

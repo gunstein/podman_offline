@@ -64,15 +64,15 @@ The harness defects found on the way to this matrix are listed in
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
-| `--host-setup` | `c63b-host-setup-d111718` | 36 | CLEAN PASS |
 | `--rpm-manual` (fapolicyd P1) | `rpm-manual-3bff57b` | 58 | CLEAN PASS |
 | `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-3bff57b` | 59 | CLEAN PASS |
 
-Status/retry and host setup: on `d111718`, with the matrix rows from main.
-Status/retry: a
+Status/retry: on `d111718`, with the matrix rows from main, before the
+matrix installed its releases as RPMs (backlog 69 WP6). Status/retry: a
 same-version failure stays pending with the old container active, a plain
-retry completes, and the restore leaves protected code unchanged. Host setup:
-procedure and evidence in [HOST-SETUP.md](HOST-SETUP.md).
+retry completes, and the restore leaves protected code unchanged. The
+`--host-setup` scenario (the `release.py` manual) was removed in backlog 69
+WP6; its last run is in the git history.
 
 RPM manual (backlog 69 WP6): both on `3bff57b` (2026-11-07), clean detached
 checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed

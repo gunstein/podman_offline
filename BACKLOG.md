@@ -1155,6 +1155,11 @@ application refactoring or unrelated backlog cleanup belongs in this task.
 
 ## 65. One-command host preparation and a short operator guide
 
+**Superseded by item 69 (2026-11-07):** WP6 removed the `release.py` setup
+flow, its manual and its tests (last in `fd3a311`); `scripts/prepare-host.sh`,
+the host part, is kept and run by `<product>-admin`. The text below is the
+history of this item.
+
 Status: implemented on `feature/65-host-setup` with local regression coverage
 (2026-10-24). The first real OL9 run at `8559a2a` stopped in preflight: sudo
 reported explicit denial with exit 0, which setup incorrectly rejected. The
@@ -1164,7 +1169,7 @@ verification remains outstanding under item 68. Review follow-up fixes literal m
 fail-stop behavior, interruption-safe bootstrap publication and bounded host
 phase/error diagnostics, with regression coverage and a revised AI operator
 assessment.
-[Implementation, evidence and lab commands](acceptance/HOST-SETUP.md). Read the
+Implementation, evidence and lab commands: `acceptance/HOST-SETUP.md` (removed in item 69 WP6; in git history at `fd3a311`). Read the
 [implementation plan](docs/HOST-SETUP-PLAN.md) before starting: it fixes the CLI,
 bootstrap trust, journal policy, scope against 66/67, failure/retry behavior and
 test gates. The focused `--host-setup` scenario uses the manual blocks and real
@@ -1309,7 +1314,8 @@ prompts and cited sections in step with `tools/`. The AI walkthrough
 ([OPERATOR-REVIEW.md](acceptance/OPERATOR-REVIEW.md)) counts 10 commands and
 282 typed characters for a first installation with both roles; it fixed seven
 findings and lists five open ones. The `release.py` procedure moved
-unchanged to `docs/RELEASE-PY-INSTALL.md` as input for `--host-setup` only.
+unchanged to `docs/RELEASE-PY-INSTALL.md` as input for `--host-setup` only
+(both removed in WP6 part 2).
 `--admin-rpm` passed on OL9 on the WP5 commit (`m69-admin-rpm-b5b86d9`).
 Human trial: outstanding (item 68). Next: WP6.
 **Decision (product owner, 2026-11-07):** changing a setting after
@@ -1331,7 +1337,23 @@ defect and a silent case in `<product>` (fixed).
 Scope finding: every fixed-matrix scenario still publishes its PROD releases
 with `release.py` (`prepare_release`, `wait_trust`, `retire` in
 `acceptance/remote.sh`), so removing the `release.py` flow means moving the
-matrix's root publication to the RPMs first; decision needed before part 2.
+matrix's root publication to the RPMs first.
+**Decision (product owner, 2026-11-07): option A**, the matrix installs its
+releases as RPMs through `<product>-admin`.
+Status 2026-11-07, WP6 part 2: every matrix scenario now has DEV build the
+release RPM of each transferred bundle (`release-rpm`) and installs it on PROD
+with `sudo <product>-admin <directory> --user <account> --port <port>`, which
+also prepares the host and retires older releases; the sibling checks accept
+RPM trust (every file of each installed release). Removed, all last in
+`fd3a311`: `scripts/release.py`, its tests and lab probes
+(`release_safety_test.py`), `--host-setup` with `acceptance/host_setup.py`,
+`acceptance/HOST-SETUP.md` and `docs/RELEASE-PY-INSTALL.md`, the lab bundle
+signing key, the WP0 runner (`acceptance/rpm_wp0/`, its tests and results) and
+`rpm-prototype/`; phase 2 builds its signature probes on the RPM flow, and the
+WP0 results stay in the git history. The P2 policy script is
+`acceptance/fapolicyd-strict.sh`. The review-guide contracts (release
+authentication, host preparation, layout, messages) and items 65-67 are
+rewritten. Local tests pass; the matrix has no lab run on this change yet.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the
@@ -1693,6 +1715,13 @@ path interfaces with this RPM work rather than redesigning either command flow.
 
 ## 66. Install sets: several signed bundles through one entry point
 
+**Superseded by item 69 (2026-11-07)**, as the
+[plan's table](docs/RPM-DELIVERY-PLAN.md#relationship-to-item-66-authoritative)
+says: `<product>-admin` installs the delivered RPMs (the selection) and
+`<product>` installs the newest installed release of every component in
+dependency order, pending first; the answers file was dropped (decision 9).
+The text below is the history of this item.
+
 Status: planned, high priority (2026-10-23), after item 65. Implementation
 plan: [INSTALL-SET-PLAN.md](docs/INSTALL-SET-PLAN.md), revised 2026-10-24 with
 the product owner: no supplier set manifest (bundles arrive one per DVD or many
@@ -1744,6 +1773,12 @@ remain outstanding; existing per-component tests/manual runs do not prove them.
 The [current operator baseline](acceptance/OPERATOR-REVIEW.md) records the gaps.
 
 ## 67. Acceptance scenario with a real ssh login as the runtime account
+
+**Status 2026-11-07:** `--rpm-manual` (item 69 WP6) logs in over real SSH as
+the runtime account and runs the manual's `myproduct` through the first
+installation, a repeat, an interruption continued in a fresh login, an
+upgrade and retirement, on P1 and P2. Still open: logout/reboot with
+`journalctl --user` in a fresh login after the reboot.
 
 Status: planned, high priority (2026-10-23). Item 65 now supplies a focused
 manual-matched setup/initial-install SSH path; this item must extend it through

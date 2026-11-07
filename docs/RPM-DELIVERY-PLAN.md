@@ -769,11 +769,15 @@ Ruff, Pyright, Vermin 3.6, shellcheck, link checks, `git diff --check`).
 5. Manual rewrite (including tools repair) and the AI operator walkthrough
    with full counts, **done 2026-11-07**: `docs/PRODUCTION-INSTALL.md`,
    walkthrough in `acceptance/OPERATOR-REVIEW.md`, drift test
-   `tests/platform_tests/test_manual.py`; the `release.py` procedure is kept
-   in `docs/RELEASE-PY-INSTALL.md` for `--host-setup` until WP6.
+   `tests/platform_tests/test_manual.py`.
 6. Harness scenario on P1 and P2 with the drift mapping; remove the
    `release.py` flow, its tests and manual sections; rewrite the contracts
-   above and item 65/66 references.
+   above and item 65/66 references. **Done 2026-11-07**: `--rpm-manual` on
+   P1 and P2 (lab-verified at `3bff57b`), and with option A (product owner,
+   2026-11-07) the fixed matrix installs its releases with `<product>-admin`;
+   the `release.py` flow, the WP0 runner and `rpm-prototype/` are removed
+   (last in `fd3a311`). The contracts were rewritten for phase 1 as decided
+   (no identity records, answers file or operation lock).
 7. Item 68 human trial on the closed lab: the printed manual only, short.
 
 ## Open points

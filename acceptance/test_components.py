@@ -580,7 +580,7 @@ class ComponentObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "before image operations"):
                     code["main"]()
 
-    def test_sibling_observation_requires_exact_recursive_package_trust(self):
+    def test_sibling_observation_requires_trust_for_the_installed_package(self):
         code = guest_code("SIBLINGS")
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -605,7 +605,8 @@ class ComponentObservationTests(unittest.TestCase):
             for path in files:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("fixture")
-            rows = ["file " + str(path) + " 123 " + "a" * 64 for path in files]
+            # Backlog 69: trust from the RPM database, for every installed file.
+            rows = ["rpmdb " + str(path) + " 123 " + "a" * 64 for path in files]
             trust = list(rows)
 
             def command(arguments):
@@ -638,14 +639,15 @@ class ComponentObservationTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {"PRODUCT_ROOT": str(home)}),
             ):
                 self.assertEqual(code["observe"]()["trust"], sorted(rows))
-                for broken in (
-                    rows[:-1],
-                    rows + rows[:1],
-                    rows + [rows[0].replace("0.4.3", "0.4.2")],
+                # An older installed release of the same component is trusted too.
+                older = rows + [rows[0].replace("0.4.3", "0.4.2")]
+                trust = older
+                self.assertEqual(code["observe"]()["trust"], sorted(older))
+                trust = rows[:-1]
+                with self.assertRaisesRegex(
+                    SystemExit, "release package is not trusted"
                 ):
-                    trust = broken
-                    with self.assertRaisesRegex(SystemExit, "exact package trust"):
-                        code["observe"]()
+                    code["observe"]()
 
     def test_help_siblings_compare_platform_identity_state_network_and_other_trust(
         self,
@@ -728,7 +730,6 @@ class ComponentObservationTests(unittest.TestCase):
             'network exists "$product_name"',
             'test "$http" = 404',
             "healthy",
-            'release_tool withdraw --product "$product_name" --component "$bundle" --version "$version"',
         ):
             self.assertIn(text, block)
         self.assertNotIn("--delete-data", block)

@@ -1,8 +1,11 @@
 # Item 65 implementation plan: host setup and operator guide
 
+**Superseded by backlog 69** (RPM delivery); WP6 removed the `release.py`
+flow this plan describes. Kept as history.
+
 Status: implemented on `feature/65-host-setup`, 2026-10-24; real OL9 verification
 passed at `2d36d71`; unassisted human verification remains outstanding under backlog 68. See
-[implementation/evidence](../acceptance/HOST-SETUP.md). This plan records the
+implementation/evidence in `acceptance/HOST-SETUP.md` (removed in backlog 69 WP6; in git history at `fd3a311`). This plan records the
 constraints; current operator commands live in the production manual.
 Read [item 65](../BACKLOG.md#65-one-command-host-preparation-and-a-short-operator-guide),
 the [review guide](REVIEW_GUIDE.md), and the

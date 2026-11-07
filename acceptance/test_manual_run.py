@@ -289,7 +289,7 @@ class ScenarioTests(unittest.TestCase):
                      "rpm-upgrade-check",
                      "rpm-retire-check",
                      "rpm-tools-damage", "rpm-tools-intact", "admin-baseline",
-                     "admin-erase-guard", "admin-medium", "rpms", "rpm-upgrade",
+                     "admin-erase-guard", "admin-medium", "rpms", "release-rpm",
                      "help-upgrade-bundle"):  # fmt: skip
             self.assertRegex(
                 REMOTE, r"(?m)^(?:[a-z0-9|-]*\|)?" + name + r"(?:\|[a-z0-9|-]*)?\)"

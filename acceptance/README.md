@@ -66,15 +66,6 @@ The [remaining fixed-matrix results](RESULTS.md) record five
 CLEAN PASS scenarios at `0ece0c1`, including renamed and the corrected Identity
 baseline; those runs do not include the focused app3 scenario.
 
-# Manual host setup (backlog 65)
-
-`--host-setup` selects the focused manual-block bootstrap/setup, repeat,
-interruption/retry and real runtime SSH path. Normal, renamed and gateway-only
-variants are runnable; current-change OL9 and human verification are outstanding.
-See [contracts, evidence and commands](HOST-SETUP.md). This is separate from the
-complete reboot/upgrade operator scenario planned in 67 and the six-scenario
-product matrix below.
-
 # Same-version status failure/retry (backlog 39)
 
 The opt-in `--status-retry` flag adds a controlled daemon-reload failure and retry
@@ -185,14 +176,15 @@ exposure are reported. No new trust rules are installed.
 
 ---
 
-# Signed bundles (backlog 38)
+# Release RPMs in the matrix (backlog 69 WP6)
 
-Every DEV build after the source clone signs its bundles with a per-run lab key
-(`$base/gnupg`, ed25519, no passphrase); the 0.2.0 legacy build is signed
-afterwards. The runner copies each archive's `.asc` and the lab public key
-`bundle-signing.gpg` to PROD, and `prepare_release` runs `gpgv` against that
-keyring before the checksum and unpacking. Readiness now requires `gpg` and
-`gpgv` on both VMs (package gnupg2).
+Every scenario delivers its PROD releases as RPMs: `transfer()` has DEV build
+the release RPM of the bundle (`release-rpm`, also for the renamed tree) and
+copies it, with the tools RPM, to PROD; the install step then installs it with
+`sudo <product>-admin <directory> --user <account> --port <port>`, which
+also prepares the host on its first run and removes an older release once a
+newer one is completed. Bundle signatures are not used in phase 1; DEV builds
+unsigned bundles.
 
 ---
 

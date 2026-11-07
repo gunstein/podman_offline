@@ -10,9 +10,8 @@ reinstall, which were inline text, and the note and stop row for delivered
 credentials of an installed component (`myproduct <component>`, found by
 the first `--rpm-manual` runs); the commands, counts and findings below are
 unchanged. This replaces the `release.py` manual for
-operators; that procedure is kept unchanged in
-[docs/RELEASE-PY-INSTALL.md](../docs/RELEASE-PY-INSTALL.md) only as input
-for `--host-setup` until WP6. The sections after this one are historical and
+operators; WP6 removed that procedure with the `release.py` flow (last in
+`fd3a311`). The sections after this one are historical and
 refer to that earlier manual.
 
 | Assessment | Result | Scope |
@@ -125,7 +124,7 @@ The guide reviewed at `2d36d71` had SHA256:
 `953744f079c6846cc9fb27936f07cee7790ac65019765986298dd42373a7cb14`; implementation branch `feature/65-host-setup`,
 based on `f52b797`. The earlier table and literal walkthrough below are a
 **historical baseline** against `7ef9671`, not a claim about the rewritten guide.
-Current local evidence is in [HOST-SETUP.md](HOST-SETUP.md).
+Current local evidence is in `acceptance/HOST-SETUP.md` (removed in WP6; in git history at `fd3a311`).
 
 The literal path now starts with a complete trusted delivery/value checklist,
 explicit administrator SSH, private unprivileged upload directory, one checked
@@ -204,7 +203,7 @@ The human trial is still **not performed / outstanding**. No time, mistakes or
 questions are invented. The original assisted run remains evidence of difficulty;
 it cannot approve this new manual. After the first preflight failure at `8559a2a`,
 all nine corrected-flow scenarios passed at `2d36d71`
-([lab evidence](HOST-SETUP.md#successful-real-ol9-verification-2026-10-24)).
+(lab evidence in `acceptance/HOST-SETUP.md`, removed in WP6; in git history at `fd3a311`).
 The full reboot/upgrade SSH flow in 67 is still pending. Neither code review,
 local tests nor this AI walkthrough establishes customer usability.
 

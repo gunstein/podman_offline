@@ -23,6 +23,10 @@ REMOVED = {
     r"GENERATED_SECRETS": "generate: on a SECRET_FILES/VOLUME_FILES source",
     r"STANDALONE_PRODUCT|examples/run\.sh": "backlog 77: no standalone mode",
     r"with_gateway_settings": "backlog 77: catalog.operator_config",
+    r"release\.py|release_tool|wait_trust|\.release\.json|bundle-signing\.gpg": (
+        "backlog 69 WP6: releases are RPMs installed by <product>-admin"
+    ),
+    r"--host-setup|--admin-rpm": "backlog 69 WP6: --rpm-manual runs the manual",
 }
 
 

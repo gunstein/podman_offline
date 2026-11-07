@@ -439,7 +439,7 @@ def execute(run, strict=False):
     run.step("05-transfer-medium", run.transfer_medium)
     if strict:
         # Lab infrastructure: the WP0 P2 policy, applied after the reset.
-        strict_policy = (ROOT / "acceptance/rpm_wp0/strict.sh").read_text()
+        strict_policy = (ROOT / "acceptance/fapolicyd-strict.sh").read_text()
         run.step("06-fapolicyd-p2", lambda: run.command(
             ["ssh"] + SSH_OPTIONS + [run.host("PROD"), "sudo -n bash -s"], strict_policy))  # fmt: skip
     # Step 2 of the manual; dnf asks before it installs.
@@ -513,7 +513,7 @@ def execute(run, strict=False):
         "08-help-build",
         lambda: run.guest("DEV", "help-upgrade-bundle", new, bundle="help"),
     )
-    run.step("08-help-rpm", lambda: run.guest("DEV", "rpm-upgrade", new, bundle="help"))
+    run.step("08-help-rpm", lambda: run.guest("DEV", "release-rpm", new, bundle="help"))
     run.step("08-transfer-rpms", run.transfer_rpms)
     admin(
         "09-manual-admin-upgrade",

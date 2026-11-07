@@ -182,11 +182,11 @@ collect external local inputs from them. A component's whole `files/` directory
 is still packaged, including harmless dev-only files stored there; selection
 for container delivery is separate from packaging.
 
-From a protected published release, run as the service user:
+`<product>` runs it for a component without config. By hand, as the runtime
+account, with the installed release:
 
 ```sh
-as_product bash "$release/deploy.sh" init-config platform
-# Or, from the release directory as the service user: ./deploy.sh init-config platform
+bash /var/lib/myproduct/releases/myproduct-platform-<version>/deploy.sh init-config platform
 ```
 
 Only components included in that bundle may be initialized. The command writes
@@ -464,14 +464,9 @@ names its option (`--public-origin`, `--ip-address`). The
 ### Installation compatibility
 
 Until the first real customer installation, existing development/lab installations
-may be discarded. For the protected-release layout, use a fresh host or explicitly
-remove the obsolete `/var/lib/<product>/releases` tree and its old
-`/etc/fapolicyd/trust.d/<product>-<component>` trust files as an administrator.
-Remove trust first, reload with `sudo fapolicyd-cli --update`, and verify with
-`sudo fapolicyd-cli --dump-db` that no old release paths remain before deleting
-the tree. Preserve unrelated trust and persistent config, credentials and volumes;
-never reuse service-writable release trust. The new helper does not migrate or
-clean up old installations automatically.
+may be discarded. A host prepared by the earlier `release.py` flow (removed in
+backlog 69 WP6) is not converted: use a fresh host. Nothing migrates or cleans
+up old installations automatically.
 
 After the first real customer installation, incompatible changes must include an
 explicit migration and verification procedure preserving customer data and
@@ -511,14 +506,11 @@ export BUNDLE_SIGNING_KEY=<fingerprint>
 gpg --export "$BUNDLE_SIGNING_KEY" > bundle-signing.gpg   # once; give it to operators
 ```
 
-Deliver `bundle-signing.gpg` to the target separately from the bundles (for
-example on a different medium) and keep it there. The target checks each
-archive with `gpgv`, which trusts only that keyring, before the checksum and
-before unpacking anything; see the installation steps below. Do not verify with
-a script taken from the unverified archive. An archive without `.asc` is
-unsigned and is for development only. Production publication and installation
-require a detached signature and the independently provisioned product keyring;
-there is no unsigned-install override.
+In phase 1 of backlog 69 the target installs unsigned release RPMs built
+from these bundles (see [Release RPMs](#release-rpms-backlog-69-phase-1)) and
+checks no bundle signature; the archive signature is kept for phase 2, in
+which the RPMs are signed and checked against the product's own key before
+installation. The `.asc` file is not part of a phase 1 delivery.
 
 ## Proxy from YAML
 
@@ -649,8 +641,8 @@ There is no migration, fallback or automatic rewrite of persistent config.
 ~/.myproduct/myproduct.env                  login home: bootstrap file only (0700/0600)
 
 /var/lib/myproduct/                         installation root, root-owned 0755
-├── releases/myproduct-<bundle>-<version>/  root-owned code/manifests/images (release.py)
-├── keyring.gpg, .release.lock              root-owned release authentication
+├── releases/myproduct-<bundle>-<version>/  root-owned, one RPM-installed tree per release
+├── incoming/                               service user, 0700; delivered credentials
 ├── config/                                 service user, 0700; XDG_CONFIG_HOME
 │   └── containers/systemd/                 scoped .kube/.yaml + shared .network
 ├── storage/                                service user, 0700; XDG_DATA_HOME
@@ -1112,80 +1104,19 @@ credentials on a medium; the runtime account logs in and runs `<product>`
 (see [Release RPMs](#release-rpms-backlog-69-phase-1)). It installs as an
 existing login account whose home only holds `~/.<product>/<product>.env`;
 everything else lives under `/var/lib/<product>`. See
-[verification](acceptance/RESULTS.md).
+[verification](acceptance/RESULTS.md). This section is the reference behind
+the manual.
 
-The rest of this section describes the earlier `release.py` flow, which
-backlog 69 WP6 removes; its procedure is kept in
-[docs/RELEASE-PY-INSTALL.md](docs/RELEASE-PY-INSTALL.md) only for the
-`--host-setup` lab scenario.
-
-Prerequisite for `journalctl --user` as the runtime account: a persistent
-journal. A fresh OL9 host has no `/var/log/journal`; create it once with
-`sudo mkdir -p /var/log/journal`, `sudo systemd-tmpfiles --create --prefix
-/var/log/journal` and `sudo journalctl --flush`. Do not add the account to
+The administrator command makes the journal persistent (creating
+`/var/log/journal` on a fresh OL9 host, so the runtime account can read its
+services' logs with `journalctl --user`) and then runs `scripts/prepare-host.sh`
+from the tools RPM with the account and port. Never add the account to
 `systemd-journal` or `adm` instead.
-
-The retired procedure gives machine/account/access, copyable commands, expected
-results and recovery in one sequence. The administrator authenticates and installs `release.py.gz`,
-then runs its `setup` operation with explicit release selections and a host release.
-The runtime account logs in itself over SSH without sudo and runs `deploy.sh
-init-layout`, config/credential steps, validate and install. Multiple-component
-runtime orchestration remains backlog 66.
-
-The retired procedure's `tool-bootstrap` block is the canonical initial tool installation
-procedure and is executed by its regression tests. It snapshots the compressed
-candidate into a root-protected location, verifies the independently delivered
-SHA256 on those exact bytes, fsyncs and atomically publishes the helper before
-execution. The bootstrap never imports candidate code. A reviewed organisation
-OS package can provision the same trusted helper instead. Incoming application
-bundles cannot authenticate their own bootstrap. Compressed transport and isolated
-stdin execution preserve fapolicyd rules; no source-file trust exception is added.
-
-The independently authenticated public key and its digest are passed to `setup`.
-It reuses `provision-key`, immutable publication and exact fapolicyd trust, refuses
-key rotation/conflicting release bytes, establishes persistent journals only for
-compatible host policy, and delegates host work to the authenticated selected
-release's existing `prepare-host.sh`. Preflight does not install packages or tune
-security services. Detailed code/evidence and lab commands are in
-[host setup verification](acceptance/HOST-SETUP.md); human verification remains
-separate from automated execution.
-
-The existing individual release operations remain available for administration
-and retirement; they are not an alternate ordinary installation recipe.
-
-The helper snapshots the archive/signature into a private directory under the
-protected `/var/lib/<product>` anchor and verifies that exact copy before extraction.
-It rejects links, special files, ambiguous members, unexpected inventory and
-identity mismatches. It publishes a complete root-owned release atomically and
-retains authenticated inventory/provenance and device/inode/mtime bindings in `.release.json`.
-Payload hashes are calculated while copying the signed archive stream; untrusted
-Python files are not reopened before enrollment. Protected device/inode/mtime bindings
-reject changed payload metadata, including ordinary same-size writes. Owner,
-permissions, links, ACLs, file set and sizes are also checked. SELinux relabeling
-(`restorecon`, `fixfiles` or autorelabel) is supported: xattr changes update ctime,
-which is deliberately excluded. Root remains trusted; these metadata checks do
-not detect a root writer who changes bytes and restores their mtime. Do not
-manually copy, modify or chmod a published tree; unsafe state is refused rather
-than silently repaired. Repeating the same
-signed archive resumes trust enrollment; different bytes for the same identity
-are refused. A per-product lock serializes publication, trust and retirement.
-After an interrupted process, incomplete `.staging-*` directories are untrusted
-root-only scratch; they are never reused as releases and may be removed by an
-administrator when no helper process is running. `/var/lib` needs space for the
-archive and extracted release at the same time.
-
-The protected layout supports the existing `integrity = none` baseline: the
-service user cannot replace trusted bytes or any ancestor after enrollment.
-`size` cannot detect deliberate same-size changes. `sha256` is additional
-verification, not a replacement for authentication or protected ownership. The
-helper reports the configured `none`, `size` or `sha256` strategy and refuses
-other/ambiguous strategies; it never changes global integrity policy. Current
-OL9 lab coverage must be recorded for the actual setting; a stronger setting
-requires its own startup/upgrade verification.
 
 prepare-host requires `--user` naming an existing non-root account and never
 changes its home, shell or login. Under the root-owned `/var/lib/<product>`
-(0755) it creates the account's `state/`, `config/` and `storage/` (0700), keeps
+(0755) it creates the account's `state/`, `incoming/`, `config/` and
+`storage/` (0700), keeps
 existing non-overlapping subuid/subgid ranges (adding one only when missing),
 enables linger and opens the HTTPS port permanently. It installs the root-owned
 drop-in `/etc/systemd/system/user@<uid>.service.d/podman-offline-<product>.conf`
@@ -1202,9 +1133,8 @@ Unexpected existing equivalences fail instead of being deleted automatically.
 Recursive restorecon excludes storage; only the storage directory itself is
 restored nonrecursively. Never run recursive or force restorecon on filled storage.
 
-Host preparation can be repeated after an interrupted preparation or to open a
-new HTTPS port (it does not close previously opened ports). Keep both host setup
-helpers together in the verified release. Below the account's directories, directory/lock creation
+Host preparation is repeated by every administrator command; it does not
+close previously opened ports. Below the account's directories, directory/lock creation
 and both `restorecon` operations run as the service UID/GID through RPM-provided
 `setpriv` (util-linux), with no supplementary groups or capabilities and with
 privilege acquisition disabled. Managed directory paths and the CNI lock refuse
@@ -1216,114 +1146,26 @@ retrying. There is no automatic root ownership repair or root relabel fallback.
 Earlier valid steps can remain after failure; retry after correcting the unsafe
 condition. If the service account is suspected compromised, inspect its
 directories under `/var/lib/<product>` before rerunning host preparation. This limits host-preparation authority; it is
-not recovery from a compromised account. The current change's OL9 Enforcing and
-fapolicyd checks are still pending; see [verification](acceptance/RESULTS.md).
+not recovery from a compromised account.
 
-Use these helpers for subsequent commands:
+The release trees under `/var/lib/<product>/releases/` belong to their RPMs:
+root-owned, `0755` directories and `0644`/`0755` files, trusted by fapolicyd
+through the RPM database, checked with `rpm -V` by the administrator command
+and removed only by it. Do not copy, modify or chmod a release tree.
 
-```sh
-# Run commands as the service user from its home and systemd runtime, with the
-# production Podman settings (the same values the user manager has).
-as_product() {
-    sudo -H -u "$service_user" env PRODUCT_ROOT="/var/lib/$product_name" bash -c '
-        cd "$HOME" || exit
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-        export XDG_CONFIG_HOME="$PRODUCT_ROOT/config" XDG_DATA_HOME="$PRODUCT_ROOT/storage"
-        exec "$@"
-    ' bash "$@"
-}
-# Require every installed component container to be running and healthy.
-healthy() {
-    as_product env PRODUCT_NAME="$product_name" python3 - <<'HEALTH'
-import os
-import pathlib
-import subprocess
-import yaml
-
-
-def main():
-    """Check each installed Pod container without printing private inspect fields."""
-    units = pathlib.Path("/var/lib", os.environ["PRODUCT_NAME"], "config/containers/systemd")
-    paths = sorted(units.glob(os.environ["PRODUCT_NAME"] + "-*.yaml"))
-    if not paths:
-        raise SystemExit("No installed component manifests")
-    for path in paths:
-        with path.open() as stream:
-            for doc in yaml.safe_load_all(stream):
-                if doc.get("kind") != "Pod":
-                    continue
-                for container in doc["spec"]["containers"]:
-                    name = doc["metadata"]["name"] + "-" + container["name"]
-                    state = subprocess.check_output(
-                        ["podman", "inspect", "--format", "{{.State.Status}} {{.State.Health.Status}}", name],
-                        universal_newlines=True, timeout=10).strip()
-                    print(name + " " + state)
-                    if state != "running healthy":
-                        raise SystemExit("Wait for healthy before continuing")
-
-
-main()
-HEALTH
-}
-# Wait against the protected authenticated inventory, including size and SHA256.
-wait_trust() {
-    release_tool wait --product "$product_name" --component "$bundle" --version "$version"
-}
-```
-
-For every component release, repeat `release_tool prepare` with its new
-`bundle`, `version`, archive and signature before running deploy. Only the
-verified `deployment/` files are enrolled by atomically publishing their
-authenticated path/size/hash records in `/etc/fapolicyd/trust.d/podman-offline-<product>.<component>`.
-This uses the documented trust-file format and avoids opening untrusted Python
-files through `--file add`. Repeated preparation merges identical records and
-preserves older verified versions; no duplicate-add exception is needed. The helper
-compares the live database with authenticated paths, sizes and SHA256 digests;
-unlisted files, duplicate records and stale content cannot pass. It never trusts
-private configuration, credentials, shell wrappers or image archives.
-
-```sh
-release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-    --archive "$archive" --signature "$archive.asc"
-release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
-state="/var/lib/$product_name/state"
-# Start with bundle=platform, then identity, then app1/app2; help needs only platform.
-as_product bash "$release/deploy.sh" init-config "$bundle"
-sudoedit -u "$service_user" "$state/$bundle/config.yaml"
-# On platform, set PUBLIC_ORIGIN, HTTPS_PORT and IP_ADDRESS first.
-# Demo only: dev/generate-certificates.sh copied from the source checkout.
-as_product bash -s -- --root "$state" "$bundle" myproduct-proxy < generate-certificates.sh
-sudoedit -u "$service_user" "$state/$bundle/config.yaml"
-sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh validate' bash "$release"
-sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$release"
-sudo systemctl --user -M "$service_user@" status "$product_name-$bundle.service"
-```
-
-Set IP_ADDRESS in platform to the target's host IP. Set PUBLIC_ORIGIN/HTTPS_PORT
-consistently in each component; use the DNS name passed to the certificate
-script. The proxy pod's hostname is derived from PUBLIC_ORIGIN, so app pods
-resolve that same HTTPS name internally. Each install validates the user database
-home, the bootstrap file and installation root, the runtime and the user
-manager's `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, renders, loads/verifies images, writes component imports/units
-and calls `systemctl --user`. It then waits up to 150 s until every app
-container of the restarted units is running and, where it has a health check,
-healthy; an unhealthy container or the timeout fails the install with the
-container's name and state (rerun install after fixing the cause; owners are
-retried). `healthy` below additionally checks every installed component, and
-HTTPS/e2e checks the application itself.
-
-For app1/app2, after platform repeat checksum/unpack/trust with `bundle=identity`
-and `components/identity/VERSION`; initialize Identity, prepare its credentials and install.
-Then repeat with `bundle=app1` or `bundle=app2` and that component's `components/<id>/VERSION`, in either order;
-initialize that app's config, prepare its credentials, edit its component-specific
-settings and install. Keep existing platform and Identity config.
-
-For help, including a platform/help-only setup, repeat after platform with
-`bundle=help` and `components/help/VERSION`; run
-`as_product bash "$release/deploy.sh" init-config help` and install. Identity
-and the apps can be omitted. Help needs no new credentials. These installs update shared routing/client imports
-and restart their changed owners (platform for routes, Identity for clients),
-while retaining the other app's service/data.
+`<product>` runs each release's own `deploy.sh` as the runtime account. Each
+install validates the user database home, the bootstrap file and installation
+root, the runtime and the user manager's `XDG_CONFIG_HOME`/`XDG_DATA_HOME`,
+renders, loads/verifies images, writes component imports/units and calls
+`systemctl --user`. It then waits up to 150 s until every app container of
+the restarted units is running and, where it has a health check, healthy; an
+unhealthy container or the timeout fails the install with the container's
+name and state (run `<product>` again after fixing the cause; owners are
+retried). The gateway's `PUBLIC_ORIGIN` decides the proxy pod's host name, so
+app pods resolve that same HTTPS name internally. Installing help or an app
+updates the shared routing/client imports and restarts only their changed
+owners (platform for routes, Identity for clients), keeping the other
+services and their data.
 
 ## Installed component status
 
@@ -1363,16 +1205,18 @@ diagnostics are never emitted as a unit state. See [verification](acceptance/RES
 
 ## Upgrade and uninstall
 
-Identity can be upgraded alone: transfer the newer Identity archive/checksum,
-verify/unpack/trust it, retain `<state>/identity/config.yaml` and all credentials, and
-install from that bundle. Verify new running image/content, login, both apps'
-retained data and database operations before retiring old Identity trust. An
-unchanged Identity route leaves platform running; app services remain running.
-Platform/app bundles need no retransmission. Installed apps' Identity requirements
-must allow the requested version.
+An upgrade is a new delivery: the administrator runs `sudo <product>-admin
+<directory>` with the newer release RPMs, then the runtime account runs
+`<product>`, which installs every component whose newest installed release is
+not yet its completed version, in dependency order. Persistent config and
+credentials are reused; nothing is copied from the release defaults again.
+The older release stays installed while it is the completed version, and the
+next administrator command removes it once the newer one is completed. Identity,
+help or an app can be upgraded alone: only its RPM is delivered, and an
+unchanged route or client leaves platform and Identity running.
 
-Failed lifecycle commands can be repeated from the same component's verified,
-trusted bundle. Retry `./deploy.sh install`, or repeat `./deploy.sh uninstall` with
+Failed lifecycle commands can be repeated from the same component's installed
+release. Run `<product>` again (it resumes the pending component first), or repeat `./deploy.sh uninstall` with
 exactly the original `--delete-data` choice. The private
 `<state>/pending-operation.json` records the install attempt and unfinished
 registration owners, or the scoped uninstall plan, before relevant changes.
@@ -1395,45 +1239,16 @@ time; the record is retry metadata, not a concurrency lock or rollback mechanism
 It cannot reconstruct unknown partial operations performed by older installers.
 See [retry verification](acceptance/RESULTS.md) for coverage and limits.
 
-Help can be upgraded alone: transfer only the new help archive/checksum, verify
-and trust its deployment package in the help trust file, install, verify healthy services
-and new HTTPS help content, then retire the old help release/trust entry. App
-bundles need no retransmission. With an unchanged route, platform is not restarted.
-A changed help route restarts platform explicitly, without changing platform version or
-restarting app services.
+A changed help route restarts platform explicitly, without changing platform
+version or restarting app services. Back up databases and private persistent
+state; none of it belongs to a release tree.
 
-
-For an upgrade, verify/unpack/trust the new bundle as above, using the same own
-trust file. Reuse persistent config and credentials: do not copy defaults
-or generate a new CA/password set. Install and check health/e2e first. Only after
-success remove the old own trust entry, leaving other bundles' trust untouched:
+The runtime account uninstalls a component with its installed release's own `deploy.sh`:
 
 ```sh
-release_tool prepare --product "$product_name" --component "$bundle" --version "$version" \
-    --archive "$archive" --signature "$archive.asc"
-release="/var/lib/$product_name/releases/$product_name-$bundle-$version"
-sudo -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$release"
-as_product podman ps
-healthy
-# Complete the required HTTPS/application e2e checks BEFORE retiring the old release.
-release_tool retire --product "$product_name" --component "$bundle" \
-    --version "$version" --old-version "$old_version"
-```
-
-Use the `healthy` helper defined above. Also verify HTTPS and application e2e
-before removing the previous trust entry.
-
-The helper removes only the selected old protected release after its trust
-entries disappear and the new authenticated trust inventory is ready. Keep component configs, credentials,
-files, shared PKI and Podman storage. Back up databases and private persistent
-state; none of it belongs to a release directory.
-
-Use a currently trusted release of the bundle to uninstall its own component:
-
-```sh
-as_product bash "$release/deploy.sh" uninstall
+bash /var/lib/myproduct/releases/myproduct-<component>-<version>/deploy.sh uninstall
 # Destructive option: also delete this component's data/secret volumes and state.
-as_product bash "$release/deploy.sh" uninstall --delete-data
+bash /var/lib/myproduct/releases/myproduct-<component>-<version>/deploy.sh uninstall --delete-data
 ```
 
 `uninstall [<component>] [--delete-data]` accepts only the bundle's own
@@ -1443,8 +1258,8 @@ uninstalls it; keep that earlier bundle until the component is removed.
 Choose one of those commands. Default uninstall retains data/config/credentials
 for reinstall. It removes only the own service, version marker, route and public
 client; only the changed registration owners reload their imports. Network and sibling data/units
-are retained. Remove the own deployment package trust entries after uninstall and update
-the trust database. Identity cannot be removed while either app remains; help
+are retained. The release RPM stays installed; removing product packages is
+a later item (product uninstallation). Identity cannot be removed while either app remains; help
 does not block it. Platform cannot be removed while Identity, apps or help remain.
 After removing dependents, uninstall Identity and platform from their own bundles.
 
@@ -1452,8 +1267,8 @@ Podman Secret contents also remain in named volumes after down/stop; removed
 Secret keys can remain there. The private home/storage restricts host access.
 Explicit own-data deletion removes those volumes too. Never enable KubeDownForce:
 it can delete database volumes. At final host removal, an administrator uninstalls
-all components, removes the selected product's scoped trust and the
-`/var/lib/<product>` tree, the `user@<uid>.service.d/podman-offline-<product>.conf`
+all components, removes the product's RPMs (not supported by the tools yet:
+their erase guard refuses it) and the `/var/lib/<product>` tree, the `user@<uid>.service.d/podman-offline-<product>.conf`
 drop-in and the account's `~/.<product>/` directory, disables linger with
 `loginctl disable-linger <user>` when nothing else needs it, and removes the
 storage fcontext equivalence with
@@ -1491,11 +1306,14 @@ via Bash /dev/tcp, backend uses Python against local /livez, frontend/help use
 local wget and proxy uses wget against its own HTTPS /livez. No probe depends on
 another pod. Backend /api/health checks the database only for e2e/control.
 
+As the runtime account, with the product's Podman settings:
+
 ```sh
-as_product podman ps
-as_product podman inspect --format '{{.State.Health.Status}}' app1-todo-backend
-as_product podman healthcheck run app1-todo-backend
-as_product /usr/lib/systemd/user-generators/podman-user-generator --dryrun
+export XDG_CONFIG_HOME=/var/lib/myproduct/config XDG_DATA_HOME=/var/lib/myproduct/storage
+podman ps
+podman inspect --format '{{.State.Health.Status}}' app1-todo-backend
+podman healthcheck run app1-todo-backend
+/usr/lib/systemd/user-generators/podman-user-generator --dryrun
 ```
 
 systemctl is-active is not an individual container health check. Linger must

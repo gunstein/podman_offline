@@ -11,7 +11,6 @@ import re
 import shlex
 import stat
 import subprocess
-import sys
 import tarfile
 import tempfile
 import types
@@ -86,61 +85,6 @@ class HarnessTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(runner, "RUNS", self.root))
         self.stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
         self.harness = runner.Run("test", "not-used")
-
-    def test_guest_helper_is_controller_supplied_and_delivered_through_a_pipe(self):
-        self.harness.cfg = {
-            "LAB_CIDR": "192.0.2.0/24",
-            "PROD_IP": "192.0.2.2",
-            "PROD_HOST": "example.invalid",
-            "HTTPS_PORT": "8443",
-        }
-        self.harness.revision = "a" * 40
-        self.harness.ssh = mock.Mock(return_value="")
-        self.harness.guest("PROD", "release-safety", "1.2.3", bundle="platform")
-        script = self.harness.ssh.call_args.args[1]
-        # Read the Bash function directly by executing the pre-case definitions.
-        definitions = script.split('case "$action" in', 1)[0]
-        # Stub everything except source serialization. Inspect fd0 in Python, not
-        # /proc's availability in this container, to establish the transport type.
-        check = 'import os,stat,sys; assert stat.S_ISFIFO(os.fstat(0).st_mode); compile(sys.stdin.read(), "helper", "exec"); print("pipe-ok")'
-        definitions = definitions.replace(
-            'sudo -n python3 -I -B - "$@"', "python3 -c " + shlex.quote(check)
-        )
-        result = subprocess.run(
-            ["bash", "-se"],
-            input=definitions + "\nrelease_tool\n",
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "pipe-ok")
-        # The real root interpreter must ignore hostile CWD/PYTHONPATH modules.
-        malicious = self.root / "shadow"
-        malicious.mkdir()
-        (malicious / "yaml.py").write_text(
-            "raise RuntimeError('untrusted module executed')\n"
-        )
-        (malicious / "argparse.py").write_text(
-            "raise RuntimeError('untrusted module executed')\n"
-        )
-        real = definitions.replace(
-            "python3 -c " + shlex.quote(check), 'python3 -I -B - "$@"'
-        )
-        result = subprocess.run(
-            ["bash", "-se"],
-            input=real + "\nrelease_tool --help\n",
-            cwd=malicious,
-            env=dict(os.environ, PYTHONPATH=str(malicious)),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--key-sha256", result.stdout)
-        self.assertNotIn("# RELEASE_HELPER_BODY", script)
-        self.assertNotIn("# RELEASE_SAFETY_BODY", script)
-        self.assertNotIn('HELPER_SOURCE = ""  # RELEASE_HELPER_SOURCE', script)
 
     def test_existing_run_cannot_be_reused(self):
         """Confirm that an existing run ID is never overwritten."""
@@ -671,281 +615,69 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
             with self.assertRaises(RuntimeError):
                 self.harness.boot_id(output)
 
-    def trust_helper(self):
-        """Get the wait function shared by the VM procedure and README."""
+    def admin_calls(self, function, admin_status=0, tools_installed=False):
+        """Run a remote.sh release function with rpm, dnf and the admin command stubbed."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        return shell_code(remote, function="wait_trust")
-
-    def run_trust_wait(self, outputs, exit_code=0, files=None, digest="a" * 64):
-        """Exercise the shared helper against independently specified trusted inventory."""
-        spec = importlib.util.spec_from_file_location(
-            "release_tool", Path(__file__).resolve().parents[1] / "scripts/release.py"
+        code = shell_code(remote, function="tools_installed") + shell_code(
+            remote, function=function
         )
-        assert spec is not None and spec.loader is not None
-        tool = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tool)
-        paths = files or ["/new/deployment/__main__.py"]
-        record = {
-            "files": {
-                path.removeprefix("/new/"): {"size": 123, "sha256": digest}
-                for path in paths
-            }
-        }
-        counter = 0
-
-        def command(arguments):
-            nonlocal counter
-            self.assertEqual(arguments, ["fapolicyd-cli", "--dump-db"])
-            counter += 1
-            print("Warning: fixture warning", file=sys.stderr)
-            if exit_code:
-                raise tool.ReleaseError("database command failed")
-            return types.SimpleNamespace(
-                stdout=outputs[min(counter - 1, len(outputs) - 1)]
-            )
-
-        stdout, stderr = io.StringIO(), io.StringIO()
-        status = 0
-        with (
-            mock.patch.object(tool, "published", return_value=record),
-            mock.patch.object(tool, "command", side_effect=command),
-            mock.patch.object(tool.time, "sleep"),
-            contextlib.redirect_stdout(stdout),
-            contextlib.redirect_stderr(stderr),
-        ):
-            try:
-                tool.wait_trust(Path("/new"), Path("/old"))
-            except tool.ReleaseError as error:
-                status = 1
-                print(str(error), file=stderr)
-        return types.SimpleNamespace(
-            returncode=status, stdout=stdout.getvalue(), stderr=stderr.getvalue()
-        ), counter
-
-    def test_trust_wait_accepts_delayed_update_without_mutations(self):
-        """Wait for the new entry and the removed old one without writing hash values."""
-        digest = "a" * 64
-        new = "file /new/deployment/__main__.py 123 " + digest + "\n"
-        old = "file /old/deployment/__main__.py 123 " + digest + "\n"
-        result, calls = self.run_trust_wait([old, old + new, new])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, 3)
-        self.assertIn("Warning: fixture warning", result.stderr)
-        self.assertNotIn(digest, result.stdout + result.stderr)
-        self.assertNotIn("--update", self.trust_helper())
-        self.assertNotIn("--file", self.trust_helper())
-
-    def test_trust_wait_preserves_paths_with_spaces(self):
-        """Accept real RPM paths with spaces and compare the whole release path."""
-        digest = "d" * 64
-        rows = [
-            "rpmdb /usr/lib/python3.9/site-packages/setuptools/command/launcher manifest.xml 123 "
-            + digest,
-            "rpmdb /usr/lib/python3.9/site-packages/setuptools/script (dev).tmpl 123 "
-            + digest,
-            "file /new/deployment-backup/__main__.py backup 123 " + digest,
-        ]
-        pending = "\n".join(rows) + "\n"
-        result, calls = self.run_trust_wait(
-            [
-                pending,
-                pending + "file /new/deployment/__main__.py 123 " + digest + "\n",
-            ],
-            digest=digest,
+        (self.root / "tools").mkdir(exist_ok=True)
+        (self.root / "tools/shop-tools-0.3.2-1.noarch.rpm").touch()
+        (self.root / "releases/shop-worker-1.2.3").mkdir(parents=True, exist_ok=True)
+        stubs = (
+            "rpm() { [[ $1 == -q ]] && return "
+            + ("0" if tools_installed else "1")
+            + "; }\n"
+            'sudo() { [[ $1 == -n ]] && shift; echo "$*" >> "$calls";'
+            ' [[ $1 == shop-admin ]] && return "$admin_status"; return 0; }\n'
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, 2)
-        self.assertNotIn(digest, result.stdout + result.stderr)
-
-    def test_package_trust_requires_every_file_and_all_old_entries_removed(self):
-        files = [
-            "/new/deployment/__main__.py",
-            "/new/deployment/common.py",
-            "/new/deployment/with spaces.py",
-        ]
-        rows = ["file " + path + " 123 " + "e" * 64 + "\n" for path in files]
-        old = "file /old/deployment/nested/render.py 123 " + "f" * 64 + "\n"
-        result, calls = self.run_trust_wait(
-            [rows[0], "".join(rows) + old, "".join(rows)], files=files, digest="e" * 64
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, 3)
-        for invalid in (
-            "".join(rows) + rows[0],
-            "".join(rows) + "file /new/deployment/unexpected.py 123 " + "a" * 64 + "\n",
-        ):
-            result, _ = self.run_trust_wait([invalid], files=files)
-            self.assertNotEqual(result.returncode, 0)
-        result, calls = self.run_trust_wait([rows[0]], files=files)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(calls, 30)
-
-    def test_trust_wait_times_out_with_stale_database(self):
-        """Reject a stale database after the limit even if the reads succeed."""
-        result, calls = self.run_trust_wait(
-            ["file /old/deployment/__main__.py 123 " + "b" * 64 + "\n"]
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(calls, 30)
-        self.assertIn("bounded polling", result.stderr)
-
-    def test_trust_wait_rejects_failed_empty_or_invalid_read(self):
-        """Stop at once on command errors or unusable stdout, also with warnings."""
-        valid = "file /new/deployment/__main__.py 123 " + "c" * 64 + "\n"
-        for output, status in ((valid, 1), ("", 0), ("invalid\n", 0)):
-            with self.subTest(output=output[:10], status=status):
-                result, calls = self.run_trust_wait([output], status)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(calls, 1)
-                self.assertIn("Warning: fixture warning", result.stderr)
-
-    def test_readme_uses_same_trust_wait_as_remote(self):
-        """Confirm that the documented function performs the same read-only check."""
-        readme = (
-            Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
-        )
-        self.assertIn('release_tool wait --product "$product_name"', readme)
-        self.assertIn('release_tool "${arguments[@]}"', self.trust_helper())
-        self.assertNotIn("find ", self.trust_helper())
-
-    def test_prepare_release_retries_trust_in_a_new_process(self):
-        """Every retry uses authenticated publication, never an existing-tree shortcut."""
-        remote = Path(__file__).with_name("remote.sh").read_text()
-        code = shell_code(remote, function="prepare_release")
         prefix = (
-            "set -eu\nproduct_name=shop\nbundle=worker\nversion=1.2.3\nbase=/operator\n"
-        )
-        stub = r"""
-sha256sum() { printf '%064d  fixture\n' 0; }
-release_tool() {
-    printf '%s\n' "$*"
-    if [[ $1 == prepare ]]; then return "$1_status"; fi
-}
-"""
-        stub = stub.replace('"$1_status"', '"$fixture_status"')
-        for status in (1, 0, 0):
-            result = subprocess.run(
-                ["bash", "-se"],
-                input=prefix
-                + "fixture_status="
-                + str(status)
-                + "\n"
-                + stub
-                + code
-                + "\nprepare_release\n",
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, status)
-            self.assertIn("provision-key --product shop", result.stdout)
-            self.assertIn(
-                "prepare --product shop --component worker --version 1.2.3",
-                result.stdout,
-            )
-            self.assertNotIn("--keyring /opt/shop/keyring.gpg", result.stdout)
-            self.assertNotIn("tar ", code)
-
-    def trust_procedure(self, source, install_status=0, health_status=0):
-        """Run the README or VM procedure with stubbed trust and install calls."""
-        if source == "remote":
-            remote = Path(__file__).with_name("remote.sh").read_text()
-            code = (
-                shell_code(remote, function="prepare_release")
-                + shell_code(remote, function="retire_release")
-                + shell_code(remote, action="upgrade")
-                + shell_code(remote, action="app-retire")
-            )
-        else:
-            readme = (
-                Path(__file__).resolve().parent.parent.joinpath("README.md").read_text()
-            )
-            blocks = re.findall(r"```sh\n(.*?)```", readme, re.DOTALL)
-            code = "\n".join(
-                block
-                for block in blocks
-                if "release_tool retire" in block
-                and "exec bash ./deploy.sh install" in block
-            )
-        (self.root / "version").write_text("0.1.1\n")
-        (self.root / "myproduct-app1-0.1.1-offline.tar.gz").touch()
-        calls = self.root / "trust-calls"
-        calls.write_text("")
-        stubs = r"""
-# Record shared-helper operations, without simulating filesystem safety here.
-release_tool() {
-    case "$1" in
-        provision-key) :;;
-        prepare) echo add >> "$calls"; echo update >> "$calls";;
-        retire) echo delete >> "$calls"; echo update >> "$calls";;
-        wait) :;;
-        *) return 9;;
-    esac
-}
-# Record trust actions and simulate install failures.
-sudo() {
-    case "$*" in
-        *'test -d'*) return 1;;
-        *'--file add'*) echo add >> "$calls";;
-        *'--file delete'*) echo delete >> "$calls";;
-        *'--update'*) echo update >> "$calls";;
-        *'exec bash ./deploy.sh install'*) echo install >> "$calls"; return "$install_status";;
-        *'find '*) printf '%s\n' "$product/deployment/__main__.py";;
-        *'--dump-db'*) printf "file %s 123 %064d\n" "$product/deployment/__main__.py" 0;;
-        *'systemctl --user'*) healthy;;
-    esac
-}
-# Run only stubbed commands under timeout in the test.
-timeout() { shift; "$@"; }
-# Simulate a passing checksum without reading a real archive.
-sha256sum() { :; }
-gpgv() { :; }
-# Simulate the health check after install.
-healthy() { echo health >> "$calls"; return "$health_status"; }
-seed_content() { :; }
-# ./deploy.sh validate is checked separately; it changes no trust state.
-validate_release() { :; }
-install_checked() { sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$product"; }
-"""
-        prefix = (
-            "set -eu\nproduct_name=myproduct\nservice_user=myproduct-ops\nbase="
-            + shlex.quote(str(self.root))
-            + "\nproduct=/var/lib/myproduct/releases/myproduct-0.1.1\nrelease=$product\nbundle=app1\nversion=0.1.1\narchive=/operator/archive\nrelease_root=/var/lib/myproduct/releases\nstate=/var/lib/myproduct/state\nold_version=0.1.0\nas_product() { :; }\ncalls="
-            + shlex.quote(str(calls))
-            + "\ninstall_status="
-            + str(install_status)
-            + "\nhealth_status="
-            + str(health_status)
-            + "\n"
-        )
+            "set -eu\nproduct_name=shop\nbundle=worker\nversion=1.2.3\n"
+            "service_user=shop-ops\nport=9443\nbase=" + shlex.quote(str(self.root))
+            + "\nproduct=" + shlex.quote(str(self.root / "releases/shop-worker-1.2.3"))
+            + "\ncalls=" + shlex.quote(str(self.root / "calls"))
+            + "\nadmin_status=" + str(admin_status) + "\n"
+        )  # fmt: skip
+        (self.root / "calls").write_text("")
         result = subprocess.run(
             ["bash", "-se"],
-            input=prefix + stubs + self.trust_helper() + code,
-            cwd=self.root,
+            input=prefix + stubs + code + "\n" + function + "\n",
             capture_output=True,
             text=True,
             check=False,
         )
-        return result, calls.read_text().splitlines()
+        return result, (self.root / "calls").read_text().splitlines()
 
-    def test_upgrade_trust_removed_only_after_install_and_health(self):
-        """Confirm the same safe trust order in README and the VM procedure."""
-        for source in ("remote", "README"):
-            with self.subTest(source=source):
-                result, calls = self.trust_procedure(source)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(
-                    calls, ["add", "update", "install", "health", "delete", "update"]
-                )
-
-    def test_failed_upgrade_keeps_old_trust(self):
-        """Keep the old trust when install or the health check fails."""
-        for source in ("remote", "README"):
-            for install, health in ((1, 0), (0, 1)):
-                with self.subTest(source=source, install=install, health=health):
-                    result, calls = self.trust_procedure(source, install, health)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertNotIn("delete", calls)
+    def test_releases_are_installed_and_retired_by_the_admin_command(self):
+        """Backlog 69 WP6: the matrix installs each release RPM as the manual does."""
+        result, calls = self.admin_calls("prepare_release")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        delivery = str(self.root / "rpm-worker-1.2.3")
+        self.assertEqual(
+            calls,
+            [
+                "dnf --disablerepo=* --setopt=localpkg_gpgcheck=0 -y -q install "
+                + str(self.root / "tools/shop-tools-0.3.2-1.noarch.rpm"),
+                "shop-admin " + delivery + " --user shop-ops --port 9443",
+            ],
+        )
+        # Installed tools are not installed again; a failing admin command stops.
+        result, calls = self.admin_calls("prepare_release", tools_installed=True)
+        self.assertEqual(
+            calls, ["shop-admin " + delivery + " --user shop-ops --port 9443"]
+        )
+        result, _ = self.admin_calls(
+            "prepare_release", admin_status=1, tools_installed=True
+        )
+        self.assertNotEqual(result.returncode, 0)
+        # Retirement is the administrator command again, without answers.
+        result, calls = self.admin_calls("retire_release", tools_installed=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ["shop-admin " + delivery])
+        result, _ = self.admin_calls(
+            "retire_release", admin_status=1, tools_installed=True
+        )
+        self.assertNotEqual(result.returncode, 0)
 
     def test_upgrade_preserves_credentials_and_orders_checks(self):
         """Confirm the upgrade order and reuse of the original passwords."""
@@ -1250,7 +982,7 @@ done
                 registry = base / "registry"
                 registry.mkdir()
                 files = {
-                    "scripts/release.py": b"untrusted Python must never be opened",
+                    "scripts/tool.py": b"untrusted Python must never be opened",
                     "images/images.tar": b"image archive",
                     "images/images.txt": b"127.0.0.1:5000/acceptance/busybox:1.37.0\n",
                 }
@@ -1259,7 +991,7 @@ done
                     for name, value in files.items()
                 )
                 if failure == "modified-python":
-                    files["scripts/release.py"] = b"changed after checksums"
+                    files["scripts/tool.py"] = b"changed after checksums"
                 elif failure == "unlisted-python":
                     files["scripts/extra.py"] = b"unlisted"
                 elif failure == "missing-image":
@@ -1484,38 +1216,10 @@ as_product() {
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("SHOULD_NOT_RUN", result.stdout)
 
-    def test_documented_install_enters_release_from_operator_directory(self):
-        """Confirm that the README command switches from the operator's cwd to the release."""
+    def test_lab_install_runs_from_the_release_directory(self):
+        """The private-output lab install starts deploy.sh in its release, not the cwd."""
         remote = Path(__file__).with_name("remote.sh").read_text()
-        # Check the public README command and the private-output lab runner separately.
-        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
-        command = next(
-            line.strip()
-            for line in readme.splitlines()
-            if "exec bash ./deploy.sh install" in line
-        )
-        command = command.replace('"$release"', '"$product"').replace(
-            "sudo ", "sudo -n ", 1
-        )
         self.assertIn("cwd=str(release)", shell_code(remote, heredoc="PRIVATE_INSTALL"))
-        release = self.root / "service home/releases/myproduct-test"
-        release.mkdir(parents=True)
-        (release / "deploy.sh").write_text('#!/bin/bash\npwd\nprintf "%s\\n" "$1"\n')
-        operator = self.root / "operator-private"
-        operator.mkdir(mode=0o700)
-        script = (
-            'product_name=myproduct\nservice_user=produser\nsudo() { shift 4; "$@"; }\nproduct=$1\n'
-            + command
-        )
-        result = subprocess.run(
-            ["bash", "-eu", "-c", script, "bash", str(release)],
-            cwd=operator,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines(), [str(release), "install"])
 
     def test_guest_security_profile_checks(self):
         """Confirm acceptance and rejection of the VM roles' security profiles."""

@@ -69,8 +69,8 @@ Run from the repository root with the contributor tools installed separately:
 ```sh
 ruff check deployment tests acceptance tools rpms.py
 ruff format --check deployment tests tools rpms.py
-pyright deployment/ bundle.py rpms.py tools/ scripts/release.py tests/ acceptance/ dev/smoke-test.py
-vermin -t=3.6- deployment/ bundle.py rpms.py tools/ scripts/release.py tests/ acceptance/prepare_host_test.py acceptance/release_safety_test.py
+pyright deployment/ bundle.py rpms.py tools/ tests/ acceptance/ dev/smoke-test.py
+vermin -t=3.6- deployment/ bundle.py rpms.py tools/ tests/ acceptance/prepare_host_test.py
 shellcheck deploy.sh build-bundle.sh dev/*.sh scripts/*.sh acceptance/remote.sh
 ```
 
@@ -110,10 +110,9 @@ check application behavior and the shipped declarations. Keep assertions about
 expected paths, resource names and bytes independent of production helpers.
 
 A supported executable temporary directory and working GPG agent are required
-for signature and host-setup tests. Journal tests also need Unix sockets. Report
-sandbox restrictions explicitly rather than treating blocked tests as passes.
-Host setup exercises ownership boundaries; running as root can change expected
-permission failures. Real rootless, SELinux and fapolicyd behavior belongs to the
+for the bundle signature tests, and `rpmbuild` for the RPM and administrator
+tests (skipped without it). Journal tests also need Unix sockets. Report
+sandbox restrictions explicitly rather than treating blocked tests as passes. Real rootless, SELinux and fapolicyd behavior belongs to the
 lab, not mocked local tests.
 
 For new behavior, follow [the review guide](../docs/REVIEW_GUIDE.md), including

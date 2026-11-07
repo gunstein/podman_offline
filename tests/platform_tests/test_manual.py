@@ -3,16 +3,19 @@
 docs/PRODUCTION-INSTALL.md is printed and followed literally (backlog 69 WP5).
 These checks catch a renamed option, a changed prompt or a changed "next"
 line in tools/ that the manual does not follow. They do not run the
-procedure; the --admin-rpm lab scenario does that.
+procedure; the --rpm-manual lab scenario runs its blocks literally.
 """
 
 import re
 import shlex
+import shutil
 import sys
 import unittest
 from pathlib import Path
 
 from deployment import arguments
+
+from helpers.product_fixture import WORKER, ProductFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -83,6 +86,24 @@ class ManualTests(unittest.TestCase):
             "produser@<server>) and run myproduct",
             MANUAL.read_text(),
         )
+
+
+class BundledManualTests(ProductFixture):
+    def test_every_bundle_ships_the_manual_with_working_links(self):
+        self.product_name = "cedar"
+        self.write_product(WORKER)
+        (self.source / "docs").mkdir()
+        for name in ("PRODUCTION-INSTALL.md", "PFX-CREDENTIALS.md"):
+            shutil.copy2(ROOT / "docs" / name, self.source / "docs" / name)
+        unpacked = self.build_and_unpack()["worker"]
+        shutil.rmtree(str(self.source))
+        manual = unpacked / "docs/PRODUCTION-INSTALL.md"
+        self.assertEqual(manual.read_bytes(), MANUAL.read_bytes())
+        for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", manual.read_text()):
+            if "://" not in target:
+                self.assertTrue(
+                    (manual.parent / target.split("#")[0]).is_file(), target
+                )
 
 
 if __name__ == "__main__":

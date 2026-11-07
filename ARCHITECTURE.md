@@ -23,7 +23,7 @@ build entrypoint and also uses `-B`.
 | `deployment/health.py` | Waits after each restart until the unit's app containers run and are healthy (podman inspect state only) |
 | `deployment/registrations.py` | Public route and client registrations (staging, comparison, writing) and the pending-operation record (retry state); used by install and uninstall, imports neither |
 | `deployment/deploy.py` | Initialization, DB/host checks, dependency/version checks, Quadlet/systemd and component lifecycle |
-| `scripts/release.py` | Independently authenticated root helper (`setup` composes preflight, explicit signed release preparation, guarded persistent journal and the authenticated host script; no runtime pending/config/credential reads): snapshot/signature verification, strict archive inventory, atomic immutable publication under `/var/lib/<product>/releases`, exact fapolicyd enrollment/wait and scoped retirement; never imports incoming code. |
+| `tools/admin.py`, `tools/runtime.py`, `rpms.py` | Backlog 69 RPM delivery: `rpms.py` wraps each built bundle as an unsigned release RPM and builds the tools RPM; `<product>-admin` (root) preflights the host, installs the delivered RPMs with dnf, prepares the host with `prepare-host.sh` and removes releases the runtime account no longer needs; `<product>` (runtime account) installs the newest release of each component through its own `deploy.sh`. |
 | `scripts/prepare-host.sh` | Explicit root host setup for an existing login account (`--user`): root-owned `/var/lib/<product>`, the account's `state/`/`config/`/`storage/`, subordinate IDs, SELinux equivalence, linger, port and the `user@<uid>` drop-in with `XDG_CONFIG_HOME`/`XDG_DATA_HOME`; drops to the account's UID/GID without groups/capabilities before descendant directory/lock preparation and relabeling. Its embedded Python helper (a here-document, because fapolicyd denies reading untrusted Python files before trust) uses directory descriptors and exclusive lock creation; it does not inspect application data. |
 
 `common.ROOT` is the directory above the package, both in source and unpacked
@@ -284,43 +284,30 @@ Each offline bundle ships the complete `deployment/` package with checksums and
 only its own resources/images. Bytecode and private state, including aliases to
 declared secrets/credential files, stay out of archives.
 
-An independently authenticated `scripts/release.py` runs with root authority via
-stdin, separate from bundle code. It locks the protected `/var/lib/<product>` anchor,
-snapshots archive/signature, checks gpgv against a separately provisioned keyring,
-validates every member and the exact checksum inventory, and publishes a complete
-root-owned release at `/var/lib/<product>/releases/<product>-<component>-<version>`.
-A root-owned `.release.json` binds the authenticated archive hash, file paths,
-sizes, modes and streamed hashes, including directory inventory and inode/mtime
-bindings. Payloads are never reopened as untrusted Python before enrollment. Existing releases must
-match it exactly; version content cannot be overwritten. Staging is never used
-as installed code. The account's `state/`, `config/` and `storage/` siblings
-stay separate and are never read by the helper.
-
-Only authenticated `deployment/` path/size/hash records are atomically enrolled
-in the scoped trust file using fapolicyd's documented text format. This avoids
-opening untrusted Python for CLI hashing; idempotent merges retain older versions. The shared bounded wait compares the live paths, sizes and SHA256
-values with the protected provenance, including removal of old trust on
-retirement. Root-controlled ancestors and files protect the `integrity = none`
-baseline after enrollment; `sha256` is supplementary, not a substitute. The
-helper refuses unexpected ownership, writable modes/ACLs, links and special
-files. The wrapper executes via Bash and Python imports run with `-B`; no new
-allow/crun/memfd or SELinux rules are introduced. The helper's own bootstrap is
-separately authenticated; it cannot trust its own unverified input.
+Each release reaches the target as an RPM (backlog 69, phase 1 unsigned) that
+installs the bundle unchanged at
+`/var/lib/<product>/releases/<product>-<component>-<version>`; the version is
+part of the package name, so versions install side by side. The RPM database
+owns the tree: fapolicyd trusts its files through `rpmdb`, `rpm -V` detects a
+changed file, and the package's only scriptlet is an erase guard that refuses
+removal unless the administrator command has just authorized exactly that
+package. The administrator command decides on a root-only copy of the
+delivered RPMs (newest per component, never older than installed, one content
+per version), installs them in one offline dnf transaction, runs each newest
+release once as the runtime account (trust check) and removes a release only
+once a newer one of its component is completed (`deploy.sh status --json` as
+the account). Phase 2 adds signatures checked against the product's own key.
 
 Normal deploy commands run as the service user against read-only release inputs.
-Config/credentials and lifecycle pending records remain owned by deploy. Old
-releases and trust survive install/health/e2e failures; root retirement follows
-all required checks and removes only the selected old release. Repeated calls
-resume enrollment of identical authenticated content; per-product locking and
-atomic directory rename prevent concurrent or partial publication.
+Config/credentials and lifecycle pending records remain owned by deploy. An
+older release survives the upgrade until the runtime account has completed the
+newer one.
 
 No migration code or old-layout fallback is added before the first real customer
 installation; current lab installations may be discarded. Incompatible changes
 after that milestone must provide migration preserving customer data/credentials.
-SELinux relabeling is supported: xattrs/ctime are excluded from the protected
-metadata bindings; root remains trusted. Historical pinned-release
-helpers and reports retain their original layouts. Current-change OL9 verification
-is pending; see [protected release verification](acceptance/RESULTS.md).
+Verification: the `--rpm-manual` scenario and the fixed matrix, which installs
+every release with the administrator command; see [results](acceptance/RESULTS.md).
 
 ## Production paths outside the login home (backlog 64)
 
@@ -331,7 +318,8 @@ root-owned installation root `/var/lib/<product>` (0755):
 
 | Path | Owner | Holds |
 | --- | --- | --- |
-| `releases/`, `keyring.gpg`, `.release.lock` | root | `scripts/release.py` publication |
+| `releases/` | root | one RPM-installed tree per release (`rpms.py`) |
+| `incoming/` | account, 0700 | credentials delivered by `<product>-admin --credentials` or `scp`, until `<product>` moves them to `state/` |
 | `state/` (`common.STATE`) | account, 0700 | config, credentials, import archives, metadata, markers, registrations, `pending-operation.json` |
 | `config/` | account, 0700 | `XDG_CONFIG_HOME`: `containers/systemd/` Quadlets (`common.QUADLET_DIR`), CNI lock |
 | `storage/` | account, 0700 | `XDG_DATA_HOME`: Podman graphroot `containers/storage`, volumes, caches |
@@ -371,8 +359,8 @@ drop-in redirects the XDG directories of that account's user manager only (one
 product per account); login shells keep their defaults, so interactive Podman
 diagnostics set the two variables explicitly (operator guide).
 
-Root never reads the bootstrap file: `prepare-host.sh` and `release.py` derive
-`/var/lib/<product>` from the authenticated release descriptor and validated
+Root never reads the bootstrap file: `prepare-host.sh` derives
+`/var/lib/<product>` from the product name of the tools RPM and validated
 arguments; deploy compares the user's setting with that prepared root and with
 the user manager. Source dev (`build/dev`, `dev/dev.sh`) and bundle building
 never call `layout.select()`, so a present bootstrap file cannot change them

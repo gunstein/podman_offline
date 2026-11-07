@@ -454,14 +454,6 @@ class RemoteActionTests(unittest.TestCase):
             self.assertTrue((state / "gateway/credentials/web/web.crt").is_file())
             self.assertFalse((state / "platform").exists())
 
-    def test_unit_tests_run_without_the_lab_signing_key(self):
-        """DEV exports the lab key for builds; product tests must not inherit it."""
-        self.assertIn(
-            'unit) cd "$src"; env -u BUNDLE_SIGNING_KEY -u GNUPGHOME python3 -B '
-            "tests/run.py all;;",
-            REMOTE,
-        )
-
     def test_bundle_argument_accepts_any_component_id_only(self):
         self.assertIn(
             "[[ $bundle =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || exit 2", REMOTE
@@ -634,30 +626,44 @@ class ScenarioTests(unittest.TestCase):
         harness.ssh = mock.Mock()
         harness.host = lambda role: role.lower()
         harness.guest = mock.Mock()
-        archive = harness.folder / "shop-gateway-0.4.7-offline.tar.gz"
-        archive.write_bytes(b"archive")
+        harness.ssh = mock.Mock(return_value="shop-tools-0.3.2-1.noarch.rpm\n")
+        rpm = "shop-gateway-0.4.7-0.4.7-1.noarch.rpm"
+        (harness.folder / rpm).write_bytes(b"rpm")
         harness.meta["bundles_built"] = runner.bundle_versions(
             "build noise\nshop-gateway-0.4.7-offline.tar.gz\n", "shop"
         )
         harness.transfer(bundle="gateway", tree="renamed")
-        sources = [call.args[0][-2] for call in harness.command.call_args_list]
+        sources = [str(call.args[0][-2]) for call in harness.command.call_args_list]
         # Demo provisioning travels separately; product bundles do not carry it.
         self.assertTrue(sources[0].endswith("/dev/generate-certificates.sh"))
         # PROD's fapolicyd denies opening untrusted Python files: the probe
         # travels compressed and no .py file is written to PROD.
-        self.assertEqual(sources[1].name, "prepare_host_test.py.gz")
+        probe = harness.command.call_args_list[1].args[0][-2]
+        self.assertEqual(probe.name, "prepare_host_test.py.gz")
         self.assertEqual(
-            gzip.decompress(sources[1].read_bytes()),
+            gzip.decompress(probe.read_bytes()),
             (runner.ROOT / "acceptance/prepare_host_test.py").read_bytes(),
         )
         targets = [str(call.args[0][-1]) for call in harness.command.call_args_list]
         self.assertEqual([t for t in targets if t.endswith(".py")], [])
-        self.assertTrue(
-            sources[2].endswith("/renamed/dist/shop-gateway-0.4.7-offline.tar.gz")
+        # Backlog 69: the release RPM and the tools RPM of the renamed tree.
+        self.assertEqual(harness.guest.call_args_list[0],
+                         mock.call("DEV", "release-rpm", "0.4.7", bundle="gateway"))  # fmt: skip
+        self.assertIn(
+            "dev:podman-offline-acceptance/transfer/renamed/dist/rpm/" + rpm, sources
         )
-        harness.guest.assert_called_once_with(
-            "PROD", "publish-release", "0.4.7", bundle="gateway"
+        self.assertIn(
+            "dev:podman-offline-acceptance/transfer/renamed/dist/rpm/shop-tools-0.3.2-1.noarch.rpm",
+            sources,
         )
+        self.assertIn(
+            "prod:podman-offline-acceptance/transfer/rpm-gateway-0.4.7/" + rpm, targets
+        )
+        self.assertFalse(
+            [s for s in sources if s.endswith((".tar.gz", ".asc", ".gpg"))]
+        )
+        self.assertEqual(harness.guest.call_args_list[-1],
+                         mock.call("PROD", "publish-release", "0.4.7", bundle="gateway"))  # fmt: skip
 
 
 class ClientRemovalCheckTests(unittest.TestCase):
