@@ -3919,9 +3919,10 @@ validation; it does not establish the cause of the remaining private Grate failu
 
 ## 63. Parameterise image versions with build-time variables
 
-Status: **implemented on branch `claude/backlog-63-image-variables`;
-product, unit and harness tests pass; real lab verification outstanding**
-(the matrix below). The resolver is `render.load_manifest`: it takes the
+Status: **implemented and lab-verified** on branch
+`claude/backlog-63-image-variables`: the full matrix plus status-retry and
+host-setup are CLEAN PASS on `d111718` (`c63b-*`,
+[results](acceptance/RESULTS.md)). The resolver is `render.load_manifest`: it takes the
 component and the product root from the manifest's place
 (`<root>/components/<id>/manifests/`), so a release builder that points
 `bundle.ROOT` at another checkout resolves that checkout's files. The
