@@ -11,33 +11,47 @@ environment's CA, the internal variant and the restore:
 python3 acceptance/acceptance.py --run whoami-1 --whoami run
 ```
 
-Backlog 69 WP2 (the tools RPM and `<product>-admin`) has its own focused
-scenario outside the fixed matrix until WP6 replaces the `release.py` flow:
+Backlog 69 WP6: the RPM delivery is verified by running the production
+manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd
+profile P1 and on the strict profile P2:
 
 ```sh
-python3 acceptance/acceptance.py --run "admin-rpm-$(git rev-parse --short HEAD)" --admin-rpm run
+python3 acceptance/acceptance.py --run "rpm-manual-$(git rev-parse --short HEAD)" --rpm-manual run
+python3 acceptance/acceptance.py --run "rpm-manual-p2-$(git rev-parse --short HEAD)" --rpm-manual --strict-fapolicyd run
 ```
 
-DEV builds the bundles, then the platform, help and tools RPMs (it installs
-`rpm-build` if missing). PROD installs the tools with `dnf`, must stop in
-preflight before any change while the runtime account is missing, then
-installs with `sudo myproduct-admin <delivery>`, repeats unchanged without
-options or terminal, receives credentials with `--credentials` (kept on a
-repeat, a different file refused) and refuses `dnf remove`/`rpm -e` of a
-release and of the tools. The credentials are the demo web certificate made
-on DEV in the delivery layout (`admin-medium`); only it and the public CA
-certificate reach PROD. The runtime account then runs `myproduct` (WP3) in a
-plain environment without terminal: the first run with
-`--public-origin`/`--ip-address` installs platform and help (`/livez` 204,
-`/help/` 200, credentials moved out of `incoming/`), an unchanged repeat
-restarts nothing (systemd invocation IDs), and `myproduct help` restarts only
-help. Then retirement (WP4): DEV builds the next help patch version and its
-RPM; `myproduct-admin` installs it and keeps the older help release while it
-is the completed version; `myproduct` installs the newer help (platform not
-restarted, `/help/` serves the new content); the next `myproduct-admin`
-removes the older release and its tree, leaves no authorization, removes
-nothing on a repeat, and a plain `rpm -e` of the newer release is still
-refused. The audit check requires no FANOTIFY/AVC denial.
+Every operator block of `docs/PRODUCTION-INSTALL.md` has a step ID
+(`<!-- operator: <id> -->`), and `STEPS` in `manual_run.py` says how the lab
+runs it: as the administrator over SSH, as the runtime user through a real SSH
+login (a lab-only key; the account is the declared prerequisite), from the
+controller as the runtime user's laptop (`scp`), or as a declared substitute
+(the lab copies the delivery to a directory instead of mounting a medium,
+which the manual allows). A block runs literally; only the manual's example
+values are replaced, and a changed step ID or example table stops the run.
+Prompts are answered in a pseudo-terminal as an operator types them; an
+unexpected prompt fails the step.
+
+DEV builds the bundles, the platform, help and tools RPMs and the demo
+supplier's web certificate in the delivery layout; the delivery directory on
+PROD holds the RPMs and `platform/credentials/` as one medium would. PROD
+then follows the manual: the tools with `dnf` (answering `y`); the admin
+command stops in preflight while the runtime account is missing and changes
+nothing; once the account exists it installs and prepares the host (the
+answers typed at its prompts) and an unchanged repeat installs nothing; plain
+`dnf remove`/`rpm -e` are refused. The runtime user's first `myproduct`
+(public address and IP address typed) stops on the missing web credentials;
+`--credentials` delivers them (a repeat keeps them, a different file on
+another medium is refused) and the next `myproduct` installs platform and
+help without asking again (`/livez` 204, `/help/` 200); a repeat restarts
+nothing and `myproduct help` restarts only help. A newer help release and
+credentials sent with `scp` follow: the admin command keeps the older help,
+`myproduct` is interrupted (terminal closed after help's validation) and a
+fresh login completes it, platform keeps running, and the next admin run
+removes the older release while a plain `rpm -e` stays refused. Last, with a
+tools module removed, the admin command fails with the documented symptom,
+`rpm -q` names the delivered version, the documented reinstall repairs it,
+and the journal lines for sharing are checked. The audit check requires no
+FANOTIFY/AVC denial. Local checks: `acceptance/test_manual_run.py`.
 
 Focused lab results, exact tested commits, the six conversion points and the
 public versus internal comparison are in [latest results](RESULTS.md).

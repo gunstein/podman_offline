@@ -1024,30 +1024,6 @@ check_client_removed() {
     [[ $removed == 302\ *errorId=* && $removed != *"/account/login"* ]] \
         || { echo "FAIL: Identity does not refuse the removed client: ${removed%%\?*}"; return 1; }
 }
-# Run <product>-admin as the administrator does (backlog 69 WP2), never with a
-# terminal; print its output and keep it and the exit status for checks.
-run_admin() {
-    admin_status=0
-    admin_output=$(sudo -n "$product_name-admin" "$@" </dev/null 2>&1) || admin_status=$?
-    printf '%s\n' "$admin_output"
-    echo "admin exit=$admin_status"
-}
-# Run <product> as the runtime account with what a console or SSH login
-# gives: HOME, USER, LOGNAME, PATH and pam_systemd's XDG_RUNTIME_DIR; no XDG
-# config/data or Podman variables (deploy.sh sets those), no terminal. Keep
-# the output and exit status for checks.
-run_runtime() {
-    local home
-    home=$(getent passwd "$service_user" | cut -d: -f6)
-    runtime_status=0
-    runtime_output=$(sudo -n -u "$service_user" env -i HOME="$home" USER="$service_user" \
-        LOGNAME="$service_user" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
-        XDG_RUNTIME_DIR="/run/user/$(id -u "$service_user")" \
-        bash -c 'cd "$HOME" && exec "$@"' bash "$product_name" "$@" </dev/null 2>&1) \
-        || runtime_status=$?
-    printf '%s\n' "$runtime_output"
-    echo "runtime exit=$runtime_status"
-}
 # Each product unit with its systemd invocation ID, which changes on a restart.
 invocations() {
     local unit
@@ -2795,89 +2771,13 @@ rpms)
     ./build-rpms.sh platform help --tools
     ls -l dist/rpm
     ;;
-admin-bootstrap)
-    # Once per server with OS tools only, as the manual will say.
-    tools=("$base/delivery/$product_name"-tools-*.noarch.rpm)
-    [[ ${#tools[@]} == 1 && -f ${tools[0]} ]]
-    sudo -n dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 -y -q install "${tools[0]}"
-    rpm -q "$product_name-tools"
-    test -x "/usr/sbin/$product_name-admin"
-    echo "PASS: $product_name-tools installed"
-    ;;
-admin-preflight-stop)
-    # Before the lab baseline the runtime account does not exist.
-    run_admin "$base/delivery" --user "$service_user" --port "$port"
-    [[ $admin_status == 1 ]]
-    grep -Fq 'Preflight stopped before any change' <<< "$admin_output"
-    grep -Fq "Account $service_user does not exist" <<< "$admin_output"
-    installed=$(rpm -qa "$product_name-*" --queryformat '%{NAME}\n')
-    [[ $installed == "$product_name-tools" ]]
-    sudo -n test ! -e "$install_root"
-    test ! -e "/etc/$product_name/host.conf"
-    echo "PASS: preflight stopped before any change"
-    ;;
 admin-baseline) lab_host_baseline;;
-admin-install)
-    run_admin "$base/delivery" --user "$service_user" --port "$port"
-    [[ $admin_status == 0 ]]
-    grep -Fxq "PASS: $product_name-admin completed" <<< "$admin_output"
-    for component in platform help; do
-        name=$(rpm -qa "$product_name-$component-*" --queryformat '%{NAME}\n')
-        [[ $name =~ ^$product_name-$component-[0-9]+\.[0-9]+\.[0-9]+$ ]]
-        rpm -V "$name"
-        grep -Fxq "[OK] $service_user can run $name" <<< "$admin_output"
-        [[ $(stat -c '%U %a' "$release_root/$name") == "root 755" ]]
-    done
-    grep -Fxq "HTTPS_PORT=$port" "/etc/$product_name/host.conf"
-    [[ $(stat -c '%U %a' "/etc/$product_name/host.conf") == "root 644" ]]
-    for name in state incoming config storage; do
-        [[ $(sudo -n stat -c '%U %a' "$install_root/$name") == "$service_user 700" ]]
-    done
-    [[ $(loginctl show-user "$service_user" -p Linger --value) == yes ]]
-    sudo -n firewall-cmd --query-port="$port/tcp"
-    test -d /var/log/journal
-    echo "PASS: releases installed with dnf, host prepared, $service_user runs each release"
-    ;;
-admin-repeat)
-    # No options and no terminal: the account and port come from the host.
-    run_admin "$base/delivery"
-    [[ $admin_status == 0 ]]
-    if grep -Fq '[OK] installed' <<< "$admin_output"; then echo "FAIL: a repeat installed a package"; exit 1; fi
-    for component in platform help; do
-        grep -Eq "^\[OK\] $product_name-$component-[0-9.]+ [0-9.]+ is installed$" <<< "$admin_output"
-    done
-    echo "PASS: unchanged repeat installed nothing and asked nothing"
-    ;;
 admin-medium)
     # Demo-only supplier credentials on DEV, already in the delivery layout
     # <component>/credentials/...; never generated on the production host.
     [[ $role == DEV ]]
     bash "$src/dev/generate-certificates.sh" --root "$base/medium" platform "$prod_host"
     (cd "$base/medium" && find . -type f | sort)
-    ;;
-admin-credentials)
-    # The web certificate and key, as delivered on a medium (backlog 69, decision 8).
-    medium="$base/medium"
-    key=platform/credentials/web/web.key
-    test -f "$medium/$key"
-    target="$install_root/incoming/$key"
-    run_admin --credentials "$medium"
-    [[ $admin_status == 0 ]]
-    if grep -Fq "PRIVATE KEY" <<< "$admin_output"; then echo "FAIL: credential content printed"; exit 1; fi
-    [[ $(sudo -n stat -c '%U %a' "$target") == "$service_user 600" ]]
-    [[ $(sudo -n stat -c '%U %a' "${target%/*}") == "$service_user 700" ]]
-    sudo -n cmp "$target" "$medium/$key"
-    run_admin --credentials "$medium"
-    [[ $admin_status == 0 ]]
-    grep -Fq "incoming/$key is already there" <<< "$admin_output"
-    other="$base/other-medium"
-    mkdir -p "$other/${key%/*}"
-    (umask 077; printf 'different\n' > "$other/$key")
-    run_admin --credentials "$other"
-    [[ $admin_status == 1 ]]
-    grep -Fq "already exist with other content; nothing was copied" <<< "$admin_output"
-    sudo -n cmp "$target" "$medium/$key"
-    echo "PASS: credentials copied as $service_user, kept on a repeat, a different file refused"
     ;;
 admin-erase-guard)
     name=$(rpm -qa "$product_name-help-*" --queryformat '%{NAME}\n')
@@ -2892,53 +2792,6 @@ admin-erase-guard)
     rpm -V "$name"
     echo "PASS: plain dnf remove and rpm -e refused; packages intact"
     ;;
-runtime-first)
-    # Backlog 69 WP3: the runtime account's one command, with the harness's
-    # answers as options; the port comes from host.conf.
-    run_runtime --public-origin "https://$prod_host:$port" --ip-address "$prod_ip"
-    [[ $runtime_status == 0 ]]
-    grep -Fxq "PASS: $product_name completed" <<< "$runtime_output"
-    for component in platform help; do
-        grep -Eq "^\[OK\] $component [0-9.]+ installed$" <<< "$runtime_output"
-    done
-    remaining=$(sudo -n find "$install_root/incoming" -mindepth 1)
-    [[ -z $remaining ]] || { echo "FAIL: delivered credentials left in incoming/"; exit 1; }
-    [[ $(sudo -n stat -c '%U %a' "$state/platform/credentials/web/web.key") == "$service_user 600" ]]
-    sudo -n cmp "$state/platform/credentials/web/web.key" "$base/medium/platform/credentials/web/web.key"
-    sudo -n grep -Fxq "HTTPS_PORT: $port" "$state/platform/config.yaml"
-    for path_code in "livez 204" "help/ 200"; do
-        set -- $path_code
-        http=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
-            --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
-            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/$1")
-        [[ $http == "$2" ]] || { echo "FAIL: /$1 answered $http, expected $2"; exit 1; }
-    done
-    invocations > "$base/invocations-first"
-    echo "PASS: $product_name installed platform and help; /livez 204, /help/ 200"
-    ;;
-runtime-repeat)
-    # No options and no terminal: nothing is asked, installed or restarted.
-    run_runtime
-    [[ $runtime_status == 0 ]]
-    if grep -Eq '^\[OK\] [a-z0-9-]+ [0-9.]+ installed$' <<< "$runtime_output"; then
-        echo "FAIL: a repeat installed a component"; exit 1
-    fi
-    invocations | diff "$base/invocations-first" -
-    echo "PASS: unchanged repeat installed and restarted nothing"
-    ;;
-runtime-reinstall)
-    # Decision 6: <product> <component> installs that one again with its config.
-    run_runtime help
-    [[ $runtime_status == 0 ]]
-    grep -Eq "^\[OK\] help [0-9.]+ installed$" <<< "$runtime_output"
-    invocations > "$base/invocations-reinstall"
-    first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
-    first_help=$(grep "^$product_name-help.service " "$base/invocations-first")
-    grep -Fxq "$first_platform" "$base/invocations-reinstall" \
-        || { echo "FAIL: platform restarted"; exit 1; }
-    if grep -Fxq "$first_help" "$base/invocations-reinstall"; then echo "FAIL: help was not restarted"; exit 1; fi
-    echo "PASS: $product_name help restarted help only"
-    ;;
 rpm-upgrade)
     # Backlog 69 WP4: the RPM of the newer release help-upgrade-bundle just
     # built, beside the first RPMs in dist/rpm, as a supplier would deliver it.
@@ -2950,27 +2803,94 @@ rpms.build_rpm(Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], Path("d
         "dist/$archive" "$product_name" "$bundle" "$requested_version"
     ls -l dist/rpm
     ;;
-admin-upgrade)
-    # The newer help release is installed; the older one is still in use.
-    old="$product_name-help-$old_version" new="$product_name-help-$requested_version"
-    run_admin "$base/delivery"
-    [[ $admin_status == 0 ]] || { echo "FAIL: $product_name-admin failed"; exit 1; }
-    grep -Fxq "[OK] installed $new" <<< "$admin_output" \
-        || { echo "FAIL: $new was not installed"; exit 1; }
-    grep -Fxq "[OK] $old kept: help $old_version is the installed version" \
-        <<< "$admin_output" || { echo "FAIL: $old was not kept as the installed version"; exit 1; }
-    rpm -q "$old" "$new" || { echo "FAIL: both help releases must be installed"; exit 1; }
-    echo "PASS: $new installed; $old kept while $service_user uses help $old_version"
+rpm-nothing-changed)
+    # After the preflight stop (backlog 69 WP6): only the tools are installed.
+    installed=$(rpm -qa "$product_name-*" --queryformat '%{NAME}\n')
+    [[ $installed == "$product_name-tools" ]] || { echo "FAIL: a package was installed"; exit 1; }
+    sudo -n test ! -e "$install_root" || { echo "FAIL: $install_root was created"; exit 1; }
+    test ! -e "/etc/$product_name/host.conf" || { echo "FAIL: host.conf was written"; exit 1; }
+    echo "PASS: preflight stopped before any change"
     ;;
-runtime-upgrade)
-    # The runtime account installs the newer help; platform keeps running.
-    run_runtime
-    [[ $runtime_status == 0 ]] || { echo "FAIL: $product_name failed"; exit 1; }
-    grep -Fxq "[OK] help $requested_version installed" <<< "$runtime_output" \
-        || { echo "FAIL: help $requested_version was not installed"; exit 1; }
+rpm-host-check)
+    # The host state the manual's step 3 promises; the command ran from the manual.
+    for component in platform help; do
+        name=$(rpm -qa "$product_name-$component-*" --queryformat '%{NAME}\n')
+        [[ $name =~ ^$product_name-$component-[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "FAIL: no single $component release package"; exit 1; }
+        rpm -V "$name" || { echo "FAIL: $name is damaged"; exit 1; }
+        [[ $(stat -c '%U %a' "$release_root/$name") == "root 755" ]] \
+            || { echo "FAIL: $release_root/$name is not root 755"; exit 1; }
+    done
+    grep -Fxq "HTTPS_PORT=$port" "/etc/$product_name/host.conf" \
+        || { echo "FAIL: host.conf does not hold port $port"; exit 1; }
+    [[ $(stat -c '%U %a' "/etc/$product_name/host.conf") == "root 644" ]] \
+        || { echo "FAIL: host.conf is not root 644"; exit 1; }
+    for name in state incoming config storage; do
+        [[ $(sudo -n stat -c '%U %a' "$install_root/$name") == "$service_user 700" ]] \
+            || { echo "FAIL: $install_root/$name is not $service_user 700"; exit 1; }
+    done
+    [[ $(loginctl show-user "$service_user" -p Linger --value) == yes ]] \
+        || { echo "FAIL: linger is off"; exit 1; }
+    sudo -n firewall-cmd --query-port="$port/tcp" || { echo "FAIL: port $port is closed"; exit 1; }
+    test -d /var/log/journal || { echo "FAIL: no persistent journal"; exit 1; }
+    echo "PASS: releases installed with dnf, host prepared for $service_user"
+    ;;
+rpm-other-medium)
+    # Lab infrastructure: a second medium whose web.key differs.
+    other="$base/other-medium/platform/credentials/web"
+    mkdir -p "$other"
+    (umask 077; printf 'different\n' > "$other/web.key")
+    ;;
+rpm-credentials-check)
+    # The delivered key in incoming/, as the runtime user, byte for byte.
+    key=platform/credentials/web/web.key
+    target="$install_root/incoming/$key"
+    [[ $(sudo -n stat -c '%U %a' "$target") == "$service_user 600" ]] \
+        || { echo "FAIL: $target is not $service_user 600"; exit 1; }
+    [[ $(sudo -n stat -c '%U %a' "${target%/*}") == "$service_user 700" ]] \
+        || { echo "FAIL: ${target%/*} is not $service_user 700"; exit 1; }
+    sudo -n cmp -s "$target" "$base/delivery/$key" \
+        || { echo "FAIL: $target differs from the delivered key"; exit 1; }
+    echo "PASS: incoming/$key is the delivered key, $service_user 600"
+    ;;
+rpm-runtime-check)
+    # After the runtime user's first complete run: credentials moved, HTTPS answers.
+    remaining=$(sudo -n find "$install_root/incoming" -mindepth 1)
+    [[ -z $remaining ]] || { echo "FAIL: delivered credentials left in incoming/"; exit 1; }
+    [[ $(sudo -n stat -c '%U %a' "$state/platform/credentials/web/web.key") == "$service_user 600" ]] \
+        || { echo "FAIL: the web key in state/ is not $service_user 600"; exit 1; }
+    sudo -n cmp -s "$state/platform/credentials/web/web.key" "$base/delivery/platform/credentials/web/web.key" \
+        || { echo "FAIL: the web key in state/ is not the delivered one"; exit 1; }
+    sudo -n grep -Fxq "PUBLIC_ORIGIN: https://$prod_host:$port" "$state/platform/config.yaml" \
+        || { echo "FAIL: the typed public address is not in config.yaml"; exit 1; }
+    for path_code in "livez 204" "help/ 200"; do
+        set -- $path_code
+        http=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
+            --resolve "$prod_host:$port:$prod_ip" --silent --show-error --max-time 5 \
+            --output /dev/null --write-out '%{http_code}' "https://$prod_host:$port/$1")
+        [[ $http == "$2" ]] || { echo "FAIL: /$1 answered $http, expected $2"; exit 1; }
+    done
+    invocations > "$base/invocations-first"
+    echo "PASS: platform and help installed; /livez 204, /help/ 200"
+    ;;
+rpm-no-restart)
+    # Capture first: diff reads everything, but keep one pattern for all checks.
+    now=$(invocations)
+    diff "$base/invocations-first" - <<< "$now" || { echo "FAIL: a service restarted"; exit 1; }
+    echo "PASS: no service restarted"
+    ;;
+rpm-reinstall-check)
+    # Decision 6: <product> help restarted help and only help.
+    now=$(invocations)
     first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
-    # Capture first: grep -q stops reading at the first line, and under
-    # pipefail the writer's SIGPIPE would read as a failed check.
+    first_help=$(grep "^$product_name-help.service " "$base/invocations-first")
+    grep -Fxq "$first_platform" <<< "$now" || { echo "FAIL: platform restarted"; exit 1; }
+    if grep -Fxq "$first_help" <<< "$now"; then echo "FAIL: help was not restarted"; exit 1; fi
+    echo "PASS: only help restarted"
+    ;;
+rpm-upgrade-check)
+    # The newer help serves its content; platform kept running; incoming/ consumed.
+    first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
     now=$(invocations)
     grep -Fxq "$first_platform" <<< "$now" || { echo "FAIL: platform restarted"; exit 1; }
     body=$(curl --noproxy '*' --cacert "$base/medium/PKI/private/ca.crt" \
@@ -2978,30 +2898,34 @@ runtime-upgrade)
         "https://$prod_host:$port/help/")
     grep -Fq "help-release-$requested_version" <<< "$body" \
         || { echo "FAIL: /help/ does not serve help $requested_version"; exit 1; }
-    echo "PASS: $product_name installed help $requested_version; platform not restarted"
+    remaining=$(sudo -n find "$install_root/incoming" -mindepth 1)
+    [[ -z $remaining ]] || { echo "FAIL: credentials sent with scp left in incoming/"; exit 1; }
+    echo "PASS: help $requested_version served; platform not restarted; incoming/ empty"
     ;;
-admin-retire)
-    # Decision 3: the older release goes once the newer one is completed; the
-    # erase guard stays closed afterwards and a repeat removes nothing.
+rpm-retire-check)
+    # Decision 3: the older release is gone with its tree; the guard stays closed.
     old="$product_name-help-$old_version" new="$product_name-help-$requested_version"
-    run_admin "$base/delivery"
-    [[ $admin_status == 0 ]] || { echo "FAIL: $product_name-admin failed"; exit 1; }
-    grep -Fxq "[OK] removed $old, which $service_user no longer uses" <<< "$admin_output" \
-        || { echo "FAIL: $old was not removed"; exit 1; }
     if rpm -q "$old" >/dev/null 2>&1; then echo "FAIL: $old is still installed"; exit 1; fi
     sudo -n test ! -e "$release_root/$old" || { echo "FAIL: $release_root/$old is left"; exit 1; }
     sudo -n test ! -e "$erase_authorization" || { echo "FAIL: the erase authorization is left"; exit 1; }
     platform=$(rpm -qa "$product_name-platform-*" --queryformat '%{NAME}\n')
     rpm -V "$new" "$platform" "$product_name-tools" \
         || { echo "FAIL: a remaining package is damaged"; exit 1; }
-    run_admin "$base/delivery"
-    [[ $admin_status == 0 ]] || { echo "FAIL: the repeat failed"; exit 1; }
-    if grep -Fq "[OK] removed" <<< "$admin_output"; then echo "FAIL: a repeat removed a release"; exit 1; fi
     expect_refusal sudo -n rpm -e "$new"
     grep -Fq "removing $new is refused" <<< "$refusal_output" \
         || { echo "FAIL: rpm -e $new was not refused by the guard"; exit 1; }
     rpm -q "$new" || { echo "FAIL: $new is gone"; exit 1; }
     echo "PASS: $old removed with its tree, $new and the others intact, a plain erase still refused"
+    ;;
+rpm-tools-damage)
+    # Fault injection outside the product: a tools module goes missing.
+    sudo -n rm -f "/usr/libexec/$product_name-tools/admin.py"
+    if rpm -V "$product_name-tools" >/dev/null 2>&1; then echo "FAIL: rpm -V misses the damage"; exit 1; fi
+    echo "PASS: the tools are damaged"
+    ;;
+rpm-tools-intact)
+    rpm -V "$product_name-tools" || { echo "FAIL: the tools are still damaged"; exit 1; }
+    echo "PASS: the tools are intact"
     ;;
 password-guard)
     # Backlog 82: the component's database password is a MOUNTS secret file.

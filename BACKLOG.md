@@ -1312,6 +1312,23 @@ findings and lists five open ones. The `release.py` procedure moved
 unchanged to `docs/RELEASE-PY-INSTALL.md` as input for `--host-setup` only.
 `--admin-rpm` passed on OL9 on the WP5 commit (`m69-admin-rpm-b5b86d9`).
 Human trial: outstanding (item 68). Next: WP6.
+**Decision (product owner, 2026-11-07):** changing a setting after
+installation stays the documented `config.yaml` edit followed by
+`<product> <component>`; no setting command is built now. It is a known gap
+(walkthrough open finding 3), to be revisited when the item 68 trial or a
+customer shows the need. WP6 starts now, before the item 68 trial.
+Status 2026-11-07, WP6 part 1: the lab scenario `--rpm-manual` (and
+`--strict-fapolicyd` for P2) runs the manual's command blocks literally
+(`acceptance/manual_run.py`: step IDs mapped in `STEPS`, example values
+replaced, prompts typed in a pseudo-terminal, the runtime user through a real
+SSH login), with the stops of the manual (missing account, missing
+credentials, a different credential), an interruption continued in a fresh
+login, upgrade, retirement and the tools repair; local checks in
+`acceptance/test_manual_run.py`. It replaces `--admin-rpm`; no lab run yet.
+Scope finding: every fixed-matrix scenario still publishes its PROD releases
+with `release.py` (`prepare_release`, `wait_trust`, `retire` in
+`acceptance/remote.sh`), so removing the `release.py` flow means moving the
+matrix's root publication to the RPMs first; decision needed before part 2.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import host_setup as operator_flow
+import manual_run
 from pve import Proxmox, env_file
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,7 +121,8 @@ class Run:
         self.status_retry = False
         self.host_setup = False
         self.whoami = False
-        self.admin_rpm = False
+        self.rpm_manual = False
+        self.strict_fapolicyd = False
         self.config_file = config
         self.folder = RUNS / run_id
         self.folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -286,7 +288,9 @@ class Run:
         """Check a clean checkout, lab access and profiles before the VMs change."""
         self.cfg = env_file(self.config_file)
         validate(self.cfg)
-        programs = ("git", "ssh", "scp") + (("ssh-keygen",) if self.host_setup else ())
+        programs = ("git", "ssh", "scp") + (
+            ("ssh-keygen",) if self.host_setup or self.rpm_manual else ()
+        )
         for program in programs:
             if not shutil.which(program):
                 raise RuntimeError("Missing controller tool: " + program)
@@ -302,7 +306,8 @@ class Run:
             status_retry=self.status_retry,
             host_setup=self.host_setup,
             whoami=self.whoami,
-            admin_rpm=self.admin_rpm,
+            rpm_manual=self.rpm_manual,
+            strict_fapolicyd=self.strict_fapolicyd,
             dev=self.cfg["DEV_IP"],
             prod=self.cfg["PROD_IP"],
             start_epoch=self.started_epoch,
@@ -859,8 +864,8 @@ class Run:
         if self.whoami:
             self.execute_whoami()
             return
-        if self.admin_rpm:
-            self.execute_admin_rpm()
+        if self.rpm_manual:
+            manual_run.execute(self, strict=self.strict_fapolicyd)
             return
         actions = [
             "unit",
@@ -1113,8 +1118,11 @@ class Run:
     def transfer_medium(self):
         """The demo supplier's credential medium: DEV to PROD through private files.
 
-        Only platform/credentials/ (the delivery layout) and the public CA
-        certificate travel; the CA key stays on DEV.
+        platform/credentials/ (the delivery layout) goes into PROD's delivery
+        directory beside the RPMs, as on one medium; the public CA certificate
+        goes to medium/ for the harness's own HTTPS checks; the CA key stays
+        on DEV. The controller keeps its copy in the private directory (the
+        runtime user's laptop, for scp) until cleanup.
         """
         assert self.private is not None
         base = "podman-offline-acceptance/" + self.id
@@ -1133,73 +1141,11 @@ class Run:
         self.ssh("PROD", "mkdir -m 700 " + shlex.quote(base + "/medium"))
         self.command(
             SCP
-            + [
-                "-r",
-                local / "platform",
-                local / "PKI",
-                self.host("PROD") + ":" + base + "/medium/",
-            ]
+            + ["-r", local / "platform", self.host("PROD") + ":" + base + "/delivery/"]
         )
-        shutil.rmtree(str(local))
-
-    def execute_admin_rpm(self):
-        """Backlog 69 WP2 on a real host: the tools RPM and <product>-admin.
-
-        A focused scenario outside the fixed matrix, until WP6 replaces the
-        release.py flow. DEV builds the platform and help release RPMs and the
-        tools RPM and the demo supplier's credential medium; PROD installs the
-        tools with dnf (the bootstrap), sees the preflight stop before any
-        change, then installs, repeats unchanged, receives credentials and
-        refuses a plain erase. The runtime account then runs <product> (WP3):
-        first installation, an unchanged repeat and one component again.
-        Last, retirement (WP4) of the help release after a newer one.
-        """
-        for action in ("build-images", "pull-images"):
-            self.step("03-" + action, lambda a=action: self.guest("DEV", a))
-        self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
-        self.step("04-rpms", lambda: self.guest("DEV", "rpms"))
-        self.step("04-admin-medium", lambda: self.guest("DEV", "admin-medium"))
-        self.step("05-transfer-rpms", self.transfer_rpms)
-        self.step("05-transfer-medium", self.transfer_medium)
-        for action in (
-            "admin-bootstrap",
-            "admin-preflight-stop",
-            "admin-baseline",
-            "admin-install",
-            "admin-repeat",
-            "admin-credentials",
-            "admin-erase-guard",
-        ):
-            self.step("06-" + action, lambda a=action: self.guest("PROD", a))
-        for action in ("runtime-first", "runtime-repeat", "runtime-reinstall"):
-            self.step("07-" + action, lambda a=action: self.guest("PROD", a))
-        self.retire_help()
-        self.finished = True
-
-    def retire_help(self):
-        """Backlog 69 WP4: a newer help release, then retirement of the older one.
-
-        The administrator installs the newer RPM (the older one stays in use),
-        the runtime account installs it, and the next administrator run removes
-        the older release.
-        """
-        old = (ROOT / "components/help/VERSION").read_text().strip()
-        major, minor, patch = old.split(".")
-        new = f"{major}.{minor}.{int(patch) + 1}"
-        self.meta["help_retire_versions"] = [old, new]
-        self.step(
-            "08-help-build",
-            lambda: self.guest("DEV", "help-upgrade-bundle", new, bundle="help"),
+        self.command(
+            SCP + ["-r", local / "PKI", self.host("PROD") + ":" + base + "/medium/"]
         )
-        self.step(
-            "08-help-rpm", lambda: self.guest("DEV", "rpm-upgrade", new, bundle="help")
-        )
-        self.step("08-transfer-rpms", self.transfer_rpms)
-        for action in ("admin-upgrade", "runtime-upgrade", "admin-retire"):
-            self.step(
-                "09-" + action,
-                lambda a=action: self.guest("PROD", a, new, old_version=old),
-            )
 
     def execute_whoami(self):
         """Install the .NET/TypeScript demo app3 offline and check its conversion risks.
@@ -1420,15 +1366,22 @@ def main():
         help="Install platform, identity and the .NET/TypeScript app3 and check backlog 71",
     )
     parser.add_argument(
-        "--admin-rpm",
+        "--rpm-manual",
         action="store_true",
-        help="Install the tools and release RPMs with <product>-admin (backlog 69 WP2)",
+        help="Run the production manual's commands for the RPM delivery (backlog 69 WP6)",
+    )
+    parser.add_argument(
+        "--strict-fapolicyd",
+        action="store_true",
+        help="With --rpm-manual: apply the strict fapolicyd profile P2 first",
     )
     args = parser.parse_args()
     if args.whoami and (args.status_retry or args.host_setup):
         parser.error("--whoami is a separate focused scenario")
-    if args.admin_rpm and (args.status_retry or args.host_setup):
-        parser.error("--admin-rpm is a separate focused scenario")
+    if args.rpm_manual and (args.status_retry or args.host_setup):
+        parser.error("--rpm-manual is a separate focused scenario")
+    if args.strict_fapolicyd and not args.rpm_manual:
+        parser.error("--strict-fapolicyd applies only to --rpm-manual")
     if args.host_setup and (args.status_retry or args.identity_only or args.help_only):
         parser.error(
             "--host-setup is a separate focused scenario; choose normal, renamed or platform-only"
@@ -1443,7 +1396,7 @@ def main():
                 args.platform_help_only,
                 args.renamed_product,
                 args.whoami,
-                args.admin_rpm,
+                args.rpm_manual,
             )
         )
         > 1
@@ -1460,7 +1413,8 @@ def main():
     run.status_retry = args.status_retry
     run.host_setup = args.host_setup
     run.whoami = args.whoami
-    run.admin_rpm = args.admin_rpm
+    run.rpm_manual = args.rpm_manual
+    run.strict_fapolicyd = args.strict_fapolicyd
     try:
         run.execute()
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - always produce evidence

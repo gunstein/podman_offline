@@ -7,8 +7,9 @@ enough to type from a printed copy. Design explanations are in the
 
 **Status:** RPM delivery, backlog 69 phase 1 (unsigned RPMs). Steps 2, 3, 4
 and 6 and the upgrade passed the automated OL9 lab scenario `--admin-rpm`,
-with the answers given as options instead of typed at the prompts; mounting,
-the prompts and the tools repair were not part of that run. The AI
+with the answers given as options. The lab scenario `--rpm-manual` runs this
+manual's command blocks literally, with typed answers and the tools repair;
+it has no lab run yet. Mounting is not part of either. The AI
 walkthrough is in `acceptance/OPERATOR-REVIEW.md`. A test with a person
 following this manual alone is still outstanding (backlog 68).
 
@@ -38,6 +39,7 @@ in the commands changes.
 | `192.0.2.10` | the server's IP address |
 | `8443` | the HTTPS port |
 | `/dev/sdb1` | the delivery medium (USB stick or DVD); step 1 shows how to find it |
+| `/mnt` | where the delivery is; a directory the delivery was copied to works too |
 
 ## Before you begin
 
@@ -77,6 +79,7 @@ on media from the supplier that stayed in trusted hands.
 
 **Server, administrator.** Insert the medium, then list the disks:
 
+<!-- operator: find-medium -->
 ```sh
 lsblk
 ```
@@ -84,6 +87,7 @@ lsblk
 **Expected:** a list of disks. The medium is the one you just inserted, for
 example `sdb1` (USB, size of the stick) or `sr0` (DVD). Mount it read-only:
 
+<!-- operator: mount -->
 ```sh
 sudo mount -o ro /dev/sdb1 /mnt
 ls /mnt
@@ -98,6 +102,7 @@ that directory wherever this manual says `/mnt`.
 
 **Server, administrator.**
 
+<!-- operator: tools -->
 ```sh
 sudo dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 install /mnt/myproduct-tools-*.rpm
 ```
@@ -111,6 +116,7 @@ Later deliveries update the tools by themselves in step 3.
 
 **Server, administrator.**
 
+<!-- operator: admin -->
 ```sh
 sudo myproduct-admin /mnt
 ```
@@ -145,6 +151,7 @@ listed as `kept`; that is normal.
 **Server, administrator**, when the delivery contains credentials (the first
 installation, and when the supplier sends new ones):
 
+<!-- operator: credentials -->
 ```sh
 sudo myproduct-admin --credentials /mnt
 ```
@@ -156,13 +163,18 @@ their contents are never shown. A repeat says `is already there`.
 
 Then remove the medium:
 
+<!-- operator: umount -->
 ```sh
 sudo umount /mnt
 ```
 
 **Alternative without a medium:** the runtime user copies the credential
-folders from a laptop, for example
-`scp -r platform produser@server1.example.org:/var/lib/myproduct/incoming/`.
+folders from a laptop, one `scp -r` per component folder, for example:
+
+<!-- operator: credentials-scp -->
+```sh
+scp -r platform produser@server1.example.org:/var/lib/myproduct/incoming/
+```
 
 ## 5. Log in as the runtime user
 
@@ -177,6 +189,7 @@ Do not use `su` or `sudo` to become the runtime user.
 
 **Server, runtime user.**
 
+<!-- operator: runtime -->
 ```sh
 myproduct
 ```
@@ -242,6 +255,7 @@ Only when `sudo myproduct-admin` itself does not start (for example
 `command not found`, or a Python error instead of `ERROR:`). With the
 delivery mounted (step 1):
 
+<!-- operator: tools-version -->
 ```sh
 rpm -q myproduct-tools
 ```
@@ -249,11 +263,16 @@ rpm -q myproduct-tools
 | It prints | Then |
 | --- | --- |
 | `package myproduct-tools is not installed` | step 2 |
-| the same version as the file in `/mnt` | `sudo dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 reinstall /mnt/myproduct-tools-*.rpm` |
+| the same version as the file in `/mnt` | the command below |
 | an older version than the file in `/mnt` | step 2 |
 | two lines, or a newer version than the file in `/mnt` | stop; ask the supplier |
 
-Then repeat step 3.
+<!-- operator: tools-reinstall -->
+```sh
+sudo dnf --disablerepo='*' --setopt=localpkg_gpgcheck=0 reinstall /mnt/myproduct-tools-*.rpm
+```
+
+Answer `y`. Then repeat step 3.
 
 ## Asking for help
 
@@ -261,6 +280,7 @@ Send the step number, the command and the `[OK]`, `WARNING:` and `ERROR:`
 lines it printed; they never contain passwords or keys. The administrator can
 add the product's start and result lines:
 
+<!-- operator: help-journal -->
 ```sh
 sudo journalctl -t myproduct -n 30 --no-pager
 ```

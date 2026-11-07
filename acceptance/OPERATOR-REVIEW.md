@@ -3,8 +3,11 @@
 ## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
 
 Manual: [docs/PRODUCTION-INSTALL.md](../docs/PRODUCTION-INSTALL.md), SHA256
-`6de42a91cb86cb45d10044d069454f4b8fcf828d2ec738e172206046fa0ab274`, on the
-RPM branch (backlog 69 WP1-WP5). This replaces the `release.py` manual for
+`d793a49b74bb84ebc9dcd4aeffa7eb0bee1f9f3045c043c7a0c9467865e3a212`, on the
+RPM branch (backlog 69 WP1-WP6). WP6 added step IDs for the lab, the `/mnt`
+row of the example table and blocks for the `scp` alternative and the tools
+reinstall, which were inline text; the commands, counts and findings below
+are unchanged. This replaces the `release.py` manual for
 operators; that procedure is kept unchanged in
 [docs/RELEASE-PY-INSTALL.md](../docs/RELEASE-PY-INSTALL.md) only as input
 for `--host-setup` until WP6. The sections after this one are historical and
@@ -15,7 +18,7 @@ refer to that earlier manual.
 | AI literal walkthrough | Findings; seven fixed in this change, five open (below) | First installation, credentials, upgrade, retirement, status/reboot, setting change, interruption and the stops table, tools repair |
 | Human trial without oral assistance | **Not performed; outstanding verification** (backlog 68) | Printed manual only, fresh OL9 VM, one person holding both accounts, console and SSH variants |
 | Product/unit tests | `test_manual` (commands parse with the real parsers, prompts are the tools' questions, cited sections exist, the admin "next" line) and the existing admin/runtime tests | Drift between manual and tools; not the procedure |
-| Real lab evidence | `m69-admin-rpm-b5b86d9` (this manual's commit) ran steps 2, 3, 4 and 6 and the upgrade/retirement with answers as options | Not mounting, typed prompts, `umount` or the tools repair |
+| Real lab evidence | `m69-admin-rpm-b5b86d9` (the WP5 manual's commit) ran steps 2, 3, 4 and 6 and the upgrade/retirement with answers as options | Not mounting, typed prompts, `umount` or the tools repair |
 
 Method: static reading of the manual from its stated prerequisites, in
 order, without filling gaps from source code or earlier chat; the expected

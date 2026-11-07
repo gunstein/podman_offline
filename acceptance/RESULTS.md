@@ -66,9 +66,10 @@ The harness defects found on the way to this matrix are listed in
 | `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
 | `--host-setup` | `c63b-host-setup-d111718` | 36 | CLEAN PASS |
 | `--admin-rpm` | `m69-admin-rpm-b5b86d9` | 31 | CLEAN PASS |
+| `--rpm-manual` (P1, P2) | none yet | | outstanding |
 
 Status/retry and host setup: on `d111718`, with the matrix rows from main.
-Admin RPM: on `b5b86d9` (2026-11-07), clean detached checkout, Oracle Linux
+Admin RPM: the WP2-WP5 scenario, replaced by `--rpm-manual` (backlog 69 WP6), which has no run yet; on `b5b86d9` (2026-11-07), clean detached checkout, Oracle Linux
 Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step; this
 commit adds backlog 69 WP5 (the RPM manual) to `30704b3`, including the
 changed `prepare-host.sh` and admin/runtime messages, which the normal run
