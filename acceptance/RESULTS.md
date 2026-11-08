@@ -29,23 +29,28 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-af22327` | 45 | CLEAN PASS |
-| normal | `normal-af22327` | 118 | CLEAN PASS |
-| `--first-app app2` | `app2-af22327` | 118 | CLEAN PASS |
-| `--identity-only` | `identity-af22327` | 58 | CLEAN PASS |
-| `--help-only` | `help-af22327` | 52 | CLEAN PASS |
-| `--platform-help-only` | `platform-help-af22327` | 31 | CLEAN PASS |
-| `--renamed-product` | `renamed-af22327` | 57 | CLEAN PASS |
+| `--whoami` | `whoami-f1576a9` | 46 | CLEAN PASS |
+| normal | `normal-f1576a9` | 118 | CLEAN PASS |
+| `--first-app app2` | `app2-f1576a9` | 118 | CLEAN PASS |
+| `--identity-only` | `identity-f1576a9` | 58 | CLEAN PASS |
+| `--help-only` | `help-f1576a9` | 52 | CLEAN PASS |
+| `--platform-help-only` | `platform-help-f1576a9` | 31 | CLEAN PASS |
+| `--renamed-product` | `renamed-f1576a9` | 57 | CLEAN PASS |
 
-All on `af22327` (2026-11-08), clean detached checkout, Oracle Linux Server
+All on `f1576a9` (2026-11-08), clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit is
-the RPM branch (backlog 69 WP1-WP6 and the first review follow-up) with main
-merged: every scenario delivered its PROD releases as RPMs built on DEV and
+the RPM branch (backlog 69 WP1-WP6 and both review follow-ups) with main
+merged, with RPM payloads at zstd level 3. These runs predate `2384eee`: every
+scenario still ran the DEV source checks; that change has no lab run yet. In
+these runs every scenario delivered its PROD releases as RPMs built on DEV and
 installed them with `sudo myproduct-admin <directory>` (which also prepared
 the host and retired older releases), and the sibling checks found every
 `deployment/` file of each sibling's installed version trusted through
-`rpmdb` with the delivered RPM's size and digest. The release-protection probe
-of these runs is the first form (`af22327`); its stricter form came after.
+`rpmdb` with the delivered RPM's size and digest. Every scenario's
+release-protection probe, whoami's included, proved it ran as the runtime
+account and found its target, and counted only refusals. With zstd level 3
+the transfer steps (`05-*`, where DEV builds the release RPMs) took 1526 s
+over 22 steps in all ten runs, the slowest 354 s (`app2`).
 Backlog 63: the demo manifests take their images from
 `config/images.yaml` (`REGISTRY`, `LOCAL_REGISTRY` and version variables) and
 help and identity from `@@COMPONENT_VERSION@@`. Every health step checked
@@ -73,9 +78,9 @@ The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `status-retry-af22327` | 119 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-af22327` | 59 | NOT CLEAN |
-| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-af22327` | 60 | NOT CLEAN |
+| `--status-retry` | `status-retry-f1576a9` | 119 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-f1576a9` | 59 | CLEAN PASS |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-f1576a9` | 60 | CLEAN PASS |
 
 Status/retry: same commit, date, checkout, OS and Podman as the matrix. A
 same-version failure stays pending with the old container active, a plain
@@ -83,13 +88,8 @@ retry completes, and the restore leaves protected code unchanged. The
 `--host-setup` scenario (the `release.py` manual) was removed in backlog 69
 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): both on `af22327` (2026-11-08), same checkout, OS
-and Podman as the matrix. Both stopped at the last step,
-`10-manual-help-journal`: journalctl, run in the scenario's terminal, prints
-`prepare-host.sh`'s notice-level lines in bold, and the journal check did not
-remove those terminal codes (a harness defect; the check now reads the text
-an operator sees). Every earlier step passed, as in the previous CLEAN PASS on
-`3bff57b` (in the git history). P1 is `clean-agent`, P2 the strict WP0 profile
+RPM manual (backlog 69 WP6): both on `f1576a9` (2026-11-08), same checkout, OS
+and Podman as the matrix. P1 is `clean-agent`, P2 the strict WP0 profile
 applied after the reset (`strict_fapolicyd: true`). In both runs every
 operator step ran the command
 block of `docs/PRODUCTION-INSTALL.md` literally (only its example values
@@ -108,7 +108,9 @@ still completed at 0.4.13) and completed in a fresh login with platform
 running; the next admin run removing help 0.4.13 and its tree with the guard
 still closed; with a tools module removed, the documented symptom, `rpm -q`,
 the documented reinstall and a working admin command; the journal lines for
-sharing; no FANOTIFY/AVC event. Earlier attempts: `edd3be5` stopped at the
+sharing; no FANOTIFY/AVC event. Earlier attempts: `af22327` stopped at the
+last step (journalctl prints `prepare-host.sh`'s notice lines in bold in the
+terminal; the check now reads the text an operator sees), `edd3be5` at the
 interruption (its stop text is printed only by `validate`), `2fdd633` at the
 check after the upgrade (credentials for an installed component were left
 unused without a word; fixed in the runtime command and the manual). Not

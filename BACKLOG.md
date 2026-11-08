@@ -1393,8 +1393,10 @@ Lab 2026-11-08 on `af22327` (the first review follow-up): the whole fixed
 matrix and `--status-retry` CLEAN PASS with every release installed as an RPM
 by `<product>-admin`; both `--rpm-manual` runs stopped only at the last step,
 the journal check (terminal bold codes from `journalctl`, a harness defect,
-fixed). The second review follow-up and the zstd level change have no lab run
-yet. Review finding F7 (the image check compares the
+fixed). Lab 2026-11-08 on `f1576a9` (second review follow-up, zstd level 3,
+the journal fix): all ten runs CLEAN PASS, the fixed matrix, `--status-retry`
+and both `--rpm-manual` runs (P1 and P2) included. The DEV source checks
+change (`2384eee`) has no lab run yet. Review finding F7 (the image check compares the
 installed YAML with the running container, both product output): kept as a
 documented limit by the product owner on 2026-11-08; help and identity keep
 their independent version checks and the resolver its unit tests.
