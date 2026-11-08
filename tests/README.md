@@ -58,7 +58,7 @@ come from synthetic fixtures. It contains neither `apps/`, `demo_tests/` nor the
 shipped demo component tree. `--isolate` builds and runs the same copy temporarily;
 `--list` prints exact test IDs for inventory comparison. Export refuses an
 existing destination. The renamed-product generator uses tracked files: stage
-new helpers before running its regression tests. Acceptance's `03-unit` step runs
+new helpers before running its regression tests. Acceptance's `03-unit` step (normal scenario) runs
 `all`; acceptance-harness tests remain a separate command below and do not prove
 real Podman/systemd behaviour. No hosted CI is added.
 

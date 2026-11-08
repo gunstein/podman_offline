@@ -89,9 +89,8 @@ was removed with it (last present at `fd3a311`). See [results](RESULTS.md).
 
 # A new ENVIRONMENT variable on the next dev up
 
-The `database-runtime` step on DEV (`03-database-runtime` in normal,
-`--first-app app2`, `--identity-only`, `--help-only` and
-`--platform-help-only`) also runs `environment_update_test.py`. It builds a
+The `database-runtime` step on DEV (`03-database-runtime` in the normal
+scenario) also runs `environment_update_test.py`. It builds a
 disposable one-component product from this checkout's tool files and an
 existing local image, runs `./dev/dev.sh up`, adds `ADDED_SETTING` under
 `ENVIRONMENT` in the component's `config.defaults.yaml` and runs
@@ -619,7 +618,7 @@ Rules that keep them in step with the product (backlog 78):
 
 ## Host preparation boundary (backlog 46)
 
-`03-host-path-safety` runs before product-specific scenarios on DEV. With
+`03-host-path-safety` runs on DEV in the normal scenario. With
 `sudo -n`, the guest executes `prepare_host_test.py` on stdin. It creates a
 uniquely named temporary system account and home under `/var/lib` (the policy
 maps `/var/tmp/.*` to `<<none>>`, which would make relabel checks vacuous), records the

@@ -1382,6 +1382,13 @@ level 3 for their payload (`rpms.py`). The af22327 lab runs spent most of
 their time in `release-rpm` on OL9's default level 19 (about 220-330 s per
 release with images, RPMs of 18-171 MB); level 3 builds many times faster
 for somewhat larger files.
+**Decision (product owner, 2026-11-08):** the scenario-independent DEV source
+checks (`03-host-path-safety`, `03-unit`, `03-database-runtime`, `03-dev-up`,
+`03-dev-e2e`, `03-dev-down`) run only in the normal scenario; app2, identity,
+help, platform-help and status-retry build only the images, the smoke-test
+venv and the registry fixture (`Run.dev_actions`). On `f1576a9` these checks
+took about 300-400 s in each of six runs. Renamed, whoami and the RPM manual
+keep their own DEV flows; DEV is still reset and the bundle built in every run.
 Lab 2026-11-08 on `af22327` (the first review follow-up): the whole fixed
 matrix and `--status-retry` CLEAN PASS with every release installed as an RPM
 by `<product>-admin`; both `--rpm-manual` runs stopped only at the last step,

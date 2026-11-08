@@ -842,6 +842,38 @@ class Run:
         self.guest("PROD", "reboot")
         self.meta["prod_boot_after_reboot"] = self.wait_ssh("PROD", old)
 
+    def dev_actions(self):
+        """The DEV steps before the bundle in the fixed flow.
+
+        The source checks on DEV (unit tests, host path safety, database
+        runtime, dev up with its end-to-end test) do not depend on the
+        scenario, so only the plain normal run performs them, once per
+        commit; it also bundles after dev up, so its PROD checks prove that
+        dev state stays out of the bundle. The other scenarios build only
+        what PROD and the later DEV steps use: the images, the smoke-test
+        venv and the registry fixture.
+        """
+        if (
+            self.first_app == "app1"
+            and not self.help_only
+            and not self.identity_only
+            and not self.platform_help_only
+            and not self.status_retry
+        ):
+            return [
+                "host-path-safety",
+                "unit",
+                "build-images",
+                "pull-images",
+                "database-runtime",
+                "dev-up",
+                "venv",
+                "dev-e2e",
+                "registry-test",
+                "dev-down",
+            ]
+        return ["build-images", "pull-images", "venv", "registry-test"]
+
     def execute(self):
         """Run the whole acceptance flow in a fixed order without repeating failed steps."""
         self.step("00-readiness", self.readiness)
@@ -849,7 +881,6 @@ class Run:
             self.step("01-reset-" + role.lower(), lambda r=role: self.reset(r))
         self.step("02-isolate-prod", lambda: self.guest("PROD", "isolate"))
         self.step("03-source", self.source)
-        self.step("03-host-path-safety", lambda: self.guest("DEV", "host-path-safety"))
         if self.renamed_product:
             self.execute_renamed()
             return
@@ -859,18 +890,7 @@ class Run:
         if self.rpm_manual:
             manual_run.execute(self, strict=self.strict_fapolicyd)
             return
-        actions = [
-            "unit",
-            "build-images",
-            "pull-images",
-            "database-runtime",
-            "dev-up",
-            "venv",
-            "dev-e2e",
-            "registry-test",
-            "dev-down",
-        ]
-        for action in actions:
+        for action in self.dev_actions():
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
         self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
         self.step("04-bundle-list", lambda: self.record_bundles("bundle-list"))

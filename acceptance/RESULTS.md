@@ -9,7 +9,10 @@ for newer code.
 
 Run from a clean detached checkout. Each command resets the disposable VMs.
 Require CLEAN PASS for every run and record the commit, step counts and the
-OS/Podman versions from each run's `EVIDENCE.md`:
+OS/Podman versions from each run's `EVIDENCE.md`. The DEV source checks
+(`03-host-path-safety`, `03-unit`, `03-database-runtime`, `03-dev-up`,
+`03-dev-e2e`) do not depend on the scenario and run only in normal; the other
+scenarios build only the images, the smoke-test venv and the registry fixture:
 
 ```sh
 git rev-parse HEAD

@@ -765,6 +765,47 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
         self.assertIn(probes[0].kwargs.get("bundle", "app1"), transferred)
         self.assertTrue(self.harness.finished)
 
+    def dev_steps_before_bundle(self, **scenario):
+        """Run the fixed flow up to the bundle and return the DEV actions."""
+        run = runner.Run("dev-" + ("-".join(scenario) or "normal"), "not-used")
+        for name, value in scenario.items():
+            setattr(run, name, value)
+        for name in ("readiness", "reset", "source"):
+            setattr(run, name, mock.Mock())
+        actions = []
+
+        def guest(role, action, *args, **kwargs):
+            if role == "DEV":
+                actions.append(action)
+            if action == "bundle":
+                raise RuntimeError("stop before the bundle")
+            return ""
+
+        run.guest = guest
+        with self.assertRaises(RuntimeError):
+            run.execute()
+        return actions[:-1]
+
+    def test_only_the_normal_run_performs_the_dev_source_checks(self):
+        """The scenario-independent DEV checks run once per commit, in normal."""
+        checks = {"host-path-safety", "unit", "database-runtime", "dev-up", "dev-e2e"}
+        normal = self.dev_steps_before_bundle()
+        self.assertLessEqual(checks, set(normal))
+        # Normal bundles after dev up: its PROD checks see no dev state.
+        self.assertLess(normal.index("dev-up"), normal.index("dev-down"))
+        self.assertEqual(normal[-1], "dev-down")
+        needed = ["build-images", "pull-images", "venv", "registry-test"]
+        self.assertEqual([a for a in normal if a in needed], needed)
+        for scenario in (
+            {"first_app": "app2"},
+            {"identity_only": True},
+            {"help_only": True},
+            {"platform_help_only": True},
+            {"status_retry": True},
+        ):
+            with self.subTest(**scenario):
+                self.assertEqual(self.dev_steps_before_bundle(**scenario), needed)
+
     def test_full_run_rechecks_after_reboot_and_upgrade(self):
         """Confirm that prod checks are repeated after reboot and upgrade."""
         self.harness.meta["version"] = "0.1.0"
