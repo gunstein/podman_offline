@@ -110,9 +110,7 @@ def init_config(component, settings=None):
         os.link(str(partial), str(target))
     finally:
         partial.unlink()
-    log.info(
-        f"[OK] Initialized {target}; edit config and prepare credentials before install"
-    )
+    log.info(f"[OK] Initialized {target}")
 
 
 def check_api_secret_lines(descriptor, installed):

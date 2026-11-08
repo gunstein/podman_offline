@@ -266,6 +266,23 @@ class AuditTests(ProductFixture):
         for text in (self.stdout.getvalue(), self.stderr.getvalue(), "".join(lines)):
             self.assertNotIn(token, text)
 
+    def test_ctrl_c_is_a_short_error_and_a_failed_journal_line(self):
+        self.write_product(self.product())
+        self.use_root(self.build_and_unpack()["worker"])
+        self.assertEqual(cli.main(["init-config", "worker"]), 0)
+        self.stderr.seek(0)
+        self.stderr.truncate()
+        with mock.patch.object(cli.deploy, "install", side_effect=KeyboardInterrupt):
+            self.assertEqual(cli.main(["install"]), 130)
+        self.assertEqual(
+            self.stderr.getvalue(),
+            "ERROR: Interrupted; run the same command again to continue\n",
+        )
+        self.assertEqual(
+            self.journal.lines()[-1].split(": ", 1)[1],
+            "install worker (bundle 1.0.0): failed (exit 130)",
+        )
+
     def test_uninstall_records_the_removed_installed_version(self):
         """An older bundle may uninstall a newer install; the journal says both."""
         self.write_product(self.product())

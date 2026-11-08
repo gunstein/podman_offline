@@ -131,7 +131,7 @@ def initialize(product):
             os.close(directory)
     finally:
         os.close(with_dir)
-    log.info(f"[OK] Bootstrap ready: {path}; continue with init-config from the manual")
+    log.info(f"[OK] Bootstrap ready: {path}")
 
 
 def read_bootstrap(path):

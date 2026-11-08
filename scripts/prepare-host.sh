@@ -337,7 +337,10 @@ fi
 manager_has_settings \
     || die "user@$service_uid.service does not use $install_root/config and $install_root/storage; inspect 'systemctl cat user@$service_uid.service' and retry"
 printf 'HOST-PHASE: firewall\n' >&2
-firewall-cmd --permanent --add-port="$port/tcp"
+# Only when missing: adding an open port again prints a firewalld warning.
+if ! firewall-cmd --permanent --query-port="$port/tcp" >/dev/null; then
+    firewall-cmd --permanent --add-port="$port/tcp"
+fi
 firewall-cmd --reload
 printf '[OK] account %s (home %s unchanged): product %s under %s, linger enabled, HTTPS port %s/tcp open\n' \
     "$user" "$account_home" "$product" "$install_root" "$port"

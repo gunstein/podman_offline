@@ -177,6 +177,17 @@ class RuntimeTests(unittest.TestCase):
         path.write_text(text)
         return path
 
+    def test_ctrl_c_names_the_next_action_without_a_traceback(self):
+        with mock.patch.object(
+            runtime, "install", side_effect=KeyboardInterrupt
+        ), mock.patch.object(runtime.output, "audit") as audit:
+            self.assertEqual(self.run_command(), 130)
+        self.assertEqual(
+            self.stderr.getvalue(),
+            "ERROR: Interrupted; run the same command again to continue\n",
+        )
+        self.assertEqual(audit.call_args_list[-1], mock.call("cedar: interrupted"))
+
     def test_first_run_installs_every_component_in_dependency_order(self):
         self.deliver("web", "credentials/web/web.key", "private-key-text\n")
         self.first_run()

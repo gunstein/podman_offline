@@ -169,6 +169,10 @@ def run(args):
     except (OSError, common.DeployError, yaml.YAMLError) as error:
         log.error(f"ERROR: {error}")
         return 1, note
+    except KeyboardInterrupt:
+        # Ctrl+C: work already done is kept; a pending install resumes next time.
+        log.error("ERROR: Interrupted; run the same command again to continue")
+        return 130, note
     log.info(f"PASS: ./deploy.sh {args.command} completed")
     return 0, note
 

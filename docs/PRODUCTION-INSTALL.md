@@ -238,6 +238,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 
 | Message (beginning) | Who | What to do, then repeat the same command |
 | --- | --- | --- |
+| `Interrupted; run the same command again to continue` (after Ctrl+C) | you | Run the same command again. |
 | dnf: `nothing provides ...` (step 2) | administrator | Install the named OS package from the OS media. |
 | `Preflight stopped before any change:` | the person named in each line | Fix each line. |
 | `- Account produser does not exist` | account administrator | Create the account. |

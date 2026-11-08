@@ -1044,6 +1044,11 @@ def main(command_line=None):
         log.error(f"ERROR: {error}")
         output.audit(action + ": failed")
         return 1
+    except KeyboardInterrupt:
+        # Ctrl+C: finished work is kept, so the same command continues.
+        log.error("ERROR: Interrupted; run the same command again to continue")
+        output.audit(action + ": interrupted")
+        return 130
     output.audit(action + ": completed")
     log.info(f"PASS: {product}-admin completed")
     return 0

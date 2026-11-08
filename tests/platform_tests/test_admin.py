@@ -265,6 +265,17 @@ class AdminFixture(ProductFixture):
 
 
 class AdminInstallTests(AdminFixture):
+    def test_ctrl_c_names_the_next_action_without_a_traceback(self):
+        with mock.patch.object(
+            admin, "install", side_effect=KeyboardInterrupt
+        ), mock.patch.object(admin.output, "audit") as audit:
+            self.assertEqual(self.admin(self.delivery), 130)
+        self.assertEqual(
+            self.stderr.getvalue(),
+            "ERROR: Interrupted; run the same command again to continue\n",
+        )
+        self.assertTrue(audit.call_args_list[-1].args[0].endswith(": interrupted"))
+
     def test_first_installation_then_an_unchanged_repeat(self):
         self.first_install()
         self.assertEqual(

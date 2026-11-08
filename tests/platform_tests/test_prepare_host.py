@@ -239,7 +239,7 @@ class HostUserManagerTests(unittest.TestCase):
         ]
         block = script[
             script.index("# The user's systemd manager") : script.index(
-                "firewall-cmd --permanent"
+                "printf 'HOST-PHASE: firewall"
             )
         ]
         stubs = r"""
@@ -446,6 +446,35 @@ class HostPortTests(unittest.TestCase):
                 result = self.run_arguments(["--port", "8443", "--user", user])
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("ERROR", result.stdout)
+
+    def test_an_open_port_is_not_added_again(self):
+        """firewalld warns ALREADY_ENABLED on a repeated add; query first."""
+        script = (
+            Path(__file__).resolve().parents[2] / "scripts/prepare-host.sh"
+        ).read_text()
+        start = script.index("printf 'HOST-PHASE: firewall")
+        block = script[start : script.index("firewall-cmd --reload", start)]
+        query, add = (
+            "--permanent --query-port=8443/tcp",
+            "--permanent --add-port=8443/tcp",
+        )
+        for already_open, calls in ((True, [query]), (False, [query, add])):
+            with self.subTest(already_open=already_open):
+                # The stub logs each call; a query answers whether the port is open.
+                stub = (
+                    'firewall-cmd() { echo "$*"; '
+                    "[[ $2 != --query-port=* || $open == 1 ]]; }\n"
+                    "port=8443\nopen=" + ("1" if already_open else "0") + "\n"
+                )
+                result = subprocess.run(
+                    ["bash", "-eu", "-c", stub + block.replace(" >/dev/null", "")],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    universal_newlines=True,
+                )
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout.splitlines(), calls)
 
 
 class HostFapolicydTests(unittest.TestCase):
