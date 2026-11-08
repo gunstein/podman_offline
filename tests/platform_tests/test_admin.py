@@ -763,26 +763,35 @@ class RunBoundedTests(unittest.TestCase):
     def test_a_group_already_gone_is_still_a_limit_result(self):
         """The cap is reached after the child was reaped elsewhere (SIGCHLD ignored)."""
         with mock.patch.object(admin.os, "killpg", side_effect=ProcessLookupError):
-            # 20 000 bytes fit in the pipe: the child exits on its own after the cap.
-            result = admin.run_bounded(
-                ["sh", "-c", "head -c 20000 /dev/zero"], 30, limit=1024
-            )
+            # A write this small fits in any pipe: the child exits on its own
+            # after the cap, so nothing waits on a process the test kept alive.
+            result = admin.run_bounded(["sh", "-c", "printf overflow"], 30, limit=1)
         self.assertIsNone(result.returncode)
 
     def test_an_interrupted_read_kills_the_command_and_closes_its_pipes(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "survived"
-            started = []
+            started, processes = [], []
+            popen = subprocess.Popen
+
+            def recorded(*arguments, **options):
+                processes.append(popen(*arguments, **options))
+                return processes[-1]
 
             def interrupted(*arguments):
                 started.append(True)
                 raise KeyboardInterrupt
 
             with mock.patch.object(
+                admin.subprocess, "Popen", side_effect=recorded
+            ), mock.patch.object(
                 admin.io_select, "select", side_effect=interrupted
             ), self.assertRaises(KeyboardInterrupt):
                 admin.run_bounded(["sh", "-c", f"sleep 2; touch {marker}"], 30)
             self.assertEqual(started, [True])
+            (process,) = processes
+            self.assertIsNotNone(process.returncode)
+            self.assertTrue(process.stdout.closed and process.stderr.closed)
             time.sleep(2.5)
             self.assertFalse(marker.exists())
 
