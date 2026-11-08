@@ -1364,7 +1364,10 @@ journal, reinstall and sibling-trust checks require the scenario's exact
 expectations; `rpm-release-protection` (the runtime account cannot change a
 release tree) replaces the removed release-safety probe in every scenario;
 the manual names the scp folder and the unmount on an upgrade. Local tests
-only; tools/VERSION 0.3.3.
+only; tools/VERSION 0.3.3. Review finding F7 (the image check compares the
+installed YAML with the running container, both product output): kept as a
+documented limit by the product owner on 2026-11-08; help and identity keep
+their independent version checks and the resolver its unit tests.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the

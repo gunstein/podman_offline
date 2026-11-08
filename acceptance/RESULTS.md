@@ -46,7 +46,10 @@ that each app container runs the image its installed YAML names (`podman
 inspect`, `ImageName` only), and the help and identity upgrades found the
 image tagged with the new `VERSION` (`localhost/demo-help:0.4.15`,
 `localhost/demo-identity:0.4.16`); the release builders changed only
-`VERSION`. These runs also cover the earlier items: app3's trust chain through
+`VERSION`. Limit (product owner, 2026-11-08): the per-container image check
+shows agreement between the installed YAML and the running container, not
+that the YAML names the intended image; only help and identity are compared
+with the scenario's own version. These runs also cover the earlier items: app3's trust chain through
 `MOUNTS` secret files (`07-whoami-chain-mounts`, backlog 80); app2's database
 password from a `MOUNTS` secret file with `POSTGRES_PASSWORD_FILE` in
 `ENVIRONMENT` (`07-database-auth`, backlogs 82 and 83); install stopping for
