@@ -56,7 +56,9 @@ missing and who fixes it, so you can also start and let it tell you.
   `util-linux` and `sudo`. Nothing is downloaded during installation.
 - **fapolicyd setting:** `subj_cache_size = 16381` or more in
   `/etc/fapolicyd/fapolicyd.conf` (the security administrator; see "If a
-  command stops").
+  command stops"). This is the size of fapolicyd's cache of running
+  processes; with a smaller cache fapolicyd can deny Podman when a service
+  starts. It changes no rule.
 - **Runtime user:** an ordinary login account (UID 1000 or higher, a login
   shell), with no `sudo` rights and not a member of `wheel`, `adm` or
   `systemd-journal`. Create it with your organisation's normal procedure; its
