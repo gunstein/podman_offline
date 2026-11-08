@@ -29,28 +29,30 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-f1576a9` | 46 | CLEAN PASS |
-| normal | `normal-f1576a9` | 118 | CLEAN PASS |
-| `--first-app app2` | `app2-f1576a9` | 118 | CLEAN PASS |
-| `--identity-only` | `identity-f1576a9` | 58 | CLEAN PASS |
-| `--help-only` | `help-f1576a9` | 52 | CLEAN PASS |
-| `--platform-help-only` | `platform-help-f1576a9` | 31 | CLEAN PASS |
-| `--renamed-product` | `renamed-f1576a9` | 57 | CLEAN PASS |
+| `--whoami` | `whoami-c168dac` | 45 | CLEAN PASS |
+| normal | `normal-c168dac` | 118 | CLEAN PASS |
+| `--first-app app2` | `app2-c168dac` | 112 | CLEAN PASS |
+| `--identity-only` | `identity-c168dac` | 52 | CLEAN PASS |
+| `--help-only` | `help-c168dac` | 46 | CLEAN PASS |
+| `--platform-help-only` | `platform-help-c168dac` | 25 | CLEAN PASS |
+| `--renamed-product` | `renamed-c168dac` | 56 | CLEAN PASS |
 
-All on `f1576a9` (2026-11-08), clean detached checkout, Oracle Linux Server
+All on `c168dac` (2026-11-08), clean detached checkout, Oracle Linux Server
 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit is
 the RPM branch (backlog 69 WP1-WP6 and both review follow-ups) with main
-merged, with RPM payloads at zstd level 3. These runs predate `2384eee`: every
-scenario still ran the DEV source checks; that change has no lab run yet. In
-these runs every scenario delivered its PROD releases as RPMs built on DEV and
+merged, with RPM payloads at zstd level 3. Only normal ran the DEV source
+checks (`2384eee`): each other fixed-flow scenario has six steps fewer than
+on `f1576a9` and renamed, whoami and both RPM manual runs one fewer
+(`03-host-path-safety`); step 03 of all ten runs took 1383 s, against at least
+2985 s on `f1576a9`. In these runs every scenario delivered its PROD releases as RPMs built on DEV and
 installed them with `sudo myproduct-admin <directory>` (which also prepared
 the host and retired older releases), and the sibling checks found every
 `deployment/` file of each sibling's installed version trusted through
 `rpmdb` with the delivered RPM's size and digest. Every scenario's
 release-protection probe, whoami's included, proved it ran as the runtime
 account and found its target, and counted only refusals. With zstd level 3
-the transfer steps (`05-*`, where DEV builds the release RPMs) took 1526 s
-over 22 steps in all ten runs, the slowest 354 s (`app2`).
+the transfer steps (`05-*`, where DEV builds the release RPMs) took 1252 s
+over 24 steps in all ten runs.
 Backlog 63: the demo manifests take their images from
 `config/images.yaml` (`REGISTRY`, `LOCAL_REGISTRY` and version variables) and
 help and identity from `@@COMPONENT_VERSION@@`. Every health step checked
@@ -78,9 +80,9 @@ The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `status-retry-f1576a9` | 119 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-f1576a9` | 59 | CLEAN PASS |
-| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-f1576a9` | 60 | CLEAN PASS |
+| `--status-retry` | `status-retry-c168dac` | 113 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-c168dac` | 58 | CLEAN PASS |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-c168dac` | 59 | CLEAN PASS |
 
 Status/retry: same commit, date, checkout, OS and Podman as the matrix. A
 same-version failure stays pending with the old container active, a plain
@@ -88,7 +90,7 @@ retry completes, and the restore leaves protected code unchanged. The
 `--host-setup` scenario (the `release.py` manual) was removed in backlog 69
 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): both on `f1576a9` (2026-11-08), same checkout, OS
+RPM manual (backlog 69 WP6): both on `c168dac` (2026-11-08), same checkout, OS
 and Podman as the matrix. P1 is `clean-agent`, P2 the strict WP0 profile
 applied after the reset (`strict_fapolicyd: true`). In both runs every
 operator step ran the command

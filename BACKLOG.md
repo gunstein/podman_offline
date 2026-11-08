@@ -1395,8 +1395,9 @@ by `<product>-admin`; both `--rpm-manual` runs stopped only at the last step,
 the journal check (terminal bold codes from `journalctl`, a harness defect,
 fixed). Lab 2026-11-08 on `f1576a9` (second review follow-up, zstd level 3,
 the journal fix): all ten runs CLEAN PASS, the fixed matrix, `--status-retry`
-and both `--rpm-manual` runs (P1 and P2) included. The DEV source checks
-change (`2384eee`) has no lab run yet. Review finding F7 (the image check compares the
+and both `--rpm-manual` runs (P1 and P2) included. Lab 2026-11-08 on
+`c168dac` (DEV source checks only in normal, `2384eee`): all ten CLEAN PASS
+again; step 03 of the ten runs fell from at least 2985 s to 1383 s. Review finding F7 (the image check compares the
 installed YAML with the running container, both product output): kept as a
 documented limit by the product owner on 2026-11-08; help and identity keep
 their independent version checks and the resolver its unit tests.
