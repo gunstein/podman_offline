@@ -17,6 +17,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
+import time
+import typing
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -74,6 +77,7 @@ class FakeHost:
         self.trust_runs = []
         # deploy.sh status --json: a report, raw text, or None for a failing status.
         self.status = None  # type: dict | str | None
+        self.status_exit = 1  # type: int | None
         self.status_runs = []
         # stderr of one failing dnf remove
         self.remove_failure = None  # type: str | None
@@ -145,7 +149,8 @@ class FakeHost:
                     if isinstance(self.status, str)
                     else json.dumps(self.status)
                 )
-                return done(text + "\n", status=1)
+                # None stands for run_bounded's time limit or output cap.
+                return done(text + "\n", status=typing.cast(int, self.status_exit))
             if rest[-1] == "--help":
                 self.trust_runs.append(args)
                 if self.trusted:
@@ -165,10 +170,10 @@ class FakeHost:
                 ["rpm", "-qp", "--queryformat", "%{PREUN}", str(self.installed[name])]
             ).stdout
             # The guard requires a root-owned authorization; the test user owns it here.
-            owner = '"$(stat -c %u "$auth")" != 0'
+            owner = '"$(stat -c %u "$auth")" = 0'
             assert owner in script and "/run/cedar/" in script, script
             script = script.replace("/run/cedar", str(self.run / "cedar")).replace(
-                owner, f'"$(stat -c %u "$auth")" != {os.getuid()}'
+                owner, f'"$(stat -c %u "$auth")" = {os.getuid()}'
             )
             guard = real(["sh", "-c", script, "preun", "0"])
             if guard.returncode != 0:
@@ -220,6 +225,10 @@ class AdminFixture(ProductFixture):
                 FAPOLICYD_CONF=self.fapolicyd,
                 TRUST_WAIT=0,
                 RUN=self.host.run,
+                # The fake host answers every command; run_bounded has its own tests.
+                run_bounded=lambda command, seconds, limit=0: self.host.command(
+                    command
+                ),
             )
         )
         self.euid.return_value = 0
@@ -297,6 +306,34 @@ class AdminInstallTests(AdminFixture):
         )
         self.assertEqual(
             self.host.prepared[-1], ["--port", "8443", "--user", "operator-a"]
+        )
+
+    def test_decisions_and_the_transaction_use_the_private_copy(self):
+        """A delivery changed after the copy cannot reach dnf (the copy boundary)."""
+        original = (self.delivery / self.release_rpm.name).read_bytes()
+        command = self.host.command
+
+        def replace_after_copy(arguments, **kwargs):
+            result = command(arguments, **kwargs)
+            words = list(map(str, arguments))
+            if (
+                words[:2] == ["rpm", "-qp"]
+                and words[-1].endswith(self.release_rpm.name)
+                and (str(self.delivery) not in words[-1])
+            ):
+                (self.delivery / self.release_rpm.name).write_bytes(
+                    b"replaced after the copy"
+                )
+            return result
+
+        self.process.side_effect = replace_after_copy
+        self.first_install()
+        self.assertEqual(
+            self.host.installed["cedar-worker-1.2.3"].read_bytes(), original
+        )
+        self.assertEqual(
+            (self.delivery / self.release_rpm.name).read_bytes(),
+            b"replaced after the copy",
         )
 
     def test_first_run_asks_for_the_account_and_port(self):
@@ -551,20 +588,38 @@ class AdminRetirementTests(AdminFixture):
                 self.assertEqual(self.removals(), [])
 
     def test_an_unreadable_state_keeps_every_older_release(self):
-        long_name = report("1.3.0")
-        long_name["components"][0]["name"] = "x" * admin.REPORT_LIMIT
-        for status, detail in (
-            (None, "ERROR: Missing bootstrap file"),
-            ("not json", "no valid status --json output"),
-            (report("1.3.0; rm -rf /"), "no valid status --json output"),
-            ({"components": [{"name": "../worker", "version": "1.3.0",
-                              "recorded_version": "1.3.0"}], "pending": None},
-             "no valid status --json output"),
-            ({"components": [], "pending": "worker"}, "no valid status --json output"),
-            (long_name, "no valid status --json output"),
+        other_product = dict(report("1.3.0"), product="oak")
+        # A first row would allow the removal; a duplicate must not override it.
+        duplicate = report("1.3.0")
+        duplicate["components"] = [
+            dict(duplicate["components"][0], version="1.2.3", recorded_version="1.2.3")
+        ] + duplicate["components"]
+        empty_pending = dict(
+            report("1.3.0"),
+            pending={"operation": "install", "component": "", "owners": []},
+        )
+        odd_pending = dict(
+            report("1.3.0"),
+            pending={"operation": "rotate", "component": "worker", "owners": []},
+        )
+        invalid = "no valid status --json output"
+        for status, exit_status, detail in (
+            (None, 1, "ERROR: Missing bootstrap file"),
+            ("not json", 1, invalid),
+            (report("1.3.0; rm -rf /"), 1, invalid),
+            ({"product": "cedar", "components": [{"name": "../worker", "version": "1.3.0",
+              "recorded_version": "1.3.0"}], "pending": None}, 1, invalid),
+            ({"product": "cedar", "components": [], "pending": "worker"}, 1, invalid),
+            (other_product, 1, invalid),
+            (duplicate, 1, invalid),
+            (empty_pending, 1, invalid),
+            (odd_pending, 1, invalid),
+            # Killed after printing valid JSON, or stopped by the time limit.
+            (report("1.3.0"), 137, invalid),
+            (report("1.3.0"), None, invalid),
         ):  # fmt: skip
-            with self.subTest(detail=detail, status=str(status)[:60]):
-                self.host.status = status
+            with self.subTest(detail=detail, exit=exit_status, status=str(status)[:60]):
+                self.host.status, self.host.status_exit = status, exit_status
                 self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
                 self.assertIn(
                     "WARNING: older releases kept (cedar-worker-1.2.3): the installation "
@@ -620,10 +675,65 @@ class AdminRetirementTests(AdminFixture):
         self.assertEqual(self.admin(self.delivery), 1)
         self.assertIn(
             f"ERROR: {left} is left after removing cedar-worker-1.2.3: no package owns "
-            "its files",
+            "its files. Ask the supplier before deleting anything",
             self.stderr.getvalue(),
         )
         self.assertNotIn("PASS:", self.stdout.getvalue())
+        # A new process no longer finds the package, but still stops on the tree,
+        # also when the first run was killed before its own check.
+        self.assertEqual(self.admin(self.delivery), 1)
+        self.assertIn(
+            f"ERROR: {left} has no installed release package: no package owns its "
+            "files. Ask the supplier before deleting anything",
+            self.stderr.getvalue(),
+        )
+        self.assertTrue((left / "unowned.txt").exists())
+
+    def test_an_authorization_of_a_finished_command_is_refused(self):
+        """A killed admin command leaves its record; a plain erase must not use it."""
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        started = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+        self.record.parent.mkdir(parents=True)
+        self.record.write_text(f"cedar-worker-1.2.3-1.2.3-1 {dead.pid} {started}\n")
+        refused = self.host.remove(
+            ["cedar-worker-1.2.3"],
+            lambda stdout="", status=0, stderr="": subprocess.CompletedProcess(
+                [], status, stdout, stderr
+            ),
+        )
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("removing cedar-worker-1.2.3 is refused", refused.stderr)
+        self.assertIn("cedar-worker-1.2.3", self.installed())
+
+
+class RunBoundedTests(unittest.TestCase):
+    """The runtime account's commands cannot stall or flood the root command."""
+
+    def test_output_and_status_of_a_finished_command(self):
+        result = admin.run_bounded(["sh", "-c", "echo out; echo err >&2; exit 3"], 5)
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr), (3, "out\n", "err\n")
+        )
+
+    def test_a_hanging_command_and_its_children_are_killed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "survived"
+            started = time.monotonic()
+            result = admin.run_bounded(
+                ["sh", "-c", f"(sleep 3; touch {marker}) & sleep 30"], 1
+            )
+            self.assertIsNone(result.returncode)
+            self.assertLess(time.monotonic() - started, 10)
+            time.sleep(3.5)
+            self.assertFalse(marker.exists())
+
+    def test_too_much_output_is_cut_off(self):
+        started = time.monotonic()
+        result = admin.run_bounded(["sh", "-c", "yes flood"], 30, limit=64 * 1024)
+        self.assertIsNone(result.returncode)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertLess(len(result.stdout), 64 * 1024 + 65536 + 1)
 
 
 class AdminSelectionTests(unittest.TestCase):

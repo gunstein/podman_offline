@@ -103,6 +103,41 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 3)
         self.assertIn("FAIL: prompt not shown: Public address", result.stdout)
 
+    def test_an_earlier_mention_of_the_question_is_not_the_prompt(self):
+        result = self.drive(
+            'echo "Runtime account already checked"; read -r -p "Different question: " a',
+            [["Runtime account", "ops"]],
+        )
+        self.assertEqual(result.returncode, 3, result.stdout)
+        self.assertIn("FAIL: unexpected prompt: Different question:", result.stdout)
+        self.assertNotIn("ops", result.stdout.replace("Runtime account", ""))
+
+    def test_other_prompt_forms_and_a_prompt_after_the_last_answer_fail(self):
+        for command in (
+            'read -r -p "Proceed? " a',
+            'read -r -p "Proceed [y/N] " a',
+            'read -r -p "Runtime account: " a; read -r -p "One more: " b',
+        ):
+            with self.subTest(command=command):
+                result = self.drive(command, [["Runtime account", "ops"]])
+                self.assertEqual(result.returncode, 3, result.stdout)
+                self.assertIn("FAIL: unexpected prompt", result.stdout)
+
+    def test_a_question_split_over_two_writes_is_answered(self):
+        result = self.drive(
+            'printf "Runtime "; sleep 0.3; read -r -p "account: " a; echo "got $a"',
+            [["Runtime account", "ops"]],
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("got ops", result.stdout)
+
+    def test_a_command_ignoring_the_closed_terminal_is_killed(self):
+        result = self.drive(
+            "trap '' HUP; echo '[OK] validated help;'; sleep 60",
+            stop="[OK] validated help;",
+        )
+        self.assertEqual(result.returncode, 129, result.stdout)
+
     def test_the_terminal_closes_after_the_stop_text(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "survived"
@@ -131,12 +166,18 @@ ADMIN_REPEAT = """[OK] preflight
 [OK] myproduct-platform-0.4.14 0.4.14 is installed
 PASS: myproduct-admin completed
 """
-RUNTIME = """[OK] platform 0.4.14 installed
-[OK] help 0.4.13 installed
-COMPONENT VERSION UNIT STATE INSTALLATION
+STATUS = """COMPONENT VERSION UNIT STATE INSTALLATION
+platform 0.4.14 myproduct-platform.service active installed
+help 0.4.13 myproduct-help.service active installed
+Product: myproduct
 Pending: none
-PASS: myproduct completed
 """
+RUNTIME = (
+    "[OK] platform 0.4.14 installed\n[OK] help 0.4.13 installed\n"
+    + STATUS
+    + "PASS: myproduct completed\n"
+)
+BOTH = {"platform": "0.4.14", "help": "0.4.13"}
 
 
 class OutputCheckTests(unittest.TestCase):
@@ -146,13 +187,15 @@ class OutputCheckTests(unittest.TestCase):
         return str(caught.exception)
 
     def test_admin_first_run(self):
-        both = ["platform", "help"]
+        both = {"platform": "0.4.14", "help": "0.4.13"}
         manual_run.check_admin_first(ADMIN_FIRST, VALUES, both)
         for output, cause in (
             (ADMIN_FIRST.replace("[OK] installed myproduct-help-0.4.13\n", ""), "help was not installed"),
             (ADMIN_FIRST.replace("can run myproduct-platform", "cannot run myproduct-platform"),
              "cannot run platform"),
             (ADMIN_FIRST.replace(" and run myproduct", ""), "next line differs"),
+            (ADMIN_FIRST.replace("installed myproduct-help-0.4.13", "installed myproduct-help-0.4.12"),
+             "help was not installed"),
             (ADMIN_FIRST.replace("PASS: myproduct-admin completed\n", ""), "no PASS line"),
         ):  # fmt: skip
             with self.subTest(cause=cause):
@@ -162,12 +205,14 @@ class OutputCheckTests(unittest.TestCase):
                 )
 
     def test_admin_repeat_installs_nothing(self):
-        both = ["platform", "help"]
+        both = {"platform": "0.4.14", "help": "0.4.13"}
         manual_run.check_admin_repeat(ADMIN_REPEAT, VALUES, both)
         for output, cause in (
             (ADMIN_REPEAT + "[OK] installed myproduct-help-0.4.14\n", "installed or removed"),
             (ADMIN_REPEAT.replace("myproduct-help-0.4.13 0.4.13 is installed", "x"),
-             "help is not reported"),
+             "help 0.4.13 is not reported"),
+            (ADMIN_REPEAT.replace("myproduct-help-0.4.13 0.4.13", "myproduct-help-0.4.12 0.4.12"),
+             "help 0.4.13 is not reported"),
         ):  # fmt: skip
             with self.subTest(cause=cause):
                 self.assertIn(
@@ -178,19 +223,33 @@ class OutputCheckTests(unittest.TestCase):
     def test_runtime_runs(self):
         installed = {"platform": "0.4.14", "help": "0.4.13"}
         asked = "Public address (https://<host name>:<port>) [x]: y\n" + RUNTIME
-        manual_run.check_runtime(asked, VALUES, installed, asked=True)
-        repeat = "COMPONENT VERSION UNIT STATE INSTALLATION\nPending: none\nPASS: myproduct completed\n"
-        manual_run.check_runtime(repeat, VALUES, {})
-        for output, expected, cause in (
-            (RUNTIME, {}, "other components were installed"),
-            (RUNTIME, {"help": "0.4.14"}, "help 0.4.14 was not installed"),
-            (RUNTIME.replace("Pending: none", "Pending: install help"), installed, "pending work"),
-            (asked, installed, "prompts were not as expected"),
+        manual_run.check_runtime(asked, VALUES, installed, BOTH, asked=True)
+        repeat = STATUS + "PASS: myproduct completed\n"
+        manual_run.check_runtime(repeat, VALUES, {}, BOTH)
+        for output, expected, status, cause in (
+            (RUNTIME, {}, BOTH, "other components were installed"),
+            (RUNTIME, {"help": "0.4.14"}, BOTH, "help 0.4.14 was not installed"),
+            (RUNTIME.replace("Pending: none", "Pending: install help"), installed, BOTH,
+             "pending work"),
+            (asked, installed, BOTH, "prompts were not as expected"),
+            # The status table must show exactly the expected rows, active and installed.
+            (RUNTIME.replace("platform 0.4.14 myproduct-platform.service active installed\n", ""),
+             installed, BOTH, "status rows"),
+            (RUNTIME.replace("help 0.4.13 myproduct-help.service active", "help 0.4.13 myproduct-help.service failed"),
+             installed, BOTH, "status rows"),
+            (RUNTIME.replace("help 0.4.13 myproduct-help.service", "help 0.4.12 myproduct-help.service"),
+             installed, BOTH, "status rows"),
+            (RUNTIME.replace("Product: myproduct", "Product: oak"), installed, BOTH, "another product"),
+            (RUNTIME, installed, dict(BOTH, app1="0.1.0"), "status rows"),
+            ("".join(line + "\n" for line in RUNTIME.splitlines() if "COMPONENT" not in line),
+             installed, BOTH, "no status table"),
         ):  # fmt: skip
             with self.subTest(cause=cause):
                 self.assertIn(
                     cause,
-                    self.fails(manual_run.check_runtime, output, VALUES, expected),
+                    self.fails(
+                        manual_run.check_runtime, output, VALUES, expected, status
+                    ),
                 )
 
     def test_missing_credential_stop(self):
@@ -239,12 +298,30 @@ class OutputCheckTests(unittest.TestCase):
         manual_run.check_tools_version(
             "myproduct-tools-0.3.1-1.noarch\n", VALUES, "0.3.1"
         )
-        self.assertIn("tools version", self.fails(
-            manual_run.check_tools_version, "myproduct-tools-0.3.0-1.noarch\n", VALUES, "0.3.1"))  # fmt: skip
-        manual_run.check_journal("myproduct-admin /srv/delivery: completed\n", VALUES)
-        self.assertIn(
-            "no start/result", self.fails(manual_run.check_journal, "", VALUES)
+        for output in ("myproduct-tools-0.3.0-1.noarch\n",
+                       "myproduct-tools-0.3.0-1.noarch\nmyproduct-tools-0.3.1-1.noarch\n"):  # fmt: skip
+            with self.subTest(output=output):
+                self.assertIn("tools version", self.fails(
+                    manual_run.check_tools_version, output, VALUES, "0.3.1"))  # fmt: skip
+        journal = (
+            "-- Logs begin --\n"
+            "Nov 07 20:25:04 prod myproduct[812]: myproduct-admin /srv/delivery: started\n"
+            "Nov 07 20:25:09 prod myproduct[812]: myproduct-admin /srv/delivery: completed\n"
+            "Nov 07 20:26:00 prod myproduct[901]: install help (bundle 0.4.14): failed (exit 1)\n"
         )
+        manual_run.check_journal(journal, VALUES)
+        started, completed = journal.splitlines()[1], journal.splitlines()[2]
+        for output, cause in (
+            ("", "unexpected journal content"),
+            (journal.replace(started + "\n", ""), "no start record"),
+            (journal.replace(completed + "\n", ""), "no result record"),
+            (journal + "Nov 07 20:27:00 prod myproduct[9]: password=hunter2\n",
+             "unexpected journal content"),
+        ):  # fmt: skip
+            with self.subTest(cause=cause):
+                failed = self.fails(manual_run.check_journal, output, VALUES)
+                self.assertIn(cause, failed)
+                self.assertNotIn("hunter2", failed)
 
 
 class ScenarioTests(unittest.TestCase):
@@ -288,7 +365,7 @@ class ScenarioTests(unittest.TestCase):
                      "rpm-reinstall-check", "rpm-before-upgrade", "rpm-interrupted-check",
                      "rpm-upgrade-check",
                      "rpm-retire-check",
-                     "rpm-tools-damage", "rpm-tools-intact", "admin-baseline",
+                     "rpm-tools-damage", "rpm-tools-intact", "rpm-release-protection", "admin-baseline",
                      "admin-erase-guard", "admin-medium", "rpms", "release-rpm",
                      "help-upgrade-bundle"):  # fmt: skip
             self.assertRegex(
@@ -331,7 +408,7 @@ class HostCheckTests(unittest.TestCase):
                 '  case "$1" in\n'
                 '    -q) for name in "${@:2}"; do grep -Fxq "$name" "$root/db" || return 1; done;;\n'
                 '    -qa) grep "^${2%\\*}" "$root/db" || true;;\n'
-                '    -V) for name in "${@:2}"; do ! grep -Fxq "$name" "$root/damaged"; done 2>/dev/null; return 0;;\n'
+                '    -V) for name in "${@:2}"; do if grep -Fxq "$name" "$root/damaged" 2>/dev/null; then return 1; fi; done; return 0;;\n'
                 "    -e) if [[ -e $root/guard-open ]]; then return 0; fi\n"
                 '        echo "myproduct: removing $2 is refused; use: sudo myproduct-admin" >&2; return 1;;\n'
                 "  esac\n"
@@ -385,6 +462,7 @@ class HostCheckTests(unittest.TestCase):
             ('mkdir -p "$release_root/myproduct-help-0.4.13"', "is left"),
             ('touch "$erase_authorization"', "the erase authorization is left"),
             ('touch "$root/guard-open"', "sudo -n rpm -e myproduct-help-0.4.14 succeeded"),
+            ('echo myproduct-platform-0.4.14 > "$root/damaged"', "a remaining package is damaged"),
         ], after)  # fmt: skip
 
     def test_restart_checks_read_every_line(self):
@@ -405,7 +483,9 @@ class HostCheckTests(unittest.TestCase):
             self.run_action("rpm-reinstall-check", setup=help_restarted).returncode, 0
         )
         self.expect("rpm-reinstall-check", [
-            ("", "help was not restarted"),
+            ("", "expected platform and one restarted help service"),
+            ('printf "myproduct-platform.service p1\\n" > "$root/invocations-now"',
+             "expected platform and one restarted help service"),
             (('printf "myproduct-platform.service p9\\nmyproduct-help.service h2\\n"'
               ' > "$root/invocations-now"'), "platform restarted"),
         ])  # fmt: skip
@@ -433,6 +513,42 @@ class HostCheckTests(unittest.TestCase):
             (fresh + '; echo myproduct-help-0.4.13 >> "$root/db"', "a package was installed"),
             ("", "was created"),
         ], ["myproduct-tools"])  # fmt: skip
+
+
+class ReleaseProtectionTests(unittest.TestCase):
+    """rpm-release-protection fails when the runtime account can change a release."""
+
+    def probe(self, denied):
+        body = REMOTE[REMOTE.index("\nrpm-release-protection)\n") + 25 :]
+        body = body[: body.index("\n    ;;\n")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree = root / "releases/myproduct-platform-0.4.14"
+            (tree / "deployment").mkdir(parents=True)
+            (tree / "deployment/__init__.py").write_text("")
+            stubs = (
+                'rpm() { case "$1" in -qa) echo myproduct-platform-0.4.14;; -V) return 0;; esac; }\n'
+                "sudo() { [[ $1 == -n ]] && shift; [[ $1 == -u ]] && shift 2;"
+                + (" return 1;" if denied else "")
+                + ' "$@"; }\n'
+            )
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + stubs + body],
+                env=dict(os.environ, product_name="myproduct", bundle="platform",
+                         service_user="myproduct-ops", release_root=str(root / "releases")),
+                capture_output=True, text=True, check=False,
+            )  # fmt: skip
+        return result
+
+    def test_a_denied_account_passes_and_a_writable_tree_fails(self):
+        result = self.probe(denied=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "PASS: myproduct-ops cannot change myproduct-platform-0.4.14", result.stdout
+        )
+        result = self.probe(denied=False)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("FAIL: myproduct-ops could run: printf x >>", result.stdout)
 
 
 if __name__ == "__main__":

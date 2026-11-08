@@ -3,7 +3,7 @@
 ## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
 
 Manual: [docs/PRODUCTION-INSTALL.md](../docs/PRODUCTION-INSTALL.md), SHA256
-`fc1fedf4a463be302b42731b7c3f036fea7c7342f4d34743b217055d17fca877`, on the
+`4bc9ab08b770646231ee87e8b3ffd512d1f4d88c4f8f715cf9640482b14201a4`, on the
 RPM branch (backlog 69 WP1-WP6). WP6 added step IDs for the lab, the `/mnt`
 row of the example table and blocks for the `scp` alternative and the tools
 reinstall, which were inline text, and the note and stop row for delivered
@@ -40,8 +40,12 @@ every suggestion):
 
 Manual edits: none for ordinary tasks; one `vi` edit to change a setting or
 for the cache stop. If the public-address suggestion is wrong, typing it adds
-about 32 characters. The longest line is the one-time tools installation (90
-characters with `'*'`). For comparison, the `release.py` manual's operator
+about 32 characters. The longest line is the tools reinstall (92 characters
+before Enter); the one-time tools installation is 90, both with `'*'`. The
+`scp` alternative is one command of 74 typed characters including Enter, run
+from the laptop folder that holds the delivered component folders; no
+complete `scp`-based task is counted here, and its account switch is the
+laptop login, not the one in the table. For comparison, the `release.py` manual's operator
 blocks were 8 811 characters in 186 lines, mostly pasted, for platform and
 identity; the RPM manual's counts do not grow with the number of components.
 
@@ -67,6 +71,15 @@ identity; the RPM manual's counts do not grow with the number of components.
    take several minutes. The root and wrong-account messages of `<product>`
    share one row in the stops table.
 
+**Review follow-up (2026-11-08)**, from the code review of `b435bec`: the
+`scp` block now says which laptop folder it runs in; an upgrade without
+credentials still unmounts the medium; "already mounted" continues only when
+`ls /mnt` shows the delivery; the "older releases kept" row names the
+administrator and what to do when it repeats; a release folder without its
+package stops every later step 3, and the tool and the manual both say to ask
+the supplier before deleting anything. The counts above are unchanged except
+where stated.
+
 **Open findings (not fixed here):**
 
 1. Finding the medium with `lsblk` needs judgement (size, `sdb1` versus
@@ -75,8 +88,8 @@ identity; the RPM manual's counts do not grow with the number of components.
 2. The one-time tools command is 90 characters with quoting and a glob;
    phase 2 adds key import. Mistyping is safe (dnf stops) but likely.
 3. Changing a setting needs `vi` and YAML (`config.yaml`), beyond the target
-   audience. Remedy candidate: a command for the one setting that changes in
-   practice; needs a product-owner decision.
+   audience. Decided on 2026-11-07 (product owner): it stays the documented
+   `config.yaml` edit; no setting command is built now (known gap, item 69).
 4. "Install the named package from the OS media" assumes the system
    administrator can do that offline; the manual only declares it as that
    person's prerequisite.

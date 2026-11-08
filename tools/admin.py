@@ -42,11 +42,15 @@ import json
 import os
 import pwd
 import re
+import select as io_select
 import shutil
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import time
+import typing
 from pathlib import Path
 
 import host
@@ -80,7 +84,8 @@ FAPOLICYD_CONF = Path("/etc/fapolicyd/fapolicyd.conf")
 
 DEFAULT_PORT = 8443
 TRUST_WAIT = 30  # seconds for fapolicyd to learn about newly installed files
-REPORT_LIMIT = 64 * 1024  # bytes of status JSON read from the runtime account
+REPORT_LIMIT = 64 * 1024  # bytes read from a command run as the runtime account
+STATUS_WAIT = 120  # seconds for deploy.sh status --json as the runtime account
 CREDENTIAL_LIMIT = 1024 * 1024  # bytes per credential file
 PRIVILEGED_GROUPS = {"root", "wheel", "adm", "systemd-journal"}
 
@@ -142,6 +147,56 @@ def run_release(account, release, *arguments):
         str(release / "deploy.sh"),
         *arguments,
     ]
+
+
+def run_bounded(command, seconds, limit=REPORT_LIMIT):
+    """Run a command as the runtime account with a time limit and an output cap.
+
+    Its output is not trusted: a child that hangs or floods stdout/stderr
+    must not stall or exhaust the root command. The command runs in its own
+    session; on either limit its whole process group is killed and reaped,
+    and the result's returncode is None.
+    """
+    log.debug("+ " + " ".join(command))
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=dict(os.environ, LC_ALL="C"),
+        start_new_session=True,
+    )
+    out, err = process.stdout, process.stderr
+    assert out is not None and err is not None
+    chunks = {out: [], err: []}
+    reading = [out, err]
+    deadline = time.monotonic() + seconds
+    size, exceeded = 0, False
+    while reading and not exceeded:
+        left = deadline - time.monotonic()
+        ready = io_select.select(reading, [], [], left)[0] if left > 0 else []
+        if not ready:
+            exceeded = True
+        for stream in ready:
+            data = os.read(stream.fileno(), 65536)
+            if not data:
+                reading.remove(stream)
+            chunks[stream].append(data)
+            size += len(data)
+            exceeded = exceeded or size > limit
+    try:
+        status = None if exceeded else process.wait(max(deadline - time.monotonic(), 0))
+    except subprocess.TimeoutExpired:
+        status = None
+    if status is None:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    out.close()
+    err.close()
+    text = {s: b"".join(c).decode(errors="replace") for s, c in chunks.items()}
+    # returncode None means a limit was reached (callers check for 0 or 1).
+    return subprocess.CompletedProcess(
+        command, typing.cast(int, status), text[out], text[err]
+    )
 
 
 def last_line(result):
@@ -514,7 +569,7 @@ def check_trust(product, account, packages):
         command = run_release(account, release, "--help")
         deadline = time.monotonic() + TRUST_WAIT
         while True:
-            result = run(command, check=False)
+            result = run_bounded(command, TRUST_WAIT)
             if result.returncode == 0:
                 break
             if time.monotonic() >= deadline:
@@ -539,14 +594,19 @@ def runtime_report(product, account, release):
     From the release's own deploy.sh status --json as the account: it reads
     the installed markers, installed metadata and pending record (and refuses
     links or invalid markers), so root never opens the account's files. The
-    JSON comes from the account and is checked before any decision. Its exit
-    status only says whether every unit is active, which retirement ignores.
+    JSON comes from the account and is checked before any decision; it is the
+    account's report, not proof, so the newest release is never removed
+    whatever it says. Exit 1 only says that a unit is not active, which
+    retirement ignores; anything else, a time limit or too much output keeps
+    every release.
     """
-    result = run(run_release(account, release, "status", "--json"), check=False)
+    result = run_bounded(run_release(account, release, "status", "--json"), STATUS_WAIT)
     try:
-        if len(result.stdout) > REPORT_LIMIT:
-            raise ValueError("too long")
+        if result.returncode not in (0, 1):
+            raise ValueError("no complete status run")
         report = json.loads(result.stdout)
+        if report["product"] != product or not isinstance(report["components"], list):
+            raise ValueError("another product or no component list")
         versions = {}
         for item in report["components"]:
             name, completed, recorded = (
@@ -555,13 +615,23 @@ def runtime_report(product, account, release):
             if not (
                 isinstance(name, str)
                 and host.ID.fullmatch(name)
+                and name not in versions
                 and (completed is None or host.VERSION.fullmatch(completed))
                 and host.VERSION.fullmatch(recorded)
             ):
                 raise ValueError("invalid component")
             versions[name] = (completed, recorded)
         pending = report["pending"]
-        if pending is not None and not isinstance(pending["component"], str):
+        if pending is not None and not (
+            isinstance(pending, dict)
+            and pending.get("operation") in ("install", "uninstall")
+            and isinstance(pending.get("component"), str)
+            and host.ID.fullmatch(pending["component"])
+            and isinstance(pending.get("owners"), list)
+            and all(
+                isinstance(o, str) and host.ID.fullmatch(o) for o in pending["owners"]
+            )
+        ):
             raise ValueError("invalid pending record")
     except (ValueError, TypeError, KeyError):
         detail = last_line(result) or "no valid status --json output"
@@ -590,11 +660,15 @@ def keep_reason(package, versions, pending):
 def remove(product, package):
     """Remove one release package: authorize exactly it, dnf, then check the result.
 
-    The authorization is the package's name-version-release in a root-only
-    file under /run; the package's %preun allows the erase only for that
-    content (rpms.GUARD), and it is deleted as soon as dnf returns. After an
-    interruption the package is either gone or still installed; a repeat
-    then checks it again and removes it, also with files already missing.
+    The authorization is the package's name-version-release with this
+    process's PID and start time, in a root-only file under /run. The
+    package's %preun allows the erase only for that content while this
+    process is alive, and deletes it (rpms.GUARD); this command deletes it
+    too when dnf returns. A killed command therefore leaves nothing a later
+    plain erase could use. After an interruption the package is either gone
+    or still installed; a repeat checks it again and removes it, also with
+    files already missing, and a tree left without its package stops every
+    later run (retire).
     """
     others = {p.name for p in installed(product)} - {package.name}
     identity = run(
@@ -603,7 +677,9 @@ def remove(product, package):
     record = RUN / product / "erase-authorization"
     record.parent.mkdir(mode=0o700, exist_ok=True)
     partial = record.with_name(record.name + ".partial")
-    partial.write_text(identity + "\n")
+    # Field 22 of /proc/<pid>/stat, the start time: a reused PID differs.
+    started = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+    partial.write_text(f"{identity} {os.getpid()} {started}\n")
     os.replace(str(partial), str(record))
     try:
         result = run(DNF + ["remove", package.name], check=False)
@@ -634,13 +710,23 @@ def remove(product, package):
     if tree.exists() or tree.is_symlink():
         raise ToolError(
             f"{tree} is left after removing {package.name}: no package owns its "
-            "files. Inspect it and remove it as administrator"
+            "files. Ask the supplier before deleting anything"
         )
 
 
 def retire(product, account):
     """Step 8: remove the releases the runtime account no longer needs."""
     packages = installed(product)
+    # A tree without its package (files left by a removal, or a removal
+    # interrupted before its check) stops every run until someone inspects it.
+    owned = {package.name for package in packages if package.component}
+    releases = host.LIB / product / "releases"
+    for tree in sorted(releases.iterdir()) if releases.is_dir() else ():
+        if tree.name not in owned:
+            raise ToolError(
+                f"{tree} has no installed release package: no package owns its files. "
+                "Ask the supplier before deleting anything"
+            )
     newest = newest_releases(packages)
     older = sorted(
         (p for p in packages if p.component and p != newest[p.component]),

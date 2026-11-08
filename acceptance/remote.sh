@@ -1558,13 +1558,10 @@ def main():
                 raise SystemExit("FAIL: expected explicit platform restart")
     else:
         # The previous app bundle is still verified/trusted; refuse its older platform.
-        # The absence of "+ podman" lines below is the evidence. Releases with
-        # backlog 74 show them only with --verbose; older ones always print them
-        # and refuse the option, so ask the old release's own help first.
+        # The absence of "+ podman" lines below is the evidence; --verbose
+        # prints them (backlog 74). Both releases come from this checkout.
         deploy = str(Path(old_release) / "deploy.sh")
-        probe = subprocess.run(["bash", deploy, "install", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
-        verbose = ["--verbose"] if probe.returncode == 0 and "--verbose" in probe.stdout else []
-        result = subprocess.run(["bash", deploy, "install"] + verbose, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+        result = subprocess.run(["bash", deploy, "install", "--verbose"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
         if result.returncode != 1 or "Platform downgrade refused" not in result.stderr or "+ podman" in result.stdout:
             raise SystemExit("FAIL: older platform was not refused before image operations")
         if observe() != current:
@@ -1589,12 +1586,6 @@ app-retire|help-retire|platform-retire|identity-retire)
     retire_release
     sudo -n test ! -e "$old_release"
     echo "PASS: old $bundle release and its own trust retired after verification"
-    ;;
-host65-credentials)
-    # Demo-only supplier fixture on DEV; never run on the production host.
-    [[ $role == DEV ]]
-    bash "$src/dev/generate-certificates.sh" --root "$base/host65-credentials" platform "$prod_host"
-    bash "$src/dev/generate-certificates.sh" --root "$base/host65-credentials" identity "$prod_host"
     ;;
 prepare-host)
     lab_host_baseline
@@ -2550,7 +2541,7 @@ siblings-before|siblings-after|help-siblings-before|help-siblings-after|platform
     if [[ $action == platform-siblings-* ]]; then mode=platform; fi
     if [[ $action == identity-siblings-* ]]; then observation="$base/identity-siblings.json"; mode=identity; fi
     if [[ $action == help-* ]]; then observation="$base/help-siblings.json"; mode=help; fi
-    sudo -n "${as_root_env[@]}" python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
+    sudo -n "${as_root_env[@]}" DELIVERIES="$base" python3 - "$action" "$observation" "$mode" <<'SIBLINGS'
 import hashlib
 import json
 import os
@@ -2611,22 +2602,31 @@ def observe():
     trust = command(["fapolicyd-cli", "--dump-db"])
     records = sorted(line for line in trust.splitlines()
                      if any("/releases/" + PRODUCT + "-" + component + "-" in line for component in components))
+    # Backlog 69: the expected trust is the delivered RPM's own inventory (the
+    # scenario's input, not the installed tree): each deployment/ file of the
+    # installed version with its size and digest, trusted through rpmdb.
     expected = set()
     for component in components:
         version = pathlib.Path(HOME, "installed", component).read_text().strip()
-        package = pathlib.Path(os.environ["PRODUCT_ROOT"]) / "releases" / (PRODUCT + "-" + component + "-" + version) / "deployment"
-        files = [str(path) for path in package.rglob("*") if path.is_file()]
-        if not files:
+        name = PRODUCT + "-" + component + "-" + version
+        rpms = sorted(pathlib.Path(os.environ["DELIVERIES"], "rpm-" + component + "-" + version).glob(name + "-*.noarch.rpm"))
+        if len(rpms) != 1:
+            raise SystemExit("FAIL: no delivered RPM for sibling " + name)
+        package = str(pathlib.Path(os.environ["PRODUCT_ROOT"]) / "releases" / name / "deployment") + "/"
+        for line in command(["rpm", "-qp", "--dump", str(rpms[0])]).splitlines():
+            fields = line.split(" ")
+            if fields[0].startswith(package) and fields[4].startswith("0100"):
+                expected.add(("rpmdb", fields[0], fields[1], fields[3].lower()))
+        if not any(path.startswith(package) for _, path, _, _ in expected):
             raise SystemExit("FAIL: missing sibling deployment package")
-        expected.update(files)
-    trusted = []
+    trusted = set()
     for record in records:
-        match = re.fullmatch(r"\S+ (/.+) [0-9]+ [0-9a-fA-F]{64}", record)
+        match = re.fullmatch(r"(\S+) (/.+) ([0-9]+) ([0-9a-fA-F]{64})", record)
         if not match:
             raise SystemExit("FAIL: invalid sibling trust entry")
-        trusted.append(match.group(1))
-    # Trust comes from the RPM database: every file of each installed release.
-    if not expected <= set(trusted):
+        trusted.add((match.group(1), match.group(2), match.group(3), match.group(4).lower()))
+    # Other side-by-side versions may be trusted too; these files must be.
+    if not expected <= trusted:
         raise SystemExit("FAIL: a sibling's installed release package is not trusted")
     versions = {name: (HOME / "installed" / name).read_text()
                 for name in components}
@@ -2792,7 +2792,8 @@ rpm-other-medium)
     # Lab infrastructure: a second medium whose web.key differs.
     other="$base/other-medium/platform/credentials/web"
     mkdir -p "$other"
-    (umask 077; printf 'different\n' > "$other/web.key")
+    # A sentinel, never a real key: the refusal must not print it.
+    (umask 077; printf 'other-medium-sentinel-5e1f\n' > "$other/web.key")
     ;;
 rpm-credentials-check)
     # The delivered key in incoming/, as the runtime user, byte for byte.
@@ -2838,7 +2839,10 @@ rpm-reinstall-check)
     first_platform=$(grep "^$product_name-platform.service " "$base/invocations-first")
     first_help=$(grep "^$product_name-help.service " "$base/invocations-first")
     grep -Fxq "$first_platform" <<< "$now" || { echo "FAIL: platform restarted"; exit 1; }
-    if grep -Fxq "$first_help" <<< "$now"; then echo "FAIL: help was not restarted"; exit 1; fi
+    current_help=$(grep "^$product_name-help.service " <<< "$now" || true)
+    [[ $(wc -l <<< "$now") == 2 && $(grep -c . <<< "$current_help") == 1 \
+        && -n ${current_help#* } && $current_help != "$first_help" ]] \
+        || { echo "FAIL: expected platform and one restarted help service"; exit 1; }
     echo "PASS: only help restarted"
     ;;
 rpm-interrupted-check)
@@ -2883,6 +2887,30 @@ rpm-retire-check)
         || { echo "FAIL: rpm -e $new was not refused by the guard"; exit 1; }
     rpm -q "$new" || { echo "FAIL: $new is gone"; exit 1; }
     echo "PASS: $old removed with its tree, $new and the others intact, a plain erase still refused"
+    ;;
+rpm-release-protection)
+    # Backlog 69: the runtime account can change neither an RPM release tree
+    # nor the releases directory (the protection release-safety probed before).
+    name=$(rpm -qa "$product_name-$bundle-*" --queryformat '%{NAME}\n' | sort -V | tail -n 1)
+    [[ -n $name ]] || { echo "FAIL: no $bundle release package"; exit 1; }
+    tree="$release_root/$name"
+    file="$tree/deployment/__init__.py"
+    attempts=(
+        "printf x >> '$file'"
+        "touch '$tree/deployment/added.py'"
+        "ln -s /tmp '$tree/linked'"
+        "mv '$tree' '$tree.moved'"
+        "rm -f '$file'"
+        "chmod 0777 '$tree'"
+        "mkdir '$release_root/$product_name-$bundle-9.9.9'"
+    )
+    for attempt in "${attempts[@]}"; do
+        if sudo -n -u "$service_user" bash -c "$attempt" 2>/dev/null; then
+            echo "FAIL: $service_user could run: $attempt"; exit 1
+        fi
+    done
+    rpm -V "$name" || { echo "FAIL: $name changed"; exit 1; }
+    echo "PASS: $service_user cannot change $name or add a release"
     ;;
 rpm-tools-damage)
     # Fault injection outside the product: a tools module goes missing.

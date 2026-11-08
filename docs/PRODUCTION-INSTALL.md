@@ -94,7 +94,8 @@ sudo mount -o ro /dev/sdb1 /mnt
 ls /mnt
 ```
 
-If `mount` says the medium is already mounted, continue.
+If `mount` says the medium is already mounted, continue when `ls /mnt` shows
+the delivery.
 **Expected:** the RPM files and the component folders with credentials. If
 the delivery was copied to the server instead (for example with `scp`), use
 that directory wherever this manual says `/mnt`.
@@ -172,7 +173,8 @@ sudo umount /mnt
 ```
 
 **Alternative without a medium:** the runtime user copies the credential
-folders from a laptop, one `scp -r` per component folder, for example:
+folders from a laptop, one `scp -r` per component folder, run in the laptop
+folder that holds the delivered component folders, for example:
 
 <!-- operator: credentials-scp -->
 ```sh
@@ -220,7 +222,7 @@ trusts your organisation's certificates to check it from the user's side.
 | --- | --- | --- |
 | Check the status | runtime user | `myproduct`. When nothing is new it installs nothing, restarts nothing and shows the status table. |
 | After a reboot | nobody | The services start by themselves. Check with `myproduct` as the runtime user. |
-| New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3 (and 4 if it contains credentials), then steps 5 and 6. Settings, credentials and data are kept, and nothing is asked again. |
+| New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3, and 4 if it contains credentials; without credentials, still remove the medium (`sudo umount /mnt`). Then steps 5 and 6. Settings, credentials and data are kept, and nothing is asked again. |
 | Remove old releases | administrator | Nothing extra: step 3 removes them once the runtime user has installed the newer version. To do it right after an upgrade, repeat step 3. |
 | Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. The HTTPS port cannot be changed after installation. |
 
@@ -249,9 +251,9 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `... differ from the files in /var/lib/myproduct/state/...` (step 6) | credential provider | A newly delivered credential differs from the one in use. Nothing was copied. Confirm which is right; the runtime user removes the wrong copy in `/var/lib/myproduct/incoming/...`. |
 | `status reports an incomplete or inactive component` (step 6) | runtime user | Run `myproduct` again a minute later; a service may still be starting. If it stays, ask for help (see below). |
 | `deploy.sh ... stopped; fix what it names` (step 6) | runtime user | The `ERROR:` line above it names the cause. The next `myproduct` resumes the unfinished component first. |
-| `WARNING: older releases kept ...` | nobody | Normal before the runtime user's first `myproduct`; a later step 3 removes them. |
+| `WARNING: older releases kept ...` | administrator | Normal before the runtime user's first `myproduct`; a later step 3 removes them. If it repeats afterwards, ask for help with the reason it names; the releases are kept. |
 | `WARNING: ... holds delivered files that <component> does not use yet` | runtime user | Run the command it names, `myproduct <component>`. |
-| `... is left after removing ...` | administrator, supplier | Files that no package owns remain in a removed release's folder. Ask the supplier before deleting anything. |
+| `... is left after removing ...` or `... has no installed release package` | administrator, supplier | Files that no package owns remain in a release folder; every later step 3 stops here until it is resolved. Ask the supplier before deleting anything. |
 
 ### Repair the tools
 

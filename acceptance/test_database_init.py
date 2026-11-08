@@ -10,9 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import yaml
-
 import database_test
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # bundle.py
 

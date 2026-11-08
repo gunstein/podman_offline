@@ -900,6 +900,10 @@ class Run:
             "07-host-path-safety",
             lambda: self.guest("PROD", "host-path-safety", bundle="help"),
         )
+        self.step(
+            "07-release-protection",
+            lambda: self.guest("PROD", "rpm-release-protection", bundle="platform"),
+        )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         if self.status_retry:
             self.step(
@@ -1009,6 +1013,10 @@ class Run:
         self.step(
             "07-host-path-safety",
             lambda: self.guest("PROD", "host-path-safety", bundle="gateway"),
+        )
+        self.step(
+            "07-release-protection",
+            lambda: self.guest("PROD", "rpm-release-protection", bundle="gateway"),
         )
         self.step("07-healthy-host-repeat", lambda: self.guest("PROD", "health"))
         self.step("07-init-check", lambda: self.guest("PROD", "renamed-init-check"))

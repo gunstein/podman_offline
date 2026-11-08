@@ -74,6 +74,17 @@ def finish(code, message=""):
     sys.exit(code)
 
 
+# Signal the command's process group; kill and reap it after 5 seconds.
+def stop_child(sig):
+    os.killpg(pid, sig)
+    for _ in range(50):
+        if os.waitpid(pid, os.WNOHANG)[0]:
+            return
+        time.sleep(0.1)
+    os.killpg(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
+
+
 while True:
     ready, _, _ = select.select([fd], [], [], 1)
     if ready:
@@ -89,18 +100,19 @@ while True:
         tail += data
         idle = time.monotonic()
         if stop and stop.encode() in printed:
-            os.killpg(pid, signal.SIGHUP)
-            os.waitpid(pid, 0)
+            stop_child(signal.SIGHUP)
             finish(129, "INTERRUPTED: terminal closed after " + stop)
-    waiting = tail.rstrip(b" ").endswith(b":") and not tail.endswith(b"\n")
-    if waiting and given < len(answers) and answers[given][0].encode() in tail:
+    # Only the current, unfinished line can be a question.
+    prompt = tail.replace(b"\r", b"\n").rsplit(b"\n", 1)[-1].rstrip()
+    waiting = prompt.endswith((b":", b"?", b"]"))
+    if waiting and given < len(answers) and answers[given][0].encode() in prompt:
         os.write(fd, answers[given][1].encode() + b"\r")
         given, tail = given + 1, b""
     elif waiting and time.monotonic() - idle > IDLE:
-        os.killpg(pid, signal.SIGTERM)
-        finish(3, "FAIL: unexpected prompt: " + tail.decode(errors="replace").splitlines()[-1])
+        stop_child(signal.SIGTERM)
+        finish(3, "FAIL: unexpected prompt: " + prompt.decode(errors="replace"))
     if time.monotonic() > deadline:
-        os.killpg(pid, signal.SIGTERM)
+        stop_child(signal.SIGTERM)
         finish(124, "FAIL: time limit")
 _, status = os.waitpid(pid, 0)
 if given < len(answers):
@@ -228,21 +240,18 @@ def check_preflight_stop(output, account):
     require("[OK] installed" not in output, "a package was installed before the stop")
 
 
-def check_admin_first(output, values, components):
-    """First admin run: preflight, each release installed and runnable, the next line."""
+def check_admin_first(output, values, versions):
+    """First admin run: preflight, each release installed and runnable, the next line.
+
+    versions: {component: version} the scenario delivered.
+    """
     printed = lines(output)
     require("[OK] preflight" in printed, "no preflight line")
-    for component in components:
-        require(
-            any(re.fullmatch(rf"\[OK\] installed {values['product']}-{component}-[0-9.]+", line)
-                for line in printed),
-            f"{component} was not installed",
-        )  # fmt: skip
-        require(
-            any(re.fullmatch(rf"\[OK\] {values['account']} can run {values['product']}-{component}-[0-9.]+", line)
-                for line in printed),
-            f"{values['account']} cannot run {component}",
-        )  # fmt: skip
+    for component, version in versions.items():
+        name = f"{values['product']}-{component}-{version}"
+        require(f"[OK] installed {name}" in printed, f"{component} was not installed")
+        require(f"[OK] {values['account']} can run {name}" in printed,
+                f"{values['account']} cannot run {component}")  # fmt: skip
     require(
         f"[OK] next: log in as {values['account']} (at the console, or ssh "
         f"{values['account']}@<server>) and run {values['product']}" in printed,
@@ -251,17 +260,17 @@ def check_admin_first(output, values, components):
     require(printed[-1] == f"PASS: {values['product']}-admin completed", "no PASS line")
 
 
-def check_admin_repeat(output, values, components):
+def check_admin_repeat(output, values, versions):
     """An unchanged admin repeat installs and removes nothing and asks nothing."""
     printed = lines(output)
     require(not any(line.startswith(("[OK] installed", "[OK] removed")) for line in printed),
             "a repeat installed or removed a package")  # fmt: skip
-    for component in components:
+    for component, version in versions.items():
         require(
-            any(re.fullmatch(rf"\[OK\] {values['product']}-{component}-[0-9.]+ [0-9.]+ is installed", line)
-                for line in printed),
-            f"{component} is not reported as installed",
-        )  # fmt: skip
+            f"[OK] {values['product']}-{component}-{version} {version} is installed"
+            in printed,
+            f"{component} {version} is not reported as installed",
+        )
     require(printed[-1] == f"PASS: {values['product']}-admin completed", "no PASS line")
 
 
@@ -290,8 +299,13 @@ def check_credentials(output, files, repeat=False):
     )
 
 
-def check_runtime(output, values, installed, asked=False):
-    """<product>: the components installed now, status complete, PASS; prompts only first."""
+def check_runtime(output, values, installed, status, asked=False):
+    """<product>: the components installed now, status complete, PASS; prompts only first.
+
+    installed: {component: version} this run installs; status: every
+    component and version the final status table must show, active and
+    installed, and nothing else.
+    """
     printed = lines(output)
     for component, version in installed.items():
         require(f"[OK] {component} {version} installed" in printed,
@@ -301,6 +315,17 @@ def check_runtime(output, values, installed, asked=False):
               and line.split()[1] not in installed]  # fmt: skip
     require(not others, "other components were installed: " + ", ".join(others))
     require("Pending: none" in printed, "status shows pending work")
+    header = "COMPONENT VERSION UNIT STATE INSTALLATION"
+    require(header in printed, "no status table")
+    rows = printed[printed.index(header) + 1 :]
+    product = f"Product: {values['product']}"
+    require(product in rows, "the status table names no or another product")
+    rows = rows[: rows.index(product)]
+    expected = sorted(
+        f"{component} {version} {values['product']}-{component}.service active installed"
+        for component, version in status.items()
+    )
+    require(sorted(rows) == expected, "status rows: " + "; ".join(rows))
     require(("Public address" in output) == asked, "the prompts were not as expected")
     require(printed[-1] == f"PASS: {values['product']} completed", "no PASS line")
 
@@ -327,18 +352,36 @@ def check_admin_retire(output, values, old):
 
 
 def check_tools_version(output, values, version):
-    """rpm -q names exactly the delivered tools version (the repair table's row)."""
+    """rpm -q names exactly one tools package, the delivered version (the repair row)."""
     require(
-        lines(output)[-1] == f"{values['product']}-tools-{version}-1.noarch",
+        [line for line in lines(output) if line]
+        == [f"{values['product']}-tools-{version}-1.noarch"],
         "rpm -q does not name the delivered tools version",
     )
 
 
 def check_journal(output, values):
-    """The shareable journal lines: the commands' start and result, nothing else."""
-    require(f"{values['product']}-admin" in output and ": completed" in output,
-            "no start/result lines in the journal")  # fmt: skip
-    require("PRIVATE KEY" not in output, "credential content in the journal")
+    """The shareable journal lines: only start and result records, the admin's both.
+
+    Every entry under the product's tag must be "<subject>: started",
+    "...: completed[; note]" or "...: failed (exit N)"; anything else fails
+    without being shown.
+    """
+    product = re.escape(values["product"])
+    record = re.compile(
+        rf"^.* {product}(\[[0-9]+\])?: (?P<subject>.+): "
+        r"(?P<result>started|completed(; [^:]*)?|failed \(exit [0-9]+\))$"
+    )
+    entries = [line for line in lines(output) if line and not line.startswith("-- ")]
+    matches = [m for m in (record.match(line) for line in entries) if m]
+    require(
+        entries and len(matches) == len(entries),
+        "unexpected journal content (not shown)",
+    )
+    admin = [m.group("result") for m in matches if m.group("subject").startswith(
+        values["product"] + "-admin ")]  # fmt: skip
+    require("started" in admin, "no start record of the admin command")
+    require("completed" in admin, "no result record of the admin command")
 
 
 # The scenario -----------------------------------------------------------
@@ -396,6 +439,9 @@ def execute(run, strict=False):
     old = (ROOT / "components/help/VERSION").read_text().strip()
     major, minor, patch = old.split(".")
     new = f"{major}.{minor}.{int(patch) + 1}"
+    platform = (ROOT / "components/platform/VERSION").read_text().strip()
+    first = {"platform": platform, "help": old}  # installed before the upgrade
+    upgraded = {"platform": platform, "help": new}
     base = "podman-offline-acceptance/" + run.id
     values = {
         "delivery": "$HOME/" + base + "/delivery",
@@ -453,12 +499,14 @@ def execute(run, strict=False):
     run.step("06-nothing-changed", lambda: run.guest("PROD", "rpm-nothing-changed"))
     run.step("06-account-created", lambda: run.guest("PROD", "admin-baseline"))
     run.step("06-runtime-login-key", lambda: runtime_login(run, values))
-    admin("06-manual-admin", lambda out: check_admin_first(out, values, ["platform", "help"]),
+    admin("06-manual-admin", lambda out: check_admin_first(out, values, first),
           answers=[("Runtime account", values["account"]), ("HTTPS port", port_answer)])  # fmt: skip
     run.step("06-host-prepared", lambda: run.guest("PROD", "rpm-host-check"))
+    run.step("06-release-protection",
+             lambda: run.guest("PROD", "rpm-release-protection", bundle="platform"))  # fmt: skip
     admin(
         "06-manual-admin-repeat",
-        lambda out: check_admin_repeat(out, values, ["platform", "help"]),
+        lambda out: check_admin_repeat(out, values, first),
     )
     run.step("06-erase-guard", lambda: run.guest("PROD", "admin-erase-guard"))
     # The runtime user before the credentials arrive: the documented stop.
@@ -472,20 +520,27 @@ def execute(run, strict=False):
     # Another medium whose key differs: the documented stop, nothing copied.
     run.step("07-other-medium", lambda: run.guest("PROD", "rpm-other-medium"))
     other = dict(values, delivery="$HOME/" + base + "/other-medium")
-    run.step("07-manual-credentials-other", lambda: require(
-        "already exist with other content; nothing was copied"
-        in run_step(run, "credentials", other, expect=1),
-        "a different credential was not refused"))  # fmt: skip
+
+    def refused(out):
+        require(
+            "already exist with other content; nothing was copied" in out,
+            "a different credential was not refused",
+        )
+        require("other-medium-sentinel-5e1f" not in out, "credential content printed")  # fmt: skip
+
+    run.step("07-manual-credentials-other",
+             lambda: refused(run_step(run, "credentials", other, expect=1)))  # fmt: skip
     run.step(
         "07-credentials-delivered", lambda: run.guest("PROD", "rpm-credentials-check")
     )
-    platform = (ROOT / "components/platform/VERSION").read_text().strip()
     runtime("07-manual-runtime",
-            lambda out: check_runtime(out, values, {"platform": platform, "help": old}))  # fmt: skip
+            lambda out: check_runtime(out, values, {"platform": platform, "help": old}, first))  # fmt: skip
     run.step("07-runtime-installed", lambda: run.guest("PROD", "rpm-runtime-check"))
-    runtime("07-manual-runtime-repeat", lambda out: check_runtime(out, values, {}))
+    runtime(
+        "07-manual-runtime-repeat", lambda out: check_runtime(out, values, {}, first)
+    )
     run.step("07-nothing-restarted", lambda: run.guest("PROD", "rpm-no-restart"))
-    runtime("07-manual-runtime-help", lambda out: check_runtime(out, values, {"help": old}),
+    runtime("07-manual-runtime-help", lambda out: check_runtime(out, values, {"help": old}, first),
             component="help")  # fmt: skip
     run.step("07-help-restarted-only", lambda: run.guest("PROD", "rpm-reinstall-check"))
     # The scp alternative: credentials for the installed platform. Plain
@@ -495,13 +550,13 @@ def execute(run, strict=False):
     waiting = (f"/var/lib/{product}/incoming/platform holds delivered files that platform "
                f"does not use yet; run {product} platform")  # fmt: skip
     runtime("08-manual-runtime-waiting",
-            lambda out: (check_runtime(out, values, {}), require(waiting in out, "no warning")))  # fmt: skip
+            lambda out: (check_runtime(out, values, {}, first), require(waiting in out, "no warning")))  # fmt: skip
 
     def taken(out):
         delivered = [
             p for p in (run.private / "medium/platform").rglob("*") if p.is_file()
         ]
-        check_runtime(out, values, {"platform": platform})
+        check_runtime(out, values, {"platform": platform}, first)
         require(f"[OK] platform: {len(delivered)} delivered credential file(s) in "
                 f"/var/lib/{product}/state/platform" in lines(out),
                 "the delivered files were not taken")  # fmt: skip
@@ -525,7 +580,7 @@ def execute(run, strict=False):
     run.step("09-left-unfinished",
              lambda: run.guest("PROD", "rpm-interrupted-check", new, old_version=old))  # fmt: skip
     runtime("09-manual-runtime-resumed",
-            lambda out: check_runtime(out, values, {"help": new}))  # fmt: skip
+            lambda out: check_runtime(out, values, {"help": new}, upgraded))  # fmt: skip
     run.step(
         "09-upgraded",
         lambda: run.guest("PROD", "rpm-upgrade-check", new, old_version=old),
@@ -536,7 +591,7 @@ def execute(run, strict=False):
         lambda: run.guest("PROD", "rpm-retire-check", new, old_version=old),
     )
     admin("09-manual-admin-retire-repeat",
-          lambda out: check_admin_repeat(out, values, ["platform", "help"]))  # fmt: skip
+          lambda out: check_admin_repeat(out, values, upgraded))  # fmt: skip
     # Tools repair: damaged tools (fault injection), the documented repair.
     run.step("10-tools-damaged", lambda: run.guest("PROD", "rpm-tools-damage"))
     # The manual's symptom: a Python error instead of an ERROR: line.
@@ -550,7 +605,7 @@ def execute(run, strict=False):
     admin("10-manual-tools-reinstall", lambda out: require("Complete!" in out, "no reinstall"),
           answers=[("Is this ok", "y")], step="tools-reinstall")  # fmt: skip
     admin("10-manual-admin-repaired",
-          lambda out: check_admin_repeat(out, values, ["platform", "help"]))  # fmt: skip
+          lambda out: check_admin_repeat(out, values, upgraded))  # fmt: skip
     run.step("10-tools-intact", lambda: run.guest("PROD", "rpm-tools-intact"))
     admin(
         "10-manual-help-journal",

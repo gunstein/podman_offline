@@ -605,13 +605,26 @@ class ComponentObservationTests(unittest.TestCase):
             for path in files:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("fixture")
-            # Backlog 69: trust from the RPM database, for every installed file.
+            # Backlog 69: the delivered RPM's inventory is the expectation;
+            # its deployment/ files must be trusted through rpmdb.
+            deliveries = home / "deliveries"
+            rpm = deliveries / "rpm-platform-0.4.3/myproduct-platform-0.4.3-0.4.3-1.noarch.rpm"
+            rpm.parent.mkdir(parents=True)
+            rpm.write_bytes(b"rpm")
+            dump = [str(path) + " 123 1700000000 " + "a" * 64 + " 0100644 root root 0 0 0 X"
+                    for path in files] + [
+                str(package) + " 4096 1700000000 " + "0" * 64 + " 040755 root root 0 0 0 X",
+                str(package.parent / "bundle.yaml") + " 9 1700000000 " + "b" * 64
+                + " 0100644 root root 0 0 0 X",
+            ]  # fmt: skip
             rows = ["rpmdb " + str(path) + " 123 " + "a" * 64 for path in files]
             trust = list(rows)
 
             def command(arguments):
                 if arguments == ["fapolicyd-cli", "--dump-db"]:
                     return "\n".join(trust)
+                if arguments == ["rpm", "-qp", "--dump", str(rpm)]:
+                    return "\n".join(dump)
                 if "network" in arguments:
                     return '[{"id":"network-id"}]'
                 return json.dumps(
@@ -636,18 +649,28 @@ class ComponentObservationTests(unittest.TestCase):
                     "argv",
                     ["guest", "identity-siblings-before", "unused", "identity"],
                 ),
-                mock.patch.dict(os.environ, {"PRODUCT_ROOT": str(home)}),
+                mock.patch.dict(
+                    os.environ, {"PRODUCT_ROOT": str(home), "DELIVERIES": str(deliveries)}
+                ),
             ):
                 self.assertEqual(code["observe"]()["trust"], sorted(rows))
                 # An older installed release of the same component is trusted too.
                 older = rows + [rows[0].replace("0.4.3", "0.4.2")]
                 trust = older
                 self.assertEqual(code["observe"]()["trust"], sorted(older))
-                trust = rows[:-1]
-                with self.assertRaisesRegex(
-                    SystemExit, "release package is not trusted"
+                first = rows[0]
+                for broken in (
+                    rows[:-1],
+                    [first.replace("rpmdb ", "file ")] + rows[1:],
+                    [first.replace(" 123 ", " 999 ")] + rows[1:],
+                    [first.replace("a" * 64, "0" * 64)] + rows[1:],
                 ):
-                    code["observe"]()
+                    with self.subTest(broken=broken[0][:30]):
+                        trust = broken
+                        with self.assertRaisesRegex(
+                            SystemExit, "release package is not trusted"
+                        ):
+                            code["observe"]()
 
     def test_help_siblings_compare_platform_identity_state_network_and_other_trust(
         self,

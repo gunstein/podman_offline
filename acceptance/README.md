@@ -76,12 +76,15 @@ release code and trust rules are unchanged; original config is restored through
 install. See [probe commands, negative control and verification limits](RESULTS.md).
 The existing matrix without this flag does not exercise this failure path.
 
-# Protected releases (backlog 54)
+# Protected releases (backlog 69)
 
-Production lab steps use the shared authenticated root helper and protected
-`/opt/<product>/releases` layout. All six scenarios now include a separate-UID
-`07-release-safety` probe; current-change OL9 verification is pending. Read
-[bootstrap, failure/retry contracts, local evidence and matrix commands](RESULTS.md).
+Production lab steps install release RPMs through `<product>-admin` into
+`/var/lib/<product>/releases`; phase 1 uses trusted unsigned deliveries. Every
+scenario's `07-release-protection` (in `--rpm-manual`: `06-release-protection`)
+tries, as the runtime account, to change, add, link, move or chmod in a release
+tree and to add a release directory, and requires all of it to be refused with
+`rpm -V` still clean. The earlier `07-release-safety` probe of `release.py`
+was removed with it (last present at `fd3a311`). See [results](RESULTS.md).
 
 # A new ENVIRONMENT variable on the next dev up
 
@@ -285,10 +288,10 @@ historical evidence, not verification of this change.
 # Deploy package acceptance (0.4.3)
 
 The stable `./deploy.sh` entrypoint now uses `python3 -B -m deployment`. Current
-bundles ship `deployment/`, and only that package directory is recursively added
-to each bundle's own fapolicyd trust file. The harness checks every expected file,
-waits for all old package entries to disappear, and preserves sibling trust.
-No bytecode, whole-release trust, migration or old-module compatibility is added.
+bundles ship `deployment/`. Since backlog 69 the release RPM's files are
+trusted through the RPM database (until then each bundle had its own fapolicyd
+trust file); the harness checks sibling trust as described under the local
+checks. No bytecode, migration or old-module compatibility is added.
 
 Use the existing fresh-install/lifecycle matrix from a clean committed checkout:
 
@@ -584,15 +587,6 @@ kept in the database for inspection. The HTTP tests do not run JavaScript in a b
 
 ## Local checks of the test harness
 
-Release preparation verifies the archive and extracted checksums before adding
-trust for that bundle's `deployment/` directory. It repeats add/update/wait even
-when the release directory already exists, so a failed trust registration or
-update can be retried without extracting again. An add status of 1 (nothing new
-after duplicate removal) is accepted only if update succeeds and the live trust
-check confirms every package file. Other add errors stop immediately; incomplete
-live trust still fails. This separate helper fix addresses the retry limitation
-recorded in DEPLOY-REFACTOR.md (git history); it does not change deploy's lifecycle retry state.
-
 ```sh
 python3 -m unittest discover -s acceptance -p 'test_*.py'
 bash -n acceptance/remote.sh
@@ -870,10 +864,11 @@ Every recorded stderr line that starts with `WARNING`, `** WARNING` or
 `Warning:` is named as a “stderr warning” in the report. The source can be the SSH client
 or the remote command; it is not inferred from the text. Known secrets are masked.
 
-Trust updates are checked with a bounded, read-only wait: `--update`
-notifies the daemon without waiting for the database to finish. Before installation the
-new path is required, and after an upgrade the old path must also be gone.
-Database content and hash values are not written to the log.
+Release trust comes from the RPM database. The sibling checks require every
+`deployment/` file of each sibling's installed version, with the size and
+digest of the delivered RPM (`rpm -qp --dump`), to be trusted through `rpmdb`;
+other side-by-side versions may be trusted too. Database content and hash
+values are not written to the log.
 
 ## Container health and hang test
 

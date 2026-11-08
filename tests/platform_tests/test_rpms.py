@@ -5,6 +5,7 @@ rpm run for real, and the erase guard is executed from the built package.
 """
 
 import copy
+import os
 import shutil
 import subprocess
 import tempfile
@@ -69,28 +70,56 @@ class ReleaseRpmTests(ProductFixture):
         self.assertIn(root + "/components/worker/files/notes.txt", paths)
         self.assertIn(root + "/checksums.sha256", paths)
 
-    def guard(self, rpm, remaining, authorization=None):
-        """Run the package's %preun with a temporary /run/cedar."""
+    def guard(self, rpm, remaining, authorization=None, keep=None):
+        """Run the package's %preun with a temporary /run/cedar.
+
+        The guard requires a root-owned authorization; the test user owns it
+        here, so only that one comparison names the test user's UID. keep, if
+        given, receives whether the authorization still exists afterwards.
+        """
         script = rpm_query(rpm, "--queryformat", "%{PREUN}")
+        owner = '"$(stat -c %u "$auth")" = 0'
+        self.assertIn(owner, script)
         with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory, "erase-authorization")
             if authorization is not None:
-                Path(directory, "erase-authorization").write_text(authorization)
-            script = script.replace("/run/cedar", directory)
-            return RUN(
+                record.write_text(authorization)
+            script = script.replace("/run/cedar", directory).replace(
+                owner, f'"$(stat -c %u "$auth")" = {os.getuid()}'
+            )
+            result = RUN(
                 ["sh", "-c", script, "preun", str(remaining)],
                 capture_output=True,
                 text=True,
                 check=False,
             )
+            if keep is not None:
+                keep.append(record.exists())
+            return result
 
-    def test_erase_needs_the_authorization_for_exactly_this_package(self):
+    def test_erase_needs_a_live_authorization_for_exactly_this_package(self):
         (rpm,) = rpms.build(["worker"])
         name = "cedar-worker-1.2.3-1.2.3-1"
+        started = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
+        live = f"{name} {os.getpid()} {started}\n"
         refused = self.guard(rpm, 0)
         self.assertEqual(refused.returncode, 1)
         self.assertIn("use: sudo cedar-admin", refused.stderr)
-        self.assertEqual(self.guard(rpm, 0, "cedar-worker-1.2.4-1.2.4-1").returncode, 1)
-        self.assertEqual(self.guard(rpm, 0, name).returncode, 0)
+        # A finished process: its PID no longer names the author.
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        for authorization in (
+            live.replace(name, "cedar-worker-1.2.4-1.2.4-1"),
+            f"{name}\n",
+            f"{name} {dead.pid} {started}\n",
+            f"{name} {os.getpid()} {int(started) + 1}\n",
+            f"{name} {os.getpid()} {started} extra\n",
+        ):
+            with self.subTest(authorization=authorization):
+                self.assertEqual(self.guard(rpm, 0, authorization).returncode, 1)
+        kept = []
+        self.assertEqual(self.guard(rpm, 0, live, keep=kept).returncode, 0)
+        self.assertEqual(kept, [False])  # consumed: a second erase finds nothing
         # An upgrade or reinstall leaves an instance: no authorization needed.
         self.assertEqual(self.guard(rpm, 1).returncode, 0)
 

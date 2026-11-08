@@ -1354,6 +1354,17 @@ WP0 results stay in the git history. The P2 policy script is
 `acceptance/fapolicyd-strict.sh`. The review-guide contracts (release
 authentication, host preparation, layout, messages) and items 65-67 are
 rewritten. Local tests pass; the matrix has no lab run on this change yet.
+Status 2026-11-08, review follow-up (code review of `b435bec`): the erase
+authorization names the live administrator process and is consumed by the
+guard; a release tree without its package stops every later run; the status
+JSON is checked for product, duplicates, the pending record and exit status;
+the account's commands run with a time limit and an output cap; the manual
+scenario's driver answers only the current prompt; the status, tools-version,
+journal, reinstall and sibling-trust checks require the scenario's exact
+expectations; `rpm-release-protection` (the runtime account cannot change a
+release tree) replaces the removed release-safety probe in every scenario;
+the manual names the scp folder and the unmount on an upgrade. Local tests
+only; tools/VERSION 0.3.3.
 
 Many customers install in a closed server lab, often from a **printed manual**,
 sometimes with **only a console** (bundles on DVD or USB, no SSH), and the

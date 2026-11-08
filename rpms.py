@@ -8,9 +8,9 @@ install side by side and the running one keeps its release tree. fapolicyd
 trusts the files through the RPM database.
 
 An installed release can be erased only by the administrator command
-(backlog 69 WP2): the package's %preun refuses an erase unless
-/run/<product>/erase-authorization names exactly this package. That command
-writes the authorization for one package and deletes it afterwards.
+(backlog 69 WP4): the package's %preun refuses an erase unless
+/run/<product>/erase-authorization names exactly this package and the live
+administrator command that wrote it, and consumes it.
 
 The tools RPM, dist/rpm/<product>-tools-<version>-1.noarch.rpm, carries the
 administrator command /usr/sbin/<product>-admin (tools/admin.py) and the
@@ -44,14 +44,25 @@ DIST = ROOT / "dist"
 
 # %preun of every release RPM. $1 is the number of instances left after the
 # transaction: 0 for an erase. Plain sh, so it needs nothing from the product.
+# The authorization (tools/admin.py remove) is root-owned and names exactly
+# this package and the live administrator process (PID and start time); the
+# guard consumes it, so it is used once and never outlives its command.
 GUARD = """\
-if [ "$1" -eq 0 ]; then
+authorized() {{
     auth=/run/{product}/erase-authorization
-    if [ -L "$auth" ] || [ ! -f "$auth" ] || [ "$(stat -c %u "$auth")" != 0 ] \\
-        || [ "$(cat "$auth")" != "%{{name}}-%{{version}}-%{{release}}" ]; then
-        echo "{product}: removing %{{name}} is refused; use: sudo {product}-admin" >&2
-        exit 1
-    fi
+    [ ! -L "$auth" ] && [ -f "$auth" ] && [ "$(stat -c %u "$auth")" = 0 ] || return 1
+    read -r identity owner started extra < "$auth" || return 1
+    [ "$identity" = "%{{name}}-%{{version}}-%{{release}}" ] && [ -z "$extra" ] || return 1
+    case "$owner$started" in ''|*[!0-9]*) return 1;; esac
+    process=$(cat "/proc/$owner/stat" 2>/dev/null) || return 1
+    set -- ${{process##*) }}
+    case "$1" in Z|X|x) return 1;; esac
+    [ "${{20}}" = "$started" ] || return 1
+    rm -f -- "$auth"
+}}
+if [ "$1" -eq 0 ] && ! authorized; then
+    echo "{product}: removing %{{name}} is refused; use: sudo {product}-admin" >&2
+    exit 1
 fi
 """
 
