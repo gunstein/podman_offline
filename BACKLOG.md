@@ -1270,6 +1270,54 @@ assisted 2026-10-23 trial and green automated lab runs do not satisfy this item.
 Completion requires an unassisted pass for each claimed task, with remaining
 scope and usability findings explicitly recorded.
 
+### Trial procedure on the lab VMs (item 69 phase 1)
+
+Verified by an AI agent on `c5bab2f` (2026-11-08,
+[result](acceptance/OPERATOR-REVIEW.md)); placeholders come from
+`~/.config/podman-offline-acceptance/lab.env`. Build the delivery and print the
+manual from one commit.
+
+1. **Delivery on DEV.** Roll DEV back to `clean-dev`. On the laptop:
+   `git bundle create /tmp/trial.bundle HEAD` and copy it to DEV. On DEV:
+   `git clone trial.bundle trial && cd trial && ./dev/build-images.sh &&
+   ./dev/pull-images.sh && ./build-bundle.sh`, then
+   `sudo dnf -y install rpm-build xorriso && ./build-rpms.sh platform help --tools`.
+2. **First medium.** The demo CA stays outside the medium; only the
+   component folder goes in:
+   `bash dev/generate-certificates.sh --root ~/pki platform <PROD_HOST> &&
+   mkdir -m 700 ~/medium1 && cp -r ~/pki/platform ~/medium1/ &&
+   cp dist/rpm/myproduct-tools-*.rpm dist/rpm/myproduct-platform-*.rpm
+   dist/rpm/myproduct-help-*.rpm ~/medium1/ &&
+   xorriso -as mkisofs -R -J -o ~/delivery1.iso ~/medium1`.
+   Check that `find ~/medium1 -type f` lists only the RPMs and
+   `platform/credentials/...`. Keep `~/pki/PKI/private/ca.crt` (public) for
+   the browser or `curl --cacert` check.
+3. **Upgrade medium** (help one patch version newer, no credentials): in a
+   second clone, `echo 0.4.14 > components/help/VERSION && ./dev/build-images.sh
+   && ./build-bundle.sh help && ./build-rpms.sh help --tools`; the tools and
+   help RPMs go into `~/medium2` and `~/delivery2.iso` the same way.
+4. **Proxmox.** Upload both ISOs to the `local` storage in the web UI; the
+   observer attaches and swaps the CD (*Hardware → CD/DVD Drive*): the lab
+   token cannot.
+5. **PROD baseline.** Roll PROD back to `clean-agent`. As the administrator:
+   `sudo useradd -m -s /bin/bash produser && sudo passwd produser` (the
+   declared prerequisite). Leave `subj_cache_size` as found
+   (`sudo grep subj_cache_size /etc/fapolicyd/fapolicyd.conf`), so the
+   preflight stop and its fix are part of the trial. Snapshot `trial-start`
+   to repeat a task after a manual fix.
+6. **Worksheet** for the participant: `produser` and its password,
+   `server1.example.org` → `<PROD_HOST>`, `192.0.2.10` → `<PROD_IP>`, port
+   `8443`, `/dev/sdb1` → `/dev/sr0`, `/mnt`; the administrator account; the
+   Proxmox console only.
+7. **Tasks**, with `delivery1.iso` attached: mount (step 1); tools (2);
+   first `myproduct-admin` with the cache stop and its fix (3); an unchanged
+   repeat (3); credentials and `umount` (4); log in as `produser` (5);
+   `myproduct`, interrupted with Ctrl+C during installation and continued
+   (6); status. Then the observer swaps to `delivery2.iso`: the upgrade
+   (steps 1, 3, `umount`, 5, 6), retirement (3 again), "Asking for help",
+   and optionally a reboot and `myproduct` (item 67). Record a setting
+   change, the tools repair and credentials with `scp` as pending.
+
 ## 69. Paper-first installation for closed networks
 
 Status: requirement and investigation (2026-10-25), lab questions answered and

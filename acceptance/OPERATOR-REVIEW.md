@@ -1,5 +1,46 @@
 # Operator review baseline for backlog 65–67
 
+## Backlog 68 trial procedure: AI verification on the lab VMs (2026-11-08)
+
+An AI agent ran the trial procedure in [backlog 68](../BACKLOG.md#68-human-operator-trial-on-a-fresh-vm)
+on `c5bab2f`: the delivery built on DEV, two ISO media attached to PROD as a
+CD (`/dev/sr0`), PROD from `clean-agent` with `produser` created and
+`subj_cache_size = 4099` left as found. It typed the manual's commands over
+SSH with a pseudo-terminal (not the console from paper), answered the
+prompts, edited `fapolicyd.conf` with `vi`, and followed the manual's rule
+after Ctrl+C. **This verifies the procedure, not an operator: it is not the
+human trial.**
+
+| Task | Result |
+| --- | --- |
+| Find and mount the medium (`lsblk`, `mount`, `ls`), both media | passed; `sr0`, type `rom`, by size |
+| Tools with `dnf` | passed |
+| First `myproduct-admin`: preflight stop on `subj_cache_size`, fixed with `vi` (`/^subj_cache_size`, `cc...`, Esc, `:wq`) and the restart, then a full run | passed |
+| Unchanged repeat, credentials, `umount` | passed |
+| Runtime user in a fresh SSH login, first `myproduct` with Ctrl+C during platform's install, then `myproduct` again | completed; HTTPS 200 (`/help/`, checked with the delivery's CA) |
+| Status, upgrade to help 0.4.14 from the second medium, retirement of 0.4.13, journal, reboot and `myproduct` in a fresh login | passed; HTTPS 200 |
+| Setting change, tools repair, credentials with `scp` | not run |
+
+Findings and what followed:
+
+1. Ctrl+C printed two Python tracebacks (product). Fixed in `40b37c4`: a
+   short `ERROR: Interrupted; run the same command again to continue`.
+2. `[OK]` lines from `init-layout` and `init-config` asked for steps that
+   `myproduct` does itself (product). Fixed in `40b37c4`.
+3. Repeated `myproduct-admin` printed firewalld's `Warning:
+   ALREADY_ENABLED` (product). Fixed in `40b37c4`.
+4. The procedure's own defects (CA key on the medium, `grep` without
+   `sudo`, unclear cross-references) were found and fixed during the runs;
+   [backlog 68](../BACKLOG.md#68-human-operator-trial-on-a-fresh-vm) has the
+   corrected procedure.
+5. The lab token may not change a VM's CD (`VM.Config.CDROM`, HTTP 403); the
+   observer swaps the CD in the Proxmox web UI.
+6. Open finding 3 below stays: the manual says to change the line and save
+   but gives no `vi` keys.
+
+Not measured: time per task (the agent recorded estimates only). The
+`40b37c4` fixes have local tests; no lab run yet.
+
 ## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
 
 Manual: [docs/PRODUCTION-INSTALL.md](../docs/PRODUCTION-INSTALL.md), SHA256
@@ -93,8 +134,9 @@ where stated.
 4. "Install the named package from the OS media" assumes the system
    administrator can do that offline; the manual only declares it as that
    person's prerequisite.
-5. Not verified on a host: mounting a medium and `umount`. The typed
-   prompts, the tools repair and a real SSH login running `myproduct`
+5. Mounting a medium and `umount` were run on a host only by the AI
+   verification of the trial procedure (2026-11-08, above), not by a
+   person. The typed prompts, the tools repair and a real SSH login running `myproduct`
    passed in `--rpm-manual` (WP6).
 
 Interruption/retry trace: every numbered step is safe to repeat. `dnf install`
