@@ -323,6 +323,20 @@ class OutputCheckTests(unittest.TestCase):
             "Nov 07 20:26:40 prod myproduct: prepare-host --user myproduct-ops --port 8443: started\n"
         )
         manual_run.check_journal(journal, VALUES)
+        # As in the af22327 lab runs: journalctl in a terminal prints logger's
+        # notice-level lines in bold; run_step removes that before the checks.
+        bold = journal.replace(
+            "myproduct: prepare-host --user myproduct-ops --port 8443: started",
+            "myproduct: \x1b[0;1;39mprepare-host --user myproduct-ops --port 8443: started\x1b[0m",
+        )
+        self.assertNotEqual(bold, journal)
+        self.assertIn(
+            "unexpected journal content",
+            self.fails(manual_run.check_journal, bold, VALUES),
+        )
+        manual_run.check_journal(
+            manual_run.terminal_text(bold.replace("\n", "\r\n")), VALUES
+        )
         started, completed = journal.splitlines()[1], journal.splitlines()[2]
         for output, cause in (
             ("", "unexpected journal content"),

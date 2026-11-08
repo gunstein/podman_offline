@@ -26,20 +26,24 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `c63b-whoami-d111718` | 46 | CLEAN PASS |
-| normal | `m69-normal-30704b3` | 118 | CLEAN PASS |
-| `--first-app app2` | `c63b-app2-d111718` | 118 | CLEAN PASS |
-| `--identity-only` | `c63b-identity-d111718` | 58 | CLEAN PASS |
-| `--help-only` | `c63b-help-d111718` | 52 | CLEAN PASS |
-| `--platform-help-only` | `c63b-platform-help-d111718` | 31 | CLEAN PASS |
-| `--renamed-product` | `c63b-renamed-d111718` | 57 | CLEAN PASS |
+| `--whoami` | `whoami-af22327` | 45 | CLEAN PASS |
+| normal | `normal-af22327` | 118 | CLEAN PASS |
+| `--first-app app2` | `app2-af22327` | 118 | CLEAN PASS |
+| `--identity-only` | `identity-af22327` | 58 | CLEAN PASS |
+| `--help-only` | `help-af22327` | 52 | CLEAN PASS |
+| `--platform-help-only` | `platform-help-af22327` | 31 | CLEAN PASS |
+| `--renamed-product` | `renamed-af22327` | 57 | CLEAN PASS |
 
-Normal: on `30704b3` (2026-11-07), the RPM branch (backlog 69 WP1-WP4)
-with main (backlogs 82, 83 and 63) merged; clean detached checkout, Oracle
-Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step.
-The other rows: on `d111718` (main, 2026-11-07, backlog 63), same checkout
-rules, OS and Podman, no failed or skipped step; not rerun on the RPM
-branch, whose WP4 change touches no deploy code. Backlog 63: the demo manifests take their images from
+All on `af22327` (2026-11-08), clean detached checkout, Oracle Linux Server
+9.8 and Podman 5.8.2 on DEV and PROD, no failed or skipped step. This commit is
+the RPM branch (backlog 69 WP1-WP6 and the first review follow-up) with main
+merged: every scenario delivered its PROD releases as RPMs built on DEV and
+installed them with `sudo myproduct-admin <directory>` (which also prepared
+the host and retired older releases), and the sibling checks found every
+`deployment/` file of each sibling's installed version trusted through
+`rpmdb` with the delivered RPM's size and digest. The release-protection probe
+of these runs is the first form (`af22327`); its stricter form came after.
+Backlog 63: the demo manifests take their images from
 `config/images.yaml` (`REGISTRY`, `LOCAL_REGISTRY` and version variables) and
 help and identity from `@@COMPONENT_VERSION@@`. Every health step checked
 that each app container runs the image its installed YAML names (`podman
@@ -66,22 +70,25 @@ The harness defects found on the way to this matrix are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `c63b-status-retry-d111718` | 119 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-3bff57b` | 58 | CLEAN PASS |
-| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-3bff57b` | 59 | CLEAN PASS |
+| `--status-retry` | `status-retry-af22327` | 119 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-af22327` | 59 | NOT CLEAN |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-af22327` | 60 | NOT CLEAN |
 
-Status/retry: on `d111718`, with the matrix rows from main, before the
-matrix installed its releases as RPMs (backlog 69 WP6). Status/retry: a
+Status/retry: same commit, date, checkout, OS and Podman as the matrix. A
 same-version failure stays pending with the old container active, a plain
 retry completes, and the restore leaves protected code unchanged. The
 `--host-setup` scenario (the `release.py` manual) was removed in backlog 69
 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): both on `3bff57b` (2026-11-07), clean detached
-checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no failed
-or skipped step; P1 is `clean-agent`, P2 the strict WP0 profile applied after
-the reset (`strict_fapolicyd: true`). This commit is the RPM branch (backlog
-69 WP1-WP6 part 1) with main merged. Every operator step ran the command
+RPM manual (backlog 69 WP6): both on `af22327` (2026-11-08), same checkout, OS
+and Podman as the matrix. Both stopped at the last step,
+`10-manual-help-journal`: journalctl, run in the scenario's terminal, prints
+`prepare-host.sh`'s notice-level lines in bold, and the journal check did not
+remove those terminal codes (a harness defect; the check now reads the text
+an operator sees). Every earlier step passed, as in the previous CLEAN PASS on
+`3bff57b` (in the git history). P1 is `clean-agent`, P2 the strict WP0 profile
+applied after the reset (`strict_fapolicyd: true`). In both runs every
+operator step ran the command
 block of `docs/PRODUCTION-INSTALL.md` literally (only its example values
 replaced), with the answers typed at the prompts and the runtime user logged
 in over real SSH without sudo: the tools with `dnf`; the admin command

@@ -228,7 +228,17 @@ def run_step(run, step, values, answers=(), stop="", expect=0, component=None):
         raise RuntimeError(
             f"Manual step {step} exited {result.returncode}, expected {expect}"
         )
-    return result.stdout.replace("\r\n", "\n")
+    return terminal_text(result.stdout)
+
+
+# CSI sequences: in a terminal, journalctl prints notice-level lines (logger's
+# default, as in prepare-host.sh) in bold. The log keeps the raw output.
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def terminal_text(output):
+    """What an operator reads: terminal line ends and colors removed."""
+    return ANSI.sub("", output.replace("\r\n", "\n"))
 
 
 def lines(output):

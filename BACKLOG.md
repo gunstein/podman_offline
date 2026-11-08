@@ -1381,7 +1381,13 @@ read with paths that may contain spaces. Local tests only; tools/VERSION
 level 3 for their payload (`rpms.py`). The af22327 lab runs spent most of
 their time in `release-rpm` on OL9's default level 19 (about 220-330 s per
 release with images, RPMs of 18-171 MB); level 3 builds many times faster
-for somewhat larger files. Review finding F7 (the image check compares the
+for somewhat larger files.
+Lab 2026-11-08 on `af22327` (the first review follow-up): the whole fixed
+matrix and `--status-retry` CLEAN PASS with every release installed as an RPM
+by `<product>-admin`; both `--rpm-manual` runs stopped only at the last step,
+the journal check (terminal bold codes from `journalctl`, a harness defect,
+fixed). The second review follow-up and the zstd level change have no lab run
+yet. Review finding F7 (the image check compares the
 installed YAML with the running container, both product output): kept as a
 documented limit by the product owner on 2026-11-08; help and identity keep
 their independent version checks and the resolver its unit tests.
