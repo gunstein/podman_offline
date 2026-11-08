@@ -1175,6 +1175,10 @@ class Run:
             self.step("06-healthy-" + name, lambda: self.guest("PROD", "health"))
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step(
+            "07-release-protection",
+            lambda: self.guest("PROD", "rpm-release-protection", bundle="platform"),
+        )
+        self.step(
             "07-whoami-chain-mounts",
             lambda: self.guest("PROD", "whoami-chain-mounts", bundle="app3"),
         )

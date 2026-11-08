@@ -2614,7 +2614,8 @@ def observe():
             raise SystemExit("FAIL: no delivered RPM for sibling " + name)
         package = str(pathlib.Path(os.environ["PRODUCT_ROOT"]) / "releases" / name / "deployment") + "/"
         for line in command(["rpm", "-qp", "--dump", str(rpms[0])]).splitlines():
-            fields = line.split(" ")
+            # 11 fields; only the path (the first) may contain spaces.
+            fields = line.rsplit(" ", 10)
             if fields[0].startswith(package) and fields[4].startswith("0100"):
                 expected.add(("rpmdb", fields[0], fields[1], fields[3].lower()))
         if not any(path.startswith(package) for _, path, _, _ in expected):
@@ -2890,27 +2891,55 @@ rpm-retire-check)
     ;;
 rpm-release-protection)
     # Backlog 69: the runtime account can change neither an RPM release tree
-    # nor the releases directory (the protection release-safety probed before).
+    # nor releases/ or the product root (the protection release-safety probed
+    # before). The probe first proves it runs as the account and finds its
+    # target; only a refusal (PermissionError) counts, any other error fails.
     name=$(rpm -qa "$product_name-$bundle-*" --queryformat '%{NAME}\n' | sort -V | tail -n 1)
     [[ -n $name ]] || { echo "FAIL: no $bundle release package"; exit 1; }
     tree="$release_root/$name"
-    file="$tree/deployment/__init__.py"
-    attempts=(
-        "printf x >> '$file'"
-        "touch '$tree/deployment/added.py'"
-        "ln -s /tmp '$tree/linked'"
-        "mv '$tree' '$tree.moved'"
-        "rm -f '$file'"
-        "chmod 0777 '$tree'"
-        "mkdir '$release_root/$product_name-$bundle-9.9.9'"
-    )
-    for attempt in "${attempts[@]}"; do
-        if sudo -n -u "$service_user" bash -c "$attempt" 2>/dev/null; then
-            echo "FAIL: $service_user could run: $attempt"; exit 1
-        fi
-    done
+    rpm -V "$name" || { echo "FAIL: $name is damaged before the probe"; exit 1; }
+    sudo -n -u "$service_user" python3 - "$tree" "$(id -u "$service_user")" <<'RELEASE_PROTECTION'
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+file = root / "deployment/__init__.py"
+if os.geteuid() != int(sys.argv[2]):
+    raise SystemExit("FAIL: protection probe ran as the wrong UID")
+if not root.is_dir() or not file.is_file():
+    raise SystemExit("FAIL: protection probe target is missing")
+
+
+def append():
+    with file.open("ab") as stream:
+        stream.write(b"x")
+
+
+attempts = [
+    ("append to a packaged file", append),
+    ("add a module", lambda: (root / "deployment/added.py").touch(exist_ok=False)),
+    ("add a symlink", lambda: (root / "linked").symlink_to("/tmp")),
+    ("rename the release", lambda: root.rename(root.with_name(root.name + ".moved"))),
+    ("remove a packaged file", file.unlink),
+    ("change release permissions", lambda: root.chmod(0o777)),
+    ("add a release", lambda: (root.parent / "protection-probe-new-release").mkdir()),
+    ("rename releases", lambda: root.parent.rename(root.parent.with_name("releases.moved"))),
+    ("rename the product root", lambda: root.parent.parent.rename(
+        root.parent.parent.with_name(root.parent.parent.name + ".moved"))),
+]
+for label, attempt in attempts:
+    try:
+        attempt()
+    except PermissionError:
+        continue
+    except OSError:
+        raise SystemExit("FAIL: protection probe could not test: " + label)
+    raise SystemExit("FAIL: runtime account could " + label)
+print("PASS: runtime UID confirmed; all release protection attempts refused")
+RELEASE_PROTECTION
     rpm -V "$name" || { echo "FAIL: $name changed"; exit 1; }
-    echo "PASS: $service_user cannot change $name or add a release"
+    echo "PASS: $service_user cannot change $name, releases/ or the product root"
     ;;
 rpm-tools-damage)
     # Fault injection outside the product: a tools module goes missing.

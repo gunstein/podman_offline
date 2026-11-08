@@ -74,15 +74,28 @@ def finish(code, message=""):
     sys.exit(code)
 
 
-# Signal the command's process group; kill and reap it after 5 seconds.
+# Signal the command's process group; after the leader exits or 5 seconds,
+# kill what is left of the group (a descendant may ignore the signal) and reap.
 def stop_child(sig):
-    os.killpg(pid, sig)
+    try:
+        os.killpg(pid, sig)
+    except ProcessLookupError:
+        pass
+    reaped = False
     for _ in range(50):
-        if os.waitpid(pid, os.WNOHANG)[0]:
-            return
+        try:
+            reaped = bool(os.waitpid(pid, os.WNOHANG)[0])
+        except ChildProcessError:
+            reaped = True
+        if reaped:
+            break
         time.sleep(0.1)
-    os.killpg(pid, signal.SIGKILL)
-    os.waitpid(pid, 0)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if not reaped:
+        os.waitpid(pid, 0)
 
 
 while True:
@@ -364,13 +377,14 @@ def check_journal(output, values):
     """The shareable journal lines: only start and result records, the admin's both.
 
     Every entry under the product's tag must be "<subject>: started",
-    "...: completed[; note]" or "...: failed (exit N)"; anything else fails
+    "...: completed[; note]", "...: failed" (the tools) or "...: failed
+    (exit N)" (deploy.sh, prepare-host.sh); anything else fails
     without being shown.
     """
     product = re.escape(values["product"])
     record = re.compile(
         rf"^.* {product}(\[[0-9]+\])?: (?P<subject>.+): "
-        r"(?P<result>started|completed(; [^:]*)?|failed \(exit [0-9]+\))$"
+        r"(?P<result>started|completed(; [^:]*)?|failed( \(exit [0-9]+\))?)$"
     )
     entries = [line for line in lines(output) if line and not line.startswith("-- ")]
     matches = [m for m in (record.match(line) for line in entries) if m]

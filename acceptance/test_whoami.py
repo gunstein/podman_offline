@@ -91,6 +91,7 @@ class WhoamiScenarioTests(ScenarioFixture):
             "06-prepare-host",
             "06-install-platform",
             "06-install-app3",
+            "07-release-protection",
             "07-whoami-chain-mounts",
             "08-credentials",
             "08-whoami-e2e",

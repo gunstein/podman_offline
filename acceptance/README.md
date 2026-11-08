@@ -81,9 +81,10 @@ The existing matrix without this flag does not exercise this failure path.
 Production lab steps install release RPMs through `<product>-admin` into
 `/var/lib/<product>/releases`; phase 1 uses trusted unsigned deliveries. Every
 scenario's `07-release-protection` (in `--rpm-manual`: `06-release-protection`)
-tries, as the runtime account, to change, add, link, move or chmod in a release
-tree and to add a release directory, and requires all of it to be refused with
-`rpm -V` still clean. The earlier `07-release-safety` probe of `release.py`
+first proves it runs as the runtime account (UID) and finds its target, then
+tries to change, add, link, move or chmod in a release tree, to add a release
+directory and to rename `releases/` and the product root; only a refusal
+counts, any other error fails, and `rpm -V` must stay clean. The earlier `07-release-safety` probe of `release.py`
 was removed with it (last present at `fd3a311`). See [results](RESULTS.md).
 
 # A new ENVIRONMENT variable on the next dev up

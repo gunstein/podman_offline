@@ -328,6 +328,11 @@ class AdminInstallTests(AdminFixture):
 
         self.process.side_effect = replace_after_copy
         self.first_install()
+        self.assertIn(
+            "cedar-worker-1.2.3",
+            self.host.installed,
+            "dnf did not install the original private-copy package",
+        )
         self.assertEqual(
             self.host.installed["cedar-worker-1.2.3"].read_bytes(), original
         )
@@ -598,6 +603,23 @@ class AdminRetirementTests(AdminFixture):
             report("1.3.0"),
             pending={"operation": "install", "component": "", "owners": []},
         )
+        twice_owned = dict(
+            report("1.3.0"),
+            pending={
+                "operation": "install",
+                "component": "worker",
+                "owners": ["gw", "gw"],
+            },
+        )
+        self_owned = dict(
+            report("1.3.0"),
+            pending={
+                "operation": "install",
+                "component": "worker",
+                "owners": ["worker"],
+            },
+        )
+        nested = "[" * 20000 + "]" * 20000
         odd_pending = dict(
             report("1.3.0"),
             pending={"operation": "rotate", "component": "worker", "owners": []},
@@ -614,6 +636,9 @@ class AdminRetirementTests(AdminFixture):
             (duplicate, 1, invalid),
             (empty_pending, 1, invalid),
             (odd_pending, 1, invalid),
+            (twice_owned, 1, invalid),
+            (self_owned, 1, invalid),
+            (nested, 1, invalid),
             # Killed after printing valid JSON, or stopped by the time limit.
             (report("1.3.0"), 137, invalid),
             (report("1.3.0"), None, invalid),
@@ -734,6 +759,32 @@ class RunBoundedTests(unittest.TestCase):
         self.assertIsNone(result.returncode)
         self.assertLess(time.monotonic() - started, 10)
         self.assertLess(len(result.stdout), 64 * 1024 + 65536 + 1)
+
+    def test_a_group_already_gone_is_still_a_limit_result(self):
+        """The cap is reached after the child was reaped elsewhere (SIGCHLD ignored)."""
+        with mock.patch.object(admin.os, "killpg", side_effect=ProcessLookupError):
+            # 20 000 bytes fit in the pipe: the child exits on its own after the cap.
+            result = admin.run_bounded(
+                ["sh", "-c", "head -c 20000 /dev/zero"], 30, limit=1024
+            )
+        self.assertIsNone(result.returncode)
+
+    def test_an_interrupted_read_kills_the_command_and_closes_its_pipes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "survived"
+            started = []
+
+            def interrupted(*arguments):
+                started.append(True)
+                raise KeyboardInterrupt
+
+            with mock.patch.object(
+                admin.io_select, "select", side_effect=interrupted
+            ), self.assertRaises(KeyboardInterrupt):
+                admin.run_bounded(["sh", "-c", f"sleep 2; touch {marker}"], 30)
+            self.assertEqual(started, [True])
+            time.sleep(2.5)
+            self.assertFalse(marker.exists())
 
 
 class AdminSelectionTests(unittest.TestCase):

@@ -583,7 +583,8 @@ class ComponentObservationTests(unittest.TestCase):
     def test_sibling_observation_requires_trust_for_the_installed_package(self):
         code = guest_code("SIBLINGS")
         with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory)
+            # A path with a space: the dump and trust parsers keep it whole.
+            home = Path(directory) / "lab root"
             # The installation root: state/, config/ and protected releases/.
             code["HOME"] = home / "state"
             contents = {

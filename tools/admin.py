@@ -170,28 +170,38 @@ def run_bounded(command, seconds, limit=REPORT_LIMIT):
     chunks = {out: [], err: []}
     reading = [out, err]
     deadline = time.monotonic() + seconds
-    size, exceeded = 0, False
-    while reading and not exceeded:
-        left = deadline - time.monotonic()
-        ready = io_select.select(reading, [], [], left)[0] if left > 0 else []
-        if not ready:
-            exceeded = True
-        for stream in ready:
-            data = os.read(stream.fileno(), 65536)
-            if not data:
-                reading.remove(stream)
-            chunks[stream].append(data)
-            size += len(data)
-            exceeded = exceeded or size > limit
+    size, exceeded, status = 0, False, None
     try:
-        status = None if exceeded else process.wait(max(deadline - time.monotonic(), 0))
-    except subprocess.TimeoutExpired:
-        status = None
-    if status is None:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-    out.close()
-    err.close()
+        while reading and not exceeded:
+            left = deadline - time.monotonic()
+            ready = io_select.select(reading, [], [], left)[0] if left > 0 else []
+            if not ready:
+                exceeded = True
+            for stream in ready:
+                data = os.read(stream.fileno(), 65536)
+                if not data:
+                    reading.remove(stream)
+                chunks[stream].append(data)
+                size += len(data)
+                exceeded = exceeded or size > limit
+        if not exceeded:
+            try:
+                status = process.wait(max(deadline - time.monotonic(), 0))
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        # Also on an exception (Ctrl+C): the group is in its own session and
+        # would outlive this command. It may be gone already.
+        try:
+            if status is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+        finally:
+            out.close()
+            err.close()
     text = {s: b"".join(c).decode(errors="replace") for s, c in chunks.items()}
     # returncode None means a limit was reached (callers check for 0 or 1).
     return subprocess.CompletedProcess(
@@ -631,9 +641,12 @@ def runtime_report(product, account, release):
             and all(
                 isinstance(o, str) and host.ID.fullmatch(o) for o in pending["owners"]
             )
+            # As registrations.load_pending: unique owners, not the component.
+            and len(set(pending["owners"])) == len(pending["owners"])
+            and pending["component"] not in pending["owners"]
         ):
             raise ValueError("invalid pending record")
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, RecursionError):
         detail = last_line(result) or "no valid status --json output"
         raise ToolError(
             f"the installation state of {account.pw_name} could not be read ({detail})"

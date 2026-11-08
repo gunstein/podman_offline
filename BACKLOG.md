@@ -1344,7 +1344,8 @@ Status 2026-11-07, WP6 part 2: every matrix scenario now has DEV build the
 release RPM of each transferred bundle (`release-rpm`) and installs it on PROD
 with `sudo <product>-admin <directory> --user <account> --port <port>`, which
 also prepares the host and retires older releases; the sibling checks accept
-RPM trust (every file of each installed release). Removed, all last in
+RPM trust (since af22327: every `deployment/` file of each sibling's installed
+version, with the delivered RPM's size and digest). Removed, all last in
 `fd3a311`: `scripts/release.py`, its tests and lab probes
 (`release_safety_test.py`), `--host-setup` with `acceptance/host_setup.py`,
 `acceptance/HOST-SETUP.md` and `docs/RELEASE-PY-INSTALL.md`, the lab bundle
@@ -1364,7 +1365,18 @@ journal, reinstall and sibling-trust checks require the scenario's exact
 expectations; `rpm-release-protection` (the runtime account cannot change a
 release tree) replaces the removed release-safety probe in every scenario;
 the manual names the scp folder and the unmount on an upgrade. Local tests
-only; tools/VERSION 0.3.3. Review finding F7 (the image check compares the
+only; tools/VERSION 0.3.3.
+Status 2026-11-08, second review follow-up (of `6f09dd1`): `run_bounded`
+kills and reaps the account's command also when its group is already gone
+or the read is interrupted; the driver kills what is left of the command's
+process group after its shell exits; the journal check accepts the tools'
+bare "failed"; the pending record needs unique owners other than its
+component, and deeply nested JSON is an unreadable state;
+`rpm-release-protection` runs its attempts in Python as the account after
+checking the UID and the target, counts only a refusal, also tries to rename
+`releases/` and the product root, and runs in whoami too; `rpm --dump` is
+read with paths that may contain spaces. Local tests only; tools/VERSION
+0.3.4. Review finding F7 (the image check compares the
 installed YAML with the running container, both product output): kept as a
 documented limit by the product owner on 2026-11-08; help and identity keep
 their independent version checks and the resolver its unit tests.

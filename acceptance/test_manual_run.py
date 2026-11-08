@@ -7,7 +7,9 @@ case that fails for exactly the defect they report.
 
 import os
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -132,11 +134,18 @@ class DriverTests(unittest.TestCase):
         self.assertIn("got ops", result.stdout)
 
     def test_a_command_ignoring_the_closed_terminal_is_killed(self):
-        result = self.drive(
-            "trap '' HUP; echo '[OK] validated help;'; sleep 60",
-            stop="[OK] validated help;",
-        )
-        self.assertEqual(result.returncode, 129, result.stdout)
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "survived"
+            # The shell dies on HUP; its child ignores HUP and TERM and would
+            # still write the marker.
+            result = self.drive(
+                f"(trap '' HUP TERM; sleep 2; touch {marker}) & "
+                "echo '[OK] validated help;'; wait",
+                stop="[OK] validated help;",
+            )
+            self.assertEqual(result.returncode, 129, result.stdout)
+            time.sleep(3)
+            self.assertFalse(marker.exists())
 
     def test_the_terminal_closes_after_the_stop_text(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -308,6 +317,10 @@ class OutputCheckTests(unittest.TestCase):
             "Nov 07 20:25:04 prod myproduct[812]: myproduct-admin /srv/delivery: started\n"
             "Nov 07 20:25:09 prod myproduct[812]: myproduct-admin /srv/delivery: completed\n"
             "Nov 07 20:26:00 prod myproduct[901]: install help (bundle 0.4.14): failed (exit 1)\n"
+            # The tools write a bare "failed" (tools/admin.py, tools/runtime.py);
+            # prepare-host.sh's logger may write no PID.
+            "Nov 07 20:26:30 prod myproduct[950]: myproduct: failed\n"
+            "Nov 07 20:26:40 prod myproduct: prepare-host --user myproduct-ops --port 8443: started\n"
         )
         manual_run.check_journal(journal, VALUES)
         started, completed = journal.splitlines()[1], journal.splitlines()[2]
@@ -516,39 +529,104 @@ class HostCheckTests(unittest.TestCase):
 
 
 class ReleaseProtectionTests(unittest.TestCase):
-    """rpm-release-protection fails when the runtime account can change a release."""
+    """rpm-release-protection: each attempt, run as the account, must be refused.
 
-    def probe(self, denied):
+    The probe's Python runs with pathlib's changing operations replaced: all
+    refuse (PermissionError) except the one ALLOW names, which then "succeeds"
+    without changing anything; ERROR names one that fails for another reason.
+    """
+
+    PRELUDE = (
+        "import io, os, pathlib\n"
+        "ALLOW, ERROR = os.environ.get('ALLOW', ''), os.environ.get('ERROR', '')\n"
+        "def replace(name):\n"
+        "    def operation(self, *args, **kwargs):\n"
+        "        if ALLOW == name + ':' + self.name:\n"
+        "            return io.BytesIO() if name == 'open' else None\n"
+        "        if ERROR == name:\n"
+        "            raise FileNotFoundError(2, 'gone')\n"
+        "        raise PermissionError(13, 'denied')\n"
+        "    setattr(pathlib.Path, name, operation)\n"
+        "for name in ('open', 'touch', 'symlink_to', 'rename', 'unlink', 'chmod', 'mkdir'):\n"
+        "    replace(name)\n"
+    )
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.tree = (
+            Path(directory.name) / "myproduct/releases/myproduct-platform-0.4.14"
+        )
+        (self.tree / "deployment").mkdir(parents=True)
+        (self.tree / "deployment/__init__.py").write_text("")
+        start = "<<'RELEASE_PROTECTION'\n"
+        body = REMOTE[REMOTE.index(start) + len(start) :]
+        self.source = body[: body.index("\nRELEASE_PROTECTION\n")]
+
+    def probe(self, uid=None, allow="", error=""):
+        return subprocess.run(
+            [sys.executable, "-", str(self.tree), str(os.geteuid() if uid is None else uid)],
+            input=self.PRELUDE + self.source, env=dict(os.environ, ALLOW=allow, ERROR=error),
+            capture_output=True, text=True, check=False,
+        )  # fmt: skip
+
+    def test_all_refused_passes(self):
+        result = self.probe()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: runtime UID confirmed", result.stdout)
+
+    def test_each_permitted_change_fails_for_its_own_attempt(self):
+        for allow, label in (
+            ("open:__init__.py", "append to a packaged file"),
+            ("touch:added.py", "add a module"),
+            ("symlink_to:linked", "add a symlink"),
+            ("rename:myproduct-platform-0.4.14", "rename the release"),
+            ("unlink:__init__.py", "remove a packaged file"),
+            ("chmod:myproduct-platform-0.4.14", "change release permissions"),
+            ("mkdir:protection-probe-new-release", "add a release"),
+            ("rename:releases", "rename releases"),
+            ("rename:myproduct", "rename the product root"),
+        ):
+            with self.subTest(label=label):
+                result = self.probe(allow=allow)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("FAIL: runtime account could " + label, result.stderr)
+
+    def test_a_probe_that_cannot_prove_anything_fails(self):
+        result = self.probe(uid=os.geteuid() + 1)
+        self.assertIn("FAIL: protection probe ran as the wrong UID", result.stderr)
+        result = self.probe(error="chmod")
+        self.assertIn(
+            "FAIL: protection probe could not test: change release permissions",
+            result.stderr,
+        )
+        (self.tree / "deployment/__init__.py").unlink()
+        result = self.probe()
+        self.assertIn("FAIL: protection probe target is missing", result.stderr)
+
+    def test_the_action_runs_the_probe_as_the_account(self):
         body = REMOTE[REMOTE.index("\nrpm-release-protection)\n") + 25 :]
         body = body[: body.index("\n    ;;\n")]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            tree = root / "releases/myproduct-platform-0.4.14"
-            (tree / "deployment").mkdir(parents=True)
-            (tree / "deployment/__init__.py").write_text("")
-            stubs = (
-                'rpm() { case "$1" in -qa) echo myproduct-platform-0.4.14;; -V) return 0;; esac; }\n'
-                "sudo() { [[ $1 == -n ]] && shift; [[ $1 == -u ]] && shift 2;"
-                + (" return 1;" if denied else "")
-                + ' "$@"; }\n'
-            )
-            result = subprocess.run(
-                ["bash", "-c", "set -euo pipefail\n" + stubs + body],
-                env=dict(os.environ, product_name="myproduct", bundle="platform",
-                         service_user="myproduct-ops", release_root=str(root / "releases")),
-                capture_output=True, text=True, check=False,
-            )  # fmt: skip
-        return result
-
-    def test_a_denied_account_passes_and_a_writable_tree_fails(self):
-        result = self.probe(denied=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(
-            "PASS: myproduct-ops cannot change myproduct-platform-0.4.14", result.stdout
+            'sudo -n -u "$service_user" python3 - "$tree" "$(id -u "$service_user")"',
+            body,
         )
-        result = self.probe(denied=False)
+        # Without the account's restrictions every attempt works: the action fails.
+        stubs = (
+            'rpm() { case "$1" in -qa) echo myproduct-platform-0.4.14;; -V) return 0;; esac; }\n'
+            "id() { command id -u; }\n"
+            'sudo() { [[ $1 == -n ]] && shift; [[ $1 == -u ]] && shift 2; "$@"; }\n'
+        )
+        result = subprocess.run(
+            ["bash", "-c", "set -euo pipefail\n" + stubs + body],
+            env=dict(os.environ, product_name="myproduct", bundle="platform",
+                     service_user="myproduct-ops", release_root=str(self.tree.parent)),
+            capture_output=True, text=True, check=False,
+        )  # fmt: skip
         self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("FAIL: myproduct-ops could run: printf x >>", result.stdout)
+        self.assertIn(
+            "FAIL: runtime account could append to a packaged file", result.stderr
+        )
 
 
 if __name__ == "__main__":
