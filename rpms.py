@@ -67,8 +67,12 @@ fi
 """
 
 # rpmbuild must install the files byte for byte: no shebang rewriting,
-# bytecode, stripping or generated dependencies.
+# bytecode, stripping or generated dependencies. The payload is zstd level 3
+# (product owner, 2026-11-08): OL9's default level 19 takes minutes for a
+# release's image archive; level 3 builds many times faster for somewhat
+# larger files.
 HEADER = """\
+%global _binary_payload w3.zstdio
 %global debug_package %{{nil}}
 %global __os_install_post %{{nil}}
 %global __brp_mangle_shebangs %{{nil}}

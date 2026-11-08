@@ -1376,7 +1376,12 @@ component, and deeply nested JSON is an unreadable state;
 checking the UID and the target, counts only a refusal, also tries to rename
 `releases/` and the product root, and runs in whoami too; `rpm --dump` is
 read with paths that may contain spaces. Local tests only; tools/VERSION
-0.3.4. Review finding F7 (the image check compares the
+0.3.4.
+**Decision (product owner, 2026-11-08):** release and tools RPMs use zstd
+level 3 for their payload (`rpms.py`). The af22327 lab runs spent most of
+their time in `release-rpm` on OL9's default level 19 (about 220-330 s per
+release with images, RPMs of 18-171 MB); level 3 builds many times faster
+for somewhat larger files. Review finding F7 (the image check compares the
 installed YAML with the running container, both product output): kept as a
 documented limit by the product owner on 2026-11-08; help and identity keep
 their independent version checks and the resolver its unit tests.

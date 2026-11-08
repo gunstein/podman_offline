@@ -390,7 +390,9 @@ It needs `rpmbuild` (package `rpm-build`) on the build machine. The RPM
 installs the release unchanged under
 `/var/lib/<product>/releases/<product>-<component>-<version>/`; the version
 is part of the package name, so versions install side by side. fapolicyd
-trusts the files through the RPM database. The RPM has no generated
+trusts the files through the RPM database. The payload is compressed with
+zstd level 3 (OL9's default level 19 takes minutes per release with images).
+The RPM has no generated
 dependencies and no scriptlet except the erase guard: a plain `dnf remove` or
 `rpm -e` is refused unless `/run/<product>/erase-authorization` names exactly
 that package (written by the administrator command for one removal, backlog

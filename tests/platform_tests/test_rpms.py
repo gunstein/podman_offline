@@ -56,6 +56,11 @@ class ReleaseRpmTests(ProductFixture):
             rpm_query(rpm, "--queryformat", "%{NAME} %{VERSION} %{RELEASE} %{ARCH}"),
             "cedar-worker-1.2.3 1.2.3 1 noarch",
         )
+        # zstd level 3, whatever the build machine's default is.
+        self.assertEqual(
+            rpm_query(rpm, "--queryformat", "%{PAYLOADCOMPRESSOR} %{PAYLOADFLAGS}"),
+            "zstd 3",
+        )
         # No generated dependencies; nothing owned outside the release tree.
         self.assertNotIn("python", rpm_query(rpm, "--requires"))
         root = "/var/lib/cedar/releases/cedar-worker-1.2.3"
