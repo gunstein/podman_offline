@@ -399,7 +399,9 @@ what its declarations decide: names and placeholder syntax, declared secrets
 and generated Secret names, `@@CLIENT_ID@@` without `client.yaml`, and the
 containers in its manifests. A container whose name is itself a `@@NAME@@`
 setting is known only with the operator's settings, so while a component has
-one, its container checks happen at validate and install. Setting values,
+one, its container checks happen at validate and install; an empty entry
+(`{}`) is not compiled into the bundle, so there it must name a container
+written literally in the manifests, or the build refuses it. Setting values,
 credentials and the database check always belong to the installation. Only a
 component whose variables the environment changes gets a rewritten
 `config.defaults.yaml` (comments are not kept, every value keeps its text).
@@ -430,7 +432,9 @@ never replaces an existing RPM, and the administrator command refuses a
 package with the same name and version but other content.
 
 Troubleshooting: a misspelled name stops the build before anything is
-written, naming the file and the place:
+written, naming the file and the place (in a component with a container
+named by a `@@NAME@@` setting, a misspelled container with variables stops
+`validate` and `install` instead):
 
 ```text
 ERROR: config/prod1.yaml: overrides.app1.ENVIRONMENT.ap: the component must have exactly one container named ap; it has 0

@@ -228,7 +228,9 @@ def check_declarations(component, env_overrides):
     client.yaml, and the containers: each must exist once, without
     hand-written envFrom or the same variable in its env. A container name
     written as a @@NAME@@ setting is known only at install, so while the
-    component has one, the container checks are left to install. Setting
+    component has one, the container checks of non-empty entries are left to
+    install, which renders the compiled ENVIRONMENT; an empty entry is not
+    compiled, so it must name a container written literally. Setting
     values, credentials and the PostgreSQL guard are checked by validate and
     install (deploy.validate_component).
     """
@@ -243,9 +245,18 @@ def check_declarations(component, env_overrides):
     )
     names_known = not any("@@" in str(name) for name in containers)
     merged = environment.read(component, env_overrides)
-    if names_known:
-        for container in environment.overridden_containers(component, env_overrides):
+    for container in environment.overridden_containers(component, env_overrides):
+        if names_known:
             environment.check_exists(component, container, containers, env_overrides)
+        elif container not in merged and container not in containers:
+            # An empty entry is not compiled into the bundle, so install could
+            # never check its name: refuse it here instead of deferring.
+            raise BundleError(
+                f"{env_overrides.path}: overrides.{component}.ENVIRONMENT."
+                f"{container}: an empty entry for a container the build cannot "
+                "find (a container name is a @@NAME@@ setting) changes nothing "
+                "and cannot be checked later; remove it"
+            )
     for container, values in merged.items():
         environment.check_client_settings(
             component, container, values, client, env_overrides

@@ -521,6 +521,35 @@ class EnvironmentBuildTests(OverrideFixture):
             {"Role": "batch"},
         )
 
+    def test_an_empty_entry_that_install_cannot_check_is_refused(self):
+        """An empty entry is not compiled; with a setting-named container the
+        build is the last place that could check it."""
+        product = shop()
+        product["shop"]["defaults"]["WORKER_CONTAINER"] = "worker"
+        worker = product["shop"]["manifests"][1]["spec"]["containers"][0]
+        worker["name"] = "@@WORKER_CONTAINER@@"
+        shutil.rmtree(self.source)
+        self.write_product(product)
+        self.put("config/prod3.yaml", environment_file(typo={}))
+        with self.assertRaisesRegex(
+            bundle.BundleError,
+            "config/prod3.yaml: overrides.shop.ENVIRONMENT.typo: an empty entry "
+            "for a container the build cannot find .* remove it",
+        ):
+            bundle.build(environment_name="prod3")
+        self.assertFalse(bundle.DIST.exists())
+        # An empty entry for a literally named container is still accepted,
+        # and the isolated bundle installs.
+        self.put("config/prod3.yaml", environment_file(main={}))
+        releases = self.build_and_unpack("prod3")
+        shutil.rmtree(self.source)
+        with self.environment():
+            self.install(releases["shop"])
+        self.assertIn(
+            "shop-main-env",
+            config_maps(common.QUADLET_DIR / "myproduct-shop.yaml"),
+        )
+
     def test_a_selected_build_refuses_overrides_outside_the_catalog(self):
         self.put(
             "config/prod3.yaml",

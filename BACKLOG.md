@@ -255,7 +255,10 @@ there need literal container names. Review fixes (2026-11-09): placeholder
 syntax, client settings and generated Secret names checked at build; empty
 mappings keep their names for the unknown-name checks; a variable name that
 is YAML null is refused; `--environment` counted in both spellings; the
-compiled file escapes non-ASCII text; `overrides` refused as a setting.
+compiled file escapes non-ASCII text; `overrides` refused as a setting;
+an empty container entry the build cannot check (the component has a
+setting-named container) is refused, because it is not compiled and
+install could never check it.
 The analysis below is based on `8b7161b`. Read the latest `main`, [AGENTS.md](AGENTS.md),
 [the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
 [COMPONENTS.md](docs/COMPONENTS.md) and this item before starting.
