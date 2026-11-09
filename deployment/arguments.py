@@ -53,12 +53,15 @@ class Once(argparse.Action):
 def parse(parser, arguments, flags=()):
     """Parse the whole command line, refusing what argparse would let through.
 
-    A flag a subcommand and its parent both accept is counted over the whole
-    line, since subparsers fill a separate namespace. The "--" separator is
+    A flag a subcommand and its parent both accept, or an option that takes a
+    value once, is counted over the whole line in both spellings (--flag value
+    and --flag=value), since argparse keeps the last of repeated values and
+    subparsers fill a separate namespace. The "--" separator is
     refused: no accepted form needs it, and component IDs never start with "-".
     """
     for flag in flags:
-        if list(arguments).count(flag) > 1:
+        given = [a for a in arguments if a == flag or a.startswith(flag + "=")]
+        if len(given) > 1:
             parser.error(f"{flag} given more than once")
     if "--" in arguments:
         parser.error("the -- separator is not accepted")

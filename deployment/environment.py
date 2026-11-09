@@ -143,6 +143,8 @@ def merge(environments, component, env_overrides):
         return environments
     result = {container: dict(values) for container, values in environments.items()}
     for container, values in overrides.items():
+        if not values:
+            continue  # An empty mapping has no effect; its name is still checked.
         target = result.setdefault(container, {})
         for key, value in values.items():
             for declared in target:
@@ -168,14 +170,8 @@ def where(component, container, env_overrides, key=None):
         if container in overrides
         else None
     )
-    if key is not None:
-        return (
-            override_place
-            if override_place and key in overrides[container]
-            else common_place
-        )
-    if override_place and container in read_defaults(defaults_path(component)):
-        return f"{common_place} with {override_place}"
+    if key is not None and override_place and key not in overrides[container]:
+        return common_place
     return override_place or common_place
 
 
@@ -204,7 +200,7 @@ def read_environment_file(root, name):
     """The Overrides of config/<name>.yaml; its only top-level key is overrides."""
     path = environment_file(root, name)
     shown = f"config/{name}.yaml"
-    document = load(path, OverrideLoader)
+    document = load(path, OverrideLoader, OVERRIDES_HINT)
     if document is None:
         document = {}
     if not isinstance(document, dict):
@@ -227,7 +223,7 @@ def read_dev_overrides(path):
     """The Overrides of config/dev.yaml's reserved overrides block, or None."""
     if not (path.exists() or path.is_symlink()):
         return None
-    document = load(path, OverrideLoader)
+    document = load(path, OverrideLoader, OVERRIDES_HINT)
     if not isinstance(document, dict) or common.OVERRIDES not in document:
         return None
     return read_overrides(document[common.OVERRIDES], "config/dev.yaml")
@@ -236,9 +232,9 @@ def read_dev_overrides(path):
 def read_overrides(block, shown):
     """Check one overrides block and return Overrides; empty mappings have no effect.
 
-    shown is the file name used in messages. Component IDs are checked
-    against the catalog in catalog.load_catalog, containers against the
-    manifests where the declarations are used (check_container).
+    shown is the file name used in messages. Empty mappings are kept, so their
+    names are still checked: component IDs against the catalog in
+    catalog.load_catalog, containers against the manifests (check_exists).
     """
     check_mapping(block, shown, common.OVERRIDES, "each component to ENVIRONMENT")
     components = {}
@@ -270,10 +266,10 @@ def read_overrides(block, shown):
                         f"{key}: '' for an empty value. There is no deletion: a "
                         "variable only some environments need belongs in their files"
                     )
-            if values:
-                result[container] = check_values(values, f"{shown}: {here}")
-        if result:
-            components[component] = result
+            result[container] = (
+                check_values(values, f"{shown}: {here}") if values else {}
+            )
+        components[component] = result
     return Overrides(shown, components)
 
 
@@ -293,7 +289,12 @@ def check_name(value, shown, place, what):
         raise common.DeployError(f"{shown}: {place}: {value!r} is not a {what}")
 
 
-def load(path, loader=TextLoader):
+# The hint for a config.defaults.yaml; an overrides file gets a general one.
+DEFAULTS_HINT = "write NAME: 'value' and quote values that start with @@"
+OVERRIDES_HINT = "check the indentation, the colons and the quotes"
+
+
+def load(path, loader=TextLoader, hint=DEFAULTS_HINT):
     """The whole config.defaults.yaml with every value as written text."""
     try:
         with path.open(encoding="utf-8") as stream:
@@ -305,10 +306,7 @@ def load(path, loader=TextLoader):
         line = f" at line {mark.line + 1}" if mark is not None else ""
         problem = getattr(error, "problem", "") or ""
         detail = problem if problem.startswith("duplicate key ") else "invalid YAML"
-        raise common.DeployError(
-            f"{path}{line}: {detail}; write NAME: 'value' and quote values "
-            "that start with @@"
-        ) from None
+        raise common.DeployError(f"{path}{line}: {detail}; {hint}") from None
 
 
 def read_defaults(path):
@@ -338,6 +336,8 @@ def check_values(values, where):
         raise common.DeployError(f"{where} must hold NAME: 'value' lines")
     seen = {}
     for key, value in values.items():
+        if not isinstance(key, str):
+            raise common.DeployError(f"{where}: {key!r} is not a variable name")
         if ":" in key:
             raise common.DeployError(
                 f"{where}: {key!r} is not a variable name; use __ instead of :"
@@ -356,6 +356,10 @@ def check_values(values, where):
         if not isinstance(value, str):
             raise common.DeployError(
                 f"{where}: {key} must be one line of text, not a list or map"
+            )
+        if "@@" in templates.TOKEN.sub("", value):
+            raise common.DeployError(
+                f"{where}: {key}: malformed placeholder (an @@ without its closing @@)"
             )
         for match in templates.TOKEN.finditer(value):
             if not (
@@ -457,13 +461,7 @@ def check_container(component, container_name, values, containers, env_overrides
     the manifests as written, before a build writes anything.
     """
     place = where(component, container_name, env_overrides)
-    matches = containers.get(container_name, [])
-    if len(matches) != 1:
-        raise common.DeployError(
-            f"{place}: the component must have exactly one container named "
-            f"{container_name}; it has {len(matches)}"
-        )
-    _, container = matches[0]
+    container = check_exists(component, container_name, containers, env_overrides)
     if container.get("envFrom"):
         raise common.DeployError(
             f"{place}: container {container_name} also has envFrom; use "
@@ -488,6 +486,38 @@ def check_container(component, container_name, values, containers, env_overrides
     return container
 
 
+def check_exists(component, container_name, containers, env_overrides):
+    """The container must exist exactly once (regular or init); returns it."""
+    matches = containers.get(container_name, [])
+    if len(matches) != 1:
+        raise common.DeployError(
+            f"{where(component, container_name, env_overrides)}: the component "
+            f"must have exactly one container named {container_name}; it has "
+            f"{len(matches)}"
+        )
+    return matches[0][1]
+
+
+def overridden_containers(component, env_overrides):
+    """Every container an override names, also with an empty mapping."""
+    return list((env_overrides.components if env_overrides else {}).get(component, {}))
+
+
+def check_client_settings(component, container_name, values, config, env_overrides):
+    """@@CLIENT_ID@@ and @@CLIENT_BASE_PATH@@ come only from client.yaml.
+
+    config needs only the settings with_client_settings derives from it.
+    """
+    for key, value in values.items():
+        for name in CLIENT_SETTINGS:
+            if f"@@{name}@@" in value and name not in config:
+                raise common.DeployError(
+                    f"{where(component, container_name, env_overrides, key)}: "
+                    f"{key}: @@{name}@@ comes from client.yaml, which "
+                    f"components/{component} does not have"
+                )
+
+
 def apply(documents, sources, config, component, containers, env_overrides=None):
     """Add the generated ConfigMaps and envFrom entries to the effective documents.
 
@@ -496,6 +526,8 @@ def apply(documents, sources, config, component, containers, env_overrides=None)
     name to its (pod spec, container) pairs. Returns the new documents and
     sources lists.
     """
+    for container_name in overridden_containers(component, env_overrides):
+        check_exists(component, container_name, containers, env_overrides)
     environments = read(component, env_overrides)
     if not environments:
         return documents, sources
@@ -504,6 +536,7 @@ def apply(documents, sources, config, component, containers, env_overrides=None)
         container = check_container(
             component, container_name, values, containers, env_overrides
         )
+        check_client_settings(component, container_name, values, config, env_overrides)
         public, receives = {}, False
         for key, value in values.items():
             here = where(component, container_name, env_overrides, key)
@@ -512,12 +545,6 @@ def apply(documents, sources, config, component, containers, env_overrides=None)
                 continue
             if is_secret_line(value):
                 continue
-            for name in CLIENT_SETTINGS:
-                if f"@@{name}@@" in value and name not in config:
-                    raise common.DeployError(
-                        f"{here}: {key}: @@{name}@@ comes from client.yaml, which "
-                        f"components/{component} does not have"
-                    )
             public[key] = public_text(value, config, f"{here}: {key}")
         env_from = container.setdefault("envFrom", [])
         if public:

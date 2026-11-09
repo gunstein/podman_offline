@@ -203,6 +203,18 @@ class DevOverrideTests(OverrideFixture):
         secret = documents(install)[("Secret", "shop-main-env-secret")]
         self.assertEqual(sorted(secret["data"]), ["Logging__Level"])
 
+    def test_overrides_is_no_setting_of_a_component(self):
+        product = shop()
+        product["shop"]["defaults"]["overrides"] = "x"
+        shutil.rmtree(self.source)
+        self.write_product(product)
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "config.defaults.yaml: overrides is reserved for config/dev.yaml",
+        ):
+            deploy.prepare()
+        self.assertFalse(common.BUILD.exists())
+
     def test_empty_overrides_have_no_effect(self):
         deploy.prepare()
         before = (common.BUILD / "install.yaml").read_text()
@@ -267,6 +279,17 @@ class DevOverrideTests(OverrideFixture):
              "A: unknown or nested placeholder"),
             ("list", overrides([f"A: [{MARKER}]"]), "A must be one line of text"),
             ("colon", overrides(["'A:B': x"]), "use __ instead of :"),
+            ("null name", overrides([f"null: {MARKER}"]),
+             f"{place}.main: None is not a variable name"),
+            ("malformed placeholder", overrides([f"A: '{MARKER}@@DB_USER'"]),
+             f"{place}.main: A: malformed placeholder"),
+            ("client setting", overrides(["A: '@@CLIENT_ID@@'"]),
+             "A: @@CLIENT_ID@@ comes from client.yaml, which components/shop"),
+            ("empty unknown component", "overrides:\n  nope: {}\n",
+             "overrides.nope: nope is not a component"),
+            ("empty unknown container",
+             "overrides:\n  shop:\n    ENVIRONMENT:\n      web: {}\n",
+             f"{place}.web: the component must have exactly one container"),
         ):  # fmt: skip
             with self.subTest(label):
                 product = shop()
@@ -433,6 +456,21 @@ class EnvironmentBuildTests(OverrideFixture):
              "SECRET_FILES has no shop-nope"),
             ("case collision", "prod3",
              environment_file(main={"logging__level": MARKER}), "differ only in case"),
+            ("null name", "prod3",
+             "overrides:\n  shop:\n    ENVIRONMENT:\n      main:\n        null: x\n",
+             "None is not a variable name"),
+            ("malformed placeholder", "prod3",
+             environment_file(main={"A": MARKER + "@@DB_USER"}),
+             "main: A: malformed placeholder"),
+            ("client setting", "prod3",
+             environment_file(main={"A": "@@CLIENT_ID@@"}),
+             "@@CLIENT_ID@@ comes from client.yaml"),
+            ("empty unknown component", "prod3", "overrides:\n  nope: {}\n",
+             "overrides.nope: nope is not a component"),
+            ("empty unknown container", "prod3", environment_file(web={}),
+             "overrides.shop.ENVIRONMENT.web: the component must have exactly"),
+            ("invalid YAML", "prod3", "overrides: [shop\n",
+             "invalid YAML; check the indentation, the colons and the quotes"),
         ):  # fmt: skip
             with self.subTest(label):
                 if text is not None:
@@ -442,6 +480,46 @@ class EnvironmentBuildTests(OverrideFixture):
                 self.assertNotIn(MARKER, str(raised.exception))
                 self.assertFalse(bundle.DIST.exists())
                 self.assertFalse(common.BUILD.exists())
+
+    def test_a_generated_secret_may_not_take_a_declared_name(self):
+        product = shop()
+        product["shop"]["defaults"]["SECRET_FILES"]["shop-migrate-env-secret"] = [
+            {"path": "credentials/other", "generate": ["value"]}
+        ]
+        shutil.rmtree(self.source)
+        self.write_product(product)
+        self.put(
+            "config/prod3.yaml",
+            environment_file(migrate={"Token": "@@secret:shop-tokens/other@@"}),
+        )
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "Secret shop-migrate-env-secret .from ENVIRONMENT or MOUNTS. has the "
+            "same name as a SECRET_FILES or VOLUME_FILES ID",
+        ):
+            bundle.build(environment_name="prod3")
+        self.assertFalse(bundle.DIST.exists())
+
+    def test_a_container_named_by_a_setting_is_left_to_install(self):
+        """Its name is known only with settings; the build does not guess."""
+        product = shop()
+        product["shop"]["defaults"]["WORKER_CONTAINER"] = "worker"
+        worker = product["shop"]["manifests"][1]["spec"]["containers"][0]
+        worker["name"] = "@@WORKER_CONTAINER@@"
+        shutil.rmtree(self.source)
+        self.write_product(product)
+        self.put("config/prod3.yaml", environment_file(worker={"Role": "batch"}))
+        bundle.build(environment_name="prod3")
+        self.assertTrue(
+            (bundle.DIST / "prod3/myproduct-shop-1.0.0-offline.tar.gz").is_file()
+        )
+        # Dev resolves the name and renders the override into that container.
+        self.put("config/dev.yaml", environment_file(worker={"Role": "batch"}))
+        deploy.prepare()
+        self.assertEqual(
+            config_maps(common.BUILD / "install.yaml")["shop-worker-env"],
+            {"Role": "batch"},
+        )
 
     def test_a_selected_build_refuses_overrides_outside_the_catalog(self):
         self.put(
@@ -607,7 +685,9 @@ class OverridePasswordTests(OverrideFixture):
 class CompiledTextTests(OverrideFixture):
     def test_compiled_file_reads_back_as_the_merged_text(self):
         """Values YAML would read as another type stay the written text."""
-        self.write_product(shop())
+        product = shop()
+        product["shop"]["defaults"]["NOTE"] = "a\x85b \u2028 blåbær"
+        self.write_product(product)
         values = {
             "Octal": "0022",
             "Float": "1.10",
@@ -621,6 +701,9 @@ class CompiledTextTests(OverrideFixture):
             "Unicode": "blåbær",
             "Colon": "a: b",
             "Hash": "a #b",
+            # Characters YAML reads as line breaks when written unescaped.
+            "NextLine": "a\x85b",
+            "LineSeparator": "a\u2028b",
         }
         overrides = environment.Overrides(
             "config/prod1.yaml", {"shop": {"main": values}}
@@ -633,4 +716,7 @@ class CompiledTextTests(OverrideFixture):
             environment.read_defaults(compiled)["main"],
             dict(environment.read_defaults(path)["main"], **values),
         )
-        self.assertEqual(rendering.merge_config(compiled), rendering.merge_config(path))
+        settings = rendering.merge_config(compiled)
+        self.assertEqual(settings, rendering.merge_config(path))
+        self.assertEqual(settings["NOTE"], "a\x85b \u2028 blåbær")
+        self.assertEqual(settings["WORKERS"], 4)

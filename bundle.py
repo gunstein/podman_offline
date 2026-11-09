@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from deployment import arguments, catalog, common, environment, output
+from deployment import arguments, catalog, common, environment, output, templates
 from deployment import render as rendering
 
 # A child of the deployment logger: same handlers, streams and convention.
@@ -222,24 +222,38 @@ def output_directories(environment_name):
 def check_declarations(component, env_overrides):
     """Check an overridden component's merged ENVIRONMENT before any output.
 
-    Only what the declarations decide: variable names and text, the merge,
-    the containers in the manifests as written, hand-written envFrom and env,
-    foreign secrets and SECRET_FILES declarations. Setting values,
-    credentials and the PostgreSQL guard need the operator's config and are
-    checked by validate and install (deploy.validate_component).
+    Only what the declarations decide without the operator's settings:
+    variable names and placeholder syntax, the merge, SECRET_FILES
+    declarations and generated Secret names, @@CLIENT_ID@@ without
+    client.yaml, and the containers: each must exist once, without
+    hand-written envFrom or the same variable in its env. A container name
+    written as a @@NAME@@ setting is known only at install, so while the
+    component has one, the container checks are left to install. Setting
+    values, credentials and the PostgreSQL guard are checked by validate and
+    install (deploy.validate_component).
     """
     directory = ROOT / "components" / component
     defaults_file = directory / "config.defaults.yaml"
     defaults = rendering.merge_config(defaults_file) if defaults_file.exists() else {}
-    environment.with_recipes(defaults, component, env_overrides)
+    templates.declarations(environment.with_recipes(defaults, component, env_overrides))
+    client = rendering.with_client_settings({}, component)
     manifests = resolved_manifests(sorted((directory / "manifests").glob("*.yaml")))
     containers = rendering.named_containers(
         [doc for documents in manifests.values() for doc in documents]
     )
-    for container, values in environment.read(component, env_overrides).items():
-        environment.check_container(
-            component, container, values, containers, env_overrides
+    names_known = not any("@@" in str(name) for name in containers)
+    merged = environment.read(component, env_overrides)
+    if names_known:
+        for container in environment.overridden_containers(component, env_overrides):
+            environment.check_exists(component, container, containers, env_overrides)
+    for container, values in merged.items():
+        environment.check_client_settings(
+            component, container, values, client, env_overrides
         )
+        if names_known:
+            environment.check_container(
+                component, container, values, containers, env_overrides
+            )
 
 
 def compiled_defaults(path, component, env_overrides):
@@ -247,8 +261,12 @@ def compiled_defaults(path, component, env_overrides):
 
     Settings keep their YAML types, read as merge_config reads them;
     ENVIRONMENT and MOUNTS keep their written text (environment.TextLoader).
-    safe_dump quotes every text that YAML would read as another type, so the
-    bundle reads exactly the merged text. Comments are not kept.
+    safe_dump quotes every text that YAML would read as another type, and
+    allow_unicode=False writes every non-ASCII character as an escape, so
+    nothing is lost (a literal U+0085 would otherwise read back as a line
+    break). The bundle reads exactly the merged text. Comments are not kept;
+    build_release writes this file only when the environment changes the
+    component's ENVIRONMENT.
     """
     typed = rendering.config_layer(path) if path.exists() else {}
     text = (environment.load(path) or {}) if path.exists() else {}
@@ -257,7 +275,7 @@ def compiled_defaults(path, component, env_overrides):
         for key, value in typed.items()
     }
     compiled[common.ENVIRONMENT] = environment.read(component, env_overrides)
-    return yaml.safe_dump(compiled, sort_keys=False, allow_unicode=True, width=1000000)
+    return yaml.safe_dump(compiled, sort_keys=False, allow_unicode=False)
 
 
 def build_release(version, descriptor, env_overrides=None, stage=None, dist=None):
@@ -319,7 +337,7 @@ def build_release(version, descriptor, env_overrides=None, stage=None, dist=None
             shutil.copytree(source, destination / entry, ignore=guard)
         else:
             shutil.copy2(source, destination / entry)
-    if env_overrides and component in env_overrides.components:
+    if environment.read(component, env_overrides) != environment.read(component):
         # The bundle carries its environment: production reads only this file.
         (destination / "config.defaults.yaml").write_text(
             compiled_defaults(

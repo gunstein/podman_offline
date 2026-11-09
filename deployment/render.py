@@ -233,6 +233,12 @@ def validate_config(config, path):
                 "components/<id>/config.defaults.yaml; remove it here"
             )
 
+        if key == common.OVERRIDES:
+            raise common.DeployError(
+                f"{path}: overrides is reserved for config/dev.yaml and a build "
+                "environment file config/<environment>.yaml; remove it here"
+            )
+
         if key == common.SECRET_TEMPLATES:
             raise common.DeployError(
                 f"{path}: SECRET_TEMPLATES is not supported; write the secret as "

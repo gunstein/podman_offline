@@ -380,7 +380,7 @@ How overrides merge (`environment.merge`):
   an override; it must exist exactly once (regular or init container).
 - There is no deletion. A variable only some environments need belongs in
   their files, not in the common declarations. An empty mapping (`{}`) has no
-  effect.
+  effect, but the component and container it names must still exist.
 - Values are text, as in `config.defaults.yaml`: `Enabled: true` and
   `MaxRows: 500` reach the container as `true` and `500`, `''` is an empty
   value and `'null'` is the text `null`. A missing value (`Name:`, `Name:
@@ -393,6 +393,16 @@ How overrides merge (`environment.merge`):
   identity's API secret lines, settings placeholders, manifest `env` and
   `envFrom`, the database password check.
 - Errors name the file, component, container and variable, never a value.
+
+Before anything is written, the build checks each overridden component with
+what its declarations decide: names and placeholder syntax, declared secrets
+and generated Secret names, `@@CLIENT_ID@@` without `client.yaml`, and the
+containers in its manifests. A container whose name is itself a `@@NAME@@`
+setting is known only with the operator's settings, so while a component has
+one, its container checks happen at validate and install. Setting values,
+credentials and the database check always belong to the installation. Only a
+component whose variables the environment changes gets a rewritten
+`config.defaults.yaml` (comments are not kept, every value keeps its text).
 
 The build environment is chosen when the bundles are built, not at the
 installation. The bundle's `config.defaults.yaml` holds the merged

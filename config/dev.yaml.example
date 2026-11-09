@@ -1,4 +1,5 @@
-# Local overrides for every rendered component; maps/lists replace the whole value.
+# Local overrides for every rendered component; maps/lists replace the whole value,
+# except SECRET_FILES/VOLUME_FILES (per ID) and overrides (per variable, below).
 PUBLIC_ORIGIN: https://myproduct-proxy:8443
 HTTPS_PORT: 8443
 

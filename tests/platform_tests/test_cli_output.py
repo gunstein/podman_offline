@@ -142,6 +142,8 @@ class ParserTests(DeployFixture):
                 ["--", "app1"],
                 ["--environment"],
                 ["--environment", "prod1", "--environment", "prod2"],
+                ["--environment=prod1", "--environment=prod2"],
+                ["--environment", "prod1", "--environment=prod2"],
             ):
                 with self.subTest(refused=refused):
                     self.stderr.truncate(0)

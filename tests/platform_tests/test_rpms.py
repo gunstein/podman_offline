@@ -191,6 +191,18 @@ class EnvironmentRpmTests(ProductFixture):
 
         self.stack.enter_context(mock.patch.object(rpms, "build_rpm", build_rpm))
 
+    def test_the_environment_is_given_once_in_either_spelling(self):
+        for repeated in (
+            ["--environment=prod1", "--environment=prod2"],
+            ["--environment", "prod1", "--environment=prod2"],
+        ):
+            with self.subTest(repeated=repeated):
+                self.assertEqual(rpms.main(repeated), 2)
+        self.assertIn(
+            "ERROR: --environment given more than once", self.stderr.getvalue()
+        )
+        self.assertEqual(self.wrapped, [])
+
     def test_the_environment_directory_is_read_and_written(self):
         self.build_and_unpack("prod1")
         dist = self.source / "dist"

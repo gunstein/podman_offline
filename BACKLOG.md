@@ -249,8 +249,13 @@ prod`) are implemented but not yet run on the lab, so
 Implementation notes, checked against `8cc668f`: the functions named below
 were unchanged since `8b7161b`; `./build-rpms.sh` (`rpms.py`) is new and
 takes `--environment`. The build checks only the overridden components'
-declarations (the common ones keep their install-time checks, so a build
-without `--environment` is unchanged), against the manifests as written.
+setting-independent declarations (the common ones keep their install-time
+checks, so a build without `--environment` is unchanged); container checks
+there need literal container names. Review fixes (2026-11-09): placeholder
+syntax, client settings and generated Secret names checked at build; empty
+mappings keep their names for the unknown-name checks; a variable name that
+is YAML null is refused; `--environment` counted in both spellings; the
+compiled file escapes non-ASCII text; `overrides` refused as a setting.
 The analysis below is based on `8b7161b`. Read the latest `main`, [AGENTS.md](AGENTS.md),
 [the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
 [COMPONENTS.md](docs/COMPONENTS.md) and this item before starting.
