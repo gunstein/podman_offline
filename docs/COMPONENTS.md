@@ -399,9 +399,10 @@ what its declarations decide: names and placeholder syntax, declared secrets
 and generated Secret names, `@@CLIENT_ID@@` without `client.yaml`, and the
 containers in its manifests. A container whose name is itself a `@@NAME@@`
 setting is known only with the operator's settings, so while a component has
-one, its container checks happen at validate and install; an empty entry
-(`{}`) is not compiled into the bundle, so there it must name a container
-written literally in the manifests, or the build refuses it. Setting values,
+one, its container checks happen at validate and install. An empty entry
+(`{}`) for a container without common `ENVIRONMENT` is not compiled into the
+bundle, so there it must name exactly one container written literally in the
+manifests, or the build refuses it. Setting values,
 credentials and the database check always belong to the installation. Only a
 component whose variables the environment changes gets a rewritten
 `config.defaults.yaml` (comments are not kept, every value keeps its text).

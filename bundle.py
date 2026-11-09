@@ -229,8 +229,9 @@ def check_declarations(component, env_overrides):
     hand-written envFrom or the same variable in its env. A container name
     written as a @@NAME@@ setting is known only at install, so while the
     component has one, the container checks of non-empty entries are left to
-    install, which renders the compiled ENVIRONMENT; an empty entry is not
-    compiled, so it must name a container written literally. Setting
+    install, which renders the compiled ENVIRONMENT; an empty entry for a
+    container without common ENVIRONMENT is not compiled, so it must name
+    exactly one container written literally. Setting
     values, credentials and the PostgreSQL guard are checked by validate and
     install (deploy.validate_component).
     """
@@ -246,11 +247,11 @@ def check_declarations(component, env_overrides):
     names_known = not any("@@" in str(name) for name in containers)
     merged = environment.read(component, env_overrides)
     for container in environment.overridden_containers(component, env_overrides):
-        if names_known:
+        # An empty entry absent from the merged ENVIRONMENT is not compiled
+        # into the bundle, so install never sees it: check it here or refuse.
+        if names_known or (container not in merged and container in containers):
             environment.check_exists(component, container, containers, env_overrides)
-        elif container not in merged and container not in containers:
-            # An empty entry is not compiled into the bundle, so install could
-            # never check its name: refuse it here instead of deferring.
+        elif container not in merged:
             raise BundleError(
                 f"{env_overrides.path}: overrides.{component}.ENVIRONMENT."
                 f"{container}: an empty entry for a container the build cannot "

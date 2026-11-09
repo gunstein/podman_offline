@@ -538,6 +538,24 @@ class EnvironmentBuildTests(OverrideFixture):
         ):
             bundle.build(environment_name="prod3")
         self.assertFalse(bundle.DIST.exists())
+        # A literal name must also be unambiguous: two containers named twin.
+        twins = [
+            pod("shop-twin-a", "localhost/shop:1"),
+            pod("shop-twin-b", "localhost/shop:1"),
+        ]
+        for twin in twins:
+            twin["spec"]["containers"][0]["name"] = "twin"
+        product["shop"]["manifests"] += twins
+        shutil.rmtree(self.source)
+        self.write_product(product)
+        self.put("config/prod3.yaml", environment_file(twin={}))
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "overrides.shop.ENVIRONMENT.twin: the component must have exactly one "
+            "container named twin; it has 2",
+        ):
+            bundle.build(environment_name="prod3")
+        self.assertFalse(bundle.DIST.exists())
         # An empty entry for a literally named container is still accepted,
         # and the isolated bundle installs.
         self.put("config/prod3.yaml", environment_file(main={}))
