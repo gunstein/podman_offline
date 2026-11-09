@@ -54,6 +54,383 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 84. Environment-specific container environment overrides
+
+Status: **agreed product requirement, ready for implementation; high
+priority** (product owner, 2026-11-09). Not implemented. The analysis below
+is based on `8b7161b`; recheck function names and behavior if the code has
+changed. Read the latest `main`, [AGENTS.md](AGENTS.md),
+[the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
+[COMPONENTS.md](docs/COMPONENTS.md) and this item before starting.
+
+Why (the product owner's decision, recorded here): one product is delivered
+to several production environments that need different values for some
+container variables (log levels, feature switches, limits) while sharing
+every other declaration. Today the only way is to change the common
+`config.defaults.yaml` per delivery. The new `config/<environment>.yaml`
+files and the reserved `components` block in `config/dev.yaml` are the
+configuration this requirement adds; nothing else is added.
+
+### Goal and scope
+
+A product has common component declarations under `components/`. At bundle
+build time, the developer can select one environment, such as `prod1` or
+`prod2`. That environment can add or replace individual `ENVIRONMENT`
+variables for explicitly named containers in explicitly named components.
+
+Dev continues to use `config/dev.yaml`. It gains the same ability to add or
+replace container environment variables, while retaining its existing
+settings and `SECRET_FILES`/`VOLUME_FILES` source overrides.
+
+Production environment overrides are limited to `ENVIRONMENT`. They cannot
+change images, component selection, manifests, routes, mounts, volume
+declarations, credential sources or ordinary top-level settings.
+
+Use existing secret references and validation rules. A variable may refer
+to an already declared secret. Actual secret values remain
+external/generated credentials.
+
+### Configuration format
+
+Common configuration remains in the existing component file:
+
+```yaml
+# components/app1/config.defaults.yaml
+ENVIRONMENT:
+  app:
+    Logging__LogLevel__Default: Information
+    Features__Reports: "false"
+```
+
+A production environment file names components at the top level:
+
+```yaml
+# config/prod1.yaml
+app1:
+  ENVIRONMENT:
+    app:
+      Features__Reports: "true"
+      Reports__MaxRows: "500"
+```
+
+```yaml
+# config/prod2.yaml
+app2:
+  ENVIRONMENT:
+    backend:
+      Logging__LogLevel__Default: Debug
+```
+
+The resulting app1 environment for prod1 includes all three variables:
+
+```yaml
+Logging__LogLevel__Default: Information
+Features__Reports: "true"
+Reports__MaxRows: "500"
+```
+
+For dev, preserve the existing top-level settings and file-source
+overrides. Add one reserved `components` block for component-specific
+environment overrides:
+
+```yaml
+# config/dev.yaml
+PUBLIC_ORIGIN: https://dev.example.test:8443
+HTTPS_PORT: 8443
+
+components:
+  app1:
+    ENVIRONMENT:
+      app:
+        Logging__LogLevel__Default: Debug
+
+  app2:
+    ENVIRONMENT:
+      backend:
+        Logging__LogLevel__Default: Trace
+```
+
+The contents of `dev.yaml.components` have exactly the same structure and
+merge rules as a production environment file. The `components` block is a
+dev-input structure: consume it before ordinary settings validation and
+merging. It must not become a setting passed to applications or be written
+to generated component `config.yaml` files. This format adds no second dev
+override file (backlog 77 removed the per-component dev file). Document
+`components` as reserved in `config/dev.yaml`.
+
+### Merge and validation rules
+
+1. Read the common `ENVIRONMENT`, then apply one selected override mapping.
+2. Merge at component, container and variable level. Replacing one variable
+   must preserve all other variables in that container.
+3. A variable with the same exact name replaces the common value. A new
+   variable is added.
+4. Different spellings that collide under the existing case-insensitive
+   variable check must fail. Do not invent case-based precedence.
+5. A container may receive its first `ENVIRONMENT` entry through an
+   override, provided that it exists and is unambiguous in the component's
+   manifests.
+6. Support regular containers and init containers through the existing
+   container lookup.
+7. Omitted entries retain the common declarations. An empty override
+   mapping has no effect.
+8. An explicitly quoted empty string is a valid empty value.
+9. YAML null, including an empty assignment, is rejected in overrides.
+   There is no deletion syntax. A variable needed only in prod1 belongs in
+   `prod1.yaml`.
+10. Preserve existing `ENVIRONMENT` text semantics. Boolean-like and
+    numeric-looking values must reach the container as the intended text.
+    Quoted `"null"` is text, whereas YAML null is invalid.
+11. Reject duplicate YAML keys, unknown components, unknown or ambiguous
+    containers, and unsupported fields. A production environment component
+    entry may contain only `ENVIRONMENT`.
+12. Reject names outside the source catalog even during a
+    component-selected bundle build.
+13. Apply the existing rules for secret declarations, keys, component
+    ownership, Identity API secret references, settings placeholders and
+    clashes with hand-written manifest `env`/`envFrom`.
+14. Replacing a secret-derived variable with a public value, or the
+    reverse, must rebuild its effective representation. No obsolete
+    generated key or recipe may remain.
+15. Error messages name the source file, component, container and variable
+    where relevant. Never print variable values, credential bytes or
+    complete connection strings.
+
+`environment.TextLoader` currently reads all scalar values as text. It
+therefore cannot by itself distinguish YAML null from quoted `"null"`.
+Handle this deliberately during override parsing using YAML node/type
+information or another small, explicit approach. Do not silently convert
+null to the text `"null"`.
+
+### Build interface and artifact layout
+
+Add one optional argument to the existing build command:
+
+```sh
+./build-bundle.sh --environment prod1
+./build-bundle.sh --environment prod1 app1
+```
+
+`--environment prod1` selects `config/prod1.yaml`. Use a documented, safe
+name grammar that prevents path traversal. Reserve names that collide with
+existing config files, including `dev` and `images`. An explicitly selected
+missing file is an error. Without `--environment`, build the common
+configuration through the existing command behavior.
+
+For selected environments, put artifacts and the current bundle list under
+the corresponding output directory:
+
+```text
+dist/prod1/
+dist/prod1/current-bundles.txt
+
+dist/prod2/
+dist/prod2/current-bundles.txt
+```
+
+Keep component archive names and production component IDs under the
+existing naming rules. Scope staging cleanup to the selected build and
+preserve artifacts belonging to other environments. Retain the existing
+rule for partial builds and `current-bundles.txt`.
+
+The output directory choice is necessary because multiple environment
+builds can contain different bytes for the same component version. Avoid
+introducing an additional environment manifest, registry or metadata
+database.
+
+Production's existing immutable-release rule still applies. A different
+bundle with the same product/component/version cannot replace an already
+published release on the same installation. An environment directory on
+the build machine does not change this identity rule. Delivering changed
+content to an existing installation requires a new component version.
+Document this distinction with one short example.
+
+### Compile the overrides into the bundle
+
+The selected environment must be fully represented in the bundle's existing
+component `config.defaults.yaml`, under `ENVIRONMENT`.
+
+Keep ordinary settings typed as before, and preserve the textual meaning of
+every existing `ENVIRONMENT` value when serializing the bundled file.
+Reading the entire file through a normal YAML loader and writing it back
+can change the meaning of unquoted environment scalars. Test that boundary
+explicitly.
+
+Preserve placeholders such as `@@DB_HOST@@` and
+`@@secret:app1-password/password@@` for the existing installation-time
+resolution. Bundle building must not read secret contents or generate
+credentials.
+
+The final bundle must work in isolation after removing the source checkout
+and the selected environment file. Production commands read the compiled
+declarations already in the bundle. `init-config` continues to produce the
+operator's settings file with the existing separation between operator
+settings and release-owned `ENVIRONMENT`.
+
+Source files must remain unchanged. Building prod1, then prod2, then the
+common configuration must not carry over declarations from a previous
+build. Generate checksums and signatures after writing the compiled
+declarations.
+
+Item 69 (RPMs): `./build-rpms.sh` wraps the built bundles; it must take the
+bundles of the selected environment's output directory, and the RPM keeps
+the existing name/version identity rule above.
+
+### Existing code and integration points
+
+The implementation must address all current readers of `ENVIRONMENT`, not
+just the code that generates ConfigMaps. On `8b7161b`:
+
+- `deployment/environment.py` reads declarations through `read`,
+  `read_defaults` and `load`. `with_recipes` creates secret recipes,
+  `apply` generates ConfigMaps and `envFrom`, and `summary` reports
+  declarations.
+- `environment.foreign_lines` reads declarations separately for Identity's
+  foreign secret references.
+- `catalog.registration_files`, `load_catalog`, `api_secret_mapping` and
+  `derive_entries` use those lines to derive dependencies and API
+  registration metadata.
+- `render.dev_layer` currently merges ordinary settings and per-ID
+  file-source overrides. `merge_config` deliberately omits release-owned
+  `ENVIRONMENT` and `MOUNTS`.
+- `render.effective_config` invokes `environment.with_recipes`.
+  `render.effective_documents` invokes `environment.apply`.
+- `deploy.dev_settings` currently builds the catalog before component
+  settings. Dev overrides that affect API registrations must be available
+  when that catalog is derived.
+- `deploy.validate_component` performs declaration checks and
+  `database_bindings`. `check_manifests` subsequently performs the runtime
+  password/volume guard.
+- `bundle.build` derives descriptors before staging. `bundle.build_release`
+  currently copies `config.defaults.yaml` unchanged.
+- `bundle.parser` uses the shared `deployment.arguments` conventions.
+- `dev/dev.sh up` invokes `deploy.sh prepare` and then
+  `podman kube play --replace`.
+
+Introduce a small shared operation that produces the effective component
+environment mapping from common declarations plus explicit overrides. Reuse
+it across the affected consumers.
+
+Keep environment selection explicit in function arguments or a small
+operation-local data structure. Do not use a process-global "selected
+environment", mutate the source tree or infer production environment
+selection from dev configuration.
+
+Each operation must use the same effective declarations for catalog
+derivation, validation, secret recipes, generated YAML, summaries and
+bundled metadata. In particular, an override of Identity's existing
+API-secret environment lines must be reflected in both the catalog
+descriptor and the rendered environment. Existing restrictions on foreign
+secret use still apply. Do not calculate descriptors from the common
+configuration and then package different declarations.
+
+Use ordinary dictionaries and straightforward control flow. Avoid a general
+YAML patch engine, overlay framework or configurable merge strategy.
+
+### Validation across the lifecycle
+
+For dev, both `deploy.sh validate` and `prepare` must see the new
+overrides. Existing credential preparation callers must see the same dev
+declarations where relevant.
+
+During environment bundle builds, validate the selected override and
+resulting declarations before publishing archives or invoking image export.
+Reuse declaration validation that works without runtime credential
+contents or Podman volume queries.
+
+Do not make valid bundles depend on production-specific settings or
+credential files being available on the build machine. Distinguish errors
+that can be established from declarations from checks that necessarily
+belong to installation.
+
+Once installed, use the existing lifecycle for rendering, equal-version
+reinstall, downgrade refusal, pending work, retry and uninstall. Verify
+that the new compiled declarations flow through these entry points
+correctly.
+
+PostgreSQL's password guard must work when `POSTGRES_PASSWORD_FILE` is
+added or overridden under `ENVIRONMENT`. A missing password file with an
+existing database volume must still stop before generation.
+
+### Product and unit tests
+
+Extend existing suites such as `test_environment.py`,
+`test_database_preflight.py`, `test_bundle.py`,
+`test_install_environment.py` and the CLI tests. Use generic component
+names and explicit expected values. Cover at least:
+
+- Addition and replacement of one variable while sibling variables and
+  containers remain intact.
+- Overrides for regular and init containers.
+- First `ENVIRONMENT` declaration for an existing container.
+- Empty string, YAML null, quoted `"null"`, boolean-like and
+  numeric-looking text.
+- Duplicate keys and case collisions across common and override
+  declarations.
+- Unknown environment, component and container, ambiguous container, and
+  forbidden fields.
+- Secret references using existing declarations, invalid references,
+  public-to-secret and secret-to-public replacement.
+- Identity API mappings derived from the effective declarations.
+- All relevant PostgreSQL password-guard outcomes.
+- Preservation of existing dev settings and file-source overrides.
+- No dev override leakage into bundles.
+- Sequential prod1, prod2 and common builds with unchanged source bytes and
+  separate output artifacts.
+- Correct bundled `ENVIRONMENT` text and preserved ordinary setting types.
+- An isolated bundle validating and installing without its source
+  environment file.
+- Equal-version re-render and retry using the compiled environment.
+- Errors containing no test secret marker or complete connection string.
+
+### Acceptance tests and evidence
+
+Extend existing acceptance infrastructure, including the dev environment
+update probe (`environment_update_test.py`) where appropriate.
+
+Real dev verification must run `dev/dev.sh up`, add or override a harmless
+public variable through `config/dev.yaml`, run `up` again, and verify the
+value inside the actual consumer container. Also check a retained common
+variable and an init-container consumer.
+
+For production, build an environment-specific bundle, transfer only the
+normal installation artifacts (item 69: the release RPMs), install it, and
+verify the expected public variable inside the running container. Exercise
+a changed environment declaration in a subsequent release while retaining
+database data and credentials.
+
+Expectations must be explicit and independent of the merger being tested.
+Generated YAML alone is insufficient runtime evidence. Harness tests must
+reject missing or incorrect runtime results.
+
+Keep credential contents out of logs. Report product tests,
+acceptance-harness tests and real Podman/systemd results separately. Mark
+lab work as outstanding if the execution environment cannot run it. Record
+only actual lab results in `acceptance/RESULTS.md`.
+
+### Documentation and done when
+
+Update the existing component documentation, README, CLI help and review
+contracts with:
+
+- The common, prod1 and dev examples.
+- Exact merge behavior and the absence of deletion.
+- The distinction between selecting an environment at build time and
+  providing production settings/credentials at installation.
+- Output directories and immutable release identity.
+- A short troubleshooting example for an unknown component or container.
+
+Run the relevant tests and standard checks. Perform the required
+understandability review by tracing one successful override and one
+rejected override through the normal entry points. A developer with basic
+Python knowledge should be able to locate the merge, follow how the result
+reaches catalog derivation and rendering, and explain why production does
+not need the environment source file.
+
+Done when the behavior works through both the bundle and the dev entry
+points, with meaningful regression coverage, documented runtime evidence or
+explicitly outstanding lab verification, and a concise operator procedure.
+
 ## 83. Allow POSTGRES_PASSWORD_FILE under ENVIRONMENT
 
 Status: **done and lab-verified** (2026-11-06, high priority): normal, app2,
