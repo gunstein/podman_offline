@@ -58,10 +58,10 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 Status: **requirement recorded** (product owner, 2026-11-09); implementation
 follows [item 84](#84-environment-specific-container-environment-overrides)
-and must not start before it. **Format decision pending:** the file format
-below changes item 84's proposed layout (overrides move under `overrides:`;
-see "Format"); the product owner confirms it before item 84 is implemented,
-so no environment file needs rewriting later. Read the latest `main`,
+and must not start before it. **Decisions (product owner, 2026-11-09):**
+the format below (fixed top-level keys `components:` and `overrides:`,
+already in item 84), and option (a) for Identity registrations of optional
+APIs (see "Dependencies and Identity registrations"). Read the latest `main`,
 [AGENTS.md](AGENTS.md), [the review guide](docs/REVIEW_GUIDE.md) and item 84
 before starting.
 
@@ -74,10 +74,10 @@ component-selection file or environment catalog is added.
 
 ### Format
 
-Item 84 proposed component IDs as the top-level keys of an environment
-file. A component list next to them would mix two kinds of key (a reserved
-name among component IDs, which a component could also be called). The
-proposal: two fixed top-level keys, both optional, nothing else allowed.
+Two fixed top-level keys, both optional, nothing else allowed: a component
+list among component-ID keys would mix two kinds of key (a reserved name
+that a component could also be called), so item 84's overrides are under
+`overrides:`.
 
 ```yaml
 # config/prod1.yaml
@@ -156,7 +156,7 @@ So excluding an API component is not enough while Identity's effective
 components, that line fails validation, and it must. Item 84 adds and
 replaces but never deletes, so an environment cannot remove a common line.
 
-The proposed treatment, with the existing rules only: **an API's
+The treatment, with the existing rules only: **an API's
 registration lines live in the environments that include the API**, as
 item 84 overrides of Identity (prod1 above). The common Identity
 declarations keep no registration of an optional API. Each environment
@@ -164,17 +164,14 @@ numbers its own `ApiResources__<n>` (each `<n>` once, all lines in one
 container, as today). Registrations or secret references are never
 discarded to make a component set pass.
 
-**Remaining product decision (with a scenario):** the demo keeps app3's
-registration in the common Identity file, and dev and a build without
-`--environment` use it. With the proposal, app3's lines move out of the
-common file: into `config/dev.yaml`'s `overrides` (and its
-`dev.yaml.example`) for dev, and into each environment that includes app3.
-A build without `--environment` then has app3 without its Identity
-registration, so app3's API calls are refused, while validation, as its rules read today, passes (to be confirmed in the analysis).
-Options: (a) accept that, and document that a product with an optional API
-always builds with an environment (recommended: no new syntax); (b) keep the
-line in the common file and add a deletion syntax to item 84, which item 84
-rule 9 now refuses. Decide before implementation.
+**Decision (a), product owner 2026-11-09:** no deletion syntax. In the demo,
+app3's registration lines move out of the common Identity file: into
+`config/dev.yaml`'s `overrides` (and `dev.yaml.example`) for dev, and into
+each environment that includes app3. A build without `--environment` then
+has app3 without its Identity registration, so app3's API calls are refused
+(as the validation rules read today it passes; confirm in the analysis). The
+documentation says that a product with an optional API always builds with
+an environment.
 
 ### Build behavior
 
@@ -235,9 +232,9 @@ Podman/systemd evidence separate.
 
 Reuse the catalog, dependency derivation, bundle selection and item 84's
 overrides. No automatic dependency completion, generic manifest overlay or
-second product model. Before implementation, record here the final YAML
-examples, the dependency rules and the decision on Identity registrations
-above.
+second product model. The YAML format and the Identity treatment are
+decided above; record any change to the dependency rules here before
+implementation.
 
 ## 84. Environment-specific container environment overrides
 
@@ -253,17 +250,16 @@ to several production environments that need different values for some
 container variables (log levels, feature switches, limits) while sharing
 every other declaration. Today the only way is to change the common
 `config.defaults.yaml` per delivery. The new `config/<environment>.yaml`
-files and the reserved `components` block in `config/dev.yaml` are the
+files and the reserved `overrides` block in `config/dev.yaml` are the
 configuration this requirement adds; nothing else is added.
 
-**Follow-up and pending format decision:** [item 85](#85-select-the-components-of-a-build-environment)
-adds a component selection to the same environment file. To leave room for
-it, item 85 proposes that an environment file has two fixed top-level keys,
-`components:` (item 85) and `overrides:` (this item, with the per-component
-structure shown below), and that `config/dev.yaml`'s reserved block is named
-`overrides`. The examples below still show the earlier layout (component IDs
-at the top level, `components` in `dev.yaml`). The product owner decides
-before this item is implemented; implement the decided layout only.
+**Format decision (product owner, 2026-11-09):** an environment file has
+fixed top-level keys only: `overrides:` (this item) and `components:`
+([item 85](#85-select-the-components-of-a-build-environment), the follow-up
+that selects the environment's components). This item implements
+`overrides:` and refuses every other top-level key, `components:`
+included, with a message that item 85 is not implemented; item 85 then
+accepts it. `config/dev.yaml`'s reserved block is named `overrides` too.
 
 ### Goal and scope
 
@@ -296,23 +292,25 @@ ENVIRONMENT:
     Features__Reports: "false"
 ```
 
-A production environment file names components at the top level:
+A production environment file names components under `overrides:`:
 
 ```yaml
 # config/prod1.yaml
-app1:
-  ENVIRONMENT:
-    app:
-      Features__Reports: "true"
-      Reports__MaxRows: "500"
+overrides:
+  app1:
+    ENVIRONMENT:
+      app:
+        Features__Reports: "true"
+        Reports__MaxRows: "500"
 ```
 
 ```yaml
 # config/prod2.yaml
-app2:
-  ENVIRONMENT:
-    backend:
-      Logging__LogLevel__Default: Debug
+overrides:
+  app2:
+    ENVIRONMENT:
+      backend:
+        Logging__LogLevel__Default: Debug
 ```
 
 The resulting app1 environment for prod1 includes all three variables:
@@ -324,7 +322,7 @@ Reports__MaxRows: "500"
 ```
 
 For dev, preserve the existing top-level settings and file-source
-overrides. Add one reserved `components` block for component-specific
+overrides. Add one reserved `overrides` block for component-specific
 environment overrides:
 
 ```yaml
@@ -332,7 +330,7 @@ environment overrides:
 PUBLIC_ORIGIN: https://dev.example.test:8443
 HTTPS_PORT: 8443
 
-components:
+overrides:
   app1:
     ENVIRONMENT:
       app:
@@ -344,13 +342,13 @@ components:
         Logging__LogLevel__Default: Trace
 ```
 
-The contents of `dev.yaml.components` have exactly the same structure and
-merge rules as a production environment file. The `components` block is a
-dev-input structure: consume it before ordinary settings validation and
+The contents of `dev.yaml`'s `overrides` have exactly the same structure
+and merge rules as `overrides` in a production environment file. The
+`overrides` block is a dev-input structure: consume it before ordinary settings validation and
 merging. It must not become a setting passed to applications or be written
 to generated component `config.yaml` files. This format adds no second dev
 override file (backlog 77 removed the per-component dev file). Document
-`components` as reserved in `config/dev.yaml`.
+`overrides` as reserved in `config/dev.yaml`.
 
 ### Merge and validation rules
 
@@ -376,7 +374,8 @@ override file (backlog 77 removed the per-component dev file). Document
     numeric-looking values must reach the container as the intended text.
     Quoted `"null"` is text, whereas YAML null is invalid.
 11. Reject duplicate YAML keys, unknown components, unknown or ambiguous
-    containers, and unsupported fields. A production environment component
+    containers, and unsupported fields (in an environment file, any
+    top-level key other than `overrides`). A production environment component
     entry may contain only `ENVIRONMENT`.
 12. Reject names outside the source catalog even during a
     component-selected bundle build.
