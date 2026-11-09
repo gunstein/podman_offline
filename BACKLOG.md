@@ -54,6 +54,191 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 85. Select the components of a build environment
+
+Status: **requirement recorded** (product owner, 2026-11-09); implementation
+follows [item 84](#84-environment-specific-container-environment-overrides)
+and must not start before it. **Format decision pending:** the file format
+below changes item 84's proposed layout (overrides move under `overrides:`;
+see "Format"); the product owner confirms it before item 84 is implemented,
+so no environment file needs rewriting later. Read the latest `main`,
+[AGENTS.md](AGENTS.md), [the review guide](docs/REVIEW_GUIDE.md) and item 84
+before starting.
+
+Why: some components belong only to certain environments. For example
+`prod1` has platform, identity, app1 and app2; `prod2` has platform,
+identity and app2, without app1. The developer selects one environment when
+building bundles, and that selection decides both its component set and its
+item 84 `ENVIRONMENT` overrides. Both live in the same environment file; no
+component-selection file or environment catalog is added.
+
+### Format
+
+Item 84 proposed component IDs as the top-level keys of an environment
+file. A component list next to them would mix two kinds of key (a reserved
+name among component IDs, which a component could also be called). The
+proposal: two fixed top-level keys, both optional, nothing else allowed.
+
+```yaml
+# config/prod1.yaml
+components:            # the environment's component set; omitted = the whole catalog
+  - platform
+  - identity
+  - app1
+  - app2
+overrides:             # item 84: per component, only ENVIRONMENT
+  app1:
+    ENVIRONMENT:
+      app:
+        Features__Reports: "true"
+        Reports__MaxRows: "500"
+  identity:
+    ENVIRONMENT:
+      app:
+        # app1 is an API: its registration is in the environments that include app1.
+        ApiResources__0__Name: app1-api
+        ApiResources__0__Scopes__0: app1
+        ApiResources__0__ApiSecrets__0__Value: '@@secret:app1-api-secret/value@@'
+```
+
+```yaml
+# config/prod2.yaml
+components:
+  - platform
+  - identity
+  - app2
+overrides:
+  app2:
+    ENVIRONMENT:
+      backend:
+        Logging__LogLevel__Default: Debug
+```
+
+`config/dev.yaml` keeps its settings and file-source overrides; item 84's
+reserved block is then named `overrides` (not `components`), with the same
+structure as `overrides` in an environment file. Dev component selection is
+outside this item.
+
+### Component selection
+
+- `bundles.yaml` stays the source catalog of available components and the
+  gateway/Identity roles.
+- `components:` is a list of catalog IDs. Omitted: the whole catalog. An
+  unknown ID or a duplicate is an error naming the file and the ID; an
+  explicitly empty list is an error ("list at least one component, or omit
+  `components` for the whole catalog").
+- Order and install dependencies follow the existing rules (the gateway,
+  then Identity; `catalog.derive_entries`).
+- A missing required component is an error naming both, for example
+  `config/prod2.yaml: app2 requires identity (it has client.yaml); add
+  identity to components`. Nothing is added automatically.
+- An override for a component outside the set is an error.
+- Components outside the set contribute no bundle and no image; their
+  manifests are not read and their credentials not required to build the
+  selected environment.
+
+Validate the source catalog's structure first, then derive and validate the
+effective product from the selected components only.
+
+### Dependencies and Identity registrations
+
+Analysis on the current code: `catalog.api_secret_mapping` reads each
+component's foreign secret lines (`environment.foreign_lines`). Identity
+may name another component's secret only as the whole value of
+`ApiResources__<n>__ApiSecrets__0__Value`, and the line's secret ID must
+start with the ID of a listed component; otherwise it stops with "no listed
+component owns ...". The demo's Identity has app3's registration
+(`ApiResources__0__*`, `@@secret:app3-api-secret/value@@`) in its common
+`config.defaults.yaml`.
+
+So excluding an API component is not enough while Identity's effective
+`ENVIRONMENT` still names its secret: with the selected set as the listed
+components, that line fails validation, and it must. Item 84 adds and
+replaces but never deletes, so an environment cannot remove a common line.
+
+The proposed treatment, with the existing rules only: **an API's
+registration lines live in the environments that include the API**, as
+item 84 overrides of Identity (prod1 above). The common Identity
+declarations keep no registration of an optional API. Each environment
+numbers its own `ApiResources__<n>` (each `<n>` once, all lines in one
+container, as today). Registrations or secret references are never
+discarded to make a component set pass.
+
+**Remaining product decision (with a scenario):** the demo keeps app3's
+registration in the common Identity file, and dev and a build without
+`--environment` use it. With the proposal, app3's lines move out of the
+common file: into `config/dev.yaml`'s `overrides` (and its
+`dev.yaml.example`) for dev, and into each environment that includes app3.
+A build without `--environment` then has app3 without its Identity
+registration, so app3's API calls are refused, while validation, as its rules read today, passes (to be confirmed in the analysis).
+Options: (a) accept that, and document that a product with an optional API
+always builds with an environment (recommended: no new syntax); (b) keep the
+line in the common file and add a deletion syntax to item 84, which item 84
+rule 9 now refuses. Decide before implementation.
+
+### Build behavior
+
+`./build-bundle.sh --environment prod1` builds the whole prod1 set;
+`./build-bundle.sh --environment prod1 app1` builds only app1's bundle
+within prod1's product (its dependencies stay part of the model). A partial
+build of a component outside the selected set is refused.
+
+The environment output directories of item 84 are used. A complete build's
+`dist/<environment>/current-bundles.txt` names exactly the selected
+environment's bundles; a partial build leaves it unchanged (today's rule).
+`dist/` keeps earlier archives on purpose (a removed component may still be
+installed somewhere), so stale archives from an earlier, larger set must not
+be picked up by accident: everything that takes "the current product" reads
+that list, including `./build-rpms.sh` (item 69), which today takes every
+catalog component's archive from `dist/` and must take the selected
+environment's list and directory instead.
+
+Compiled descriptors describe the selected environment consistently, and
+bundles stay usable offline without the source catalog or environment file.
+
+### Production lifecycle
+
+Selection at build time never uninstalls anything on a target. If app1 was
+installed and a later delivery of that environment omits it, removing app1
+stays an explicit uninstall (`deploy.sh uninstall app1`, with the existing
+dependency, registration and data-retention rules); the operator manual
+says so. With the RPM delivery (item 69), app1's release stays installed and
+running until that uninstall, and `<product>-admin` keeps its release (the
+retirement rule never removes a component's newest release).
+
+### Verification
+
+Extend the existing fixtures and tests to cover:
+
+- two environments with different explicit component sets;
+- no `components:` meaning the full catalog;
+- unknown, duplicate and empty selections;
+- a partial build inside and outside the selected set;
+- a missing gateway or Identity dependency;
+- an included Identity declaration naming an excluded API's secret
+  (refused);
+- a valid environment-specific API registration with item 84 overrides;
+- excluded components with an unavailable image, a malformed manifest or
+  missing credentials having no effect on the selected build;
+- correct descriptors, image lists and `current-bundles.txt`;
+- repeated builds after reducing the set (no stale archive selected,
+  `build-rpms.sh` included);
+- isolated installation of the selected bundles;
+- an explicit uninstall when an installation moves to a smaller set.
+
+Real acceptance: on a fresh installation, the selected components run and
+the excluded component's containers, units and registrations (routes,
+clients, API secrets) are absent. Keep product tests, harness tests and real
+Podman/systemd evidence separate.
+
+### Planning and simplicity
+
+Reuse the catalog, dependency derivation, bundle selection and item 84's
+overrides. No automatic dependency completion, generic manifest overlay or
+second product model. Before implementation, record here the final YAML
+examples, the dependency rules and the decision on Identity registrations
+above.
+
 ## 84. Environment-specific container environment overrides
 
 Status: **agreed product requirement, ready for implementation; high
@@ -70,6 +255,15 @@ every other declaration. Today the only way is to change the common
 `config.defaults.yaml` per delivery. The new `config/<environment>.yaml`
 files and the reserved `components` block in `config/dev.yaml` are the
 configuration this requirement adds; nothing else is added.
+
+**Follow-up and pending format decision:** [item 85](#85-select-the-components-of-a-build-environment)
+adds a component selection to the same environment file. To leave room for
+it, item 85 proposes that an environment file has two fixed top-level keys,
+`components:` (item 85) and `overrides:` (this item, with the per-component
+structure shown below), and that `config/dev.yaml`'s reserved block is named
+`overrides`. The examples below still show the earlier layout (component IDs
+at the top level, `components` in `dev.yaml`). The product owner decides
+before this item is implemented; implement the decided layout only.
 
 ### Goal and scope
 
