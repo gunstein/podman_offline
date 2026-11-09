@@ -1,6 +1,8 @@
 """Build the offline bundles: dist/<product>-<component>-<version>-offline.tar.gz (+ .sha256).
 
-<product> is bundles.yaml's product name.
+<product> is bundles.yaml's product name. With --environment <name>, the
+overrides of config/<name>.yaml are compiled into each bundle's
+config.defaults.yaml (backlog 84) and the output goes to dist/<name>/.
 """
 
 import hashlib
@@ -14,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from deployment import arguments, catalog, common, output
+from deployment import arguments, catalog, common, environment, output
 from deployment import render as rendering
 
 # A child of the deployment logger: same handlers, streams and convention.
@@ -205,11 +207,66 @@ def guarded_directories():
     return [ROOT] + [ROOT / "components" / name for name in names]
 
 
-def build_release(version, descriptor):
-    """Package one compiled component descriptor."""
+def output_directories(environment_name):
+    """Staging and output of one build; each environment has its own.
+
+    build/bundle and dist/ without an environment, build/bundle-<name> and
+    dist/<name>/ with one: the same component version can have different
+    bytes in two environments, and one build never removes another's files.
+    """
+    if environment_name is None:
+        return STAGE, DIST
+    return STAGE.with_name(f"{STAGE.name}-{environment_name}"), DIST / environment_name
+
+
+def check_declarations(component, env_overrides):
+    """Check an overridden component's merged ENVIRONMENT before any output.
+
+    Only what the declarations decide: variable names and text, the merge,
+    the containers in the manifests as written, hand-written envFrom and env,
+    foreign secrets and SECRET_FILES declarations. Setting values,
+    credentials and the PostgreSQL guard need the operator's config and are
+    checked by validate and install (deploy.validate_component).
+    """
+    directory = ROOT / "components" / component
+    defaults_file = directory / "config.defaults.yaml"
+    defaults = rendering.merge_config(defaults_file) if defaults_file.exists() else {}
+    environment.with_recipes(defaults, component, env_overrides)
+    manifests = resolved_manifests(sorted((directory / "manifests").glob("*.yaml")))
+    containers = rendering.named_containers(
+        [doc for documents in manifests.values() for doc in documents]
+    )
+    for container, values in environment.read(component, env_overrides).items():
+        environment.check_container(
+            component, container, values, containers, env_overrides
+        )
+
+
+def compiled_defaults(path, component, env_overrides):
+    """config.defaults.yaml with the selected overrides merged into ENVIRONMENT.
+
+    Settings keep their YAML types, read as merge_config reads them;
+    ENVIRONMENT and MOUNTS keep their written text (environment.TextLoader).
+    safe_dump quotes every text that YAML would read as another type, so the
+    bundle reads exactly the merged text. Comments are not kept.
+    """
+    typed = rendering.config_layer(path) if path.exists() else {}
+    text = (environment.load(path) or {}) if path.exists() else {}
+    compiled = {
+        key: text[key] if key == common.MOUNTS else value
+        for key, value in typed.items()
+    }
+    compiled[common.ENVIRONMENT] = environment.read(component, env_overrides)
+    return yaml.safe_dump(compiled, sort_keys=False, allow_unicode=True, width=1000000)
+
+
+def build_release(version, descriptor, env_overrides=None, stage=None, dist=None):
+    """Package one compiled component descriptor into dist (default dist/)."""
+    stage = stage or STAGE
+    dist = dist or DIST
     component = str(descriptor["name"])
     name = f"{descriptor['product']}-{component}-{version}"
-    target = STAGE / name
+    target = stage / name
 
     directory = ROOT / "components" / component
     # One resolution for the image list and the shipped manifests.
@@ -262,6 +319,14 @@ def build_release(version, descriptor):
             shutil.copytree(source, destination / entry, ignore=guard)
         else:
             shutil.copy2(source, destination / entry)
+    if env_overrides and component in env_overrides.components:
+        # The bundle carries its environment: production reads only this file.
+        (destination / "config.defaults.yaml").write_text(
+            compiled_defaults(
+                directory / "config.defaults.yaml", component, env_overrides
+            ),
+            encoding="utf-8",
+        )
     # The operator guide and the documents it links travel with every release
     # (backlog 64); the guide links nothing else except README.md.
     for document in RELEASE_DOCS:
@@ -295,15 +360,15 @@ def build_release(version, descriptor):
         encoding="utf-8",
     )
 
-    DIST.mkdir(exist_ok=True)
-    archive = DIST / f"{name}-offline.tar.gz"
+    dist.mkdir(parents=True, exist_ok=True)
+    archive = dist / f"{name}-offline.tar.gz"
 
     # gzip level 6 compresses about three times faster than tarfile's default
     # 9, for archives under 1 % larger (measured on 3 GB of binaries).
     with tarfile.open(archive, "w:gz", compresslevel=6) as tar:
         tar.add(target, arcname=name, filter=owner_root)
 
-    (DIST / f"{archive.name}.sha256").write_text(
+    (dist / f"{archive.name}.sha256").write_text(
         f"{sha256(archive)}  {archive.name}\n",
         encoding="utf-8",
     )
@@ -345,28 +410,42 @@ def sign(archive):
     return signature
 
 
-def build(selected=()):
+def build(selected=(), environment_name=None):
     """Build one bundle per catalog component.
 
     selected names catalog components to build; the whole catalog is still
-    validated. A partial build leaves dist/current-bundles.txt unchanged,
-    because that list names the complete current product.
+    validated. A partial build leaves current-bundles.txt unchanged,
+    because that list names the complete current product. environment_name
+    selects config/<name>.yaml; its overrides are part of every derived
+    descriptor and bundled config.defaults.yaml, and the output goes to
+    dist/<name>/ (output_directories). The source files are never changed.
     """
     if not (ROOT / "bundles.yaml").exists():
         raise BundleError(f"Missing {ROOT / 'bundles.yaml'}")
-    # Validate the whole catalog and its selected images before any output.
-    descriptors = catalog.source_descriptors(ROOT)
+    env_overrides = (
+        environment.read_environment_file(ROOT, environment_name)
+        if environment_name is not None
+        else None
+    )
+    stage, dist = output_directories(environment_name)
+    # Validate the whole catalog, its declarations and its selected images
+    # before any output.
+    descriptors = catalog.source_descriptors(ROOT, env_overrides)
     unknown = sorted(set(selected) - set(descriptors))
     if unknown:
         raise BundleError(
             "Unknown component " + ", ".join(unknown) + "; see bundles.yaml"
         )
+    # Only overridden components: the common declarations keep their checks
+    # at validate and install, as without an environment.
+    for name in sorted(env_overrides.components if env_overrides else {}):
+        check_declarations(name, env_overrides)
     manifest_images()
     guard = generated_secret_guard(guarded_directories())
     guard(ROOT, ["scripts", "quadlet"])
-    shutil.rmtree(STAGE, ignore_errors=True)
+    shutil.rmtree(stage, ignore_errors=True)
     current = [
-        build_release(descriptor["version"], descriptor)
+        build_release(descriptor["version"], descriptor, env_overrides, stage, dist)
         for name, descriptor in descriptors.items()
         if not selected or name in selected
     ]
@@ -374,18 +453,24 @@ def build(selected=()):
         return
     # dist/ also keeps earlier archives, for example of a removed component that
     # is still installed somewhere; this list names only the current product.
-    (DIST / "current-bundles.txt").write_text(
+    (dist / "current-bundles.txt").write_text(
         "".join(path.name + "\n" for path in current), encoding="utf-8"
     )
 
 
 def parser():
-    """./build-bundle.sh [--verbose] [<component> ...] (backlog 73)."""
+    """./build-bundle.sh [--environment <name>] [<component> ...] [--verbose]."""
     result = arguments.Parser(
         prog="./build-bundle.sh",
-        usage="./build-bundle.sh [<component> ...] [--verbose]",
+        usage="./build-bundle.sh [--environment <name>] [<component> ...] [--verbose]",
         description="Build offline bundles; without components, every catalog component.",
         allow_abbrev=False,
+    )
+    result.add_argument(
+        "--environment",
+        metavar="<name>",
+        help="compile the ENVIRONMENT overrides of config/<name>.yaml into the "
+        "bundles and write them to dist/<name>/",
     )
     result.add_argument(
         "--verbose",
@@ -401,17 +486,20 @@ def main(command_line=None):
     """Build the bundle and return an exit code without traceback for expected errors.
 
     command_line is the argument list (default: sys.argv[1:]): optional
-    component names and --verbose. Usage errors exit 2 and --help 0.
+    --environment <name>, component names and --verbose. Usage errors exit 2
+    and --help 0.
     """
     try:
         args = arguments.parse(
-            parser(), sys.argv[1:] if command_line is None else command_line
+            parser(),
+            sys.argv[1:] if command_line is None else command_line,
+            flags=("--environment",),
         )
     except arguments.UsageError as error:
         return error.code
     output.configure(verbose=args.verbose)
     try:
-        build(args.components)
+        build(args.components, args.environment)
     except (
         OSError,
         BundleError,

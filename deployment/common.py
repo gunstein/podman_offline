@@ -30,6 +30,10 @@ ENVIRONMENT = "ENVIRONMENT"
 # Files mounted into each container; only in the release's config.defaults.yaml.
 MOUNTS = "MOUNTS"
 VOLUME_FILES = "VOLUME_FILES"
+# Per-component ENVIRONMENT overrides: the only top-level key of a build
+# environment file config/<environment>.yaml, and a reserved block of
+# config/dev.yaml (backlog 84; deployment/environment.py).
+OVERRIDES = "overrides"
 
 IMPORT_SOURCE = "volume.podman.io/import-source"
 

@@ -559,10 +559,15 @@ PY
 }
 # Check only the demo's public layer marker, never a complete environment.
 config_layers() {
-    local mode=$1
+    local mode=$1 expected=defaults
     local -a run_python=(python3)
     if [[ $mode == prod ]]; then run_python=(as_product python3); fi
-    "${run_python[@]}" - "$mode" <<'CONFIG_LAYERS'
+    # Scenario input written by the app1 upgrade step: that release is built
+    # for an environment that overrides the marker (seed_upgrade.py, backlog 84).
+    if [[ $mode == prod && -f $base/expected-app1-layer ]]; then
+        expected=$(cat "$base/expected-app1-layer")
+    fi
+    "${run_python[@]}" - "$mode" "$expected" <<'CONFIG_LAYERS'
 import os
 from pathlib import Path
 import subprocess
@@ -570,11 +575,13 @@ import sys
 import yaml
 
 
-def check_layers(paths, mode, first, second, installed=()):
+def check_layers(paths, mode, first, second, installed=(), expected="defaults"):
     """Check selected layer and sibling isolation in rendered and running containers.
 
     In prod only components without a completion marker may lack a consumer, so a
     missing or misnamed installed app cannot pass without being checked.
+    expected is the first component's marker: the release default, or the
+    scenario's environment override after the app1 upgrade.
     """
     docs = []
     for path in paths:
@@ -582,8 +589,8 @@ def check_layers(paths, mode, first, second, installed=()):
     maps = {doc["metadata"]["name"]: doc.get("data", {}) for doc in docs if doc.get("kind") == "ConfigMap"}
     pods = {doc["metadata"]["name"]: doc for doc in docs if doc.get("kind") == "Pod"}
     # Since backlog 77 there is no per-component dev layer: dev and prod use the
-    # release default, and the sibling must not receive the setting.
-    expected = "defaults"
+    # release default (or a build environment's override), and the sibling must
+    # not receive the setting.
     for component in (first, second):
         pod = pods.get(component + "-todo")
         if pod is None:
@@ -616,7 +623,7 @@ def check_layers(paths, mode, first, second, installed=()):
 
 
 def main():
-    mode = sys.argv[1]
+    mode, expected = sys.argv[1:3]
     if mode not in ("dev", "prod"):
         raise RuntimeError("Unknown config layer mode")
     paths = ([Path("build/install.yaml")] if mode == "dev" else
@@ -625,7 +632,9 @@ def main():
         raise RuntimeError("Missing rendered config layer inputs")
     first, second = (("orders", "inventory") if os.environ["PRODUCT_NAME"] == "shop" else ("app1", "app2"))
     installed = ({path.name for path in (Path(os.environ["PRODUCT_STATE"]) / "installed").glob("*")} if mode == "prod" else ())
-    check_layers(paths, mode, first, second, installed)
+    if first != "app1":
+        expected = "defaults"
+    check_layers(paths, mode, first, second, installed, expected)
 
 
 if __name__ == "__main__":
@@ -1166,8 +1175,8 @@ renamed-dev-up)
 from urllib.parse import urlsplit
 from deployment import deploy
 
-known, settings = deploy.dev_settings()
-deploy.check_dev_components(known, settings)
+known, settings, env_overrides = deploy.dev_settings()
+deploy.check_dev_components(known, settings, env_overrides)
 print(urlsplit(settings["gateway"]["PUBLIC_ORIGIN"]).hostname)
 RENAMED_HOST
 )
@@ -1648,6 +1657,8 @@ upgrade)
     old_release="$release_root/$product_name-$bundle-$old_version"
     validate_release
     install_checked
+    # This release carries the environment override (seed_upgrade.py LAYER).
+    if [[ $bundle == app1 ]]; then printf '%s\n' environment-lab > "$base/expected-app1-layer"; fi
     healthy
     if [[ $bundle == app1 ]]; then seed_content prod release-v2; fi
     echo 'PASS: upgraded and healthy; old release/trust retained until controller e2e checks pass'

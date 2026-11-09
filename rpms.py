@@ -35,7 +35,7 @@ from pathlib import Path
 
 import yaml
 
-from deployment import arguments, catalog, common, output
+from deployment import arguments, catalog, common, environment, output
 
 log = logging.getLogger("deployment.rpms")
 
@@ -308,15 +308,21 @@ def build_tools(product, out):
         return rpmbuild(work, product + "-tools.spec", text, target)
 
 
-def build(selected=(), tools=False):
+def build(selected=(), tools=False, environment_name=None):
     """Build the selected RPMs into dist/rpm/; return their paths.
 
     selected names catalog components, each built from its bundle in dist/
     (./build-bundle.sh first, matching its .sha256 file); tools adds the tools
     RPM. Without either, every catalog component and the tools.
+    environment_name takes the bundles of that build environment from
+    dist/<name>/ and writes dist/<name>/rpm/ (./build-bundle.sh --environment).
     """
     if shutil.which("rpmbuild") is None:
         raise RpmError("rpmbuild is missing; install the rpm-build package")
+    dist, option = DIST, ""
+    if environment_name is not None:
+        environment.environment_file(ROOT, environment_name)  # Same name rules.
+        dist, option = DIST / environment_name, f"--environment {environment_name} "
     descriptors = catalog.source_descriptors(ROOT)
     unknown = sorted(set(selected) - set(descriptors))
     if unknown:
@@ -327,16 +333,19 @@ def build(selected=(), tools=False):
         if not everything and component not in selected:
             continue
         product, version = descriptor["product"], descriptor["version"]
-        archive = DIST / f"{product}-{component}-{version}-offline.tar.gz"
+        archive = dist / f"{product}-{component}-{version}-offline.tar.gz"
         checksum = Path(str(archive) + ".sha256")
         if not archive.is_file() or not checksum.is_file():
-            raise RpmError(f"Missing {archive.name}; run ./build-bundle.sh {component}")
+            raise RpmError(
+                f"Missing {archive.relative_to(ROOT)}; run ./build-bundle.sh "
+                f"{option}{component}"
+            )
         if checksum.read_text().split()[0] != sha256(archive):
             raise RpmError(f"{archive.name} does not match its .sha256 file")
-        built.append(build_rpm(archive, product, component, version, DIST / "rpm"))
+        built.append(build_rpm(archive, product, component, version, dist / "rpm"))
         log.info(f"[OK] {built[-1].relative_to(ROOT)}")
     if everything or tools:
-        built.append(build_tools(catalog.product_name(ROOT), DIST / "rpm"))
+        built.append(build_tools(catalog.product_name(ROOT), dist / "rpm"))
         log.info(f"[OK] {built[-1].relative_to(ROOT)}")
     return built
 
@@ -344,12 +353,21 @@ def build(selected=(), tools=False):
 def parser():
     result = arguments.Parser(
         prog="./build-rpms.sh",
-        usage="./build-rpms.sh [<component> ...] [--tools] [--verbose]",
+        usage=(
+            "./build-rpms.sh [--environment <name>] [<component> ...] [--tools] "
+            "[--verbose]"
+        ),
         description=(
             "Wrap built bundles as RPMs and build the tools RPM; without "
             "components or --tools, every catalog component and the tools."
         ),
         allow_abbrev=False,
+    )
+    result.add_argument(
+        "--environment",
+        metavar="<name>",
+        help="wrap the bundles of dist/<name>/ (./build-bundle.sh --environment "
+        "<name>) into dist/<name>/rpm/",
     )
     result.add_argument(
         "--tools",
@@ -367,13 +385,15 @@ def parser():
 def main(command_line=None):
     try:
         args = arguments.parse(
-            parser(), sys.argv[1:] if command_line is None else command_line
+            parser(),
+            sys.argv[1:] if command_line is None else command_line,
+            flags=("--environment",),
         )
     except arguments.UsageError as error:
         return error.code
     output.configure(verbose=args.verbose)
     try:
-        build(args.components, args.tools)
+        build(args.components, args.tools, args.environment)
     except (
         OSError,
         RpmError,

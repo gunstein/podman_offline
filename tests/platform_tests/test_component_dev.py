@@ -171,7 +171,7 @@ class ComponentDevTests(ProductFixture):
         self.write_product(copy.deepcopy(RENAMED))
         expected = {"PUBLIC_ORIGIN": "https://dev.test:9555", "HTTPS_PORT": 9555}
         self.layer("config/dev.yaml", expected)
-        known, settings = deploy.dev_settings()
+        known, settings, _ = deploy.dev_settings()
         for name in (
             name
             for name in known

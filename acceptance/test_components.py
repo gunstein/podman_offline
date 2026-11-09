@@ -114,9 +114,9 @@ class ComponentHarnessTests(unittest.TestCase):
             (source / "components/app1/VERSION").write_text("0.2.0\n")
             build = source / "build-bundle.sh"
             build.write_text(
-                '#!/usr/bin/env bash\n# Create only the three scoped upgrade artifacts for the test.\nset -euo pipefail\nversion=$(cat components/app1/VERSION)\nfor bundle in app1 app2 help; do\n    mkdir -p dist "build/bundle/myproduct-$bundle-$version/images"\n    archive="myproduct-$bundle-$version-offline.tar.gz"\n    printf fixture > "dist/$archive"\n    (cd dist && sha256sum "$archive" > "$archive.sha256")\n    printf \'localhost/upgrade-fixture:1\\n\' > "build/bundle/myproduct-$bundle-$version/images/images.txt"\ndone\n'
+                '#!/usr/bin/env bash\n# Create only the three scoped upgrade artifacts for the test.\nset -euo pipefail\n[[ $1 == --environment && $2 == lab && -f config/lab.yaml ]]\ndist=dist/lab stage=build/bundle-lab\nversion=$(cat components/app1/VERSION)\nfor bundle in app1 app2 help; do\n    mkdir -p "$dist" "$stage/myproduct-$bundle-$version/images"\n    archive="myproduct-$bundle-$version-offline.tar.gz"\n    printf fixture > "$dist/$archive"\n    (cd "$dist" && sha256sum "$archive" > "$archive.sha256")\n    printf \'localhost/upgrade-fixture:1\\n\' > "$stage/myproduct-$bundle-$version/images/images.txt"\ndone\n'
                 + (
-                    "printf damaged >> dist/myproduct-app1-0.2.1-offline.tar.gz\n"
+                    "printf damaged >> dist/lab/myproduct-app1-0.2.1-offline.tar.gz\n"
                     if corrupt
                     else ""
                 )
@@ -609,7 +609,10 @@ class ComponentObservationTests(unittest.TestCase):
             # Backlog 69: the delivered RPM's inventory is the expectation;
             # its deployment/ files must be trusted through rpmdb.
             deliveries = home / "deliveries"
-            rpm = deliveries / "rpm-platform-0.4.3/myproduct-platform-0.4.3-0.4.3-1.noarch.rpm"
+            rpm = (
+                deliveries
+                / "rpm-platform-0.4.3/myproduct-platform-0.4.3-0.4.3-1.noarch.rpm"
+            )
             rpm.parent.mkdir(parents=True)
             rpm.write_bytes(b"rpm")
             dump = [str(path) + " 123 1700000000 " + "a" * 64 + " 0100644 root root 0 0 0 X"
@@ -651,7 +654,8 @@ class ComponentObservationTests(unittest.TestCase):
                     ["guest", "identity-siblings-before", "unused", "identity"],
                 ),
                 mock.patch.dict(
-                    os.environ, {"PRODUCT_ROOT": str(home), "DELIVERIES": str(deliveries)}
+                    os.environ,
+                    {"PRODUCT_ROOT": str(home), "DELIVERIES": str(deliveries)},
                 ),
             ):
                 self.assertEqual(code["observe"]()["trust"], sorted(rows))

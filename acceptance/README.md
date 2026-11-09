@@ -93,14 +93,18 @@ The `database-runtime` step on DEV (`03-database-runtime` in the normal
 scenario) also runs `environment_update_test.py`. It builds a
 disposable one-component product from this checkout's tool files and an
 existing local image, runs `./dev/dev.sh up`, adds `ADDED_SETTING` under
-`ENVIRONMENT` in the component's `config.defaults.yaml` and runs
-`./dev/dev.sh up` again, with `build/`, containers and credentials left in
-place. It passes only if the first container lacks the variable, the second
-`up` replaced the container, `ADDED_SETTING` and `EXISTING_SETTING` have
-their exact values inside the running container, and the generated secret is
-unchanged byte for byte. Only those two variables are read; only the probe's
-own pod, volumes, network and image alias are removed. `test_environment_update.py`
-checks that each wrong observation fails.
+`ENVIRONMENT` in the component's `config.defaults.yaml`, overrides
+`OVERRIDDEN_SETTING` (regular container) and `INIT_SETTING` (an `always` init
+container that prints it) in `config/dev.yaml`'s `overrides` block (backlog 84)
+and runs `./dev/dev.sh up` again, with `build/`, containers and credentials
+left in place. It passes only if the first containers have the common values
+and lack the added variable, the second `up` replaced the container,
+`ADDED_SETTING`, the retained `EXISTING_SETTING` and both overrides have their
+exact values inside the running and the init container, and the generated
+secret is unchanged byte for byte. Only those four variables are read; only
+the probe's own pod, volumes, network and image alias are removed.
+`test_environment_update.py` checks that each wrong observation fails and that
+this checkout's `deploy.sh prepare` renders the probe's product as expected.
 
 # Secret-derived init environment (backlog 61)
 
@@ -124,8 +128,10 @@ refuses missing/stale rows or a dev row in production. An installed app missing
 its consumer is still rejected by the item 56 checks.
 
 `upgrade-bundle` now uses `seed_upgrade.py`: an isolated checkout changes exactly
-app1 VERSION plus reference SQL, builds/transfers only its bundle, and leaves the
-operator's checkout unchanged. Upgrade explicitly requires `release-v2` in the
+app1 VERSION plus reference SQL, writes the build environment `config/lab.yaml`
+(an override of app1's `DEMO_CONFIG_LAYER`, backlog 84), builds only its bundle
+with `./build-bundle.sh --environment lab app1`, transfers it as a release RPM,
+and leaves the operator's checkout unchanged. Upgrade explicitly requires `release-v2` in the
 database. Persistent checks permit only the changed public seed import archive;
 config, credentials, Todo data and sibling assertions remain required. Item 53's
 changed-application-image work is still separate and should extend that builder.
@@ -136,13 +142,15 @@ and replays while checking retained Todo rows and no duplicate seed rows. Stubbe
 harness tests protect those assertions; the actual lab run is outstanding.
 See [latest results](RESULTS.md) for verification and runnable commands.
 
-# Component dev overrides (backlog 56)
+# Config layer marker
 
-The demo now has a tracked `components/app1/config.dev.yaml` with a public
-`DEMO_CONFIG_LAYER` marker. Both normal and renamed dev-up steps verify the
-rendered value and the running backend's single environment key (`component-dev`)
-and require its absence in the sibling backend. Production `healthy()` verifies
-`defaults` for app1/orders when installed and sibling isolation for app2/inventory.
+app1's `ENVIRONMENT` has a public `DEMO_CONFIG_LAYER` marker (`defaults`). Both
+normal and renamed dev-up steps verify the rendered value and the running
+backend's single environment key and require its absence in the sibling
+backend. Production `healthy()` verifies `defaults` for app1/orders when
+installed, and `environment-lab` for app1 after the app1 upgrade (the `upgrade`
+step records that scenario input in the run directory, `expected-app1-layer`;
+the value is `seed_upgrade.LAYER`), plus sibling isolation for app2/inventory.
 The renamed generator carries and renames component dev maps as declarations.
 Owner/help-only scenarios require no app marker. No full environment is printed.
 

@@ -133,10 +133,16 @@ class ParserTests(DeployFixture):
             self.assertEqual(bundle.main(["--help"]), 0)
             self.assertTrue(
                 self.stdout.getvalue().startswith(
-                    "Usage: ./build-bundle.sh [<component> ...] [--verbose]"
+                    "Usage: ./build-bundle.sh [--environment <name>] [<component> ...] [--verbose]"
                 )
             )
-            for refused in (["--verb"], ["--verbose", "--verbose"], ["--", "app1"]):
+            for refused in (
+                ["--verb"],
+                ["--verbose", "--verbose"],
+                ["--", "app1"],
+                ["--environment"],
+                ["--environment", "prod1", "--environment", "prod2"],
+            ):
                 with self.subTest(refused=refused):
                     self.stderr.truncate(0)
                     self.stderr.seek(0)
@@ -148,8 +154,11 @@ class ParserTests(DeployFixture):
                     self.assertNotIn("error:", errors)
             build.assert_not_called()
             self.assertEqual(bundle.main(["app1", "help", "--verbose"]), 0)
-            build.assert_called_once_with(["app1", "help"])
-        self.assertTrue(output.log.isEnabledFor(logging.DEBUG))
+            build.assert_called_once_with(["app1", "help"], None)
+            self.assertTrue(output.log.isEnabledFor(logging.DEBUG))
+            build.reset_mock()
+            self.assertEqual(bundle.main(["app1", "--environment", "prod1"]), 0)
+            build.assert_called_once_with(["app1"], "prod1")
         self.assertIn("PASS: ./build-bundle.sh completed", self.stdout.getvalue())
 
 

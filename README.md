@@ -134,6 +134,7 @@ names](docs/COMPONENTS.md#reserved-configuration-names).
 | --- | --- |
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
+| `config/<environment>.yaml` | Optional build environment: `ENVIRONMENT` overrides compiled into bundles by `./build-bundle.sh --environment <environment>` ([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)) |
 | `components/<component>/config.defaults.yaml` | Component settings, secret and volume references, `ENVIRONMENT` and `MOUNTS` |
 | `/var/lib/myproduct/state/<component>/config.yaml` | Authoritative persistent production config |
 
@@ -141,7 +142,12 @@ Dev merges the component defaults and then the developer's own
 `config/dev.yaml`, which applies to every component. A setting there replaces
 the whole value. A `SECRET_FILES` or `VOLUME_FILES` ID there replaces only that
 ID's source list, in the component whose ID it starts with; the component must
-already declare the ID. No recursive merge or list concatenation takes place. Duplicate YAML keys are rejected in each source
+already declare the ID. No recursive merge or list concatenation takes place.
+The reserved `overrides` block adds or replaces single container variables
+(`overrides: <component>: ENVIRONMENT: <container>: <variables>`), merged into
+`ENVIRONMENT` exactly as a build environment file is
+([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml));
+it is not a setting and never reaches `build/dev/<component>/config.yaml`. Duplicate YAML keys are rejected in each source
 file. Missing `config/dev.yaml` means no overrides; an invalid one fails.
 Production initialization, validation and install never read it, even if a file
 is copied into a release by hand. `IP_ADDRESS` belongs to platform because only
@@ -370,7 +376,12 @@ One invocation creates one bundle per catalog component and lists them in
 `dist/current-bundles.txt`; older archives in `dist/` are retained, for example
 for uninstalling a removed component. `./build-bundle.sh app1 help` builds only
 the named components, after validating the whole catalog, and leaves
-`dist/current-bundles.txt` unchanged. Only catalog components are scanned for
+`dist/current-bundles.txt` unchanged. `./build-bundle.sh --environment prod1`
+(optionally with component names) compiles the `ENVIRONMENT` overrides of
+`config/prod1.yaml` into the bundles and writes them, with their own
+`current-bundles.txt`, to `dist/prod1/`; the source files stay unchanged and
+the installation needs no environment file
+([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)). Only catalog components are scanned for
 images. Each bundle contains its component's `config.defaults.yaml`, only its
 component,
 `deploy.sh`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
@@ -385,7 +396,9 @@ private files out of shipped directories and retain their declarations.
 ### Release RPMs (backlog 69, phase 1)
 
 After `./build-bundle.sh`, `./build-rpms.sh [<component> ...]` wraps each
-selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`.
+selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`;
+`./build-rpms.sh --environment prod1` takes the bundles of `dist/prod1/` and
+writes `dist/prod1/rpm/`.
 It needs `rpmbuild` (package `rpm-build`) on the build machine. The RPM
 installs the release unchanged under
 `/var/lib/<product>/releases/<product>-<component>-<version>/`; the version

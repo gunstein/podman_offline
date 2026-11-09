@@ -1,4 +1,11 @@
-"""Build app1's changed public SQL in an isolated checkout, retaining source state."""
+"""Build app1's changed public SQL in an isolated checkout, retaining source state.
+
+The upgrade is built for the build environment ENVIRONMENT (backlog 84): its
+config/lab.yaml, written only in the isolated checkout, overrides app1's
+DEMO_CONFIG_LAYER, so PROD runs a changed environment declaration in the
+next release while keeping its data and credentials. remote.sh's
+config_layers expects LAYER after this upgrade.
+"""
 
 import re
 import shutil
@@ -6,6 +13,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+ENVIRONMENT = "lab"
+LAYER = "environment-lab"
 
 
 def build_upgrade(source, version, revision, product):
@@ -39,13 +49,20 @@ def build_upgrade(source, version, revision, product):
             raise RuntimeError(
                 "Seed upgrade must change exactly app1 VERSION and reference SQL"
             )
+        (release / "config").mkdir(exist_ok=True)
+        (release / "config" / (ENVIRONMENT + ".yaml")).write_text(
+            "overrides:\n  app1:\n    ENVIRONMENT:\n      backend:\n"
+            "        DEMO_CONFIG_LAYER: " + LAYER + "\n"
+        )
         subprocess.run(
-            ["bash", "./build-bundle.sh", "app1"], cwd=str(release), check=True
+            ["bash", "./build-bundle.sh", "--environment", ENVIRONMENT, "app1"],
+            cwd=str(release),
+            check=True,
         )
         name = product + "-app1-" + version + "-offline.tar.gz"
         (source / "dist").mkdir(exist_ok=True)
         for suffix in ("", ".sha256", ".asc"):
-            artifact = release / "dist" / (name + suffix)
+            artifact = release / "dist" / ENVIRONMENT / (name + suffix)
             if suffix != ".asc" or artifact.exists():
                 shutil.copy2(str(artifact), str(source / "dist" / artifact.name))
         images = source / "build/bundle" / (product + "-app1-" + version) / "images"
@@ -53,13 +70,17 @@ def build_upgrade(source, version, revision, product):
         shutil.copy2(
             str(
                 release
-                / "build/bundle"
+                / ("build/bundle-" + ENVIRONMENT)
                 / (product + "-app1-" + version)
                 / "images/images.txt"
             ),
             str(images / "images.txt"),
         )
-    print("PASS: isolated app1 SQL upgrade; source checkout unchanged")
+    print(
+        "PASS: isolated app1 SQL upgrade for environment "
+        + ENVIRONMENT
+        + "; source checkout unchanged"
+    )
 
 
 if __name__ == "__main__":

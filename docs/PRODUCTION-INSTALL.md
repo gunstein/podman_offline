@@ -68,6 +68,7 @@ missing and who fixes it, so you can also start and let it tell you.
 - **The delivery** from the supplier, on a medium or copied to the server:
   - `myproduct-tools-<version>-1.noarch.rpm` (the commands),
   - one `myproduct-<component>-<version>-<version>-1.noarch.rpm` per component,
+    already built by the supplier for your environment (you select nothing),
   - the credentials (certificates, keys, passwords), in folders named
     `<component>/credentials/...`, for example
     `platform/credentials/web/web.crt` and `platform/credentials/web/web.key`.

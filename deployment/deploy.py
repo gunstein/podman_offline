@@ -13,7 +13,16 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, health, layout, mounts, registrations, templates
+from . import (
+    catalog,
+    common,
+    environment,
+    health,
+    layout,
+    mounts,
+    registrations,
+    templates,
+)
 from . import render as rendering
 from .output import log
 
@@ -387,10 +396,15 @@ def dev_settings():
 
     Both are in dependency order, so a public_from source is merged before the
     components that take its PUBLIC_ORIGIN and HTTPS_PORT, as init-config does
-    in production. Nothing is written here.
+    in production. Returns (descriptors, settings, env_overrides): the last is
+    config/dev.yaml's overrides block (environment.Overrides or None), read
+    once and used for the catalog here and for every component's
+    ENVIRONMENT by the caller. Nothing is written here.
     """
-    known = catalog.source_descriptors(common.ROOT)
-    rendering.dev_file_ids(common.ROOT / "config/dev.yaml", known)
+    local = common.ROOT / "config/dev.yaml"
+    env_overrides = environment.read_dev_overrides(local)
+    known = catalog.source_descriptors(common.ROOT, env_overrides)
+    rendering.dev_file_ids(local, known)
     settings = {}
     for component, descriptor in known.items():
         source = descriptor["public_from"]
@@ -406,11 +420,17 @@ def dev_settings():
         settings[component] = rendering.component_defaults(
             component, overrides=overrides, dev=True
         )
-    return known, settings
+    return known, settings, env_overrides
 
 
 def validate_component(
-    config, config_path, manifests, component=None, imported=(), imported_secrets=()
+    config,
+    config_path,
+    manifests,
+    component=None,
+    imported=(),
+    imported_secrets=(),
+    env_overrides=None,
 ):
     """Validate one component's manifests from declarations; no writes or host commands.
 
@@ -422,7 +442,13 @@ def validate_component(
     """
     check_quadlet_templates(component)
     documents = rendering.effective_documents(
-        config, config_path, manifests, component, imported, imported_secrets
+        config,
+        config_path,
+        manifests,
+        component,
+        imported,
+        imported_secrets,
+        env_overrides,
     )
     database_bindings(config, config_path, documents)
     registrations.check_client_route(manifests.parent)
@@ -430,16 +456,30 @@ def validate_component(
 
 
 def check_manifests(
-    config, config_path, manifests, component=None, imported=(), imported_secrets=()
+    config,
+    config_path,
+    manifests,
+    component=None,
+    imported=(),
+    imported_secrets=(),
+    env_overrides=None,
 ):
     """Validate the component, then check database volumes; no writes.
 
     Every path (install, prepare) runs this before generating any
     secret: declarations are validated before any Podman command. Production
     install has already checked the user-manager environment at this point.
+    env_overrides is dev's overrides block; production passes None, because a
+    bundle's config.defaults.yaml already holds its environment's overrides.
     """
     documents = validate_component(
-        config, config_path, manifests, component, imported, imported_secrets
+        config,
+        config_path,
+        manifests,
+        component,
+        imported,
+        imported_secrets,
+        env_overrides,
     )
     database_preflight(config, config_path, documents)
     return documents
@@ -468,7 +508,7 @@ def image_archive():
     return archive
 
 
-def check_dev_components(known, settings):
+def check_dev_components(known, settings, env_overrides):
     """Validate and check every catalog component before any dev write.
 
     Returns component -> (effective config, effective documents) for rendering.
@@ -476,7 +516,9 @@ def check_dev_components(known, settings):
     checked = {}
     for component, component_settings in settings.items():
         path = common.BUILD / "dev" / component / "config.yaml"
-        config = rendering.effective_config(component_settings, path, component)
+        config = rendering.effective_config(
+            component_settings, path, component, env_overrides
+        )
         documents = check_manifests(
             config,
             path,
@@ -484,6 +526,7 @@ def check_dev_components(known, settings):
             component,
             catalog.imported_volumes(known[component]),
             catalog.imported_secrets(known[component]),
+            env_overrides,
         )
         checked[component] = config, documents
     return checked
@@ -492,8 +535,8 @@ def check_dev_components(known, settings):
 def prepare_components():
     """Render the catalog components with private dev state and their registrations."""
     state = common.BUILD / "dev"
-    known, settings_by_component = dev_settings()
-    checked = check_dev_components(known, settings_by_component)
+    known, settings_by_component, env_overrides = dev_settings()
+    checked = check_dev_components(known, settings_by_component, env_overrides)
     for component, (config, documents) in checked.items():
         check_selected_keys(
             config, state / component / "config.yaml", documents, component

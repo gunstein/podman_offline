@@ -170,7 +170,52 @@ class ComponentDevHarnessTests(unittest.TestCase):
         self.assertIn(
             '(Path(os.environ["PRODUCT_STATE"]) / "installed").glob("*")', REMOTE
         )
-        self.assertIn("check_layers(paths, mode, first, second, installed)", REMOTE)
+        self.assertIn(
+            "check_layers(paths, mode, first, second, installed, expected)", REMOTE
+        )
+
+    def test_the_environment_upgrade_expects_its_override(self):
+        """After the app1 upgrade (seed_upgrade.py) only its override passes."""
+        import seed_upgrade
+
+        upgrade = shell_code(REMOTE, action="upgrade")
+        self.assertIn(
+            "printf '%s\\n' " + seed_upgrade.LAYER + ' > "$base/expected-app1-layer"',
+            upgrade,
+        )
+        self.assertLess(
+            upgrade.index("expected-app1-layer"), upgrade.index("    healthy")
+        )
+        code = guest_code("CONFIG_LAYERS")
+        for rendered, verdict in (
+            (seed_upgrade.LAYER, True),
+            ("defaults", False),
+        ):
+            with (
+                self.subTest(rendered=rendered),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path, _ = self.fixture(directory, "app1", "app2", rendered)
+                run = mock.Mock(
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, rendered + "\n", ""),
+                        subprocess.CompletedProcess([], 0, "", ""),
+                    ]
+                )
+                with (
+                    mock.patch.object(subprocess, "run", run),
+                    contextlib.redirect_stdout(io.StringIO()) as output,
+                ):
+                    if verdict:
+                        code["check_layers"](
+                            [path], "prod", "app1", "app2", (), seed_upgrade.LAYER
+                        )
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "Wrong rendered"):
+                            code["check_layers"](
+                                [path], "prod", "app1", "app2", (), seed_upgrade.LAYER
+                            )
+                self.assertEqual("PASS:" in output.getvalue(), verdict)
 
     def test_runtime_assertions_are_wired_into_dev_and_production_steps(self):
         for action in ("dev-up", "renamed-dev-up"):

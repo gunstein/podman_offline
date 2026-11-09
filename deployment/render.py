@@ -328,11 +328,15 @@ def dev_layer(config, path, component):
 
     A setting replaces the whole value for every component. A SECRET_FILES or
     VOLUME_FILES ID replaces only that ID's source list, in the component whose
-    ID it starts with; the ID must already be declared there.
+    ID it starts with; the ID must already be declared there. The reserved
+    overrides block is no setting: deploy.dev_settings reads it
+    (environment.read_dev_overrides), and it never reaches a config.yaml.
     """
     layer = config_layer(path)
     result = dict(config)
     for key, value in layer.items():
+        if key == common.OVERRIDES:
+            continue
         if key not in (common.SECRET_FILES, common.VOLUME_FILES):
             result[key] = value
             continue
@@ -1202,15 +1206,16 @@ def check_imported_mounted(documents, imported, path):
             )
 
 
-def effective_config(config, path, component):
+def effective_config(config, path, component, env_overrides=None):
     """Validate a component's config; add PUBLIC_HOSTNAME and ENVIRONMENT/MOUNTS recipes; no writes.
 
     The result is transient: validation and materialization use it, nobody
-    writes it to config.yaml.
+    writes it to config.yaml. env_overrides (dev only; environment.Overrides)
+    must be the same value effective_documents receives.
     """
     validate_component_config(config, component, path)
     derived = with_client_settings(with_derived(config, path), component)
-    with_environment = environment.with_recipes(derived, component)
+    with_environment = environment.with_recipes(derived, component, env_overrides)
     return mounts.with_recipes(with_environment, component)
 
 
@@ -1259,7 +1264,13 @@ def named_containers(documents):
 
 
 def effective_documents(
-    config, path, manifests, component=None, imported=(), imported_secrets=()
+    config,
+    path,
+    manifests,
+    component=None,
+    imported=(),
+    imported_secrets=(),
+    env_overrides=None,
 ):
     """Return the manifests as they will be installed, fully validated, without writes.
 
@@ -1268,7 +1279,8 @@ def effective_documents(
     substitution), pull policies, mounts, duplicates and the links between
     manifests, config, imported registration volumes and registration Secrets
     (by name). A registration Secret (accepts.apis) is rendered by the platform,
-    so config must not declare the same name.
+    so config must not declare the same name. env_overrides: as for
+    effective_config.
     """
     # Standalone prepare/install/validate load_config directly, without going
     # through effective_config; do not rely on prior component config validation.
@@ -1302,6 +1314,7 @@ def effective_documents(
             config,
             component,
             named_containers(documents),
+            env_overrides,
         )
         mounts.apply(documents, component, named_containers(documents))
 

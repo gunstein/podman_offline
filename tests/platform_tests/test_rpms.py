@@ -158,3 +158,57 @@ class ReleaseRpmTests(ProductFixture):
         self.assertIn("ERROR: rpmbuild is missing", self.stderr.getvalue())
         self.assertEqual(rpms.main([]), 0)
         self.assertIn("PASS: ./build-rpms.sh completed", self.stdout.getvalue())
+
+
+class EnvironmentRpmTests(ProductFixture):
+    """--environment takes the bundles of dist/<environment>/ (backlog 84).
+
+    rpmbuild is replaced: this checks which archive is wrapped and where the
+    package goes, not the package itself (ReleaseRpmTests).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.product_name = "cedar"
+        product: dict = copy.deepcopy(WORKER)
+        product["worker"]["env"] = {"main": {"MODE": "common"}}
+        self.write_product(product, version="1.2.3")
+        (self.source / "config").mkdir()
+        (self.source / "config/prod1.yaml").write_text(
+            "overrides:\n  worker:\n    ENVIRONMENT:\n      main:\n        MODE: prod1\n"
+        )
+        self.stack.enter_context(
+            mock.patch.multiple(rpms, ROOT=self.source, DIST=self.source / "dist")
+        )
+        self.stack.enter_context(
+            mock.patch.object(rpms.shutil, "which", return_value="/usr/bin/rpmbuild")
+        )
+        self.wrapped = []
+
+        def build_rpm(archive, product, component, version, target):
+            self.wrapped.append((archive, target))
+            return target / f"{product}-{component}.rpm"
+
+        self.stack.enter_context(mock.patch.object(rpms, "build_rpm", build_rpm))
+
+    def test_the_environment_directory_is_read_and_written(self):
+        self.build_and_unpack("prod1")
+        dist = self.source / "dist"
+        rpms.build(["worker"], environment_name="prod1")
+        self.assertEqual(
+            self.wrapped,
+            [(dist / "prod1/cedar-worker-1.2.3-offline.tar.gz", dist / "prod1/rpm")],
+        )
+        # The common build's archive is never taken for an environment.
+        self.build_and_unpack()
+        (dist / "prod1/cedar-worker-1.2.3-offline.tar.gz").unlink()
+        with self.assertRaisesRegex(
+            rpms.RpmError,
+            "Missing dist/prod1/cedar-worker-1.2.3-offline.tar.gz; run "
+            "./build-bundle.sh --environment prod1 worker",
+        ):
+            rpms.build(["worker"], environment_name="prod1")
+        with self.assertRaisesRegex(
+            catalog.common.DeployError, "missing file config/prod2.yaml"
+        ):
+            rpms.build(["worker"], environment_name="prod2")

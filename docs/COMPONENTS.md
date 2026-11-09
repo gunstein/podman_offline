@@ -143,9 +143,12 @@ sets them in its own config. No other setting is shared between components.
 Source dev merges the component defaults, then the developer's local
 `config/dev.yaml` (untracked, for every component). A setting replaces the
 whole value; a `SECRET_FILES`/`VOLUME_FILES` ID replaces only that ID's source
-list in the component it starts with, which must declare it. It is excluded
-from bundles and never read by production `init-config`, `validate` or
-`install`.
+list in the component it starts with, which must declare it. Its reserved
+`overrides` block adds or replaces container variables as a build environment
+file does ([environment overrides](#environment-overrides-configenvironmentyaml));
+it is no setting and never reaches `build/dev/<id>/config.yaml`. The file is
+excluded from bundles and never read by production `init-config`, `validate`
+or `install`.
 
 Every other component gets the gateway's effective dev `PUBLIC_ORIGIN` and
 `HTTPS_PORT`, as production reads them from the gateway's `config.yaml`. A
@@ -206,6 +209,7 @@ redirect URIs, so they cannot be renamed:
 | `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values |
 | `SECRET_TEMPLATES` | Refused in every config file; the platform's internal name for the Secrets it renders from `ENVIRONMENT` and `MOUNTS` |
 | `ENVIRONMENT`, `MOUNTS` | Each container's environment and mounted files; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
+| `overrides` | Only in `config/dev.yaml` and a build environment file `config/<environment>.yaml`: per-component `ENVIRONMENT` overrides ([environment overrides](#environment-overrides-configenvironmentyaml)); never a setting |
 | `COMPONENT_VERSION` | Only in a container `image`: the component's `VERSION` ([image versions](#image-versions-configimagesyaml)) |
 | Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@` in its own component |
 
@@ -321,6 +325,111 @@ Rules, each refused before anything is written with the file and the next step:
   platform's database check reads the container's effective environment.
   Declare it either in `ENVIRONMENT` or in the container's manifest `env`,
   never both. The same database password protection applies in both cases.
+
+### Environment overrides: `config/<environment>.yaml`
+
+One product can be delivered to several environments that need other values
+for a few container variables (log levels, feature switches, limits) and share
+every other declaration (backlog 84). The common values stay in the
+component's `config.defaults.yaml`:
+
+```yaml
+# components/app1/config.defaults.yaml
+ENVIRONMENT:
+  app:
+    Logging__LogLevel__Default: Information
+    Features__Reports: "false"
+```
+
+An environment file names components under `overrides:`, its only
+top-level key:
+
+```yaml
+# config/prod1.yaml
+overrides:
+  app1:
+    ENVIRONMENT:
+      app:
+        Features__Reports: "true"
+        Reports__MaxRows: "500"
+```
+
+`./build-bundle.sh --environment prod1` builds with it; app1's container
+`app` then gets all three variables: `Logging__LogLevel__Default:
+Information`, `Features__Reports: "true"` and `Reports__MaxRows: "500"`.
+In dev, the same block is the reserved `overrides` key of `config/dev.yaml`,
+next to its settings and file-source overrides:
+
+```yaml
+# config/dev.yaml
+PUBLIC_ORIGIN: https://dev.example.test:8443
+HTTPS_PORT: 8443
+
+overrides:
+  app1:
+    ENVIRONMENT:
+      app:
+        Logging__LogLevel__Default: Debug
+```
+
+How overrides merge (`environment.merge`):
+
+- Per component, container and variable. A variable with the same name
+  replaces the common value; a new one is added; every other variable and
+  container stays as declared. A container may get its first variables from
+  an override; it must exist exactly once (regular or init container).
+- There is no deletion. A variable only some environments need belongs in
+  their files, not in the common declarations. An empty mapping (`{}`) has no
+  effect.
+- Values are text, as in `config.defaults.yaml`: `Enabled: true` and
+  `MaxRows: 500` reach the container as `true` and `500`, `''` is an empty
+  value and `'null'` is the text `null`. A missing value (`Name:`, `Name:
+  null` or `Name: ~`) is refused.
+- A name that differs from a common one only in case is refused, as within
+  one file; there is no rule for which spelling wins.
+- A component entry holds only `ENVIRONMENT`. Images, manifests, `MOUNTS`,
+  file sources and settings cannot be overridden. Every other rule above
+  applies to the merged variables: declared secrets of the component,
+  identity's API secret lines, settings placeholders, manifest `env` and
+  `envFrom`, the database password check.
+- Errors name the file, component, container and variable, never a value.
+
+The build environment is chosen when the bundles are built, not at the
+installation. The bundle's `config.defaults.yaml` holds the merged
+`ENVIRONMENT`, and its `bundle.yaml` the dependencies and API secret lines
+derived from it, so the installation needs neither the source checkout nor
+`config/prod1.yaml`. Settings and credentials are still the operator's
+`config.yaml` and delivered files, as without an environment.
+
+`--environment <name>` takes lowercase letters, digits and inner hyphens, a
+letter first; `dev` and `images` are refused because `config/dev.yaml` and
+`config/images.yaml` have other meanings. A missing file is an error, and so
+is any other top-level key (`components:` is [backlog
+85](../BACKLOG.md#85-select-the-components-of-a-build-environment), not
+implemented yet). Without `--environment` the common declarations are built
+unchanged. The output of an environment goes to its own directory,
+`dist/<name>/` with its `current-bundles.txt` (staging in
+`build/bundle-<name>/`); `./build-rpms.sh --environment <name>` wraps those
+bundles into `dist/<name>/rpm/`. One build never removes another's files.
+
+The directories exist because prod1 and prod2 can contain different bytes for
+the same component version. On one installation a version still has exactly
+one content: if app1 1.4.0 from `dist/prod1/` is installed and the prod1
+overrides change, deliver app1 1.4.1, not a rebuilt 1.4.0: `./build-rpms.sh`
+never replaces an existing RPM, and the administrator command refuses a
+package with the same name and version but other content.
+
+Troubleshooting: a misspelled name stops the build before anything is
+written, naming the file and the place:
+
+```text
+ERROR: config/prod1.yaml: overrides.app1.ENVIRONMENT.ap: the component must have exactly one container named ap; it has 0
+ERROR: config/prod1.yaml: overrides.app9: app9 is not a component in bundles.yaml; listed: platform, identity, app1, app2, app3, help
+```
+
+Correct the container or component name in the environment file (container
+names are in the component's manifests, component IDs in `bundles.yaml`) and
+run the build again.
 
 ### Files with secrets: `MOUNTS`
 

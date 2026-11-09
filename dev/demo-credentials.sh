@@ -8,9 +8,9 @@ hostname=$(python3 -B - <<'DEMO_HOST'
 from urllib.parse import urlsplit
 from deployment import deploy
 
-known, settings = deploy.dev_settings()
+known, settings, env_overrides = deploy.dev_settings()
 # Check manifests and database state before certificates, config output or secrets.
-deploy.check_dev_components(known, settings)
+deploy.check_dev_components(known, settings, env_overrides)
 print(urlsplit(settings["platform"]["PUBLIC_ORIGIN"]).hostname)
 DEMO_HOST
 )

@@ -330,15 +330,20 @@ class ProductFixture(DeployFixture):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
 
-    def build_and_unpack(self):
-        """Build every catalog bundle, then unpack them where no source exists."""
+    def build_and_unpack(self, environment_name=None):
+        """Build every catalog bundle, then unpack them where no source exists.
+
+        environment_name builds with ./build-bundle.sh --environment, from
+        dist/<name>/.
+        """
         self.use_root(self.source)
-        bundle.build()
-        current = (self.source / "dist/current-bundles.txt").read_text().split()
+        bundle.build(environment_name=environment_name)
+        dist = self.source / "dist" / (environment_name or "")
+        current = (dist / "current-bundles.txt").read_text().split()
         self.releases.mkdir(exist_ok=True)
         unpacked = {}
         for archive_name in current:
-            path = self.source / "dist" / archive_name
+            path = dist / archive_name
             # Archives built by this test; keep the Python 3.6 extract API.
             with tarfile.open(str(path)) as archive:
                 with warnings.catch_warnings():

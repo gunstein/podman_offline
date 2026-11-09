@@ -238,10 +238,20 @@ implementation.
 
 ## 84. Environment-specific container environment overrides
 
-Status: **agreed product requirement, ready for implementation; high
-priority** (product owner, 2026-11-09). Not implemented. The analysis below
-is based on `8b7161b`; recheck function names and behavior if the code has
-changed. Read the latest `main`, [AGENTS.md](AGENTS.md),
+Status: **implemented (2026-11-09); real Podman/systemd verification
+outstanding.** Agreed product requirement, high priority (product owner,
+2026-11-09). Product and acceptance-harness tests pass; the dev probe
+(`acceptance/environment_update_test.py`) and the PROD app1 upgrade built
+for the environment `lab` (`acceptance/seed_upgrade.py`, `config_layers
+prod`) are implemented but not yet run on the lab, so
+[RESULTS](acceptance/RESULTS.md) has no row for them. The contract is in
+[COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml).
+Implementation notes, checked against `8cc668f`: the functions named below
+were unchanged since `8b7161b`; `./build-rpms.sh` (`rpms.py`) is new and
+takes `--environment`. The build checks only the overridden components'
+declarations (the common ones keep their install-time checks, so a build
+without `--environment` is unchanged), against the manifests as written.
+The analysis below is based on `8b7161b`. Read the latest `main`, [AGENTS.md](AGENTS.md),
 [the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
 [COMPONENTS.md](docs/COMPONENTS.md) and this item before starting.
 

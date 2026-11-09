@@ -141,8 +141,14 @@ def product_name(root):
     raise common.DeployError(f"{root} has neither bundle.yaml nor bundles.yaml")
 
 
-def load_catalog(root):
-    """Read bundles.yaml and validate the graph before any file or host action."""
+def load_catalog(root, env_overrides=None):
+    """Read bundles.yaml and validate the graph before any file or host action.
+
+    env_overrides (environment.Overrides or None) is the selected build
+    environment or dev's overrides block: Identity's API secret lines are
+    derived from the merged ENVIRONMENT, and every overridden component must
+    be listed here, also when only some bundles are built.
+    """
     path, data = catalog_document(root)
     entries = data["components"]
     if not isinstance(entries, list) or not entries:
@@ -154,7 +160,18 @@ def load_catalog(root):
         check_id(name, f"{path}: components")
     if len(set(entries)) != len(entries):
         raise common.DeployError(f"{path}: components lists an ID twice")
-    files = {name: registration_files(root / "components" / name) for name in entries}
+    unknown = (
+        sorted(set(env_overrides.components) - set(entries)) if env_overrides else []
+    )
+    if env_overrides and unknown:
+        raise common.DeployError(
+            f"{env_overrides.path}: overrides.{unknown[0]}: {unknown[0]} is not a "
+            f"component in {path.name}; listed: {', '.join(entries)}"
+        )
+    files = {
+        name: registration_files(root / "components" / name, env_overrides)
+        for name in entries
+    }
     catalog = derive_entries(path, data, files)
     for name, entry in catalog.items():
         check_entry(name, entry, f"{path}: components.{name}")
@@ -164,15 +181,16 @@ def load_catalog(root):
     return catalog
 
 
-def registration_files(directory):
+def registration_files(directory, env_overrides=None):
     """Which registration files a source component has, and its foreign secret lines.
 
-    Reads only file existence and ENVIRONMENT; never manifests or settings.
+    Reads only file existence and ENVIRONMENT (with the selected overrides);
+    never manifests or settings.
     """
     return {
         "route": (directory / ROLE_FILES["routes"]).is_file(),
         "client": (directory / ROLE_FILES["clients"]).is_file(),
-        "foreign": environment.foreign_lines(directory),
+        "foreign": environment.foreign_lines(directory, env_overrides),
     }
 
 
@@ -188,10 +206,7 @@ def api_secret_mapping(identity, files):
     mapping, containers = {}, set()
     for name, found in files.items():
         for line in found["foreign"]:
-            where = (
-                f"components/{name}/config.defaults.yaml: "
-                f"ENVIRONMENT.{line.container}.{line.key}"
-            )
+            where = f"{line.source}.{line.key}"
             if name != identity:
                 hint = (
                     "only identity's ApiResources__<n>__ApiSecrets__0__Value lines may"
@@ -530,9 +545,12 @@ def component_directory(root, name):
     return directory
 
 
-def source_descriptors(root):
-    """Compile every catalog entry into a descriptor, checking its source files."""
-    catalog = load_catalog(root)
+def source_descriptors(root, env_overrides=None):
+    """Compile every catalog entry into a descriptor, checking its source files.
+
+    env_overrides: as for load_catalog.
+    """
+    catalog = load_catalog(root, env_overrides)
     product = catalog_document(root)[1]["product"]
     versions = {}
     for name, entry in catalog.items():

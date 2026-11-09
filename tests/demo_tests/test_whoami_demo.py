@@ -69,8 +69,8 @@ class WhoamiCredentialTests(CertificateFixture):
         (package / "__init__.py").write_text("")
         (package / "deploy.py").write_text(
             "def dev_settings():\n"
-            "    return {}, {'platform': {'PUBLIC_ORIGIN': 'https://example.test:8443'}}\n"
-            "def check_dev_components(known, settings):\n"
+            "    return {}, {'platform': {'PUBLIC_ORIGIN': 'https://example.test:8443'}}, None\n"
+            "def check_dev_components(known, settings, env_overrides):\n"
             "    pass\n"
         )
         cert = self.project / "build/dev/app3/cert"

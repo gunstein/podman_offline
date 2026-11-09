@@ -1,3 +1,12 @@
 # Local overrides for every rendered component; maps/lists replace the whole value.
 PUBLIC_ORIGIN: https://myproduct-proxy:8443
 HTTPS_PORT: 8443
+
+# Reserved: add or replace single container variables, merged into the
+# component's ENVIRONMENT as a build environment file config/<name>.yaml is
+# (docs/COMPONENTS.md, "Environment overrides"). Not a setting.
+# overrides:
+#   app1:
+#     ENVIRONMENT:
+#       backend:
+#         Logging__LogLevel__Default: Debug

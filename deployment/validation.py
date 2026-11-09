@@ -57,9 +57,9 @@ def validate_catalog():
     dev config is assembled (deploy.dev_settings), exactly as prepare does.
     """
     state = common.BUILD / "dev"
-    known, settings = deploy.dev_settings()
+    known, settings, env_overrides = deploy.dev_settings()
     # Show what the catalog derived from gateway/identity and the files.
-    entries = catalog.load_catalog(common.ROOT)
+    entries = catalog.load_catalog(common.ROOT, env_overrides)
     for line in catalog.derived_lines(entries) + api_secret_summary(entries):
         log.info("[OK] " + line)
     findings = []
@@ -67,7 +67,9 @@ def validate_catalog():
         path = state / component / "config.yaml"
         imported = catalog.imported_volumes(known[component])
         try:
-            config = rendering.effective_config(component_settings, path, component)
+            config = rendering.effective_config(
+                component_settings, path, component, env_overrides
+            )
             documents = deploy.validate_component(
                 config,
                 path,
@@ -75,12 +77,13 @@ def validate_catalog():
                 component,
                 imported,
                 catalog.imported_secrets(known[component]),
+                env_overrides,
             )
             check_images(documents)
             check_sources(config, path, documents, imported, component)
-            for line in environment.summary(component, config) + mounts.summary(
-                component, config
-            ):
+            for line in environment.summary(
+                component, config, env_overrides
+            ) + mounts.summary(component, config):
                 log.info("[OK] " + line)
         except ERRORS as error:
             findings.append((component, str(error)))
