@@ -39,7 +39,8 @@ Findings and what followed:
    but gives no `vi` keys.
 
 Not measured: time per task (the agent recorded estimates only). The
-`40b37c4` fixes have local tests; no lab run yet.
+`40b37c4` fixes passed the full lab loop on `ee5e270` (no firewalld warning
+in any run); the Ctrl+C message has local tests only.
 
 ## Backlog 69 WP5: AI walkthrough of the RPM manual (2026-11-07)
 
