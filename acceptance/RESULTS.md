@@ -91,13 +91,15 @@ the earlier matrices are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | not run on `9c85e2f` | | outstanding |
+| `--status-retry` | `status-retry-9c85e2f` | 113 | CLEAN PASS |
 | `--rpm-manual` (fapolicyd P1) | `rpm-manual-9c85e2f` | 58 | CLEAN PASS |
 | `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-9c85e2f` | 59 | CLEAN PASS |
 
-Status/retry: its last run is on `ee5e270` (in the git history) and is no
-evidence for `9c85e2f`, whose `deployment/` changed (backlog 84). Run it with
-`python3 acceptance/acceptance.py --run "status-retry-$rev" --status-retry run`.
+Status/retry: on `9c85e2f` (2026-11-10, after the matrix), clean detached
+checkout, no failed or skipped step; OS and Podman versions were not
+extracted from this run's `EVIDENCE.md`. A same-version failure stays pending
+with the old container active, a plain retry completes, and the restore
+leaves protected code unchanged.
 The `--host-setup` scenario (the `release.py` manual) was removed in backlog
 69 WP6; its last run is in the git history.
 

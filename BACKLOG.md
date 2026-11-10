@@ -246,8 +246,7 @@ and the PROD app1 upgrade built for the environment `lab`
 (`acceptance/seed_upgrade.py`, `config_layers prod`); see
 [RESULTS](acceptance/RESULTS.md). Local tests only:
 `./build-rpms.sh --environment` with real `rpmbuild` and an interrupted
-install of an environment-built release; `--status-retry` was not rerun on
-`9c85e2f`. The contract is in
+install of an environment-built release. The contract is in
 [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml).
 Implementation notes, checked against `8cc668f`: the functions named below
 were unchanged since `8b7161b`; `./build-rpms.sh` (`rpms.py`) is new and
