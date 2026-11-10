@@ -235,7 +235,9 @@ myproduct --environment prod1
 ```
 
 Use this form every time from now on, also after an upgrade and for one
-component (`myproduct --environment prod1 <component>`). It installs only the
+component (`myproduct --environment prod1 <component>`). Plain `myproduct`
+stops, and changes nothing, before it would install a component without
+the settings the file gave it; it names the command to use. It installs only the
 components the file lists, with its settings; any other component is left as
 it is. Before it changes anything it checks that every listed component and
 what it needs is installed as a release package; if not, it names what is
@@ -323,6 +325,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `status reports an incomplete or inactive component` (step 7) | runtime user | Run the same command again a minute later (with `--environment prod1` if you used it); a service may still be starting. If it stays, ask for help (see below). |
 | `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. Repeat the same command (with `--environment prod1` if you used it); it resumes the unfinished component first. |
 | `Missing /var/lib/myproduct/state/prod1.yaml` (step 7) | runtime user | Step 6. |
+| `<component> was installed with --environment prod1 ...; nothing was changed` (step 7) | runtime user | Run the command it names, `myproduct --environment prod1`. |
 | `no release package of ...` or `... needs ... installed: ...`, then `Nothing was changed` (step 7) | administrator | Install the delivery with the missing or matching release packages (step 3). |
 | `... requires ...; add ... to components:` (step 7) | supplier, runtime user | The environment file lacks a component another one needs; add the named line under `components:`. |
 | `... is not in components:` or `... cannot be overridden` or `... must have exactly one container named ...` (step 7) | supplier | The environment file does not fit the delivered releases; nothing was changed. Ask the supplier for a corrected file. |

@@ -453,7 +453,14 @@ for an API, the secret line Identity names it with. It is the one way to
 tell an unchanged component from one whose overrides, or whose secret in
 Identity, changed in the same version. An unfinished install is finished
 first; then every listed component is decided in order, that one too. `<product>` without `--environment` keeps its
-behavior: every installed release with its release declarations.
+behavior, every installed release with its release declarations, with one
+stop (product owner, 2026-11-10): a component whose last install got
+overrides or an API secret line from an environment is not installed
+without it, because that would remove them silently (an API would lose its
+registration with Identity). `<product>` stops before its first install and
+`deploy.sh install` refuses, both naming `--environment <name>` from the
+record, which holds the environment's name for this. After `deploy.sh
+uninstall` the record is gone.
 
 The bundle's `bundle.yaml` is environment-neutral and names the catalog's
 Identity (`identity`). Only the API roles depend on an environment, so they

@@ -47,7 +47,12 @@ environment's effect differs from what its last install applied
 (check-environment --json, at its turn: Identity's install before it can
 change its API role). Components not listed are left as they are. The
 selection is not remembered: the file is read again by every run and by
-every deploy.sh it calls; each install records only its own overrides.
+every deploy.sh it calls; each install records what it applied to its
+own component and the environment's name (state/environment/<id>.json).
+Without --environment, a component whose last install got overrides or an
+API secret line from an environment stops the command before any install,
+naming the environment (product owner, 2026-11-10; deploy.sh install
+refuses it too).
 """
 
 import json
@@ -193,6 +198,35 @@ def uninstalled(state):
             raise ToolError(f"Invalid uninstall record {record}")
         names.append(record.name)
     return names
+
+
+def environment_installs(state):
+    """{component: environment} for each component its environment changed (backlog 85).
+
+    Read from state/environment/<id>.json, which deploy.sh install writes
+    with the environment's name and what it applied, as uninstalled() reads
+    state/uninstalled/: a component whose last install got overrides or an
+    API secret line from an environment. Links and other files are refused.
+    """
+    directory = state / "environment"
+    if directory.is_symlink():
+        raise ToolError(f"Refuse symlinked environment records: {directory}")
+    if not directory.exists():
+        return {}
+    result = {}
+    for record in sorted(directory.iterdir()):
+        if record.name.startswith("."):
+            continue  # An interrupted atomic write leaves only a temporary file.
+        name = record.name[: -len(".json")] if record.name.endswith(".json") else ""
+        try:
+            if not host.ID.fullmatch(name) or record.is_symlink():
+                raise ValueError(name)
+            data = json.loads(record.read_text(encoding="utf-8"))
+            if data["environment"] and (data["overrides"] or data["api_secret"]):
+                result[name] = data["environment"]
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+            raise ToolError(f"Invalid environment record {record}") from None
+    return result
 
 
 def complete(report, name, version):
@@ -495,6 +529,28 @@ def install(product, args):
         done.append(component)
         log.info(f"[OK] {component} {package.version} installed")
 
+    if not args.environment:
+        # Product owner, 2026-11-10: an install without the environment would
+        # drop what it gave a component; stop before the first install.
+        recorded = environment_installs(host.LIB / product / "state")
+        resumed = pending["component"] if pending else None
+        planned = (
+            [args.component]
+            if args.component
+            else [
+                name
+                for name in order
+                if name == resumed or not complete(report, name, versions[name])
+            ]
+        )
+        for name in planned:
+            if name in recorded:
+                raise ToolError(
+                    f"{name} was installed with --environment {recorded[name]}, which "
+                    "gave it overrides or an API secret line; nothing was changed. "
+                    f"Run {product} --environment {recorded[name]}"
+                    + (f" {name}" if args.component else "")
+                )
     # An unfinished install is finished first, then the status is read again,
     # so every component is then decided in order (Identity before its APIs),
     # the resumed one included.

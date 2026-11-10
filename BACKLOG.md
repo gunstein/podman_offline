@@ -97,7 +97,14 @@ below; sections that describe the build-time model are marked
 3. An explicit command applies it: `<product> --environment <name>`. Plain
    `<product>` keeps its behavior (every installed newest release, no
    overrides); a site that always uses one environment puts the command in
-   its own script. The selection is not remembered.
+   its own script. The selection is not remembered. **Decision (product
+   owner, 2026-11-10, option C):** an install without `--environment` of a
+   component whose last install got overrides or an API secret line from
+   an environment is refused before any change (`<product>` before its
+   first install, `deploy.sh install` too), naming that environment; the
+   environment record holds its name for this. Otherwise a forgotten flag
+   removed the overrides, or an API's registration with Identity, without
+   a word.
 4. Before any change the command checks that every listed component and
    every dependency has an installed release package in a compatible
    version, that every dependency is listed, and that no listed component

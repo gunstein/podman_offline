@@ -1006,16 +1006,16 @@ def environment_effect(descriptor, env_overrides, known):
     }
 
 
-def write_installed_marker(descriptor, effect):
+def write_installed_marker(descriptor, effect, environment_name=None):
     """Publish the completed version before acknowledging the install attempt.
 
-    effect (environment_effect) is recorded just before it
-    (catalog.environment_record_path). An earlier uninstall record goes with
-    it: the component is installed again.
+    effect (environment_effect) and the environment's name (None without
+    one) are recorded just before it (catalog.environment_record_path). An
+    earlier uninstall record goes with it: the component is installed again.
     """
     write_install_record(
         catalog.environment_record_path(common.STATE, descriptor["name"]),
-        json.dumps(effect, sort_keys=True) + "\n",
+        json.dumps(dict(effect, environment=environment_name), sort_keys=True) + "\n",
     )
     write_install_record(
         common.STATE / "installed" / descriptor["name"], descriptor["version"] + "\n"
@@ -1039,7 +1039,14 @@ def install_preconditions(checked):
 
 
 def install_component_plan(
-    descriptor, checked, known, imports, updates, removals, env_overrides=None
+    descriptor,
+    checked,
+    known,
+    imports,
+    updates,
+    removals,
+    env_overrides=None,
+    environment_name=None,
 ):
     """Apply a staged install in the established validation/write/restart order."""
     name = descriptor["name"]
@@ -1069,7 +1076,9 @@ def install_component_plan(
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
     write_installed_marker(
-        descriptor, environment_effect(descriptor, env_overrides, known)
+        descriptor,
+        environment_effect(descriptor, env_overrides, known),
+        environment_name,
     )
     registrations.clear_pending()
     run("podman", "ps", "--all", "--pod")
@@ -1133,15 +1142,20 @@ def install_checks(env_overrides=None):
 def install_components(environment_name=None):
     """Validate the bundle, installed state and config before writing anything.
 
-    Order: service_user selects paths, the target environment file is read
-    (target_environment), install_checks validates declarations (including
+    Order: service_user selects paths, an install without an environment is
+    refused for a component its environment changed
+    (check_installed_without_environment), the target environment file is
+    read (target_environment), install_checks validates declarations (including
     both Quadlet templates), production_environment checks runtime and the
     user manager, then temporary registration staging, manifests and
     database preflight, and install_component_plan.
     """
     # Pure declaration checks precede even the user-manager host query.
     service_user()
-    env_overrides = target_environment(environment_name, bundle_descriptor()["name"])
+    product, name = bundle_descriptor()["product"], bundle_descriptor()["name"]
+    if environment_name is None:
+        check_installed_without_environment(product, name)
+    env_overrides = target_environment(environment_name, name)
     descriptor, known, config, config_path = install_checks(env_overrides)
     production_environment()
     name = descriptor["name"]
@@ -1170,7 +1184,14 @@ def install_components(environment_name=None):
         }
         check_selected_keys(effective, config_path, checked[name][1], name)
         install_component_plan(
-            descriptor, checked, known, imports, updates, removals, env_overrides
+            descriptor,
+            checked,
+            known,
+            imports,
+            updates,
+            removals,
+            env_overrides,
+            environment_name,
         )
 
 
@@ -1201,6 +1222,46 @@ def target_environment(environment_name, component):
     return env_overrides
 
 
+def recorded_environment(name):
+    """The environment of name's last install, when that install applied anything from it.
+
+    Read from the record write_installed_marker wrote; None without one, or
+    when the environment gave the component no overrides and no API secret
+    line (then an install without it changes nothing it applied).
+    """
+    record = catalog.environment_record_path(common.STATE, name)
+    if record.is_symlink():
+        raise common.DeployError(f"Refuse symlinked environment record {record}")
+    if not record.is_file():
+        return None
+    try:
+        data = json.loads(record.read_text(encoding="utf-8"))
+        environment_name = data["environment"]
+        applied = data["overrides"] or data["api_secret"]
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+        raise common.DeployError(f"Invalid environment record {record}") from None
+    return environment_name if environment_name and applied else None
+
+
+def check_installed_without_environment(product, name):
+    """Product owner, 2026-11-10 (backlog 85): an environment is not dropped silently.
+
+    An install without --environment of a component whose last install got
+    overrides or an API secret line from an environment would remove them
+    (an API would lose its registration with Identity). Refused before any
+    change, naming the command to use.
+    """
+    environment_name = recorded_environment(name)
+    if environment_name:
+        raise common.DeployError(
+            f"{name} was installed with --environment {environment_name}, which "
+            "gave it overrides or an API secret line; an install without it would "
+            f"remove them. Run {product} --environment {environment_name} (or "
+            f"./deploy.sh install --environment {environment_name}); nothing was "
+            "changed"
+        )
+
+
 def environment_applied(descriptor, env_overrides, installed):
     """Whether the completed install of this release has this environment's effect.
 
@@ -1221,6 +1282,9 @@ def environment_applied(descriptor, env_overrides, installed):
         applied = json.loads(record.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
         return False
+    if not isinstance(applied, dict):
+        return False
+    applied.pop("environment", None)  # Another file with the same effect is applied.
     current = environment_effect(descriptor, env_overrides, installed)
     return applied == json.loads(json.dumps(current))
 

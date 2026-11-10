@@ -315,7 +315,7 @@ class TargetEffectTests(ProductFixture):
                 json.loads(
                     catalog.environment_record_path(common.STATE, "ledger").read_text()
                 ),
-                {"api_secret": None, "overrides": {}},
+                {"api_secret": None, "environment": "prod1", "overrides": {}},
             )
             # An override changes: only accounts, which it names, is not applied.
             self.place_environment(
@@ -354,6 +354,46 @@ class TargetEffectTests(ProductFixture):
             self.assertFalse(
                 catalog.environment_record_path(common.STATE, "ledger").exists()
             )
+
+    def test_an_install_without_the_environment_does_not_drop_it(self):
+        """Product owner, 2026-11-10: plain myproduct stops, naming the environment."""
+        releases = self.releases_built
+        self.place_environment(
+            "prod1",
+            environment_file(["accounts", "ledger"], registration(0, "ledger")),
+        )
+        with self.environment():
+            for name in ("accounts", "ledger"):
+                self.install(releases[name], environment_name="prod1")
+            before = sorted(
+                (str(path), path.read_bytes())
+                for path in common.STATE.rglob("*")
+                if path.is_file()
+            )
+            # ledger has no overrides, but prod1 makes it an API of accounts.
+            for name in ("ledger", "accounts"):
+                with self.subTest(name):
+                    self.use_root(releases[name])
+                    with self.assertRaisesRegex(
+                        common.DeployError,
+                        f"{name} was installed with --environment prod1, which gave "
+                        "it overrides or an API secret line; an install without it "
+                        "would remove them. Run myproduct --environment prod1 "
+                        "\\(or ./deploy.sh install --environment prod1\\); nothing "
+                        "was changed",
+                    ):
+                        deploy.install()
+            after = sorted(
+                (str(path), path.read_bytes())
+                for path in common.STATE.rglob("*")
+                if path.is_file()
+            )
+            self.assertEqual(after, before)
+            self.assertTrue((common.STATE / "apis/ledger/value").is_file())
+            # An environment that gave a component nothing: no reason to stop.
+            self.place_environment("plain", environment_file(["reports"]))
+            self.install(releases["reports"], environment_name="plain")
+            self.install(releases["reports"])
 
     def test_effective_dependencies_and_foreign_secrets_are_refused_first(self):
         releases = self.releases_built

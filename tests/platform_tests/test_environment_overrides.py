@@ -356,7 +356,20 @@ class TargetEnvironmentTests(OverrideFixture):
         self.assertEqual(
             environment.read_defaults(bundled)["main"]["Logging__Level"], "Information"
         )
-        # Without an environment: the release's declarations alone.
+        # Without an environment the release's declarations would silently
+        # replace prod2's overrides: refused before any change (backlog 85).
+        before = self.state_bytes()
+        with self.assertRaisesRegex(
+            common.DeployError,
+            "shop was installed with --environment prod2, which gave it overrides "
+            "or an API secret line; an install without it would remove them. Run "
+            "myproduct --environment prod2",
+        ):
+            self.install_shop()
+        self.assertEqual(self.state_bytes(), before)
+        # After an explicit uninstall: the release's declarations alone.
+        with self.environment(), redirect_stdout(io.StringIO()):
+            deploy.uninstall()
         self.assertEqual(self.install_shop()["shop-migrate-env"], {"Mode": "full"})
 
     def test_a_secret_line_and_a_public_line_swap(self):

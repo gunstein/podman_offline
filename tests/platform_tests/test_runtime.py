@@ -543,6 +543,42 @@ class EnvironmentTests(RuntimeTests):
         )
         self.assertEqual(self.releases.installed, {})
 
+    def test_without_the_environment_its_components_are_not_installed(self):
+        """Product owner, 2026-11-10: plain cedar stops before the first install."""
+        self.place("prod1", "components: [web, api, worker]\n")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        records = self.lib / "cedar/state/environment"
+        records.mkdir()
+        (records / "worker.json").write_text(
+            json.dumps(
+                {
+                    "api_secret": None,
+                    "environment": "prod1",
+                    "overrides": {"main": {"MODE": "fast"}},
+                }
+            )
+        )
+        # Nothing to do: nothing is refused.
+        self.assertEqual(self.run_command(), 0, self.stderr.getvalue())
+        self.releases.add("worker", "1.1.0")
+        self.releases.add("web", "1.1.0")
+        for arguments, command in (
+            ((), "Run cedar --environment prod1"),
+            (("worker",), "Run cedar --environment prod1 worker"),
+        ):
+            with self.subTest(arguments):
+                self.releases.calls.clear()
+                self.assertEqual(self.run_command(*arguments), 1)
+                self.assertIn(
+                    "worker was installed with --environment prod1, which gave it "
+                    "overrides or an API secret line; nothing was changed. " + command,
+                    self.stderr.getvalue(),
+                )
+                self.assertNotIn("install", self.releases.commands())
+        # With the environment it proceeds.
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        self.assertEqual(self.releases.installed["worker"], "1.1.0")
+
     def test_messages_name_the_command_with_its_environment(self):
         self.place("prod1", "components: [web, api]\n")
         self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
