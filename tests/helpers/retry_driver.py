@@ -31,7 +31,15 @@ def main():
         QUADLET_TEMPLATE=root / "quadlet/template.kube",
     )
     # Identity/layout guards have separate tests; retry uses the paths above.
-    state.update(production_environment=lambda: None, service_user=lambda: None)
+    state.update(
+        production_environment=lambda: None,
+        service_user=lambda: None,
+        service_identity=lambda: None,
+    )
+    # status selects the state directory without the bootstrap (layout.select_state).
+    vars(importlib.import_module("deployment.layout")).update(
+        select_state=lambda product: None
+    )
     os.environ["XDG_RUNTIME_DIR"] = str(root)
     events = []
     record = Path(parameters["record"])

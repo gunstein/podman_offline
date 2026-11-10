@@ -3,7 +3,7 @@
 import json
 import subprocess
 
-from . import catalog, common, deploy, registrations
+from . import catalog, common, deploy, layout, registrations
 
 # Never echo arbitrary command output (e.g. a bus error) as a unit state.
 UNIT_STATES = {
@@ -56,8 +56,11 @@ def collect():
     """Use this bundle only to select the product/code, never its incoming version."""
     if not (common.ROOT / "bundle.yaml").is_file():
         raise common.DeployError("Run status from an unpacked component bundle")
-    deploy.service_user()  # Read-only identity/bootstrap/layout; no manager query.
+    # Read-only identity and state; no bootstrap file is needed, so the
+    # runtime command can read the status before init-layout (backlog 85).
+    deploy.service_identity()
     product = catalog.product_name(common.ROOT)
+    layout.select_state(product)
     descriptors = catalog.load_installed_metadata(common.STATE)
     deploy.check_same_product(product, descriptors)
     catalog.installed_components(common.STATE, descriptors)

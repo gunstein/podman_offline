@@ -237,7 +237,10 @@ myproduct --environment prod1
 Use this form every time from now on, also after an upgrade and for one
 component (`myproduct --environment prod1 <component>`). Plain `myproduct`
 stops, and changes nothing, before it would install a component without
-the settings the file gave it; it names the command to use. It installs only the
+the settings the file gave it; it names the command to use. It can only do
+so once a component's first installation with the file has finished: if
+that first installation is interrupted, repeat it with the same
+`myproduct --environment prod1` command, never without the option. It installs only the
 components the file lists, with its settings; any other component is left as
 it is. Before it changes anything it checks that every listed component and
 what it needs is installed as a release package; if not, it names what is

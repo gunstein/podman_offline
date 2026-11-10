@@ -1153,8 +1153,12 @@ def install_components(environment_name=None):
     # Pure declaration checks precede even the user-manager host query.
     service_user()
     product, name = bundle_descriptor()["product"], bundle_descriptor()["name"]
+    # The record is checked with or without an environment: an invalid one
+    # stops here, before any change, not at its write after the restart.
     if environment_name is None:
         check_installed_without_environment(product, name)
+    else:
+        recorded_environment(name)
     env_overrides = target_environment(environment_name, name)
     descriptor, known, config, config_path = install_checks(env_overrides)
     production_environment()
@@ -1225,22 +1229,35 @@ def target_environment(environment_name, component):
 def recorded_environment(name):
     """The environment of name's last install, when that install applied anything from it.
 
-    Read from the record write_installed_marker wrote; None without one, or
-    when the environment gave the component no overrides and no API secret
-    line (then an install without it changes nothing it applied).
+    Read from the record write_installed_marker wrote (missing: None). A
+    record that exists must be a regular file (no link, no directory) with
+    a JSON object of exactly "environment" (text or null), "overrides" (a
+    mapping) and "api_secret" (a mapping or null); anything else is refused,
+    as tools/runtime.py environment_installs refuses it. None also when the
+    environment gave the component no overrides and no API secret line
+    (then an install without it changes nothing it applied).
     """
     record = catalog.environment_record_path(common.STATE, name)
-    if record.is_symlink():
-        raise common.DeployError(f"Refuse symlinked environment record {record}")
-    if not record.is_file():
+    if not os.path.lexists(str(record)):
         return None
     try:
+        if record.is_symlink() or not record.is_file():
+            raise ValueError("regular file required")
         data = json.loads(record.read_text(encoding="utf-8"))
-        environment_name = data["environment"]
-        applied = data["overrides"] or data["api_secret"]
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
-        raise common.DeployError(f"Invalid environment record {record}") from None
-    return environment_name if environment_name and applied else None
+        if (
+            not isinstance(data, dict)
+            or set(data) != {"environment", "overrides", "api_secret"}
+            or not isinstance(data["environment"], (str, type(None)))
+            or not isinstance(data["overrides"], dict)
+            or not isinstance(data["api_secret"], (dict, type(None)))
+        ):
+            raise ValueError("fields")
+    except (OSError, UnicodeError, ValueError):
+        raise common.DeployError(
+            f"Invalid environment record {record}; nothing was changed"
+        ) from None
+    applied = data["overrides"] or data["api_secret"]
+    return data["environment"] if data["environment"] and applied else None
 
 
 def check_installed_without_environment(product, name):
@@ -1256,9 +1273,9 @@ def check_installed_without_environment(product, name):
         raise common.DeployError(
             f"{name} was installed with --environment {environment_name}, which "
             "gave it overrides or an API secret line; an install without it would "
-            f"remove them. Run {product} --environment {environment_name} (or "
-            f"./deploy.sh install --environment {environment_name}); nothing was "
-            "changed"
+            f"remove them. Run {product} --environment {environment_name} {name} "
+            f"(or ./deploy.sh install --environment {environment_name}); nothing "
+            "was changed"
         )
 
 

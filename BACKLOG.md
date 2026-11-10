@@ -104,7 +104,13 @@ below; sections that describe the build-time model are marked
    first install, `deploy.sh install` too), naming that environment; the
    environment record holds its name for this. Otherwise a forgotten flag
    removed the overrides, or an API's registration with Identity, without
-   a word.
+   a word. Review fixes (on `4707ddd`): an invalid record is refused by
+   both readers; `status` needs no bootstrap file, so the runtime command
+   refuses before `init-layout`; the message names the component; an
+   unfinished uninstall is reported first. Not covered: a first
+   environment install interrupted before its record exists (the manual
+   says to repeat it with the option); covering it would need the
+   environment in the pending record, a separate requirement.
 4. Before any change the command checks that every listed component and
    every dependency has an installed release package in a compatible
    version, that every dependency is listed, and that no listed component

@@ -215,8 +215,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(
             self.releases.commands(),
             [
-                "init-layout",
+                # The status needs no bootstrap: refusals come before init-layout.
                 "status --json",
+                "init-layout",
                 WEB_INIT,
                 "install",
                 "init-config api",
@@ -245,7 +246,7 @@ class RuntimeTests(unittest.TestCase):
         with mock.patch.object(runtime.sys, "stdin", mock.Mock(isatty=lambda: False)):
             self.assertEqual(self.run_command(), 0, self.stderr.getvalue())
         self.assertEqual(
-            self.releases.commands(), ["init-layout", "status --json", "status"]
+            self.releases.commands(), ["status --json", "init-layout", "status"]
         )
         for name in ("web", "api", "worker"):
             self.assertIn(f"[OK] {name} 1.0.0 is installed", self.stdout.getvalue())
@@ -360,7 +361,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.run_command("worker"), 0, self.stderr.getvalue())
         self.assertEqual(
             self.releases.commands(),
-            ["init-layout", "status --json", "install", "status"],
+            ["status --json", "init-layout", "install", "status"],
         )
         self.assertEqual(self.run_command("reports"), 1)
         self.assertIn(
@@ -488,8 +489,9 @@ class EnvironmentTests(RuntimeTests):
             [
                 "check-environment prod1",
                 "check-environment prod1",
-                "init-layout",
+                # The status needs no bootstrap: refusals come before init-layout.
                 "status --json",
+                "init-layout",
                 WEB_INIT.replace(
                     "init-config web", "init-config web --environment prod1"
                 ),
@@ -575,6 +577,18 @@ class EnvironmentTests(RuntimeTests):
                     self.stderr.getvalue(),
                 )
                 self.assertNotIn("install", self.releases.commands())
+                # Not even the bootstrap file is written.
+                self.assertNotIn("init-layout", self.releases.commands())
+        # An unfinished uninstall is named first: that is the next step.
+        self.releases.pending = {
+            "operation": "uninstall",
+            "component": "worker",
+            "owners": [],
+        }
+        self.assertEqual(self.run_command(), 1)
+        self.assertIn("The uninstall of worker is unfinished", self.stderr.getvalue())
+        self.assertNotIn("installed with --environment", self.stderr.getvalue())
+        self.releases.pending = None
         # With the environment it proceeds.
         self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
         self.assertEqual(self.releases.installed["worker"], "1.1.0")

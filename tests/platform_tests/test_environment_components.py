@@ -21,7 +21,7 @@ from unittest import mock
 import bundle
 import rpms
 import yaml
-from deployment import catalog, cli, common, deploy, status
+from deployment import catalog, cli, common, deploy, layout, status
 
 from helpers.product_fixture import RENAMED, ProductFixture
 
@@ -378,7 +378,7 @@ class TargetEffectTests(ProductFixture):
                         common.DeployError,
                         f"{name} was installed with --environment prod1, which gave "
                         "it overrides or an API secret line; an install without it "
-                        "would remove them. Run myproduct --environment prod1 "
+                        f"would remove them. Run myproduct --environment prod1 {name} "
                         "\\(or ./deploy.sh install --environment prod1\\); nothing "
                         "was changed",
                     ):
@@ -394,6 +394,81 @@ class TargetEffectTests(ProductFixture):
             self.place_environment("plain", environment_file(["reports"]))
             self.install(releases["reports"], environment_name="plain")
             self.install(releases["reports"])
+
+    def test_an_invalid_environment_record_is_refused_by_both_readers(self):
+        """deploy.sh install and the runtime command: one contract, before any change."""
+        releases = self.releases_built
+        self.place_environment(
+            "prod1",
+            environment_file(["accounts", "ledger"], registration(0, "ledger")),
+        )
+        with self.environment():
+            for name in ("accounts", "ledger"):
+                self.install(releases[name], environment_name="prod1")
+            record = catalog.environment_record_path(common.STATE, "ledger")
+            valid = record.read_text()
+            elsewhere = self.root / "elsewhere.json"
+            elsewhere.write_text(valid)
+            fields = json.loads(valid)
+            cases = {
+                "directory": lambda: record.mkdir(),
+                "link": lambda: record.symlink_to(elsewhere),
+                "not JSON": lambda: record.write_text("{"),
+                "no environment": lambda: record.write_text(
+                    json.dumps({"overrides": {}, "api_secret": None})
+                ),
+                "another field": lambda: record.write_text(
+                    json.dumps(dict(fields, extra=1))
+                ),
+                "overrides a list": lambda: record.write_text(
+                    json.dumps(dict(fields, overrides=[]))
+                ),
+                "environment a number": lambda: record.write_text(
+                    json.dumps(dict(fields, environment=1))
+                ),
+            }
+            for label, damage in cases.items():
+                with self.subTest(label):
+                    record.unlink()
+                    damage()
+                    before = sorted(
+                        (str(path), path.is_file() and path.read_bytes())
+                        for path in common.STATE.rglob("*")
+                    )
+                    self.use_root(releases["ledger"])
+                    for environment_name in (None, "prod1"):
+                        with self.assertRaisesRegex(
+                            common.DeployError,
+                            f"Invalid environment record {record}; nothing was changed",
+                        ):
+                            deploy.install(environment_name)
+                    with self.assertRaisesRegex(
+                        runtime.ToolError,
+                        f"Invalid environment record {record}; nothing was changed",
+                    ):
+                        runtime.environment_installs(common.STATE)
+                    after = sorted(
+                        (str(path), path.is_file() and path.read_bytes())
+                        for path in common.STATE.rglob("*")
+                    )
+                    self.assertEqual(after, before)
+                    self.assertTrue((common.STATE / "apis/ledger/value").is_file())
+                    if record.is_dir() and not record.is_symlink():
+                        record.rmdir()
+                        record.touch()
+            record.unlink()
+            record.write_text(valid)
+            self.assertEqual(
+                runtime.environment_installs(common.STATE),
+                {"accounts": "prod1", "ledger": "prod1"},
+            )
+            # The status reads no bootstrap file: the runtime command reads
+            # it before init-layout, so a refusal writes nothing.
+            with mock.patch.object(layout, "select", side_effect=AssertionError):
+                self.assertEqual(
+                    [item["name"] for item in status.collect()["components"]],
+                    ["accounts", "ledger"],
+                )
 
     def test_effective_dependencies_and_foreign_secrets_are_refused_first(self):
         releases = self.releases_built

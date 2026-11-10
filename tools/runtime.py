@@ -206,11 +206,14 @@ def environment_installs(state):
     Read from state/environment/<id>.json, which deploy.sh install writes
     with the environment's name and what it applied, as uninstalled() reads
     state/uninstalled/: a component whose last install got overrides or an
-    API secret line from an environment. Links and other files are refused.
+    API secret line from an environment. The same contract as
+    deployment/deploy.py recorded_environment: a regular file (no link, no
+    directory) with exactly "environment" (text or null), "overrides" (a
+    mapping) and "api_secret" (a mapping or null); anything else is refused.
     """
     directory = state / "environment"
-    if directory.is_symlink():
-        raise ToolError(f"Refuse symlinked environment records: {directory}")
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ToolError(f"Invalid environment records {directory}")
     if not directory.exists():
         return {}
     result = {}
@@ -221,11 +224,23 @@ def environment_installs(state):
         try:
             if not host.ID.fullmatch(name) or record.is_symlink():
                 raise ValueError(name)
+            if not record.is_file():
+                raise ValueError("regular file required")
             data = json.loads(record.read_text(encoding="utf-8"))
-            if data["environment"] and (data["overrides"] or data["api_secret"]):
-                result[name] = data["environment"]
-        except (OSError, UnicodeError, ValueError, KeyError, TypeError):
-            raise ToolError(f"Invalid environment record {record}") from None
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"environment", "overrides", "api_secret"}
+                or not isinstance(data["environment"], (str, type(None)))
+                or not isinstance(data["overrides"], dict)
+                or not isinstance(data["api_secret"], (dict, type(None)))
+            ):
+                raise ValueError("fields")
+        except (OSError, UnicodeError, ValueError):
+            raise ToolError(
+                f"Invalid environment record {record}; nothing was changed"
+            ) from None
+        if data["environment"] and (data["overrides"] or data["api_secret"]):
+            result[name] = data["environment"]
     return result
 
 
@@ -235,16 +250,8 @@ def complete(report, name, version):
     return bool(item and item["complete"] and item["version"] == version)
 
 
-def selected(report, order, versions, component, product, removed, environment=None):
-    """The components to install now, in order: the incomplete ones.
-
-    A pending install was finished before (install), so report is the status
-    after it. removed (uninstalled()) stays out until <product> <component>
-    installs it again. An unfinished uninstall is finished, never
-    reinstalled. With an environment a completed component stays in the
-    list: install decides at its turn whether it already has the
-    environment's effect (applied).
-    """
+def check_no_pending_uninstall(report):
+    """An unfinished uninstall is finished with its own command, never reinstalled."""
     pending = report["pending"]
     if pending and pending["operation"] == "uninstall":
         raise ToolError(
@@ -252,17 +259,34 @@ def selected(report, order, versions, component, product, removed, environment=N
             "./deploy.sh uninstall command in its release again (with --delete-data "
             'if you gave it), see "Remove a component" in the manual'
         )
+
+
+def selected(
+    report, order, versions, component, product, removed, environment=None, say=True
+):
+    """The components to install, in order: the named one, or the incomplete ones.
+
+    A pending install is incomplete in report, so it is included.
+    removed (uninstalled()) stays out until <product> <component> installs
+    it again. With an environment a completed component stays in the list:
+    install decides at its turn whether it already has the environment's
+    effect (applied). say=False only computes the list (the check before
+    the first change); the run itself says what it leaves out.
+    """
     if component:
         return [component]
     current = {item["name"]: item for item in report["components"]}
     targets = []
     for name in order:
         if name in removed and not current.get(name):
-            log.info(
-                f"[OK] {name} was uninstalled; run {product} {name} to install it again"
-            )
+            if say:
+                log.info(
+                    f"[OK] {name} was uninstalled; run {product} {name} to install "
+                    "it again"
+                )
         elif complete(report, name, versions[name]) and not environment:
-            log.info(f"[OK] {name} {versions[name]} is installed")
+            if say:
+                log.info(f"[OK] {name} {versions[name]} is installed")
         else:
             targets.append(name)
     return targets
@@ -494,16 +518,33 @@ def install(product, args):
         # before init-layout writes the bootstrap file.
         for component in order:
             deployed(found[component][1], "check-environment", args.environment)
-    deployed(first, "init-layout")
     versions = {name: found[name][0].version for name in order}
     removed = uninstalled(host.LIB / product / "state")
+    # status needs no bootstrap file: every refusal comes before init-layout.
     report = status_report(first)
     pending = report["pending"]
+    check_no_pending_uninstall(report)
     if args.environment and pending and pending["component"] not in order:
         raise ToolError(
             f"The {pending['operation']} of {pending['component']} is unfinished, and "
             f"{pending['component']} is not in this environment; finish it first"
         )
+    if not args.environment:
+        # Product owner, 2026-11-10: an install without the environment would
+        # drop what it gave a component; stop before the first change.
+        recorded = environment_installs(host.LIB / product / "state")
+        planned = selected(
+            report, order, versions, args.component, product, removed, say=False
+        )
+        for name in planned:
+            if name in recorded:
+                raise ToolError(
+                    f"{name} was installed with --environment {recorded[name]}, which "
+                    "gave it overrides or an API secret line; nothing was changed. "
+                    f"Run {product} --environment {recorded[name]}"
+                    + (f" {name}" if args.component else "")
+                )
+    deployed(first, "init-layout")
     done = []
 
     def install_component(component):
@@ -529,28 +570,6 @@ def install(product, args):
         done.append(component)
         log.info(f"[OK] {component} {package.version} installed")
 
-    if not args.environment:
-        # Product owner, 2026-11-10: an install without the environment would
-        # drop what it gave a component; stop before the first install.
-        recorded = environment_installs(host.LIB / product / "state")
-        resumed = pending["component"] if pending else None
-        planned = (
-            [args.component]
-            if args.component
-            else [
-                name
-                for name in order
-                if name == resumed or not complete(report, name, versions[name])
-            ]
-        )
-        for name in planned:
-            if name in recorded:
-                raise ToolError(
-                    f"{name} was installed with --environment {recorded[name]}, which "
-                    "gave it overrides or an API secret line; nothing was changed. "
-                    f"Run {product} --environment {recorded[name]}"
-                    + (f" {name}" if args.component else "")
-                )
     # An unfinished install is finished first, then the status is read again,
     # so every component is then decided in order (Identity before its APIs),
     # the resumed one included.
