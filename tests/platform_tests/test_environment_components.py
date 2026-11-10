@@ -417,6 +417,49 @@ class SelectionRpmTests(SelectionFixture):
             rpms.build(["accounts"], environment_name="prod1")
         self.assertFalse((bundle.DIST / "prod1/delivery").exists())
 
+    def test_a_changed_role_or_image_refuses_the_reused_rpm(self):
+        """The descriptor's roles and the image content count, not only the files."""
+        self.put(
+            "config/prod3.yaml", environment_file(["accounts", "ledger", "reports"])
+        )
+        bundle.build(environment_name="prod3")
+        rpms.build(environment_name="prod3")
+        for label, change, refused in (
+            (
+                "ledger becomes an API of accounts",
+                lambda: self.put(
+                    "config/prod3.yaml",
+                    environment_file(
+                        ["accounts", "ledger", "reports"],
+                        accounts={"main": registration(0, "ledger")},
+                    ),
+                ),
+                "ledger",
+            ),
+            (
+                "same tag, other image",
+                lambda: self.image_ids.update({"localhost/reports:1": "rebuilt"}),
+                "reports",
+            ),
+        ):
+            with self.subTest(label):
+                self.put(
+                    "config/prod3.yaml",
+                    environment_file(["accounts", "ledger", "reports"]),
+                )
+                self.image_ids.clear()
+                change()
+                version = f"1.{len(self.wrapped)}.0"
+                (self.source / "components/accounts/VERSION").write_text(version + "\n")
+                bundle.build(environment_name="prod3")
+                with self.assertRaisesRegex(
+                    rpms.RpmError,
+                    f"myproduct-{refused}-1.0.0-1.0.0-1.noarch.rpm wraps another "
+                    f"myproduct-{refused}-1.0.0-offline.tar.gz than the current one",
+                ):
+                    rpms.build(["accounts"], environment_name="prod3")
+                self.assertFalse((bundle.DIST / "prod3/delivery").exists())
+
     def test_a_failed_copy_leaves_no_delivery(self):
         bundle.build(environment_name="prod1")
         rpms.build(environment_name="prod1")

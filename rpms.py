@@ -24,6 +24,7 @@ because one version has exactly one content.
 """
 
 import hashlib
+import json
 import logging
 import shutil
 import stat
@@ -373,28 +374,68 @@ BUNDLE_SUFFIX = ".bundle.sha256"
 
 
 def bundle_content(archive):
-    """SHA256 of the component's own content in a bundle: its declarations and images.
+    """SHA256 of what the component's release does, not of the archive's bytes.
 
-    Taken from the bundle's checksums.sha256 lines for components/<id>/ (the
-    manifests and config.defaults.yaml with its environment's overrides) and
-    images/images.txt. Not the archive's bytes, which change with every build
-    (tar and gzip times), and not bundle.yaml or the shared tools code: a
-    dependency's new version changes the ranges in bundle.yaml, and an
-    earlier release of this component stays a valid delivery then.
+    Three parts, each read from the bundle itself:
+
+    - its own files: the checksums.sha256 lines for components/<id>/ (the
+      manifests and config.defaults.yaml with its environment's overrides)
+      and images/images.txt;
+    - its descriptor (bundle.yaml) with the names of its dependencies but not
+      their version ranges: a dependency's new version changes those ranges,
+      and an earlier release of this component stays a valid delivery then;
+      roles, routes, clients, apis, accepts and api_secrets all count;
+    - its images: image IDs and layer digests from images.tar's manifest.json,
+      so the same tag with other content is a change.
+
+    The archive's bytes change with every build (tar and gzip times), and the
+    shared tools code is no part of a component's release content.
     """
     root = archive.name[: -len("-offline.tar.gz")]
     with tarfile.open(str(archive)) as tar:
-        member = tar.extractfile(root + "/checksums.sha256")
-        if member is None:
-            raise RpmError(f"{archive.name} has no checksums.sha256")
-        lines = member.read().decode("utf-8").splitlines()
+        lines = member_bytes(tar, root + "/checksums.sha256").decode("utf-8")
+        descriptor = yaml.safe_load(member_bytes(tar, root + "/bundle.yaml"))
+        images = image_identity(tar, root + "/images/images.tar")
     own = sorted(
         line
-        for line in lines
+        for line in lines.splitlines()
         if line.split("  ", 1)[-1].startswith("components/")
         or line.endswith("  images/images.txt")
     )
-    return hashlib.sha256("\n".join(own).encode("utf-8")).hexdigest()
+    descriptor = dict(descriptor, requires=sorted(descriptor["requires"]))
+    content = {"files": own, "descriptor": descriptor, "images": images}
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
+def member_bytes(tar, name):
+    member = tar.extractfile(name)
+    if member is None:
+        raise RpmError(f"{name} is missing from the bundle")
+    return member.read()
+
+
+def image_identity(tar, name):
+    """[RepoTags, Config, Layers] of every image in the bundle's docker-archive.
+
+    Read as a stream: manifest.json may follow gigabytes of layers.
+    """
+    stream = tar.extractfile(name)
+    if stream is None:
+        raise RpmError(f"{name} is missing from the bundle")
+    with tarfile.open(fileobj=stream, mode="r|") as images:
+        for member in images:
+            if member.name.lstrip("./") == "manifest.json":
+                manifest = images.extractfile(member)
+                if manifest is not None:
+                    return sorted(
+                        [
+                            sorted(item.get("RepoTags") or []),
+                            item["Config"],
+                            item["Layers"],
+                        ]
+                        for item in json.load(manifest)
+                    )
+    raise RpmError(f"{name} has no manifest.json")
 
 
 def write_delivery(dist, descriptors, option):

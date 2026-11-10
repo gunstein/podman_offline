@@ -91,11 +91,12 @@ lines from its `dev.yaml.example`.
    version has one content); the administrator command installs every
    product RPM of the directory it is given, so delivering `rpm/` after a
    smaller set would have reinstalled an excluded component. A reused RPM
-   is delivered only while it wraps the component's current content (its
-   `components/<id>/` files and `images.txt`, `<rpm>.bundle.sha256`; not the
-   archive bytes, which change with every build, and not a dependency's
-   range in `bundle.yaml`), and the directory is published only when
-   complete. Builds without an environment are unchanged (their `dist/rpm/` has the same limit for a
+   is delivered only while it wraps the component's current content
+   (`<rpm>.bundle.sha256`: its `components/<id>/` files and `images.txt`, its
+   descriptor without the dependency version ranges, and its images' IDs and
+   layer digests; not the archive bytes, which change with every build, and
+   not a dependency's range, which a dependency's new version changes), and
+   the directory is published only when complete. Builds without an environment are unchanged (their `dist/rpm/` has the same limit for a
    component removed from the catalog; not in this item's scope).
 
 The text below is the requirement. **Decisions (product owner, 2026-11-09):**

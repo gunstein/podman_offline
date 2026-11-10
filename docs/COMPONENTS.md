@@ -458,8 +458,11 @@ overrides:
   RPM, and that is the directory the supplier delivers: `dist/prod2/rpm/`
   keeps every RPM ever built (one version has one content), so an RPM of an
   earlier, larger set is never delivered. A component RPM is delivered only
-  while it wraps the component's current content (its `components/<id>/`
-  files and `images.txt`, recorded beside the RPM as `<rpm>.bundle.sha256`);
+  while it wraps the component's current content, recorded beside the RPM as
+  `<rpm>.bundle.sha256`: its `components/<id>/` files and `images.txt`, its
+  descriptor's roles and dependency names (not the version ranges a
+  dependency's new version changes), and its images' IDs and layer digests
+  from `images.tar`;
   an RPM of the same version with other content, for example after an
   override changed without a new `VERSION`, is refused with the next step.
   With an RPM still missing or refused there is no delivery directory, and

@@ -6,6 +6,9 @@ add, rename or remove a component, which is what these tests demonstrate.
 Podman/systemd are recorded instead of run; everything else is real.
 """
 
+import hashlib
+import io
+import json
 import os
 import shutil
 import subprocess
@@ -211,6 +214,24 @@ WORKER = {
 DEMO_NAMES = ("platform", "identity", "app1", "app2", "help")
 
 
+def write_image_archive(path, images):
+    """A docker-archive with only its manifest.json, as podman save -m writes it."""
+    manifest = json.dumps(
+        [
+            {
+                "Config": hashlib.sha256(identity.encode()).hexdigest() + ".json",
+                "RepoTags": [image],
+                "Layers": [],
+            }
+            for image, identity in images.items()
+        ]
+    ).encode()
+    with tarfile.open(str(path), "w") as archive:
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        archive.addfile(info, io.BytesIO(manifest))
+
+
 class ProductFixture(DeployFixture):
     """A source checkout, its dist/ output, unpacked releases and a target home."""
 
@@ -220,6 +241,8 @@ class ProductFixture(DeployFixture):
         self.releases = self.root / "releases"
         self.product_name = "myproduct"  # product: in the generated bundles.yaml
         self.volumes = set()
+        # image -> the ID podman save records for it; a test may change one.
+        self.image_ids = {}
         self.process.side_effect = self.host_command
         temporary_directory = tempfile.TemporaryDirectory
 
@@ -237,7 +260,11 @@ class ProductFixture(DeployFixture):
         args = list(map(str, arguments))
         status = 0
         if args[:2] == ["podman", "save"]:
-            Path(args[args.index("-o") + 1]).write_bytes(b"recorded image archive")
+            images = args[args.index("-o") + 2 :]
+            write_image_archive(
+                Path(args[args.index("-o") + 1]),
+                {image: self.image_ids.get(image, image) for image in images},
+            )
         elif args[:3] == ["podman", "volume", "exists"]:
             status = 0 if args[-1] in self.volumes else 1
         return subprocess.CompletedProcess(args, status, b"", b"")
