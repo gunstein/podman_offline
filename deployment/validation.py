@@ -21,7 +21,7 @@ from .output import log
 ERRORS = (common.DeployError, OSError, yaml.YAMLError)
 
 
-def validate():
+def validate(environment_name=None):
     """Report every component's first finding; exit non-zero when there is one.
 
     The source checkout validates every catalog component with its dev config,
@@ -31,7 +31,12 @@ def validate():
     rendered output, archives, Podman, systemd or network.
     """
     if (common.ROOT / "bundle.yaml").exists():
-        names, findings = validate_bundle()
+        names, findings = validate_bundle(environment_name)
+    elif environment_name is not None:
+        raise common.DeployError(
+            "--environment applies to a release on the target; the source checkout "
+            "validates with config/dev.yaml"
+        )
     elif (common.ROOT / "components").is_dir():
         names, findings = validate_catalog()
     else:
@@ -112,7 +117,7 @@ def api_secret_summary(entries):
     return lines
 
 
-def validate_bundle():
+def validate_bundle(environment_name=None):
     """Validate this bundle's component as install would, without the volume query.
 
     Needs the service user (not root, its own HOME) and its bootstrap file
@@ -120,7 +125,10 @@ def validate_bundle():
     directory or user manager, so it also works before linger is enabled.
     """
     deploy.service_user()
-    descriptor, known, config, config_path = deploy.install_checks()
+    env_overrides = deploy.target_environment(
+        environment_name, deploy.bundle_descriptor()["name"]
+    )
+    descriptor, known, config, config_path = deploy.install_checks(env_overrides)
     name = descriptor["name"]
     findings = []
     try:
@@ -132,7 +140,7 @@ def validate_bundle():
         findings.append(("registrations", str(error)))
     imported = catalog.imported_volumes(descriptor)
     try:
-        effective = rendering.effective_config(config, config_path, name)
+        effective = rendering.effective_config(config, config_path, name, env_overrides)
         documents = deploy.validate_component(
             effective,
             config_path,
@@ -140,12 +148,13 @@ def validate_bundle():
             name,
             imported,
             catalog.imported_secrets(descriptor),
+            env_overrides,
         )
         deploy.install_preconditions({name: (effective, documents)})
         check_sources(effective, config_path, documents, imported, name)
-        for line in environment.summary(name, effective) + mounts.summary(
-            name, effective
-        ):
+        for line in environment.summary(
+            name, effective, env_overrides
+        ) + mounts.summary(name, effective):
             log.info("[OK] " + line)
     except ERRORS as error:
         findings.append((name, str(error)))

@@ -19,8 +19,12 @@ preparation script and the two deployment modules they import, under
 /usr/libexec/<product>-tools/. Its version is tools/VERSION: raise it whenever
 one of TOOLS_FILES changes. It has the same erase guard; an upgrade replaces it.
 
-A version is built once: an existing RPM of the same name is never replaced,
-because one version has exactly one content.
+One version has exactly one content: an existing RPM of the same name is
+never replaced; it is reused when it wraps the same content (bundle_content,
+tools_content) and refused otherwise. Every run writes dist/delivery/ with
+exactly its RPMs, the directory to deliver (backlog 85); bundles and RPMs are
+environment-neutral, and the target applies its environment file at
+deployment.
 """
 
 import hashlib
@@ -36,7 +40,7 @@ from pathlib import Path
 
 import yaml
 
-from deployment import arguments, catalog, common, environment, output
+from deployment import arguments, catalog, common, output
 
 log = logging.getLogger("deployment.rpms")
 
@@ -309,66 +313,6 @@ def build_tools(product, out):
         return rpmbuild(work, product + "-tools.spec", text, target)
 
 
-def build(selected=(), tools=False, environment_name=None):
-    """Build the selected RPMs into dist/rpm/; return their paths.
-
-    selected names catalog components, each built from its bundle in dist/
-    (./build-bundle.sh first, matching its .sha256 file); tools adds the tools
-    RPM. Without either, every catalog component and the tools.
-    environment_name takes the bundles of that build environment from
-    dist/<name>/ and writes dist/<name>/rpm/ (./build-bundle.sh --environment):
-    only its components (backlog 85), and only archives its
-    current-bundles.txt names, so an archive an earlier, larger set left in
-    dist/<name>/ is never wrapped; dist/<name>/delivery/ then holds exactly
-    the current delivery (write_delivery).
-    """
-    if shutil.which("rpmbuild") is None:
-        raise RpmError("rpmbuild is missing; install the rpm-build package")
-    dist, option, env_overrides, current = DIST, "", None, None
-    if environment_name is not None:
-        env_overrides = environment.read_environment_file(ROOT, environment_name)
-        dist, option = DIST / environment_name, f"--environment {environment_name} "
-        current = current_bundles(dist, option)
-    descriptors = catalog.source_descriptors(ROOT, env_overrides)
-    unknown = sorted(set(selected) - set(descriptors))
-    if unknown and env_overrides and env_overrides.selected is not None:
-        raise RpmError(
-            ", ".join(unknown) + f" is not in {env_overrides.path} components:"
-        )
-    if unknown:
-        raise RpmError("Unknown component " + ", ".join(unknown) + "; see bundles.yaml")
-    if current is not None:
-        check_current_bundles(current, descriptors, dist, option)
-    everything = not selected and not tools
-    built = []
-    for component, descriptor in descriptors.items():
-        if not everything and component not in selected:
-            continue
-        product, version = descriptor["product"], descriptor["version"]
-        archive = dist / f"{product}-{component}-{version}-offline.tar.gz"
-        checksum = Path(str(archive) + ".sha256")
-        if not archive.is_file() or not checksum.is_file():
-            raise RpmError(
-                f"Missing {archive.relative_to(ROOT)}; run ./build-bundle.sh "
-                f"{option}{component}"
-            )
-        if checksum.read_text().split()[0] != sha256(archive):
-            raise RpmError(f"{archive.name} does not match its .sha256 file")
-        built.append(build_rpm(archive, product, component, version, dist / "rpm"))
-        # Which bundle content this RPM wraps, so write_delivery can tell a
-        # reused RPM from one of an earlier bundle with the same version.
-        Path(str(built[-1]) + BUNDLE_SUFFIX).write_text(
-            bundle_content(archive) + "\n", encoding="utf-8"
-        )
-        log.info(f"[OK] {built[-1].relative_to(ROOT)}")
-    if everything or tools:
-        built.append(build_tools(catalog.product_name(ROOT), dist / "rpm"))
-        log.info(f"[OK] {built[-1].relative_to(ROOT)}")
-    if environment_name is not None:
-        write_delivery(dist, descriptors, option)
-    return built
-
-
 # Beside each component RPM: bundle_content() of the archive it wraps.
 BUNDLE_SUFFIX = ".bundle.sha256"
 
@@ -438,109 +382,125 @@ def image_identity(tar, name):
     raise RpmError(f"{name} has no manifest.json")
 
 
-def write_delivery(dist, descriptors, option):
-    """dist/<environment>/delivery/: exactly the RPMs of the current delivery.
+def tools_content():
+    """SHA256 of the tools RPM's files and tools/VERSION, as bundle_content for a bundle."""
+    digest = hashlib.sha256((ROOT / "tools/VERSION").read_bytes())
+    for installed, source in sorted(TOOLS_FILES.items()):
+        digest.update(installed.encode() + b"\0" + (ROOT / source).read_bytes())
+    return digest.hexdigest()
+
+
+def built_or_reused(rpm, content, what, build):
+    """Build rpm, or reuse it when it wraps the same content; one version, one content.
+
+    content is written beside a new RPM (BUNDLE_SUFFIX). An existing RPM with
+    other or unknown content is refused: rebuilding it would give one
+    version two contents.
+    """
+    record = Path(str(rpm) + BUNDLE_SUFFIX)
+    if rpm.exists():
+        if not record.is_file() or record.read_text(encoding="utf-8") != content + "\n":
+            raise RpmError(
+                f"{rpm.name} already exists with other content; one version has "
+                f"one content, so give {what} a new VERSION instead of rebuilding it"
+            )
+        log.info(f"[OK] {rpm.relative_to(ROOT)} (built before, same content)")
+        return rpm
+    rpm = build()
+    record.write_text(content + "\n", encoding="utf-8")
+    log.info(f"[OK] {rpm.relative_to(ROOT)}")
+    return rpm
+
+
+def build(selected=(), tools=False):
+    """Build or reuse the selected RPMs and write dist/delivery/ with exactly them.
+
+    selected names catalog components, each from its bundle in dist/
+    (./build-bundle.sh first, matching its .sha256 file); tools alone is
+    only the tools RPM. Without either, every catalog component. Every run
+    with components includes the tools RPM. dist/rpm/ keeps every RPM ever
+    built; dist/delivery/ (write_delivery) holds this run's RPMs and nothing
+    else, and is the directory to deliver; a refused run leaves none.
+    """
+    # Removed first: after a refused run there is no delivery that looks current.
+    shutil.rmtree(str(DIST / "delivery"), ignore_errors=True)
+    if shutil.which("rpmbuild") is None:
+        raise RpmError("rpmbuild is missing; install the rpm-build package")
+    descriptors = catalog.source_descriptors(ROOT)
+    unknown = sorted(set(selected) - set(descriptors))
+    if unknown:
+        raise RpmError("Unknown component " + ", ".join(unknown) + "; see bundles.yaml")
+    chosen = [
+        name for name in descriptors if (not selected and not tools) or name in selected
+    ]
+    built = []
+    for component in chosen:
+        product, version = (
+            descriptors[component]["product"],
+            descriptors[component]["version"],
+        )
+        archive = DIST / f"{product}-{component}-{version}-offline.tar.gz"
+        checksum = Path(str(archive) + ".sha256")
+        if not archive.is_file() or not checksum.is_file():
+            raise RpmError(f"Missing {archive.name}; run ./build-bundle.sh {component}")
+        if checksum.read_text().split()[0] != sha256(archive):
+            raise RpmError(f"{archive.name} does not match its .sha256 file")
+        rpm = DIST / "rpm" / f"{product}-{component}-{version}-{version}-1.noarch.rpm"
+        built.append(
+            built_or_reused(
+                rpm,
+                bundle_content(archive),
+                component,
+                lambda a=archive, c=component, v=version, p=product: build_rpm(
+                    a, p, c, v, DIST / "rpm"
+                ),
+            )
+        )
+    product = catalog.product_name(ROOT)
+    version = (ROOT / "tools/VERSION").read_text().strip()
+    built.append(
+        built_or_reused(
+            DIST / "rpm" / f"{product}-tools-{version}-1.noarch.rpm",
+            tools_content(),
+            "tools (tools/VERSION)",
+            lambda: build_tools(product, DIST / "rpm"),
+        )
+    )
+    write_delivery(built)
+    return built
+
+
+def write_delivery(rpms):
+    """dist/delivery/: exactly the RPMs of this run, published only when complete.
 
     The administrator command installs every product RPM of the directory it
-    is given, so the supplier delivers this one, not dist/<environment>/rpm/,
-    which keeps every RPM ever built (one version has one content). It is
-    written again by every --environment run: the selected components' RPMs
-    in their current versions and the current tools RPM. A missing one, or a
-    component RPM built from another archive than the current one (same
-    version, other content), leaves no delivery directory at all. The
-    directory is filled beside it and renamed only when complete, so a
-    failed copy never leaves a smaller delivery that looks intended.
+    is given, so the supplier delivers this one, never dist/rpm/, which keeps
+    every RPM ever built. It is filled beside it and renamed when complete,
+    so a failed copy never leaves a smaller delivery that looks intended.
     """
-    product = catalog.product_name(ROOT)
-    tools = (ROOT / "tools/VERSION").read_text().strip()
-    wanted = {
-        name: f"{descriptor['product']}-{name}-{descriptor['version']}-"
-        f"{descriptor['version']}-1.noarch.rpm"
-        for name, descriptor in descriptors.items()
-    }
-    wanted["--tools"] = f"{product}-tools-{tools}-1.noarch.rpm"
-    delivery, partial = dist / "delivery", dist / ".delivery-partial"
+    delivery, partial = DIST / "delivery", DIST / ".delivery-partial"
     shutil.rmtree(str(delivery), ignore_errors=True)
     shutil.rmtree(str(partial), ignore_errors=True)
-    missing = [
-        name for name, rpm in wanted.items() if not (dist / "rpm" / rpm).is_file()
-    ]
-    if missing:
-        raise RpmError(
-            f"{delivery.relative_to(ROOT)} not written: no RPM yet for "
-            + ", ".join(missing)
-            + f"; run ./build-rpms.sh {option}"
-            + " ".join(missing)
-        )
-    for name, descriptor in descriptors.items():
-        rpm = dist / "rpm" / wanted[name]
-        archive = dist / (
-            f"{descriptor['product']}-{name}-{descriptor['version']}-offline.tar.gz"
-        )
-        wrapped = Path(str(rpm) + BUNDLE_SUFFIX)
-        current = bundle_content(archive) + "\n"
-        if not wrapped.is_file() or wrapped.read_text(encoding="utf-8") != current:
-            raise RpmError(
-                f"{delivery.relative_to(ROOT)} not written: {rpm.name} wraps another "
-                f"{archive.name} than the current one; one version has one content, "
-                f"so give {name} a new VERSION and build it again"
-            )
     try:
-        partial.mkdir()
-        for rpm in wanted.values():
-            shutil.copy2(str(dist / "rpm" / rpm), str(partial / rpm))
+        partial.mkdir(parents=True)
+        for rpm in rpms:
+            shutil.copy2(str(rpm), str(partial / rpm.name))
         partial.rename(delivery)
     finally:
         shutil.rmtree(str(partial), ignore_errors=True)
     log.info(f"[OK] {delivery.relative_to(ROOT)}: deliver this directory")
 
 
-def current_bundles(dist, option):
-    """The archive names of dist/<environment>/current-bundles.txt."""
-    path = dist / "current-bundles.txt"
-    if not path.is_file():
-        raise RpmError(
-            f"Missing {path.relative_to(ROOT)}; run ./build-bundle.sh {option.strip()}"
-        )
-    return path.read_text(encoding="utf-8").split()
-
-
-def check_current_bundles(current, descriptors, dist, option):
-    """The list names exactly the environment's components in their versions."""
-    expected = {
-        f"{descriptor['product']}-{name}-{descriptor['version']}-offline.tar.gz"
-        for name, descriptor in descriptors.items()
-    }
-    listed = set(current)
-    if listed != expected:
-        stale = sorted(listed - expected) or sorted(expected - listed)
-        raise RpmError(
-            f"{(dist / 'current-bundles.txt').relative_to(ROOT)} does not match "
-            f"the environment's components ({', '.join(stale)}); run "
-            f"./build-bundle.sh {option.strip()}"
-        )
-
-
 def parser():
     result = arguments.Parser(
         prog="./build-rpms.sh",
-        usage=(
-            "./build-rpms.sh [--environment <name>] [<component> ...] [--tools] "
-            "[--verbose]"
-        ),
+        usage="./build-rpms.sh [<component> ...] [--tools] [--verbose]",
         description=(
             "Wrap built bundles as RPMs and build the tools RPM; without "
-            "components or --tools, every catalog component (or every component "
-            "of the --environment) and the tools. With --environment, "
-            "dist/<name>/delivery/ holds exactly the RPMs to deliver."
+            "components or --tools, every catalog component and the tools. "
+            "dist/delivery/ then holds exactly this run's RPMs: deliver it."
         ),
         allow_abbrev=False,
-    )
-    result.add_argument(
-        "--environment",
-        metavar="<name>",
-        help="wrap the bundles of dist/<name>/ (./build-bundle.sh --environment "
-        "<name>) into dist/<name>/rpm/",
     )
     result.add_argument(
         "--tools",
@@ -558,15 +518,13 @@ def parser():
 def main(command_line=None):
     try:
         args = arguments.parse(
-            parser(),
-            sys.argv[1:] if command_line is None else command_line,
-            flags=("--environment",),
+            parser(), sys.argv[1:] if command_line is None else command_line
         )
     except arguments.UsageError as error:
         return error.code
     output.configure(verbose=args.verbose)
     try:
-        build(args.components, args.tools, args.environment)
+        build(args.components, args.tools)
     except (
         OSError,
         RpmError,

@@ -38,6 +38,17 @@ product="$release_root/$product_name-$bundle-${version:-RELEASE}"
 private="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman-offline-$run"
 # Run commands as the runtime account from its login home with the right
 # runtime and the documented production Podman settings (docs/PRODUCTION-INSTALL.md).
+# The target environment this run deploys (backlog 85): the name the step that
+# placed its file recorded (place_environment), or none.
+environment_option=()
+if [[ -f $base/environment ]]; then environment_option=(--environment "$(cat "$base/environment")"); fi
+# Place a target environment file (stdin) as the runtime account, as step 6
+# of the manual does, and record its name for this run's later installs.
+place_environment() {
+    as_product sh -c 'umask 077 && cat > "$1"' - "$state/$1.yaml"
+    printf '%s\n' "$1" > "$base/environment"
+    environment_option=(--environment "$1")
+}
 as_product() {
     sudo -n -H -u "$service_user" "${as_root_env[@]}" bash -c '
         cd "$HOME" || exit
@@ -50,14 +61,14 @@ as_product() {
 user_service() { sudo -n systemctl --user -M "$service_user@" "$@"; }
 # Capture deploy diagnostics before evidence; fail closed if a DB password leaks.
 install_checked() {
-    if as_product python3 - "$product" <<'PRIVATE_INSTALL'
+    if as_product python3 - "$product" "${environment_option[@]}" <<'PRIVATE_INSTALL'
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 release = Path(sys.argv[1])
-result = subprocess.run(["bash", "./deploy.sh", "install"], cwd=str(release),
+result = subprocess.run(["bash", "./deploy.sh", "install"] + sys.argv[2:], cwd=str(release),
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
 credentials = [path.read_text().rstrip("\n") for path in Path(os.environ["PRODUCT_STATE"]).glob("*/credentials/*/password") if path.is_file()]
 if any(value and value in result.stdout + result.stderr for value in credentials):
@@ -172,7 +183,7 @@ retire_release() {
 # ./deploy.sh validate must pass for this release before it is installed (backlog 23).
 validate_release() {
     local output
-    output=$(sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh validate' bash "$product")
+    output=$(sudo -n -H -u "$service_user" bash -c 'cd "$1" && exec bash ./deploy.sh validate "${@:2}"' bash "$product" "${environment_option[@]}")
     printf '%s\n' "$output"
     [[ $output == *"[OK] validated $bundle;"* ]] || { echo "FAIL: validate did not pass for $bundle" >&2; return 1; }
 }
@@ -183,7 +194,7 @@ install_configuration() {
     for component in $components; do
         existing=0
         if sudo -n test -e "$state/$component/config.yaml"; then existing=1; fi
-        as_product bash "$product/deploy.sh" init-config "$component"
+        as_product bash "$product/deploy.sh" init-config "$component" "${environment_option[@]}"
         # The component that accepts routes is the gateway; edit its new config first.
         if [[ $existing == 0 ]] && as_product python3 -c 'import sys, yaml; sys.exit("routes" not in yaml.safe_load(open(sys.argv[1]))["accepts"])' "$product/bundle.yaml"; then
         as_product python3 - "$state/$component/config.yaml" "$prod_ip" "$prod_host" "$port" <<'CONFIG'
@@ -562,8 +573,8 @@ config_layers() {
     local mode=$1 expected=defaults
     local -a run_python=(python3)
     if [[ $mode == prod ]]; then run_python=(as_product python3); fi
-    # Scenario input written by the app1 upgrade step: that release is built
-    # for an environment that overrides the marker (seed_upgrade.py, backlog 84).
+    # Scenario input written by the app1 upgrade step: that release is deployed
+    # with a target environment file that overrides the marker (backlog 85).
     if [[ $mode == prod && -f $base/expected-app1-layer ]]; then
         expected=$(cat "$base/expected-app1-layer")
     fi
@@ -1203,36 +1214,12 @@ renamed-dev-down)
     test -z "$output"
     ;;
 bundle-list) cat "$src/dist/current-bundles.txt";;
-whoami-bundle)
-    cd "$src"
-    output=$(git status --porcelain)
-    test -z "$output"
-    # Backlog 85: the demo's build environment with app3, config/whoami.yaml.
-    ./build-bundle.sh --environment whoami
-    mapfile -t listed < dist/whoami/current-bundles.txt
-    built=()
-    for name in "${listed[@]}"; do
-        [[ $name =~ ^"$product_name"-(platform|identity|app3)-[0-9]+\.[0-9]+\.[0-9]+-offline\.tar\.gz$ ]]
-        built+=("${BASH_REMATCH[1]}")
-        (cd dist/whoami && sha256sum -c "$name.sha256")
-    done
-    # Exactly the selected components; app1, app2 and help get no bundle.
-    test "${built[*]}" = 'platform identity app3'
-    # Identity's descriptor carries app3's API secret from the overrides only.
-    identity=${listed[1]%-offline.tar.gz}
-    tar -xzOf "dist/whoami/${listed[1]}" "$identity/bundle.yaml" | python3 -c '
-import sys, yaml
-expected = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
-if yaml.safe_load(sys.stdin)["api_secrets"] != expected:
-    raise SystemExit("FAIL: identity bundle lacks the app3 API secret line")
-'
-    # The release RPM transport (release-rpm) takes the archives from dist/;
-    # only the listed archives, their checksums and signatures.
-    for name in "${listed[@]}"; do cp dist/whoami/"$name" dist/whoami/"$name".* dist/; done
-    cat build/bundle-whoami/"$product_name"-*/images/images.txt
-    echo 'PASS: whoami environment: platform, identity and app3 only; app3 registered'
+whoami-environment)
+    # Backlog 85: the demo's environment file with app3's registration, on
+    # the target as the runtime account (the manual's step 6).
+    place_environment whoami < "$base/whoami.yaml"
+    echo 'PASS: whoami environment file placed in the state directory'
     ;;
-whoami-bundle-list) cat "$src/dist/whoami/current-bundles.txt";;
 whoami-api-registration)
     # Identity received app3's own secret through the platform (backlog 85):
     # the expected value is app3's credential, not what the product rendered.
@@ -1729,10 +1716,22 @@ HELP_ALONE
 upgrade)
     prepare_release
     old_release="$release_root/$product_name-$bundle-$old_version"
+    if [[ $bundle == app1 ]]; then
+        # Backlog 85: the neutral app1 release deployed with a target
+        # environment file that overrides its marker; later installs of this
+        # run use the same file (environment_option).
+        place_environment lab <<'LAB_ENVIRONMENT'
+components: [platform, identity, app1, app2, help]
+overrides:
+  app1:
+    ENVIRONMENT:
+      backend:
+        DEMO_CONFIG_LAYER: environment-lab
+LAB_ENVIRONMENT
+        printf '%s\n' environment-lab > "$base/expected-app1-layer"
+    fi
     validate_release
     install_checked
-    # This release carries the environment override (seed_upgrade.py LAYER).
-    if [[ $bundle == app1 ]]; then printf '%s\n' environment-lab > "$base/expected-app1-layer"; fi
     healthy
     if [[ $bundle == app1 ]]; then seed_content prod release-v2; fi
     echo 'PASS: upgraded and healthy; old release/trust retained until controller e2e checks pass'
@@ -2799,8 +2798,10 @@ rpms)
     # bundles just built. DEV is the build machine and may install rpm-build.
     command -v rpmbuild >/dev/null || sudo -n dnf -y -q install rpm-build
     cd "$src"
-    ./build-rpms.sh platform help --tools
-    ls -l dist/rpm
+    ./build-rpms.sh platform help
+    # The delivery (backlog 85): exactly these two release RPMs and the tools.
+    test "$(cd dist/delivery && ls | sort | tr '\n' ' ')" = "$product_name-help-$(cat components/help/VERSION)-$(cat components/help/VERSION)-1.noarch.rpm $product_name-platform-$(cat components/platform/VERSION)-$(cat components/platform/VERSION)-1.noarch.rpm $product_name-tools-$(cat tools/VERSION)-1.noarch.rpm "
+    ls -l dist/delivery
     ;;
 admin-baseline) lab_host_baseline;;
 admin-medium)

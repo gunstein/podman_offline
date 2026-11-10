@@ -357,15 +357,11 @@ class ProductFixture(DeployFixture):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
 
-    def build_and_unpack(self, environment_name=None):
-        """Build every catalog bundle, then unpack them where no source exists.
-
-        environment_name builds with ./build-bundle.sh --environment, from
-        dist/<name>/.
-        """
+    def build_and_unpack(self):
+        """Build every catalog bundle, then unpack them where no source exists."""
         self.use_root(self.source)
-        bundle.build(environment_name=environment_name)
-        dist = self.source / "dist" / (environment_name or "")
+        bundle.build()
+        dist = self.source / "dist"
         current = (dist / "current-bundles.txt").read_text().split()
         self.releases.mkdir(exist_ok=True)
         unpacked = {}
@@ -380,16 +376,28 @@ class ProductFixture(DeployFixture):
             unpacked[deploy.catalog.load_bundle_descriptor(release)["name"]] = release
         return unpacked
 
-    def install(self, release, configure=None):
-        """init-config, optional operator edit, then install from an unpacked release."""
+    def install(self, release, configure=None, environment_name=None):
+        """init-config, optional operator edit, then install from an unpacked release.
+
+        environment_name deploys with the target environment file
+        state/<environment_name>.yaml (place_environment).
+        """
         self.use_root(release)
         name = deploy.bundle_descriptor()["name"]
-        deploy.init_config(name)
+        deploy.init_config(name, environment_name=environment_name)
         if configure:
             configure(common.STATE / name)
         self.process.reset_mock()
-        deploy.install()
+        deploy.install(environment_name)
         return self.restarts()
+
+    def place_environment(self, name, text):
+        """The operator's environment file on the target, state/<name>.yaml (0600)."""
+        path = common.STATE / (name + ".yaml")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o600)
+        return path
 
     def files_under(self, directory):
         return sorted(

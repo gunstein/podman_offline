@@ -54,25 +54,63 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
-## 85. Select the components of a build environment
+## 85. Select the components of a target environment
 
-Status: **implemented (2026-11-10); real Podman/systemd verification
-outstanding** (requirement: product owner, 2026-11-09). It builds on
-[item 84](#84-environment-specific-container-environment-overrides), which
-is implemented and lab-verified on `9c85e2f`. Product tests
-(`tests/platform_tests/test_environment_components.py`, the demo tests) and
-harness tests pass; the `--whoami` scenario now builds the demo's
-`config/whoami.yaml` and checks the selection on DEV and app3's registration
-on PROD, but has not run on the lab. Implementation notes: the integration
-points listed under "Planning and simplicity" were as described on
-`e822637`; `guarded_directories` keeps guarding every catalog ID (it needs
-only `catalog.catalog_components`); the operator manual gained one row,
-"Remove a component a delivery no longer contains" (the release's own
-`./deploy.sh uninstall`, since the runtime command has no uninstall); the
-renamed-product generator drops the demo's build environments and app3's
-lines from its `dev.yaml.example`.
+Status: **implemented, revised model (2026-11-10); real Podman/systemd
+verification outstanding**. Product tests
+(`tests/platform_tests/test_environment_components.py`,
+`test_environment_overrides.py`, `test_runtime.py`, the demo tests) and
+harness tests pass. The `--whoami`, normal (app1 upgrade with the lab
+environment) and `--rpm-manual` scenarios exercise it but have not run on
+the lab; the `9c85e2f` runs in [RESULTS](acceptance/RESULTS.md) predate this
+model. It builds on
+[item 84](#84-environment-specific-container-environment-overrides).
 
-**Decisions after the review (product owner, 2026-11-10):**
+**Revised decision (product owner with human reviewers, 2026-11-10).**
+Component selection and environment overrides move from the bundle build to
+deployment on the target. This replaces the build-time model recorded
+below; sections that describe the build-time model are marked
+"Superseded".
+
+1. Bundles and RPMs are environment-neutral. A supplier delivers all
+   components or only some.
+2. The operator places the environment file
+   `/var/lib/<product>/state/<name>.yaml` on the target (runtime user,
+   mode 0600). It lives outside the release trees, so it survives upgrades,
+   RPM installation and release retirement. `components:` is required there;
+   `overrides:` keeps item 84's meaning. An override of a component outside
+   `components:` is refused.
+3. An explicit command applies it: `<product> --environment <name>`. Plain
+   `<product>` keeps its behavior (every installed newest release, no
+   overrides); a site that always uses one environment puts the command in
+   its own script. The selection is not remembered.
+4. Before any change the command checks that every listed component and
+   every dependency has an installed release package in a compatible
+   version, that every dependency is listed, and that no listed component
+   was uninstalled on purpose (stop; the operator removes it from the file
+   or installs it with `<product> --environment <name> <component>`). Then
+   every listed release runs `./deploy.sh check-environment <name>` (the
+   file, the merged declarations and Identity's API lines, without config
+   or credentials). A missing package names the component and says the
+   administrator installs the release packages and the command is then
+   repeated. Nothing is omitted, fetched or added silently.
+5. Components outside `components:` are not deployed, stopped or
+   uninstalled. Removing one stays the release's own `./deploy.sh
+   uninstall` with the existing dependency, registration and data-retention
+   rules; the uninstall record (decision 1 below) keeps it out of plain
+   `<product>` runs.
+6. API roles are derived on the target: Identity's `api_secrets` come from
+   its merged `ENVIRONMENT` with the listed components, and another
+   component is an API exactly when the installed Identity registers it
+   (`catalog.environment_descriptor`). The bundle descriptor carries the
+   catalog's `identity` for that. A bundle's own `apis`/`accepts` cannot be
+   reused, because they depend on the environment.
+7. Deliveries: `./build-rpms.sh [component ...]` writes `dist/delivery/`
+   with exactly that run's RPMs and the tools RPM (decision 2 below).
+8. The dev workflow (`config/dev.yaml`, its `overrides`) is unchanged.
+
+**Decisions after the first review (product owner, 2026-11-10), still in
+force:**
 
 1. An explicit uninstall is remembered in state: `deploy.sh uninstall`
    writes `state/uninstalled/<component>` (the removed version), `status
@@ -84,22 +122,25 @@ lines from its `dev.yaml.example`.
    An unfinished uninstall is never reinstalled by the runtime command. The
    runtime command reads `state/uninstalled/` itself: its status report may
    come from an older release that does not know the record.
-2. A delivery is `dist/<environment>/delivery/`: every `./build-rpms.sh
-   --environment` run writes it again with exactly the selected components'
-   current RPMs and the current tools RPM, and the supplier delivers that
-   directory. `dist/<environment>/rpm/` keeps every RPM ever built (one
-   version has one content); the administrator command installs every
-   product RPM of the directory it is given, so delivering `rpm/` after a
-   smaller set would have reinstalled an excluded component. A reused RPM
+2. A delivery is `dist/delivery/` (revised from `dist/<environment>/delivery/`):
+   every `./build-rpms.sh` run writes it again with exactly the chosen
+   components' current RPMs and the current tools RPM, and the supplier
+   delivers that directory. `dist/rpm/` keeps every RPM ever built (one
+   version has one content) and is not delivered: the administrator command
+   installs every product RPM of the directory it is given. A reused RPM
    is delivered only while it wraps the component's current content
    (`<rpm>.bundle.sha256`: its `components/<id>/` files and `images.txt`, its
    descriptor without the dependency version ranges, and its images' IDs and
    layer digests; not the archive bytes, which change with every build, and
-   not a dependency's range, which a dependency's new version changes), and
-   the directory is published only when complete. Builds without an environment are unchanged (their `dist/rpm/` has the same limit for a
-   component removed from the catalog; not in this item's scope).
+   not a dependency's range, which a dependency's new version changes);
+   other content under the same version is refused ("give it a new
+   VERSION"), and the directory is published only when complete. The tools
+   RPM is checked the same way.
 
-The text below is the requirement. **Decisions (product owner, 2026-11-09):**
+The text below is the original requirement. Where it describes building for
+an environment (`./build-bundle.sh --environment`, `config/<environment>.yaml`
+in the source, `dist/<environment>/`, an optional `components:`), the
+revised decision above replaces it. **Decisions (product owner, 2026-11-09):**
 the format below (fixed top-level keys `components:` and `overrides:`,
 already in item 84), and option (a) for Identity registrations of optional
 APIs (see "Dependencies and Identity registrations"). Read the latest `main`,
@@ -114,6 +155,10 @@ item 84 `ENVIRONMENT` overrides. Both live in the same environment file; no
 component-selection file or environment catalog is added.
 
 ### Format
+
+> Superseded in part by the revised decision: the file is the target's
+> `state/<name>.yaml`, not `config/prod1.yaml`, and `components:` is required
+> there. The keys and the meaning of `overrides:` are unchanged.
 
 Two fixed top-level keys, both optional, nothing else allowed: a component
 list among component-ID keys would mix two kinds of key (a reserved name
@@ -153,7 +198,7 @@ this item.
 
 `components:` decides which components the environment's product has.
 `overrides:` keeps exactly item 84's meaning (existing behavior, see item 84
-and [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)):
+and [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file)):
 for each selected component it is merged into the `ENVIRONMENT` of that
 component's `config.defaults.yaml`. A variable with the same name replaces
 the common value, a new variable is added, every other variable stays;
@@ -208,6 +253,12 @@ In prod2, app2's `backend` gets `Logging__LogLevel__Default: Debug`
 
 ### Component selection
 
+> Superseded in part: the selection is applied on the target by
+> `<product> --environment <name>`, against the installed release packages
+> (`tools/runtime.py` `environment_releases`), not at build time. Unknown,
+> duplicate and empty lists, missing dependencies and overrides outside the
+> set are still refused; "omitted = the whole catalog" no longer applies.
+
 - `bundles.yaml` stays the source catalog of available components and the
   gateway/Identity roles.
 - `components:` is a list of catalog IDs. Omitted: the whole catalog. An
@@ -228,6 +279,11 @@ Validate the source catalog's structure first, then derive and validate the
 effective product from the selected components only.
 
 ### Dependencies and Identity registrations
+
+> Still in force: decision (a), registrations of optional APIs in the
+> environments that include them. Superseded: "a build without
+> `--environment`" below; bundles are neutral, and the API roles are derived
+> on the target (`catalog.environment_descriptor`).
 
 Analysis on the current code: `catalog.api_secret_mapping` reads each
 component's foreign secret lines (`environment.foreign_lines`). Identity
@@ -265,6 +321,10 @@ an environment.
 
 ### Build behavior
 
+> Superseded by the revised decision: there is no environment build,
+> no `dist/<environment>/` and no `current-bundles.txt`. `./build-rpms.sh
+> [component ...]` writes `dist/delivery/` (decision 2 above).
+
 `./build-bundle.sh --environment prod1` builds the whole prod1 set;
 `./build-bundle.sh --environment prod1 app1` builds only app1's bundle
 within prod1's product (its dependencies stay part of the model). A partial
@@ -291,6 +351,9 @@ bundles stay usable offline without the source catalog or environment file.
 
 ### Production lifecycle
 
+> Still in force, with "a later delivery of that environment" read as "a
+> smaller environment file on the target".
+
 Selection at build time never uninstalls anything on a target. If app1 was
 installed and a later delivery of that environment omits it, removing app1
 stays an explicit uninstall (`deploy.sh uninstall app1`, with the existing
@@ -305,6 +368,13 @@ so the API is uninstalled before the smaller environment's Identity is
 installed; the manual names that order.
 
 ### Verification
+
+> Superseded where it names builds; the revised model is covered by
+> `test_environment_overrides.py` (two environments on one bundle, target
+> API registration, the same credential on both sides, refusal before
+> changes, the protection against dropping an installed API, retry) and
+> `test_environment_components.py` (selected sets, a smaller environment,
+> refused releases, deliveries), plus `test_runtime.py` for the command.
 
 Item 84's tests (merge, null, case, containers, compile, isolated install)
 stay as they are and are not repeated here. Extend the existing fixtures and
@@ -370,29 +440,25 @@ Integration points on `e822637` (recheck before starting):
 
 ## 84. Environment-specific container environment overrides
 
-Status: **implemented and lab-verified on `9c85e2f`** (code review approved
-2026-11-09; agreed product requirement, high priority, product owner
-2026-11-09). The fixed matrix and both `--rpm-manual` runs passed CLEAN on
-`9c85e2f`, including the dev probe (`acceptance/environment_update_test.py`)
-and the PROD app1 upgrade built for the environment `lab`
-(`acceptance/seed_upgrade.py`, `config_layers prod`); see
-[RESULTS](acceptance/RESULTS.md). Local tests only:
-`./build-rpms.sh --environment` with real `rpmbuild` and an interrupted
-install of an environment-built release. The contract is in
-[COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml).
-Implementation notes, checked against `8cc668f`: the functions named below
-were unchanged since `8b7161b`; `./build-rpms.sh` (`rpms.py`) is new and
-takes `--environment`. The build checks only the overridden components'
-setting-independent declarations (the common ones keep their install-time
-checks, so a build without `--environment` is unchanged); container checks
-there need literal container names. Review fixes (2026-11-09): placeholder
-syntax, client settings and generated Secret names checked at build; empty
-mappings keep their names for the unknown-name checks; a variable name that
-is YAML null is refused; `--environment` counted in both spellings; the
-compiled file escapes non-ASCII text; `overrides` refused as a setting;
-an empty container entry outside the merged ENVIRONMENT in a component with
-a setting-named container must name exactly one literal container, because
-it is not compiled and install could never check it.
+Status: **implemented and lab-verified on `9c85e2f` for the build-time
+model; production application revised by
+[item 85](#85-select-the-components-of-a-target-environment)** (code review
+approved 2026-11-09; agreed product requirement, high priority, product owner
+2026-11-09). The `9c85e2f` matrix and `--rpm-manual` runs passed CLEAN with
+overrides compiled into environment bundles; see
+[RESULTS](acceptance/RESULTS.md). **Revised 2026-11-10 (product owner with
+human reviewers):** bundles no longer carry overrides. In production the
+overrides come from the target's environment file
+`/var/lib/<product>/state/<name>.yaml` and are applied by `<product>
+--environment <name>` (`deploy.sh install|validate|init-config --environment
+<name>`), at the same merge point: per variable over the release's
+`ENVIRONMENT`. In dev, `config/dev.yaml`'s `overrides` block is unchanged.
+The merge, null, case, container and `envFrom` rules below stay in force;
+the sections "Build interface and artifact layout" and "Compile the
+overrides into the bundle", and the build parts of the validation and
+acceptance sections, are superseded. Real Podman/systemd verification of the
+target application is outstanding (item 85). The contract is in
+[COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file).
 The analysis below is based on `8b7161b`. Read the latest `main`, [AGENTS.md](AGENTS.md),
 [the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
 [COMPONENTS.md](docs/COMPONENTS.md) and this item before starting.
@@ -407,7 +473,7 @@ configuration this requirement adds; nothing else is added.
 
 **Format decision (product owner, 2026-11-09):** an environment file has
 fixed top-level keys only: `overrides:` (this item) and `components:`
-([item 85](#85-select-the-components-of-a-build-environment), the follow-up
+([item 85](#85-select-the-components-of-a-target-environment), the follow-up
 that selects the environment's components). This item implements
 `overrides:` and refuses every other top-level key, `components:`
 included, with a message that item 85 is not implemented; item 85 then
@@ -549,6 +615,11 @@ null to the text `"null"`.
 
 ### Build interface and artifact layout
 
+> Superseded by item 85's revised decision: there is no
+> `./build-bundle.sh --environment`, no `config/<environment>.yaml` in the
+> source and no `dist/<environment>/`. The environment file is placed on the
+> target and applied by `<product> --environment <name>`.
+
 Add one optional argument to the existing build command:
 
 ```sh
@@ -591,6 +662,10 @@ content to an existing installation requires a new component version.
 Document this distinction with one short example.
 
 ### Compile the overrides into the bundle
+
+> Superseded by item 85's revised decision: bundles carry only the
+> release's declarations; the overrides are read from the target's
+> environment file at `init-config`, `validate` and `install`.
 
 The selected environment must be fully represented in the bundle's existing
 component `config.defaults.yaml`, under `ENVIRONMENT`.
@@ -673,6 +748,10 @@ Use ordinary dictionaries and straightforward control flow. Avoid a general
 YAML patch engine, overlay framework or configurable merge strategy.
 
 ### Validation across the lifecycle
+
+> Build-time checks below are superseded: the same checks run on the
+> target in `./deploy.sh check-environment <name>` before the runtime
+> command changes anything, and again at `validate`/`install`.
 
 For dev, both `deploy.sh validate` and `prepare` must see the new
 overrides. Existing credential preparation callers must see the same dev

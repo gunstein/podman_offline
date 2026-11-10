@@ -32,7 +32,10 @@ STEPS = {
     "credentials": "admin",
     "umount": "substitute",  # nothing is mounted
     "credentials-scp": "laptop",  # the controller is the runtime user's laptop
+    "environment-scp": "laptop",  # backlog 85: the operator's environment file
     "runtime": "runtime",
+    "runtime-environment": "runtime",
+    "uninstall": "runtime",
     "tools-version": "admin",
     "tools-reinstall": "admin",
     "help-journal": "admin",
@@ -191,19 +194,27 @@ def driver_script(line, answers=(), stop=""):
     )
 
 
-def run_step(run, step, values, answers=(), stop="", expect=0, component=None):
+def run_step(
+    run, step, values, answers=(), stop="", expect=0, component=None, fill=None
+):
     """Run one manual step as its role; return the printed output.
 
     expect is the exit status the scenario requires (0, or 1 for a documented
     stop, 129 for a deliberate interruption). component runs the documented
-    `myproduct <component>` form of the runtime step for that component.
+    `myproduct <component>` form of a runtime step for that component. fill
+    replaces the block's own placeholders the manual tells the operator to
+    replace (step 9: <component> and <version>); each must be in the block.
     """
     line = command(step, values)
     if component is not None:
         documented = "`" + blocks()[step] + " <component>`"
-        if step != "runtime" or documented not in MANUAL.read_text():
+        if not step.startswith("runtime") or documented not in MANUAL.read_text():
             raise ValueError("The manual does not document " + documented)
         line += " " + component
+    for placeholder, value in (fill or {}).items():
+        if placeholder not in line:
+            raise ValueError(step + " has no " + placeholder)
+        line = line.replace(placeholder, value)
     role = STEPS[step]
     if role == "runtime":
         target = run.operator_ssh
@@ -492,9 +503,18 @@ def execute(run, strict=False):
 
         run.step(name, action)
 
-    def runtime(name, check=None, answers=(), expect=0, stop="", component=None):
+    def runtime(
+        name,
+        check=None,
+        answers=(),
+        expect=0,
+        stop="",
+        component=None,
+        step="runtime",
+        fill=None,
+    ):
         def action():
-            output = run_step(run, "runtime", values, answers, stop, expect, component)
+            output = run_step(run, step, values, answers, stop, expect, component, fill)
             if check:
                 check(output)
 
@@ -593,7 +613,7 @@ def execute(run, strict=False):
         lambda: run.guest("DEV", "help-upgrade-bundle", new, bundle="help"),
     )
     run.step("08-help-rpm", lambda: run.guest("DEV", "release-rpm", new, bundle="help"))
-    run.step("08-transfer-rpms", run.transfer_rpms)
+    run.step("08-transfer-rpms", lambda: run.transfer_rpms("dist/rpm"))
     admin(
         "09-manual-admin-upgrade",
         lambda out: check_admin_upgrade(out, values, new, old),
@@ -616,6 +636,39 @@ def execute(run, strict=False):
     )
     admin("09-manual-admin-retire-repeat",
           lambda out: check_admin_repeat(out, values, upgraded))  # fmt: skip
+
+    # Backlog 85: the environment file (step 6), the environment form of step
+    # 7, an uninstall (step 9), the documented stop and the reinstall.
+    def environment_scp():
+        """The supplier's file in the laptop folder, then the manual's scp line."""
+        environment = run.private / "environment"
+        environment.mkdir(exist_ok=True)
+        (environment / "prod1.yaml").write_text("components: [platform, help]\n")
+        return laptop_step(run, "environment-scp", values, environment)
+
+    run.step("09-manual-environment-scp", environment_scp)
+
+    def checked_everywhere(out):
+        check_runtime(out, values, {}, upgraded)
+        for component in ("platform", "help"):
+            require(f"[OK] {component} fits environment prod1" in lines(out),
+                    component + " did not check the environment file")  # fmt: skip
+
+    runtime("09-manual-runtime-environment", checked_everywhere,
+            step="runtime-environment")  # fmt: skip
+    runtime("09-manual-uninstall",
+            lambda out: require("[OK] Uninstalled help; shared network retained; "
+                                "data preserved" in lines(out), "help was not uninstalled"),
+            step="uninstall", fill={"<component>": "help", "<version>": new})  # fmt: skip
+    stopped = (f"help was uninstalled but is in components: of /var/lib/{product}/state/"
+               f"prod1.yaml; remove it there, or run {product} --environment prod1 help "
+               "to install it again")  # fmt: skip
+    runtime("09-manual-runtime-environment-uninstalled",
+            lambda out: require(stopped in out, "the uninstalled help was not refused"),
+            expect=1, step="runtime-environment")  # fmt: skip
+    runtime("09-manual-runtime-environment-help",
+            lambda out: check_runtime(out, values, {"help": new}, upgraded),
+            step="runtime-environment", component="help")  # fmt: skip
     # Tools repair: damaged tools (fault injection), the documented repair.
     run.step("10-tools-damaged", lambda: run.guest("PROD", "rpm-tools-damage"))
     # The manual's symptom: a Python error instead of an ERROR: line.

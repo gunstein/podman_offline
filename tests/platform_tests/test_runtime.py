@@ -51,6 +51,7 @@ class FakeReleases:
         self.installed = {}  # component -> version completed
         self.pending = None
         self.fail = set()  # components whose install fails
+        self.check_fail = set()  # components whose check-environment fails
         self.calls = []
 
     def add(self, component, version, descriptor=None):
@@ -92,12 +93,18 @@ class FakeReleases:
                     }
                 )
             )
+        if command[0] == "check-environment":
+            return done(status=1 if component in self.check_fail else 0)
         if command[0] == "init-config":
             config = self.lib / "cedar/state" / command[1] / "config.yaml"
             config.parent.mkdir(parents=True, exist_ok=True)
-            settings = dict(item.split("=", 1) for item in command[3::2])
+            settings = dict(
+                command[index + 1].split("=", 1)
+                for index, item in enumerate(command)
+                if item == "--set"
+            )
             config.write_text(yaml.safe_dump(settings))
-        if command == ["install"]:
+        if command[:1] == ["install"]:
             if component in self.fail:
                 self.pending = {"operation": "install", "component": component}
                 return done(status=1)
@@ -442,3 +449,132 @@ class RuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnvironmentTests(RuntimeTests):
+    """cedar --environment <name> (backlog 85): the operator's file decides."""
+
+    def place(self, name, text):
+        path = self.lib / "cedar/state" / (name + ".yaml")
+        path.write_text(text)
+        return path
+
+    def environment_run(self, *arguments):
+        return self.run_command(
+            "--environment",
+            "prod1",
+            "--public-origin",
+            "https://shop.example:9443",
+            "--ip-address",
+            "10.0.0.5",
+            *arguments,
+        )
+
+    def test_only_the_listed_components_are_deployed_with_the_file(self):
+        self.place("prod1", "components: [web, api]\n")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        self.assertEqual(
+            self.releases.commands(),
+            [
+                "init-layout",
+                "check-environment prod1",
+                "check-environment prod1",
+                "status --json",
+                WEB_INIT.replace(
+                    "init-config web", "init-config web --environment prod1"
+                ),
+                "install --environment prod1",
+                "init-config api --environment prod1",
+                "install --environment prod1",
+                "status",
+            ],
+        )
+        self.assertNotIn("worker", [name for name, _ in self.releases.calls])
+        self.assertEqual(sorted(self.releases.installed), ["api", "web"])
+
+    def test_missing_packages_and_dependencies_change_nothing(self):
+        self.releases.add("web", "2.0.0")
+        for label, text, pattern in (
+            ("missing package", "components: [web, api, reports]\n",
+             "no release package of reports"),
+            ("incompatible", "components: [web, api]\n",
+             "api needs web 1.0.0 or newer before 2.0.0, installed: 2.0.0"),
+            ("dependency not listed", "components: [api]\n",
+             "api requires web; add web to components:"),
+            ("no components", "overrides: {}\n", "components: must list"),
+            ("repeated", "components: [web, web]\n", "components: must list"),
+        ):  # fmt: skip
+            with self.subTest(label):
+                self.place("prod1", text)
+                self.assertEqual(self.environment_run(), 1)
+                self.assertRegex(self.stderr.getvalue(), pattern)
+                self.assertEqual(self.releases.calls, [])
+                if label in ("missing package", "incompatible"):
+                    self.assertIn(
+                        "Nothing was changed. The administrator installs the cedar "
+                        "release packages (sudo cedar-admin <delivery directory>); "
+                        "then run the same command again",
+                        self.stderr.getvalue(),
+                    )
+        self.assertEqual(self.run_command("--environment", "absent"), 1)
+        self.assertIn("Missing", self.stderr.getvalue())
+        self.assertIn(
+            "absent.yaml; place the environment file there", self.stderr.getvalue()
+        )
+
+    def test_a_refused_check_stops_before_any_install(self):
+        self.place("prod1", "components: [web, api]\n")
+        self.releases.check_fail.add("api")
+        self.assertEqual(self.environment_run(), 1)
+        self.assertEqual(
+            self.releases.commands(),
+            ["init-layout", "check-environment prod1", "check-environment prod1"],
+        )
+        self.assertEqual(self.releases.installed, {})
+
+    def test_an_uninstalled_listed_component_stops_until_it_is_named(self):
+        self.place("prod1", "components: [web, api, worker]\n")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        del self.releases.installed["worker"]
+        record = self.lib / "cedar/state/uninstalled/worker"
+        record.parent.mkdir()
+        record.write_text("1.0.0\n")
+        self.assertEqual(self.environment_run(), 1)
+        self.assertIn(
+            "worker was uninstalled but is in components: of "
+            + str(self.lib / "cedar/state/prod1.yaml")
+            + "; remove it there, or run cedar --environment prod1 worker to install "
+            "it again",
+            self.stderr.getvalue(),
+        )
+        self.assertEqual(self.releases.calls, [])
+        self.assertEqual(self.environment_run("worker"), 0, self.stderr.getvalue())
+        self.assertFalse(record.exists())
+        self.assertIn(
+            ("worker", ["install", "--environment", "prod1"]), self.releases.calls
+        )
+
+    def test_a_pending_operation_outside_the_environment_stops(self):
+        self.place("prod1", "components: [web, api]\n")
+        self.releases.pending = {
+            "operation": "install",
+            "component": "worker",
+            "owners": [],
+        }
+        self.assertEqual(self.environment_run(), 1)
+        self.assertIn(
+            "The install of worker is unfinished, and worker is not in this environment",
+            self.stderr.getvalue(),
+        )
+        self.assertNotIn("install --environment prod1", self.releases.commands())
+
+    def test_identity_comes_before_the_components_it_may_register(self):
+        identity = {"requires": {}, "accepts": {}, "identity": "zed"}
+        for name in ("alpha", "zed"):
+            self.releases.add(name, "1.0.0", identity)
+        self.place("prod1", "components: [alpha, zed]\n")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        installs = [
+            name for name, command in self.releases.calls if command[0] == "install"
+        ]
+        self.assertEqual(installs, ["zed", "alpha"])

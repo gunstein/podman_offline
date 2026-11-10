@@ -5,7 +5,8 @@ Phase 1, within the product owner's decisions of 2026-11-01 (BACKLOG.md item
 /usr/libexec/<product>-tools/runtime.py; the command is /usr/bin/<product>.
 The runtime account runs it in its own login (console or SSH), never root:
 
-    <product> [<component>] [--public-origin <url>] [--ip-address <address>]
+    <product> [--environment <environment>] [<component>]
+              [--public-origin <url>] [--ip-address <address>]
 
 It uses the releases <product>-admin installed, the newest of each component,
 in dependency order, each through its own deploy.sh (no code is shared
@@ -28,6 +29,17 @@ across releases):
 7. A warning names each component that is not installed now but has
    delivered files waiting in incoming/ (<product> <component> takes them).
 8. deploy.sh status.
+
+With --environment <environment> (backlog 85) the operator's file
+/var/lib/<product>/state/<environment>.yaml decides the components: only
+those listed are deployed, each with the file's overrides (init-config and
+install get --environment). Before anything changes: every listed component
+and every dependency of one must have an installed release package in a
+compatible version, a dependency must be listed too, a listed component may
+not have been uninstalled on purpose (unless named), and every listed
+release checks the file (deploy.sh check-environment). Components not
+listed are left as they are. Nothing about the environment is remembered:
+the file is read again by every run and by every deploy.sh it calls.
 """
 
 import json
@@ -80,7 +92,12 @@ def releases(product):
 
 
 def install_order(product, found):
-    """Components in dependency order; a missing dependency stops."""
+    """Components in dependency order; a missing dependency stops.
+
+    Identity (each descriptor names it) comes before every component it does
+    not itself depend on: an environment may make any of them an API of
+    Identity, whose installed mapping that component's install reads.
+    """
     requires = {}
     for component, (_, _, descriptor) in found.items():
         requires[component] = set(descriptor["requires"])
@@ -89,6 +106,18 @@ def install_order(product, found):
                 f"{component} requires {dependency}, which is not installed; the "
                 f"administrator delivers the {product}-{dependency} RPM"
             )
+    identities = {descriptor.get("identity") for _, _, descriptor in found.values()}
+    identity = next(iter(identities)) if len(identities) == 1 else None
+    if identity in found:
+        before, pending = set(), [identity]
+        while pending:
+            for dependency in requires[pending.pop()]:
+                if dependency not in before:
+                    before.add(dependency)
+                    pending.append(dependency)
+        for component, needed in requires.items():
+            if component != identity and component not in before:
+                needed.add(identity)
     order = []
     while len(order) < len(requires):
         ready = sorted(
@@ -169,7 +198,7 @@ def selected(report, order, versions, component, product, removed):
         raise ToolError(
             f"The uninstall of {pending['component']} is unfinished; run the same "
             "./deploy.sh uninstall command in its release again (with --delete-data "
-            'if you gave it); see the manual, "Remove a component"'
+            'if you gave it), see "Remove a component" in the manual'
         )
     if component:
         return [component]
@@ -303,9 +332,95 @@ def move_credentials(product, component):
         )
 
 
+def environment_components(product, name):
+    """components: of state/<name>.yaml; each listed release checks the rest.
+
+    Only the list is read here, to know which releases to use; the file's
+    structure and overrides are the releases' to check (check-environment).
+    """
+    path = host.LIB / product / "state" / (name + ".yaml")
+    if not host.ENVIRONMENT.fullmatch(name):
+        raise ToolError(
+            f"--environment {name!r}: use lowercase letters, digits and inner hyphens"
+        )
+    if path.is_symlink() or not path.is_file():
+        raise ToolError(
+            f"Missing {path}; place the environment file there as {product}'s "
+            'runtime user, see "Place the environment file" in the manual'
+        )
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        raise ToolError(f"{path} is not valid YAML; correct it and run again") from None
+    components = document.get("components") if isinstance(document, dict) else None
+    if (
+        not isinstance(components, list)
+        or not components
+        or not all(isinstance(c, str) and host.ID.fullmatch(c) for c in components)
+        or len(set(components)) != len(components)
+    ):
+        raise ToolError(
+            f"{path}: components: must list the components of this installation, "
+            "each once"
+        )
+    return path, components
+
+
+def compatible(version, requirement):
+    """version within requirement's inclusive min and exclusive before."""
+    key = host.version_key
+    return key(requirement["min"]) <= key(version) < key(requirement["before"])
+
+
+def environment_releases(product, args, found):
+    """The listed components' releases, checked before anything changes."""
+    path, components = environment_components(product, args.environment)
+    missing = sorted(name for name in components if name not in found)
+    problems = []
+    for name in components:
+        if name not in found:
+            continue
+        for dependency, requirement in sorted(found[name][2]["requires"].items()):
+            if dependency not in components:
+                raise ToolError(
+                    f"{path}: {name} requires {dependency}; add {dependency} to "
+                    "components:, then run the same command again"
+                )
+            if dependency in found and not compatible(
+                found[dependency][0].version, requirement
+            ):
+                problems.append(
+                    f"{name} needs {dependency} {requirement['min']} or newer before "
+                    f"{requirement['before']}, installed: {found[dependency][0].version}"
+                )
+    if missing or problems:
+        named = ["no release package of " + ", ".join(missing)] if missing else []
+        raise ToolError(
+            "; ".join(named + problems)
+            + f". Nothing was changed. The administrator installs the {product} "
+            f"release packages (sudo {product}-admin <delivery directory>); then run "
+            "the same command again"
+        )
+    if args.component and args.component not in components:
+        raise ToolError(f"{args.component} is not in components: of {path}")
+    removed = uninstalled(host.LIB / product / "state")
+    for name in components:
+        if name in removed and name != args.component:
+            raise ToolError(
+                f"{name} was uninstalled but is in components: of {path}; remove it "
+                f"there, or run {product} --environment {args.environment} {name} to "
+                "install it again"
+            )
+    return {name: found[name] for name in components}
+
+
 def install(product, args):
     check_account(product)
     found = releases(product)
+    option = []
+    if args.environment:
+        found = environment_releases(product, args, found)
+        option = ["--environment", args.environment]
     order = install_order(product, found)
     if args.component and args.component not in found:
         raise ToolError(
@@ -314,11 +429,20 @@ def install(product, args):
         )
     first = found[order[0]][1]
     deployed(first, "init-layout")
+    if args.environment:
+        # Every listed release checks the file before the first change.
+        for component in order:
+            deployed(found[component][1], "check-environment", args.environment)
     versions = {name: found[name][0].version for name in order}
     removed = uninstalled(host.LIB / product / "state")
-    targets = selected(
-        status_report(first), order, versions, args.component, product, removed
-    )
+    report = status_report(first)
+    pending = report["pending"]
+    if args.environment and pending and pending["component"] not in order:
+        raise ToolError(
+            f"The {pending['operation']} of {pending['component']} is unfinished, and "
+            f"{pending['component']} is not in this environment; finish it first"
+        )
+    targets = selected(report, order, versions, args.component, product, removed)
     for component in targets:
         package, path, descriptor = found[component]
         config = host.LIB / product / "state" / component / "config.yaml"
@@ -326,7 +450,7 @@ def install(product, args):
             settings = []
             if "routes" in descriptor["accepts"]:
                 settings = gateway_answers(product, args)
-            command = ["init-config", component]
+            command = ["init-config", component] + option
             for setting in settings:
                 command += ["--set", setting]
             deployed(path, *command)
@@ -338,7 +462,7 @@ def install(product, args):
                 f"to a new config. Edit it, then run {product} {component}"
             )
         move_credentials(product, component)
-        deployed(path, "install")
+        deployed(path, "install", *option)
         log.info(f"[OK] {component} {package.version} installed")
     # Delivered credentials are taken only by an install of their component;
     # say so instead of leaving them unused without a word.
@@ -360,15 +484,22 @@ def parser(product):
     result = arguments.Parser(
         prog=product,
         usage=(
-            f"{product} [<component>] [--public-origin <url>] [--ip-address <address>] "
-            "[--verbose]"
+            f"{product} [--environment <environment>] [<component>] "
+            "[--public-origin <url>] [--ip-address <address>] [--verbose]"
         ),
         description=(
             f"Install the installed {product} releases as the runtime account, in "
-            "dependency order; with <component>, install that one again with its "
-            "current config. Repeat the same command after a stop."
+            "dependency order; with --environment, the components and overrides of "
+            f"/var/lib/{product}/state/<environment>.yaml; with <component>, install "
+            "that one again with its current config. Repeat the same command after a "
+            "stop."
         ),
         allow_abbrev=False,
+    )
+    result.add_argument(
+        "--environment",
+        metavar="<environment>",
+        help=f"deploy the environment file /var/lib/{product}/state/<environment>.yaml",
     )
     result.add_argument("component", nargs="?", metavar="<component>")
     result.add_argument(
@@ -391,12 +522,18 @@ def main(command_line=None):
     product = host.product_name()
     try:
         args = arguments.parse(
-            parser(product), sys.argv[1:] if command_line is None else command_line
+            parser(product),
+            sys.argv[1:] if command_line is None else command_line,
+            flags=("--environment",),
         )
     except arguments.UsageError as error:
         return error.code
     output.configure(verbose=args.verbose, product=product)
-    action = " ".join([product] + ([args.component] if args.component else []))
+    action = " ".join(
+        [product]
+        + (["--environment", args.environment] if args.environment else [])
+        + ([args.component] if args.component else [])
+    )
     output.audit(action + ": started")
     try:
         install(product, args)

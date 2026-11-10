@@ -67,8 +67,11 @@ missing and who fixes it, so you can also start and let it tell you.
   packages.
 - **The delivery** from the supplier, on a medium or copied to the server:
   - `myproduct-tools-<version>-1.noarch.rpm` (the commands),
-  - one `myproduct-<component>-<version>-<version>-1.noarch.rpm` per component,
-    already built by the supplier for your environment (you select nothing),
+  - one `myproduct-<component>-<version>-<version>-1.noarch.rpm` per component
+    that this server needs (not necessarily every component of the product),
+  - if the supplier made one for this server, an **environment file**, for
+    example `prod1.yaml`: which components this server runs and a few of
+    their settings for this server (step 6),
   - the credentials (certificates, keys, passwords), in folders named
     `<component>/credentials/...`, for example
     `platform/credentials/web/web.crt` and `platform/credentials/web/web.key`.
@@ -165,7 +168,7 @@ sudo myproduct-admin --credentials /mnt
 `[OK] credentials are in /var/lib/myproduct/incoming for produser` and
 `PASS: myproduct-admin completed`. The files are copied for the runtime user;
 their contents are never shown. A repeat says `is already there`. The
-runtime user's next installation of that component takes them (step 6); for
+runtime user's next installation of that component takes them (step 7); for
 a component that is already installed, that is `myproduct <component>`.
 
 Then remove the medium:
@@ -193,14 +196,49 @@ Log out of the administrator account (`exit`), then log in as `produser`:
 
 Do not use `su` or `sudo` to become the runtime user.
 
-## 6. Install the components
+## 6. Place the environment file
 
-**Server, runtime user.**
+Only when your delivery has an environment file (for example `prod1.yaml`);
+otherwise go on with step 7.
+
+**Laptop, runtime user**, in the laptop folder that holds the file:
+
+<!-- operator: environment-scp -->
+```sh
+scp prod1.yaml produser@server1.example.org:/var/lib/myproduct/state/
+```
+
+The file is then `/var/lib/myproduct/state/prod1.yaml`, owned by `produser`;
+the folder `/var/lib/myproduct/state` can be read only by `produser`. At the
+console without a laptop, create the same file there as the runtime user
+with an editor, for example `vi /var/lib/myproduct/state/prod1.yaml`, and
+type what the supplier gave you. The file is yours: installing a delivery,
+upgrades and the removal of old releases never change or remove it. To
+change a setting in it later, edit it and run step 7 again.
+
+## 7. Install the components
+
+**Server, runtime user.** Without an environment file:
 
 <!-- operator: runtime -->
 ```sh
 myproduct
 ```
+
+With the environment file of step 6:
+
+<!-- operator: runtime-environment -->
+```sh
+myproduct --environment prod1
+```
+
+Use this form every time from now on, also after an upgrade and for one
+component (`myproduct --environment prod1 <component>`). It installs only the
+components the file lists, with its settings; any other component is left as
+it is. Before it changes anything it checks that every listed component and
+what it needs is installed as a release package; if not, it names what is
+missing and changes nothing: the administrator installs the missing packages
+(step 3), then run the same command again.
 
 The first time it asks two questions:
 
@@ -219,16 +257,40 @@ installation takes a few minutes.
 Open `https://server1.example.org:8443/` in a browser on a computer that
 trusts your organisation's certificates to check it from the user's side.
 
-## 7. Everyday tasks
+## 8. Everyday tasks
 
 | Task | Who | What to do |
 | --- | --- | --- |
-| Check the status | runtime user | `myproduct`. When nothing is new it installs nothing, restarts nothing and shows the status table. |
+| Check the status | runtime user | `myproduct` (with an environment file: `myproduct --environment prod1`). When nothing is new it installs nothing, restarts nothing and shows the status table. |
 | After a reboot | nobody | The services start by themselves. Check with `myproduct` as the runtime user. |
-| New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3, and 4 if it contains credentials; without credentials, still remove the medium (`sudo umount /mnt`). Then steps 5 and 6. Settings, credentials and data are kept, and nothing is asked again. |
-| Remove a component a delivery no longer contains | runtime user | A delivery never removes a component; it keeps running. To remove it: `cd /var/lib/myproduct/releases/myproduct-<component>-<version>` (its newest release; `ls /var/lib/myproduct/releases` lists them), then `./deploy.sh uninstall`. **Expected:** `[OK] Uninstalled <component>; shared network retained; data preserved`. Its settings, credentials and data are kept; its address in the browser and its sign-in registration stop working. Later runs of `myproduct` leave it out (`[OK] <component> was uninstalled`); `myproduct <component>` installs it again. If `myproduct` stops with `uninstall <component> first`, remove that component this way, then run `myproduct` again. |
+| New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3, and 4 if it contains credentials; without credentials, still remove the medium (`sudo umount /mnt`). Then steps 5 and 7. Settings, credentials, data and the environment file are kept, and nothing is asked again. |
+| Remove a component a delivery no longer contains | runtime user | Step 9. |
 | Remove old releases | administrator | Nothing extra: step 3 removes them once the runtime user has installed the newer version. To do it right after an upgrade, repeat step 3. |
 | Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. The HTTPS port cannot be changed after installation. |
+
+## 9. Remove a component
+
+A delivery never removes a component: it keeps running. **Server, runtime
+user.** With an environment file, first delete the component's line under
+`components:` in `/var/lib/myproduct/state/prod1.yaml` (and its part under
+`overrides:`). Then, with the component's newest release (`ls
+/var/lib/myproduct/releases` lists them), replacing `<component>` and
+`<version>`:
+
+<!-- operator: uninstall -->
+```sh
+cd /var/lib/myproduct/releases/myproduct-<component>-<version>
+./deploy.sh uninstall
+```
+
+**Expected:** `[OK] Uninstalled <component>; shared network retained; data
+preserved`. Its settings, credentials and data are kept; its address in the
+browser and its sign-in registration stop working. Later runs of `myproduct`
+leave it out (`[OK] <component> was uninstalled`); `myproduct <component>`
+(or `myproduct --environment prod1 <component>`) installs it again. If
+`myproduct` stops with `uninstall <component> first`, remove that component
+this way first, then run the same `myproduct` command again. After an
+interruption, run the same two lines again.
 
 ## If a command stops
 
@@ -253,9 +315,15 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `No <component>/credentials/ directory in /mnt` (step 4) | supplier | The medium has no credentials in the layout under "Before you begin". |
 | `This host is not prepared for myproduct` | administrator | Step 3 first. |
 | `myproduct runs as produser on this host`, or `Run myproduct as the runtime account, not as root` | you | Log in as the runtime user (step 5). |
-| `... differ from the files in /var/lib/myproduct/state/...` (step 6) | credential provider | A newly delivered credential differs from the one in use. Nothing was copied. Confirm which is right; the runtime user removes the wrong copy in `/var/lib/myproduct/incoming/...`. |
-| `status reports an incomplete or inactive component` (step 6) | runtime user | Run `myproduct` again a minute later; a service may still be starting. If it stays, ask for help (see below). |
-| `deploy.sh ... stopped; fix what it names` (step 6) | runtime user | The `ERROR:` line above it names the cause. The next `myproduct` resumes the unfinished component first. |
+| `... differ from the files in /var/lib/myproduct/state/...` (step 7) | credential provider | A newly delivered credential differs from the one in use. Nothing was copied. Confirm which is right; the runtime user removes the wrong copy in `/var/lib/myproduct/incoming/...`. |
+| `status reports an incomplete or inactive component` (step 7) | runtime user | Run `myproduct` again a minute later; a service may still be starting. If it stays, ask for help (see below). |
+| `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. The next `myproduct` resumes the unfinished component first. |
+| `Missing /var/lib/myproduct/state/prod1.yaml` (step 7) | runtime user | Step 6. |
+| `no release package of ...` or `... needs ... installed: ...`, then `Nothing was changed` (step 7) | administrator | Install the delivery with the missing or matching release packages (step 3). |
+| `... requires ...; add ... to components:` (step 7) | supplier, runtime user | The environment file lacks a component another one needs; add the named line under `components:`. |
+| `... is not in components:` or `... cannot be overridden` or `... must have exactly one container named ...` (step 7) | supplier | The environment file does not fit the delivered releases; nothing was changed. Ask the supplier for a corrected file. |
+| `... was uninstalled but is in components:` (step 7) | runtime user | Delete that line from the environment file (step 9), or install the component again with the command the message names. |
+| `The uninstall of ... is unfinished` | runtime user | Run the same two lines of step 9 again. |
 | `WARNING: older releases kept ...` | administrator | Normal before the runtime user's first `myproduct`; a later step 3 removes them. If it repeats afterwards, ask for help with the reason it names; the releases are kept. |
 | `WARNING: ... holds delivered files that <component> does not use yet` | runtime user | Run the command it names, `myproduct <component>`. |
 | `... is left after removing ...` or `... has no installed release package` | administrator, supplier | Files that no package owns remain in a release folder; every later step 3 stops here until it is resolved. Ask the supplier before deleting anything. |

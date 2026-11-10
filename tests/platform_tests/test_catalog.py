@@ -314,6 +314,9 @@ class CatalogTests(unittest.TestCase):
                 "name": "app",
                 "product": "myproduct",
                 "version": "1.0.0",
+                # The catalog names no Identity here (backlog 85: every
+                # descriptor names the catalog's, for target environments).
+                "identity": None,
                 "requires": {"base": {"min": "0.4.2", "before": "0.5.0"}},
                 "public_from": "base",
                 "routes": None,
@@ -358,6 +361,7 @@ class CatalogTests(unittest.TestCase):
             "name": "app",
             "product": "myproduct",
             "version": "1.0.0",
+            "identity": None,
             "requires": {"base": {"min": "1.0.0", "before": "2.0.0"}},
             "public_from": None,
             "routes": None,

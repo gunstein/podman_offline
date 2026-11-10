@@ -175,20 +175,26 @@ class ComponentDevHarnessTests(unittest.TestCase):
         )
 
     def test_the_environment_upgrade_expects_its_override(self):
-        """After the app1 upgrade (seed_upgrade.py) only its override passes."""
-        import seed_upgrade
+        """After the app1 upgrade with its target environment, only its override passes.
 
+        The expectation and the environment file's value are the same
+        scenario input, written out in the upgrade step (backlog 85).
+        """
+        layer = "environment-lab"
         upgrade = shell_code(REMOTE, action="upgrade")
+        self.assertIn("        DEMO_CONFIG_LAYER: " + layer + "\n", upgrade)
         self.assertIn(
-            "printf '%s\\n' " + seed_upgrade.LAYER + ' > "$base/expected-app1-layer"',
-            upgrade,
+            "printf '%s\\n' " + layer + ' > "$base/expected-app1-layer"', upgrade
+        )
+        self.assertLess(
+            upgrade.index("place_environment lab"), upgrade.index("install_checked")
         )
         self.assertLess(
             upgrade.index("expected-app1-layer"), upgrade.index("    healthy")
         )
         code = guest_code("CONFIG_LAYERS")
         for rendered, verdict in (
-            (seed_upgrade.LAYER, True),
+            (layer, True),
             ("defaults", False),
         ):
             with (
@@ -207,13 +213,11 @@ class ComponentDevHarnessTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()) as output,
                 ):
                     if verdict:
-                        code["check_layers"](
-                            [path], "prod", "app1", "app2", (), seed_upgrade.LAYER
-                        )
+                        code["check_layers"]([path], "prod", "app1", "app2", (), layer)
                     else:
                         with self.assertRaisesRegex(RuntimeError, "Wrong rendered"):
                             code["check_layers"](
-                                [path], "prod", "app1", "app2", (), seed_upgrade.LAYER
+                                [path], "prod", "app1", "app2", (), layer
                             )
                 self.assertEqual("PASS:" in output.getvalue(), verdict)
 

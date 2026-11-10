@@ -15,6 +15,8 @@ from deployment import catalog
 
 REPO = Path(__file__).resolve().parents[2]
 DEMO = catalog.load_catalog(REPO)
+# The catalog's Identity, which every compiled descriptor names (backlog 85).
+IDENTITY = catalog.catalog_document(REPO)[1].get("identity")
 DEMO_COMPONENTS = tuple(DEMO)
 COMPATIBLE = {"min": "1.0.0", "before": "2.0.0"}
 
@@ -45,6 +47,7 @@ def demo_descriptor(root, name, requirement=None, version=None):
         "name": name,
         "product": "myproduct",
         "version": version or (directory / "VERSION").read_text().strip(),
+        "identity": IDENTITY,
         "requires": {
             dependency: dict(requirement or COMPATIBLE)
             for dependency in entry["requires"]

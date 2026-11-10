@@ -1,22 +1,21 @@
-"""Environment-specific ENVIRONMENT overrides (backlog 84).
+"""ENVIRONMENT overrides in dev and on the target (backlogs 84 and 85).
 
-A build environment file config/<environment>.yaml, or the reserved overrides
-block of config/dev.yaml, adds or replaces single variables of named
-containers. Expected values are written out here, never computed with the
-merge under test.
+config/dev.yaml's reserved overrides block, or a target environment file
+/var/lib/<product>/state/<environment>.yaml applied at deployment
+(deploy.sh install --environment), adds or replaces single variables of named
+containers. Bundles are built without any environment. Expected values are
+written out here, never computed with the merge under test.
 """
 
+import base64
 import copy
-import hashlib
 import io
 import shutil
-import tarfile
+import subprocess
 from contextlib import redirect_stderr, redirect_stdout
 
-import bundle
 import yaml
 from deployment import catalog, common, deploy, environment, validation
-from deployment import render as rendering
 
 from helpers.product_fixture import RENAMED, ProductFixture, pod
 
@@ -75,6 +74,14 @@ def config_maps(path):
     }
 
 
+def environment_file(components, **containers):
+    """A target environment file: its components and the first one's containers."""
+    document = {"components": components}
+    if containers:
+        document["overrides"] = {components[0]: {"ENVIRONMENT": containers}}
+    return yaml.safe_dump(document, sort_keys=False)
+
+
 class OverrideFixture(ProductFixture):
     def put(self, relative, text):
         path = self.source / relative
@@ -82,28 +89,12 @@ class OverrideFixture(ProductFixture):
         path.write_text(text)
         return path
 
-    def archive_file(self, archive, relative):
-        """One member's text from a built archive, without unpacking it."""
-        with tarfile.open(str(archive)) as tar:
-            name = archive.name[: -len("-offline.tar.gz")]
-            member = tar.extractfile(f"{name}/{relative}")
-            assert member is not None
-            return member.read().decode()
-
-    def defaults_file(self, label, text):
-        """Write text where merge_config reads it as a release's defaults."""
-        path = self.root / label / "components/shop/config.defaults.yaml"
-        path.parent.mkdir(parents=True)
-        path.write_text(text)
-        return path
-
-    def source_bytes(self):
+    def state_bytes(self):
+        """Every state file except the environment files, for "nothing changed"."""
         return {
-            str(path.relative_to(self.source)): path.read_bytes()
-            for path in self.source.rglob("*")
-            if path.is_file()
-            and path.relative_to(self.source).parts[0] not in ("dist", "build")
-            and "__pycache__" not in path.parts
+            str(path.relative_to(common.STATE)): path.read_bytes()
+            for path in common.STATE.rglob("*")
+            if path.is_file() and path.parent != common.STATE
         }
 
 
@@ -303,116 +294,41 @@ class DevOverrideTests(OverrideFixture):
                 self.assertFalse(common.BUILD.exists())
 
 
-def environment_file(**containers):
-    """config/<environment>.yaml text overriding shop's containers."""
-    return yaml.safe_dump(
-        {"overrides": {"shop": {"ENVIRONMENT": containers}}}, sort_keys=False
-    )
+PROD1 = (
+    "components: [shop]\n"
+    "overrides:\n  shop:\n    ENVIRONMENT:\n      main:\n"
+    "        Logging__Level: Warning\n        Reports__MaxRows: 500\n"
+    "        Enabled: true\n        Word: 'null'\n        Empty: ''\n"
+)
 
 
-class EnvironmentBuildTests(OverrideFixture):
+class TargetEnvironmentTests(OverrideFixture):
+    """One neutral bundle, the environment applied by deploy.sh install --environment."""
+
     def setUp(self):
         super().setUp()
         self.write_product(shop())
-        self.put(
-            "config/prod1.yaml",
-            "overrides:\n  shop:\n    ENVIRONMENT:\n      main:\n"
-            "        Logging__Level: Warning\n        Reports__MaxRows: 500\n"
-            "        Enabled: true\n        Word: 'null'\n        Empty: ''\n",
-        )
-        self.put("config/prod2.yaml", environment_file(migrate={"Mode": "none"}))
-        # Dev overrides never reach a bundle.
+        # Dev overrides never reach a bundle or a target.
         self.put("config/dev.yaml", DEV_OVERRIDES)
+        self.releases_built = self.build_and_unpack()
+        shutil.rmtree(self.source)  # No checkout on the target.
+        self.installed = None
 
-    def bundled(self, environment_name=None):
-        dist = bundle.DIST / (environment_name or "")
-        archive = dist / "myproduct-shop-1.0.0-offline.tar.gz"
-        return self.archive_file(archive, "components/shop/config.defaults.yaml")
-
-    def test_environment_builds_are_separate_and_source_stays_unchanged(self):
-        source = self.source_bytes()
-        bundle.build(environment_name="prod1")
-        bundle.build(environment_name="prod2")
-        bundle.build()
-        self.assertEqual(self.source_bytes(), source)
-        archive = "myproduct-shop-1.0.0-offline.tar.gz\n"
-        for directory in ("dist/prod1", "dist/prod2", "dist"):
-            with self.subTest(directory):
-                self.assertEqual(
-                    (self.source / directory / "current-bundles.txt").read_text(),
-                    archive,
-                )
-        loaded = {}
-        for name in ("prod1", "prod2", None):
-            loaded[name] = self.defaults_file(str(name), self.bundled(name))
-        self.assertEqual(
-            environment.read_defaults(loaded["prod1"]),
-            {
-                "main": {
-                    "Logging__Level": "Warning",
-                    "Feature": "false",
-                    "User": "@@DB_USER@@",
-                    "Signing": "@@secret:shop-tokens/signing@@",
-                    "Reports__MaxRows": "500",
-                    "Enabled": "true",
-                    "Word": "null",
-                    "Empty": "",
-                },
-                "migrate": {"Mode": "full"},
-            },
-        )
-        self.assertEqual(
-            environment.read_defaults(loaded["prod2"]),
-            {
-                "main": {
-                    "Logging__Level": "Information",
-                    "Feature": "false",
-                    "User": "@@DB_USER@@",
-                    "Signing": "@@secret:shop-tokens/signing@@",
-                },
-                "migrate": {"Mode": "none"},
-            },
-        )
-        # Without an environment the file is shipped byte for byte.
-        self.assertEqual(
-            self.bundled(),
-            (self.source / "components/shop/config.defaults.yaml").read_text(),
-        )
-        # Settings keep their types; MOUNTS keeps its text.
-        for name in ("prod1", "prod2"):
-            settings = rendering.merge_config(loaded[name])
-            self.assertEqual(settings["WORKERS"], 4)
-            self.assertEqual(settings["DB_USER"], "shop")
-            self.assertEqual(
-                environment.load(loaded[name])["MOUNTS"],
-                {"main": {"/etc/shop/app.conf": "app.conf"}},
-            )
-        digests = {
-            hashlib.sha256(
-                (self.source / directory / archive.strip()).read_bytes()
-            ).hexdigest()
-            for directory in ("dist/prod1", "dist/prod2", "dist")
-        }
-        self.assertEqual(len(digests), 3)
-
-    def test_a_partial_build_keeps_the_environment_list(self):
-        bundle.build(environment_name="prod1")
-        current = (bundle.DIST / "prod1/current-bundles.txt").read_text()
-        (bundle.DIST / "prod1/current-bundles.txt").write_text("kept\n")
-        bundle.build(["shop"], environment_name="prod1")
-        self.assertEqual(
-            (bundle.DIST / "prod1/current-bundles.txt").read_text(), "kept\n"
-        )
-        self.assertTrue(current)
-        self.assertFalse((bundle.DIST / "current-bundles.txt").exists())
-
-    def test_isolated_bundle_installs_and_rerenders_its_environment(self):
-        releases = self.build_and_unpack("prod1")
-        shutil.rmtree(self.source)  # No checkout, no config/prod1.yaml.
+    def install_shop(self, environment_name=None):
         with self.environment():
-            self.install(releases["shop"])
-            installed = common.QUADLET_DIR / "myproduct-shop.yaml"
-            expected = {
+            self.install(self.releases_built["shop"], environment_name=environment_name)
+        return config_maps(common.QUADLET_DIR / "myproduct-shop.yaml")
+
+    def test_one_bundle_in_two_environments(self):
+        release = self.releases_built["shop"]
+        bundled = release / "components/shop/config.defaults.yaml"
+        self.assertEqual(
+            environment.read_defaults(bundled)["main"]["Logging__Level"], "Information"
+        )
+        self.place_environment("prod1", PROD1)
+        self.assertEqual(
+            self.install_shop("prod1")["shop-main-env"],
+            {
                 "Logging__Level": "Warning",
                 "Feature": "false",
                 "User": "shop",
@@ -420,170 +336,149 @@ class EnvironmentBuildTests(OverrideFixture):
                 "Enabled": "true",
                 "Word": "null",
                 "Empty": "",
-            }
-            self.assertEqual(config_maps(installed)["shop-main-env"], expected)
-            written = yaml.safe_load((common.STATE / "shop/config.yaml").read_text())
-            self.assertNotIn(common.ENVIRONMENT, written)
-            self.assertNotIn(common.OVERRIDES, written)
-            self.assertEqual(written["WORKERS"], 4)
-            # An equal-version install renders the compiled declarations again.
-            self.process.reset_mock()
-            deploy.install()
-            self.assertEqual(config_maps(installed)["shop-main-env"], expected)
+            },
+        )
+        config = (common.STATE / "shop/config.yaml").read_bytes()
+        written = yaml.safe_load(config)
+        self.assertNotIn(common.ENVIRONMENT, written)
+        self.assertNotIn(common.OVERRIDES, written)
+        self.assertEqual(written["WORKERS"], 4)
+        # The same release in another environment: its overrides only.
+        self.place_environment(
+            "prod2", environment_file(["shop"], migrate={"Mode": "none"})
+        )
+        maps = self.install_shop("prod2")
+        self.assertEqual(maps["shop-main-env"]["Logging__Level"], "Information")
+        self.assertNotIn("Reports__MaxRows", maps["shop-main-env"])
+        self.assertEqual(maps["shop-migrate-env"], {"Mode": "none"})
+        # The operator's config is the same file; the release is unchanged.
+        self.assertEqual((common.STATE / "shop/config.yaml").read_bytes(), config)
+        self.assertEqual(
+            environment.read_defaults(bundled)["main"]["Logging__Level"], "Information"
+        )
+        # Without an environment: the release's declarations alone.
+        self.assertEqual(self.install_shop()["shop-migrate-env"], {"Mode": "full"})
 
-    def test_invalid_selections_fail_before_any_output(self):
+    def test_a_secret_line_and_a_public_line_swap(self):
+        self.place_environment(
+            "prod1",
+            environment_file(
+                ["shop"],
+                main={
+                    "Signing": "public",
+                    "Logging__Level": "@@secret:shop-tokens/other@@",
+                },
+            ),
+        )
+        maps = self.install_shop("prod1")
+        self.assertEqual(maps["shop-main-env"]["Signing"], "public")
+        self.assertNotIn("Logging__Level", maps["shop-main-env"])
+        secret = documents(common.QUADLET_DIR / "myproduct-shop.yaml")[
+            ("Secret", "shop-main-env-secret")
+        ]
+        self.assertEqual(sorted(secret["data"]), ["Logging__Level"])
+
+    def test_interrupted_install_retries_with_the_file(self):
+        self.place_environment("prod1", PROD1)
+        failed = []
+
+        def restart(arguments, **kwargs):
+            if list(arguments)[:3] == ["systemctl", "--user", "restart"] and not failed:
+                failed.append(arguments)
+                raise subprocess.CalledProcessError(1, arguments)
+            return self.host_command(arguments, **kwargs)
+
+        self.process.side_effect = restart
+        with self.environment():
+            self.use_root(self.releases_built["shop"])
+            deploy.init_config("shop", environment_name="prod1")
+            with self.assertRaises(subprocess.CalledProcessError):
+                deploy.install("prod1")
+            self.assertTrue((common.STATE / "pending-operation.json").is_file())
+            deploy.install("prod1")
+        self.assertFalse((common.STATE / "pending-operation.json").exists())
+        maps = config_maps(common.QUADLET_DIR / "myproduct-shop.yaml")
+        self.assertEqual(maps["shop-main-env"]["Logging__Level"], "Warning")
+        self.assertEqual((common.STATE / "installed/shop").read_text(), "1.0.0\n")
+
+    def test_invalid_environments_change_nothing(self):
+        self.place_environment("prod1", PROD1)
+        self.install_shop("prod1")
+        before = self.state_bytes()
+        rendered = (common.QUADLET_DIR / "myproduct-shop.yaml").read_bytes()
         for label, name, text, pattern in (
-            ("traversal", "../prod1", None, "use lowercase letters"),
-            ("upper case", "Prod1", None, "use lowercase letters"),
-            ("reserved dev", "dev", None, "config/dev.yaml has another meaning"),
-            ("reserved images", "images", None, "config/images.yaml has another"),
-            ("missing file", "prod9", None, "missing file config/prod9.yaml"),
+            ("bad name", "Prod9", None, "use lowercase letters"),
+            ("missing file", "prod9", None, "missing file .*prod9.yaml"),
+            ("no components", "prod3", "overrides: {}\n",
+             "components: is missing; list the components of this installation"),
             ("empty components", "prod3", "components: []\n",
-             "config/prod3.yaml: components: list at least one component"),
-            ("other key", "prod3", "DB_USER: x\n",
-             "config/prod3.yaml: 'DB_USER' is not allowed"),
-            ("unknown component", "prod3",
-             "overrides:\n  nope:\n    ENVIRONMENT:\n      main:\n        A: b\n",
-             "config/prod3.yaml: overrides.nope: nope is not a component"),
-            ("unknown container", "prod3", environment_file(web={"A": MARKER}),
-             ("config/prod3.yaml: overrides.shop.ENVIRONMENT.web: the component "
-              "must have exactly one container named web; it has 0")),
+             "components: list at least one component"),
+            ("repeated", "prod3", "components: [shop, shop]\n", "lists shop twice"),
+            ("other key", "prod3", "components: [shop]\nDB_USER: x\n",
+             "'DB_USER' is not allowed"),
+            ("not listed", "prod3", "components: [other]\n",
+             "shop is not in components:"),
+            ("override outside", "prod3",
+             ("components: [shop]\noverrides:\n  other:\n    ENVIRONMENT:\n"
+              "      main:\n        A: b\n"),
+             "overrides.other: other is not in components:"),
+            ("unknown container", "prod3", environment_file(["shop"], web={"A": MARKER}),
+             "overrides.shop.ENVIRONMENT.web: the component must have exactly one"),
             ("null value", "prod3",
-             "overrides:\n  shop:\n    ENVIRONMENT:\n      main:\n        A:\n",
-             "config/prod3.yaml: overrides.shop.ENVIRONMENT.main: A has no value"),
+             ("components: [shop]\noverrides:\n  shop:\n    ENVIRONMENT:\n"
+              "      main:\n        A:\n"),
+             "main: A has no value .YAML null."),
             ("undeclared secret", "prod3",
-             environment_file(main={"A": "@@secret:shop-nope/x@@"}),
+             environment_file(["shop"], main={"A": "@@secret:shop-nope/x@@"}),
              "SECRET_FILES has no shop-nope"),
             ("case collision", "prod3",
-             environment_file(main={"logging__level": MARKER}), "differ only in case"),
-            ("null name", "prod3",
-             "overrides:\n  shop:\n    ENVIRONMENT:\n      main:\n        null: x\n",
-             "None is not a variable name"),
+             environment_file(["shop"], main={"logging__level": MARKER}),
+             "differ only in case"),
             ("malformed placeholder", "prod3",
-             environment_file(main={"A": MARKER + "@@DB_USER"}),
-             "main: A: malformed placeholder"),
+             environment_file(["shop"], main={"A": MARKER + "@@DB_USER"}),
+             "A: malformed placeholder"),
             ("client setting", "prod3",
-             environment_file(main={"A": "@@CLIENT_ID@@"}),
+             environment_file(["shop"], main={"A": "@@CLIENT_ID@@"}),
              "@@CLIENT_ID@@ comes from client.yaml"),
-            ("empty unknown component", "prod3", "overrides:\n  nope: {}\n",
-             "overrides.nope: nope is not a component"),
-            ("empty unknown container", "prod3", environment_file(web={}),
-             "overrides.shop.ENVIRONMENT.web: the component must have exactly"),
-            ("invalid YAML", "prod3", "overrides: [shop\n",
-             "invalid YAML; check the indentation, the colons and the quotes"),
         ):  # fmt: skip
             with self.subTest(label):
                 if text is not None:
-                    self.put(f"config/{name}.yaml", text)
-                with self.assertRaisesRegex(common.DeployError, pattern) as raised:
-                    bundle.build(environment_name=name)
+                    self.place_environment(name, text)
+                self.process.reset_mock()
+                with self.environment():
+                    self.use_root(self.releases_built["shop"])
+                    with self.assertRaisesRegex(common.DeployError, pattern) as raised:
+                        deploy.install(name)
+                    # check-environment refuses the same files without config.
+                    if text is not None and label not in ("not listed",):
+                        with self.assertRaisesRegex(common.DeployError, pattern):
+                            deploy.check_environment(name)
                 self.assertNotIn(MARKER, str(raised.exception))
-                self.assertFalse(bundle.DIST.exists())
-                self.assertFalse(common.BUILD.exists())
+                self.process.assert_not_called()
+                self.assertEqual(self.state_bytes(), before)
+                self.assertEqual(
+                    (common.QUADLET_DIR / "myproduct-shop.yaml").read_bytes(), rendered
+                )
 
-    def test_a_generated_secret_may_not_take_a_declared_name(self):
-        product = shop()
-        product["shop"]["defaults"]["SECRET_FILES"]["shop-migrate-env-secret"] = [
-            {"path": "credentials/other", "generate": ["value"]}
-        ]
-        shutil.rmtree(self.source)
-        self.write_product(product)
-        self.put(
-            "config/prod3.yaml",
-            environment_file(migrate={"Token": "@@secret:shop-tokens/other@@"}),
-        )
-        with self.assertRaisesRegex(
-            common.DeployError,
-            "Secret shop-migrate-env-secret .from ENVIRONMENT or MOUNTS. has the "
-            "same name as a SECRET_FILES or VOLUME_FILES ID",
-        ):
-            bundle.build(environment_name="prod3")
-        self.assertFalse(bundle.DIST.exists())
-
-    def test_a_container_named_by_a_setting_is_left_to_install(self):
-        """Its name is known only with settings; the build does not guess."""
-        product = shop()
-        product["shop"]["defaults"]["WORKER_CONTAINER"] = "worker"
-        worker = product["shop"]["manifests"][1]["spec"]["containers"][0]
-        worker["name"] = "@@WORKER_CONTAINER@@"
-        shutil.rmtree(self.source)
-        self.write_product(product)
-        self.put("config/prod3.yaml", environment_file(worker={"Role": "batch"}))
-        bundle.build(environment_name="prod3")
-        self.assertTrue(
-            (bundle.DIST / "prod3/myproduct-shop-1.0.0-offline.tar.gz").is_file()
-        )
-        # Dev resolves the name and renders the override into that container.
-        self.put("config/dev.yaml", environment_file(worker={"Role": "batch"}))
-        deploy.prepare()
-        self.assertEqual(
-            config_maps(common.BUILD / "install.yaml")["shop-worker-env"],
-            {"Role": "batch"},
-        )
-
-    def test_an_empty_entry_that_install_cannot_check_is_refused(self):
-        """An empty entry is not compiled; with a setting-named container the
-        build is the last place that could check it."""
-        product = shop()
-        product["shop"]["defaults"]["WORKER_CONTAINER"] = "worker"
-        worker = product["shop"]["manifests"][1]["spec"]["containers"][0]
-        worker["name"] = "@@WORKER_CONTAINER@@"
-        shutil.rmtree(self.source)
-        self.write_product(product)
-        self.put("config/prod3.yaml", environment_file(typo={}))
-        with self.assertRaisesRegex(
-            bundle.BundleError,
-            "config/prod3.yaml: overrides.shop.ENVIRONMENT.typo: an empty entry "
-            "for a container the build cannot find .* remove it",
-        ):
-            bundle.build(environment_name="prod3")
-        self.assertFalse(bundle.DIST.exists())
-        # A literal name must also be unambiguous: two containers named twin.
-        twins = [
-            pod("shop-twin-a", "localhost/shop:1"),
-            pod("shop-twin-b", "localhost/shop:1"),
-        ]
-        for twin in twins:
-            twin["spec"]["containers"][0]["name"] = "twin"
-        product["shop"]["manifests"] += twins
-        shutil.rmtree(self.source)
-        self.write_product(product)
-        self.put("config/prod3.yaml", environment_file(twin={}))
-        with self.assertRaisesRegex(
-            common.DeployError,
-            "overrides.shop.ENVIRONMENT.twin: the component must have exactly one "
-            "container named twin; it has 2",
-        ):
-            bundle.build(environment_name="prod3")
-        self.assertFalse(bundle.DIST.exists())
-        # An empty entry for a literally named container is still accepted,
-        # and the isolated bundle installs.
-        self.put("config/prod3.yaml", environment_file(main={}))
-        releases = self.build_and_unpack("prod3")
-        shutil.rmtree(self.source)
+    def test_check_environment_needs_no_config(self):
+        self.place_environment("prod1", PROD1)
+        self.process.reset_mock()  # The build ran podman save.
         with self.environment():
-            self.install(releases["shop"])
-        self.assertIn(
-            "shop-main-env",
-            config_maps(common.QUADLET_DIR / "myproduct-shop.yaml"),
-        )
+            self.use_root(self.releases_built["shop"])
+            deploy.check_environment("prod1")
+        self.assertFalse((common.STATE / "shop").exists())
+        self.process.assert_not_called()
 
-    def test_a_selected_build_refuses_overrides_outside_the_catalog(self):
-        self.put(
-            "config/prod3.yaml",
-            "overrides:\n  gone:\n    ENVIRONMENT:\n      main:\n        A: b\n",
-        )
-        with self.assertRaisesRegex(common.DeployError, "gone is not a component"):
-            bundle.build(["shop"], environment_name="prod3")
-        self.assertFalse(bundle.DIST.exists())
-
-    def test_build_bundle_command_reports_errors_on_one_line(self):
-        stream = io.StringIO()
-        with redirect_stdout(stream), redirect_stderr(stream):
-            self.assertEqual(bundle.main(["--environment", "prod9"]), 1)
+    def test_validate_applies_the_environment(self):
+        self.place_environment("prod1", PROD1)
+        self.install_shop("prod1")
+        with self.environment():
+            self.use_root(self.releases_built["shop"])
+            with self.assertLogs("deployment", "INFO") as shown:
+                validation.validate("prod1")
         self.assertIn(
-            "ERROR: --environment prod9: missing file config/prod9.yaml",
-            stream.getvalue(),
+            "[OK] shop/main: ENVIRONMENT -> 7 settings (ConfigMap shop-main-env)",
+            "\n".join(shown.output),
         )
 
 
@@ -613,9 +508,10 @@ def api_product():
     }
 
 
+LINE = "@@secret:ledger-api-secret/value@@"
 API_LINE = (
     "overrides:\n  accounts:\n    ENVIRONMENT:\n      main:\n"
-    "        ApiResources__0__ApiSecrets__0__Value: '@@secret:ledger-api-secret/value@@'\n"
+    f"        ApiResources__0__ApiSecrets__0__Value: '{LINE}'\n"
 )
 
 
@@ -624,28 +520,87 @@ class ApiOverrideTests(OverrideFixture):
         super().setUp()
         self.write_product(api_product())
 
-    def test_identity_mapping_follows_the_effective_declarations(self):
-        self.put("config/prod1.yaml", API_LINE)
-        common_descriptors = catalog.source_descriptors(self.source)
-        self.assertEqual(common_descriptors["accounts"]["api_secrets"], {})
-        self.assertIsNone(common_descriptors["ledger"]["apis"])
-        releases = self.build_and_unpack("prod1")
+    def neutral_releases(self):
+        releases = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        return releases
+
+    def test_the_target_environment_registers_the_api(self):
+        releases = self.neutral_releases()
         accounts = catalog.load_bundle_descriptor(releases["accounts"])
-        ledger = catalog.load_bundle_descriptor(releases["ledger"])
+        self.assertEqual(accounts["api_secrets"], {})
+        self.assertEqual(accounts["identity"], "accounts")
+        self.place_environment("prod1", "components: [accounts, ledger]\n" + API_LINE)
+        with self.environment():
+            self.install(releases["accounts"], environment_name="prod1")
+            self.install(releases["ledger"], environment_name="prod1")
+        installed = catalog.load_installed_metadata(common.STATE)
         self.assertEqual(
-            accounts["api_secrets"],
+            installed["accounts"]["api_secrets"],
             {"ledger": {"index": 0, "secret": "ledger-api-secret/value"}},
         )
-        self.assertEqual(accounts["accepts"], {"apis": "accounts-apis"})
-        self.assertEqual(ledger["apis"], "accounts")
-        self.assertEqual(list(ledger["requires"]), ["accounts"])
-        bundled = environment.read_defaults(
-            releases["accounts"] / "components/accounts/config.defaults.yaml"
-        )
+        self.assertEqual(installed["accounts"]["accepts"], {"apis": "accounts-apis"})
+        self.assertEqual(installed["ledger"]["apis"], "accounts")
+        self.assertEqual(list(installed["ledger"]["requires"]), ["accounts"])
+        # Both sides hold the API's own generated secret, byte for byte.
+        value = (common.STATE / "ledger/credentials/api-secret/value").read_bytes()
+        self.assertTrue(value)
+        self.assertEqual((common.STATE / "apis/ledger/value").read_bytes(), value)
+        identity = documents(common.QUADLET_DIR / "myproduct-accounts.yaml")
         self.assertEqual(
-            bundled["main"]["ApiResources__0__ApiSecrets__0__Value"],
-            "@@secret:ledger-api-secret/value@@",
+            base64.b64decode(
+                identity[("Secret", "accounts-apis")]["data"][
+                    "ApiResources__0__ApiSecrets__0__Value"
+                ]
+            ),
+            value,
         )
+        # An Identity release deployed without the line would drop the
+        # installed API: refused, nothing changed.
+        self.place_environment("prod2", "components: [accounts, ledger]\n")
+        before = self.state_bytes()
+        with self.environment():
+            self.use_root(releases["accounts"])
+            with self.assertRaisesRegex(
+                common.DeployError,
+                "no API secret line for installed ledger; uninstall ledger first",
+            ):
+                deploy.install("prod2")
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_without_the_line_the_same_bundles_have_no_api(self):
+        releases = self.neutral_releases()
+        self.place_environment("prod2", "components: [accounts, ledger]\n")
+        with self.environment():
+            self.install(releases["accounts"], environment_name="prod2")
+            self.install(releases["ledger"], environment_name="prod2")
+        installed = catalog.load_installed_metadata(common.STATE)
+        self.assertEqual(installed["accounts"]["api_secrets"], {})
+        self.assertIsNone(installed["ledger"]["apis"])
+        self.assertFalse((common.STATE / "apis/ledger").exists())
+
+    def test_references_outside_the_environment_are_refused(self):
+        releases = self.neutral_releases()
+        for label, release, text, pattern in (
+            ("excluded API", "accounts", "components: [accounts]\n" + API_LINE,
+             "no listed component owns ledger-api-secret"),
+            ("not Identity", "ledger",
+             ("components: [accounts, ledger]\noverrides:\n  ledger:\n"
+              "    ENVIRONMENT:\n      main:\n        Other: '@@secret:accounts-key/x@@'\n"),
+             "Other names another component's secret"),
+            ("undeclared API secret", "ledger",
+             ("components: [accounts, ledger]\noverrides:\n  accounts:\n"
+             "    ENVIRONMENT:\n      main:\n"
+             "        ApiResources__0__ApiSecrets__0__Value: '@@secret:ledger-other/value@@'\n"),
+             "names ledger-other, which ledger does not declare"),
+        ):  # fmt: skip
+            with self.subTest(label):
+                self.place_environment("prod3", text)
+                with self.environment():
+                    self.use_root(releases[release])
+                    with self.assertRaisesRegex(common.DeployError, pattern):
+                        deploy.check_environment("prod3")
+                self.assertFalse((common.STATE / "installed").exists())
 
     def test_dev_renders_the_api_secret_named_by_an_override(self):
         self.put("config/dev.yaml", API_LINE)
@@ -657,19 +612,6 @@ class ApiOverrideTests(OverrideFixture):
         )
         main = rendered[("Pod", "accounts-server")]["spec"]["containers"][0]
         self.assertIn({"secretRef": {"name": "accounts-apis"}}, main["envFrom"])
-
-    def test_only_identity_may_name_another_components_secret(self):
-        self.put(
-            "config/prod1.yaml",
-            "overrides:\n  ledger:\n    ENVIRONMENT:\n      main:\n"
-            "        Other: '@@secret:accounts-key/value@@'\n",
-        )
-        with self.assertRaisesRegex(
-            common.DeployError,
-            "config/prod1.yaml: overrides.ledger.ENVIRONMENT.main.Other: "
-            "accounts-key is another component's secret",
-        ):
-            bundle.build(environment_name="prod1")
 
 
 def override_orders():
@@ -706,64 +648,26 @@ class OverridePasswordTests(OverrideFixture):
         deploy.prepare()
         self.assertTrue(self.password.is_file())
 
-    def test_compiled_override_keeps_the_password_guard_at_install(self):
-        self.put("config/prod1.yaml", PASSWORD_LINE)
-        releases = self.build_and_unpack("prod1")
+    def test_target_override_keeps_the_password_guard_at_install(self):
+        releases = self.build_and_unpack()
         shutil.rmtree(self.source)
         self.provide_credentials(self.product, common.STATE)
+        self.place_environment(
+            "prod1", "components: [gateway, login-service, orders]\n" + PASSWORD_LINE
+        )
         with self.environment():
             for name in ("gateway", "login-service"):
-                self.install(releases[name])
+                self.install(releases[name], environment_name="prod1")
             self.use_root(releases["orders"])
-            deploy.init_config("orders")
+            deploy.init_config("orders", environment_name="prod1")
             self.volumes.add("orders-data")
             before = self.files_under(common.STATE)
             self.process.reset_mock()
             with self.assertRaisesRegex(
                 common.DeployError, "existing volume orders-data"
             ):
-                deploy.install()
+                deploy.install("prod1")
             self.assertEqual(
                 self.commands(), [["podman", "volume", "exists", "orders-data"]]
             )
             self.assertEqual(self.files_under(common.STATE), before)
-
-
-class CompiledTextTests(OverrideFixture):
-    def test_compiled_file_reads_back_as_the_merged_text(self):
-        """Values YAML would read as another type stay the written text."""
-        product = shop()
-        product["shop"]["defaults"]["NOTE"] = "a\x85b \u2028 blåbær"
-        self.write_product(product)
-        values = {
-            "Octal": "0022",
-            "Float": "1.10",
-            "Bool": "yes",
-            "Null": "null",
-            "Tilde": "~",
-            "Empty": "",
-            "Reference": "@@secret:shop-tokens/other@@",
-            "Spaces": "  padded  ",
-            "Long": "x" * 300 + " y",
-            "Unicode": "blåbær",
-            "Colon": "a: b",
-            "Hash": "a #b",
-            # Characters YAML reads as line breaks when written unescaped.
-            "NextLine": "a\x85b",
-            "LineSeparator": "a\u2028b",
-        }
-        overrides = environment.Overrides(
-            "config/prod1.yaml", {"shop": {"main": values}}, None
-        )
-        path = self.source / "components/shop/config.defaults.yaml"
-        compiled = self.defaults_file(
-            "compiled", bundle.compiled_defaults(path, "shop", overrides)
-        )
-        self.assertEqual(
-            environment.read_defaults(compiled)["main"],
-            dict(environment.read_defaults(path)["main"], **values),
-        )
-        settings = rendering.merge_config(compiled)
-        self.assertEqual(settings, rendering.merge_config(path))
-        self.assertEqual(settings["NOTE"], "a\x85b \u2028 blåbær")
-        self.assertEqual(settings["WORKERS"], 4)

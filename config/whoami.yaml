@@ -1,7 +1,9 @@
-# The demo's build environment with app3, the optional API (backlog 85):
-#   ./build-bundle.sh --environment whoami
-# The --whoami acceptance scenario installs these bundles. Without this
-# environment the bundles have no app3 registration in Identity.
+# The demo's target environment file with app3, the optional API (backlog 85).
+# Bundles are built without it; on the target the runtime user copies it to
+# /var/lib/<product>/state/whoami.yaml and deploys with
+#   <product> --environment whoami
+# The --whoami acceptance scenario does exactly that. Without it, Identity has
+# no registration of app3.
 components:
   - platform
   - identity

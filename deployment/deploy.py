@@ -57,16 +57,19 @@ def setting_values(component, settings):
     return values
 
 
-def init_config(component, settings=None):
+def init_config(component, settings=None, environment_name=None):
     """Exclusively materialize one bundled config; never create private input files.
 
     settings (KEY: text, from --set) are written into the new config with the
     defaults, in one atomic step: the file appears complete or not at all, so
     the runtime command asks again after an interruption (backlog 69,
-    decision 9). An existing config is never changed.
+    decision 9). An existing config is never changed. environment_name
+    (backlog 85) validates the release's declarations with that target
+    environment's overrides; nothing of it is written to config.yaml.
     """
     production_environment()
     descriptor = bundle_descriptor()
+    env_overrides = target_environment(environment_name, component)
     if component != descriptor["name"]:
         raise common.DeployError(
             f"Component {component} is not included in this bundle"
@@ -93,13 +96,17 @@ def init_config(component, settings=None):
     config = rendering.component_defaults(component, overrides={**values, **public})
     # The release's own declarations (ENVIRONMENT, MOUNTS, manifests) are
     # checked as validate does, before the file exists; credentials may follow.
+    descriptor = catalog.environment_descriptor(
+        descriptor, env_overrides, catalog.load_installed_metadata(common.STATE)
+    )
     validate_component(
-        rendering.effective_config(config, target, component),
+        rendering.effective_config(config, target, component, env_overrides),
         target,
         common.ROOT / "components" / component / "manifests",
         component,
         catalog.imported_volumes(descriptor),
         catalog.imported_secrets(descriptor),
+        env_overrides,
     )
     config = {key: value for key, value in config.items() if key not in public}
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1037,23 +1044,31 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     run("podman", "ps", "--all", "--pod")
 
 
-def install_checks():
+def install_checks(env_overrides=None):
     """Decide everything install needs before staging; no writes, no host commands.
 
-    The bundle descriptor, the installed set with this descriptor (ID prefixes,
-    role owners, pending owner work), dependency and dependent ranges, and the
-    persistent config with the gateway's public settings. Returns (descriptor,
-    known, config, config_path). ./deploy.sh validate runs this too.
+    The bundle descriptor in the target environment (environment_descriptor;
+    the bundle's own without one), the installed set with this descriptor (ID
+    prefixes, role owners, pending owner work), dependency and dependent
+    ranges, and the persistent config with the gateway's public settings.
+    Returns (descriptor, known, config, config_path). ./deploy.sh validate
+    runs this too.
     """
-    descriptor = bundle_descriptor()
+    installed = catalog.load_installed_metadata(common.STATE)
+    descriptor = catalog.environment_descriptor(
+        bundle_descriptor(), env_overrides, installed
+    )
     name = descriptor["name"]
     check_quadlet_templates(name)
     pending = registrations.check_pending("install", name, descriptor["product"])
-    installed = catalog.load_installed_metadata(common.STATE)
     check_same_product(descriptor["product"], installed)
     known = dict(installed)
     known[name] = descriptor
     catalog.check_id_prefixes(known, "installed components and this bundle")
+    # An Identity release without an installed API's line is refused first,
+    # with the uninstall it needs (the owner check would only say "does not
+    # accept apis").
+    check_api_secret_lines(descriptor, installed)
     # An incoming descriptor must not take over a role another component serves.
     catalog.check_owners(known, "installed components and this bundle")
     # Unfinished owner work stays valid even if this release drops the role,
@@ -1080,22 +1095,23 @@ def install_checks():
             + ", ".join(from_release)
         )
     check_not_downgrade(descriptor)
-    check_api_secret_lines(descriptor, installed)
     rendering.validate_component_config(config, name, config_path)
     return descriptor, known, config, config_path
 
 
-def install_components():
+def install_components(environment_name=None):
     """Validate the bundle, installed state and config before writing anything.
 
-    Order: service_user selects paths, install_checks validates declarations
-    (including both Quadlet templates), production_environment checks runtime
-    and the user manager, then temporary registration staging, manifests and
+    Order: service_user selects paths, the target environment file is read
+    (target_environment), install_checks validates declarations (including
+    both Quadlet templates), production_environment checks runtime and the
+    user manager, then temporary registration staging, manifests and
     database preflight, and install_component_plan.
     """
     # Pure declaration checks precede even the user-manager host query.
     service_user()
-    descriptor, known, config, config_path = install_checks()
+    env_overrides = target_environment(environment_name, bundle_descriptor()["name"])
+    descriptor, known, config, config_path = install_checks(env_overrides)
     production_environment()
     name = descriptor["name"]
     with tempfile.TemporaryDirectory(
@@ -1106,7 +1122,7 @@ def install_components():
         imports, updates, removals = registrations.registration_stage(
             [name], Path(directory), known
         )
-        effective = rendering.effective_config(config, config_path, name)
+        effective = rendering.effective_config(config, config_path, name, env_overrides)
         checked = {
             name: (
                 effective,
@@ -1117,6 +1133,7 @@ def install_components():
                     name,
                     catalog.imported_volumes(descriptor),
                     catalog.imported_secrets(descriptor),
+                    env_overrides,
                 ),
             )
         }
@@ -1124,13 +1141,90 @@ def install_components():
         install_component_plan(descriptor, checked, known, imports, updates, removals)
 
 
-def install():
-    """Install the component of this unpacked bundle."""
+def install(environment_name=None):
+    """Install the component of this unpacked bundle, in a target environment or not."""
     if not (common.ROOT / "bundle.yaml").exists():
         raise common.DeployError(
             "Run install from an unpacked component bundle, not the source checkout"
         )
-    install_components()
+    install_components(environment_name)
+
+
+def target_environment(environment_name, component):
+    """The Overrides of state/<environment>.yaml, or None without an environment.
+
+    Read again by every command that needs it, so install, validate,
+    init-config and a retry all use the file as it is now; nothing about the
+    selection is remembered (backlog 85). The component must be listed.
+    """
+    if environment_name is None:
+        return None
+    env_overrides = environment.read_environment_file(common.STATE, environment_name)
+    if component not in env_overrides.selected:
+        raise common.DeployError(
+            f"{env_overrides.path}: {component} is not in components:; add it there "
+            f"to deploy it in this environment"
+        )
+    return env_overrides
+
+
+def check_environment(environment_name):
+    """deploy.sh check-environment <name>: this release in the environment; no writes.
+
+    What the declarations decide without config or credentials, so the
+    runtime command can check every selected release before it changes
+    anything: the file (environment.read_environment_file), the merged
+    ENVIRONMENT (names, placeholder syntax, SECRET_FILES declarations and
+    generated Secret names, client settings, the containers of the
+    manifests), Identity's API secret lines against the listed components,
+    and for any other component the declaration of a secret Identity's
+    overrides name. A container name written as a @@NAME@@ setting is known
+    only with settings; its checks are left to install. Install repeats all
+    of this with the operator's config (install_checks, effective_documents).
+    """
+    service_user()
+    descriptor = bundle_descriptor()
+    name = descriptor["name"]
+    env_overrides = target_environment(environment_name, name)
+    if env_overrides is None:
+        raise common.DeployError("check-environment needs an environment name")
+    directory = common.ROOT / "components" / name
+    defaults = catalog.release_defaults(name)
+    templates.declarations(environment.with_recipes(defaults, name, env_overrides))
+    client = rendering.with_client_settings({}, name)
+    documents = [
+        document
+        for path in sorted((directory / "manifests").glob("*.yaml"))
+        for document in rendering.load_manifest(path)
+    ]
+    containers = rendering.named_containers(documents)
+    literal = not any("@@" in str(container) for container in containers)
+    merged = environment.read(name, env_overrides)
+    for container in environment.overridden_containers(name, env_overrides):
+        if literal or (container not in merged and container not in containers):
+            environment.check_exists(name, container, containers, env_overrides)
+    for container, values in merged.items():
+        environment.check_client_settings(
+            name, container, values, client, env_overrides
+        )
+        if literal:
+            environment.check_container(
+                name, container, values, containers, env_overrides
+            )
+    identity = descriptor["identity"]
+    if name == identity:
+        catalog.environment_descriptor(descriptor, env_overrides, {})
+    elif identity is not None:
+        declared = defaults.get(common.SECRET_FILES) or {}
+        for values in (env_overrides.components.get(identity) or {}).values():
+            for value in values.values():
+                for secret in environment.secret_ids(value):
+                    if secret.startswith(name + "-") and secret not in declared:
+                        raise common.DeployError(
+                            f"{env_overrides.path}: overrides.{identity} names "
+                            f"{secret}, which {name} does not declare in SECRET_FILES"
+                        )
+    log.info(f"[OK] {name} fits environment {environment_name}")
 
 
 def uninstall_plan(component, delete_data, installed, product):

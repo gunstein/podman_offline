@@ -53,6 +53,7 @@ class ManualTests(unittest.TestCase):
         self.assertIn("sudo myproduct-admin /mnt", checked)
         self.assertIn("sudo myproduct-admin --credentials /mnt", checked)
         self.assertIn("myproduct", checked)
+        self.assertIn("myproduct --environment prod1", checked)
 
     def test_every_prompt_shown_is_a_question_the_tools_ask(self):
         source = (ROOT / "tools/admin.py").read_text() + (
@@ -75,8 +76,18 @@ class ManualTests(unittest.TestCase):
             (ROOT / "tools" / name).read_text() for name in ("admin.py", "runtime.py")
         )
         cited = set(re.findall(r'see \\?"([^"\\]+)\\?" in the manual', source))
-        headings = set(re.findall(r"^#+ (.+)$", MANUAL.read_text(), re.MULTILINE))
-        self.assertEqual(cited, {"If a command stops", "Before you begin"})
+        headings = set(
+            re.findall(r"^#+ (?:\d+\. )?(.+)$", MANUAL.read_text(), re.MULTILINE)
+        )
+        self.assertEqual(
+            cited,
+            {
+                "If a command stops",
+                "Before you begin",
+                "Place the environment file",
+                "Remove a component",
+            },
+        )
         self.assertLessEqual(cited, headings)
 
     def test_the_next_line_of_the_admin_command_is_the_manual_line(self):

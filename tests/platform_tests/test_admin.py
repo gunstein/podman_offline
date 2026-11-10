@@ -559,6 +559,10 @@ class AdminRetirementTests(AdminFixture):
     def test_an_older_release_is_removed_once_the_newer_one_is_completed(self):
         self.host.status = report("1.2.3")
         self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
+        # The operator's environment file (backlog 85) is in state/, which the
+        # upgrade and the retirement below never touch.
+        environment = self.host.lib / "cedar/state/prod1.yaml"
+        environment.write_text("components: [worker]\n")
         self.assertEqual(self.host.transactions[-1], ("install", [self.newer_rpm.name]))
         self.assertIn(
             "[OK] cedar-worker-1.2.3 kept: worker 1.2.3 is the installed version",
@@ -586,6 +590,7 @@ class AdminRetirementTests(AdminFixture):
         runs = len(self.host.status_runs)
         self.assertEqual(self.admin(self.delivery), 0, self.stderr.getvalue())
         self.assertEqual(len(self.host.status_runs), runs)
+        self.assertEqual(environment.read_text(), "components: [worker]\n")
 
     def test_an_unfinished_or_missing_installation_keeps_the_older_release(self):
         for status, reason in (

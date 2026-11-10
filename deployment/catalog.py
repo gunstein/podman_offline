@@ -52,6 +52,7 @@ DESCRIPTOR_KEYS = (
     "name",
     "product",
     "version",
+    "identity",
     "requires",
     "public_from",
     "routes",
@@ -152,8 +153,7 @@ def product_name(root):
 def catalog_components(root):
     """Read bundles.yaml and check its structure: the list of every component ID.
 
-    Returns (path, document, IDs). Nothing of the components is read, so a
-    build environment can select from it (backlog 85).
+    Returns (path, document, IDs). Nothing of the components is read.
     """
     path, data = catalog_document(root)
     entries = data["components"]
@@ -179,27 +179,25 @@ def catalog_components(root):
 def load_catalog(root, env_overrides=None):
     """Read bundles.yaml and validate the graph before any file or host action.
 
-    env_overrides (environment.Overrides or None) is the selected build
-    environment or dev's overrides block. Its component set (selected; None
-    is the whole catalog) is the product: only those components' files are
-    read, and every dependency must be in it. Identity's API secret lines are
-    derived from the merged ENVIRONMENT, and every overridden component must
-    be selected, also when only some bundles are built.
+    env_overrides (environment.Overrides or None) is dev's overrides block:
+    Identity's API secret lines are derived from the merged ENVIRONMENT, and
+    every overridden component must be listed. Bundles are built without one
+    (backlog 85); a target environment is applied by environment_descriptor.
     """
     path, data, entries = catalog_components(root)
-    selected = selected_components(path, entries, env_overrides)
+    unknown = (
+        sorted(set(env_overrides.components) - set(entries)) if env_overrides else []
+    )
+    if env_overrides and unknown:
+        raise common.DeployError(
+            f"{env_overrides.path}: overrides.{unknown[0]}: {unknown[0]} is not a "
+            f"component in {path.name}; listed: {', '.join(entries)}"
+        )
     files = {
         name: registration_files(root / "components" / name, env_overrides)
-        for name in selected
+        for name in entries
     }
-    check_selected_dependencies(data, selected, files, env_overrides)
-    # Roles outside the set serve nobody here (check_selected_dependencies).
-    document = {
-        "components": selected,
-        "gateway": data.get("gateway") if data.get("gateway") in selected else None,
-        "identity": data.get("identity") if data.get("identity") in selected else None,
-    }
-    catalog = derive_entries(path, document, files)
+    catalog = derive_entries(path, data, files)
     for name, entry in catalog.items():
         check_entry(name, entry, f"{path}: components.{name}")
     check_owners(catalog, str(path))
@@ -207,54 +205,47 @@ def load_catalog(root, env_overrides=None):
     return catalog
 
 
-def selected_components(path, entries, env_overrides):
-    """The environment's components in catalog order; overrides only of those."""
-    selected = env_overrides.selected if env_overrides else None
-    where = env_overrides.path if env_overrides else None
-    for name in selected or []:
-        if name not in entries:
-            raise common.DeployError(
-                f"{where}: components: {name} is not a component in {path.name}; "
-                f"listed: {', '.join(entries)}"
-            )
-    chosen = [name for name in entries if selected is None or name in selected]
-    for name in sorted(env_overrides.components if env_overrides else {}):
-        if name not in entries:
-            raise common.DeployError(
-                f"{where}: overrides.{name}: {name} is not a component in "
-                f"{path.name}; listed: {', '.join(entries)}"
-            )
-        if name not in chosen:
-            raise common.DeployError(
-                f"{where}: overrides.{name}: {name} is not in components:; add it "
-                "there or remove its overrides"
-            )
-    return chosen
+def environment_descriptor(descriptor, env_overrides, installed, root=None):
+    """This release's descriptor in a target environment (backlog 85).
 
+    The bundle's descriptor is environment-neutral; only the API roles can
+    differ between environments, because an environment may add Identity's
+    ApiResources__<n>__ApiSecrets__0__Value lines. So:
 
-def check_selected_dependencies(data, selected, files, env_overrides):
-    """Every dependency of a selected component is selected; nothing is added.
+    - Identity derives api_secrets (and accepts apis) from its merged
+      ENVIRONMENT, with the environment's components as the listed ones, by
+      the catalog's own rule (api_secret_mapping).
+    - Any other component is an API of Identity exactly when the installed
+      Identity's api_secrets names it (the installed Identity's mapping is
+      authoritative); it then requires the installed Identity's series.
 
-    The rules are derive_entries': every component takes the gateway's public
-    settings, and a component with client.yaml registers it with Identity.
+    Without an environment the bundle's descriptor is used unchanged.
     """
-    gateway, identity = data.get("gateway"), data.get("identity")
-    for name in selected:
-        dependency = reason = None
-        if gateway is not None and gateway not in selected:
-            dependency = gateway
-            reason = (
-                "it has route.conf" if files[name]["route"] else "its public settings"
+    if env_overrides is None:
+        return descriptor
+    root = root or common.ROOT
+    result = json.loads(json.dumps(descriptor))
+    name, identity = descriptor["name"], descriptor["identity"]
+    if name == identity:
+        files = {other: {"foreign": []} for other in env_overrides.selected}
+        files[name] = {
+            "foreign": environment.foreign_lines(
+                root / "components" / name, env_overrides
             )
-        elif (
-            identity is not None and identity not in selected and files[name]["client"]
-        ):
-            dependency, reason = identity, "it has client.yaml"
-        if dependency:
-            raise common.DeployError(
-                f"{env_overrides.path}: {name} requires {dependency} ({reason}); "
-                f"add {dependency} to components"
-            )
+        }
+        mapping = api_secret_mapping(name, files)
+        result["api_secrets"] = mapping
+        result["accepts"].pop("apis", None)
+        if mapping:
+            result["accepts"]["apis"] = environment.owner_secret_name(name)
+    elif identity is not None:
+        owner = installed.get(identity)
+        registered = owner is not None and name in owner["api_secrets"]
+        result["apis"] = identity if registered else None
+        if owner is not None and registered and identity not in result["requires"]:
+            result["requires"][identity] = compatible_range(owner["version"])
+    check_entry(name, result, f"{name} in environment {env_overrides.path}")
+    return result
 
 
 def registration_files(directory, env_overrides=None):
@@ -649,6 +640,9 @@ def source_descriptors(root, env_overrides=None):
             "name": name,
             "product": product,
             "version": versions[name],
+            # The catalog's Identity: a target environment derives the API
+            # roles from it (environment_descriptor).
+            "identity": catalog_document(root)[1].get("identity"),
             "requires": {
                 dependency: compatible_range(versions[dependency])
                 for dependency in entry["requires"]
@@ -672,6 +666,8 @@ def check_descriptor(data, where):
             f"{where}: expected exactly the fields {', '.join(DESCRIPTOR_KEYS)}"
         )
     check_id(data["name"], f"{where}: name")
+    if data["identity"] is not None:
+        check_id(data["identity"], f"{where}: identity")
     check_product(data["product"], f"{where}: product")
     version_number(data["version"])
     requires = data["requires"]

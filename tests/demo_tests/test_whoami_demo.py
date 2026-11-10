@@ -2,8 +2,10 @@
 
 import json
 import re
+import shutil
 import stat
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -172,9 +174,14 @@ class WhoamiSourceTests(unittest.TestCase):
         backend_env = yaml.safe_load((COMPONENT / "config.defaults.yaml").read_text())[
             "ENVIRONMENT"
         ]["backend"]
-        # app3 is an optional API (backlog 85): the build environment that
-        # includes it and dev's overrides hold the same Identity lines.
-        environment = deployment_environment.read_environment_file(ROOT, "whoami")
+        # app3 is an optional API (backlog 85): the demo's target environment
+        # file (copied to state/whoami.yaml on the target) and dev's overrides
+        # hold the same Identity lines.
+        with tempfile.TemporaryDirectory() as state:
+            shutil.copy2(str(ROOT / "config/whoami.yaml"), state + "/whoami.yaml")
+            environment = deployment_environment.read_environment_file(
+                Path(state), "whoami"
+            )
         self.assertEqual(environment.selected, ["platform", "identity", "app3"])
         identity_env = environment.components["identity"]["app"]
         dev = yaml.safe_load((ROOT / "config/dev.yaml.example").read_text())
@@ -198,13 +205,17 @@ class WhoamiSourceTests(unittest.TestCase):
             config["SECRET_FILES"]["app3-api-secret"],
             [{"path": "credentials/api-secret", "generate": ["value"]}],
         )
-        self.assertEqual(deployment_catalog.load_catalog(ROOT)["app3"]["apis"], None)
-        catalog = deployment_catalog.load_catalog(ROOT, environment)
-        self.assertEqual(list(catalog), ["platform", "identity", "app3"])
-        self.assertEqual(catalog["app3"]["apis"], "identity")
-        self.assertEqual(catalog["identity"]["accepts"]["apis"], "identity-apis")
+        # The neutral bundles have no API registration; the environment adds it
+        # on the target (catalog.environment_descriptor).
+        neutral = deployment_catalog.source_descriptors(ROOT)
+        self.assertIsNone(neutral["app3"]["apis"])
+        self.assertEqual(neutral["identity"]["api_secrets"], {})
+        identity = deployment_catalog.environment_descriptor(
+            neutral["identity"], environment, {}, ROOT
+        )
+        self.assertEqual(identity["accepts"]["apis"], "identity-apis")
         self.assertEqual(
-            catalog["identity"]["api_secrets"],
+            identity["api_secrets"],
             {"app3": {"index": 0, "secret": "app3-api-secret/value"}},
         )
         _, backend = backend_container()

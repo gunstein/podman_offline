@@ -1104,11 +1104,16 @@ class Run:
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True
 
-    def transfer_rpms(self):
-        """Copy the RPMs built on DEV through the controller into PROD's delivery."""
+    def transfer_rpms(self, directory="dist/delivery"):
+        """Copy the RPMs built on DEV through the controller into PROD's delivery.
+
+        dist/delivery/ is what ./build-rpms.sh wrote for its components and the
+        supplier delivers (backlog 85); dist/rpm/ keeps every RPM ever built and
+        is taken only for an upgrade built outside the checkout's catalog.
+        """
         base = "podman-offline-acceptance/" + self.id
         names = self.ssh(
-            "DEV", "cd " + shlex.quote(base + "/src/dist/rpm") + " && ls"
+            "DEV", "cd " + shlex.quote(base + "/src/" + directory) + " && ls"
         ).split()
         if not names or not all(
             re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.noarch\.rpm", name) for name in names
@@ -1118,7 +1123,11 @@ class Run:
         for name in names:
             local = self.folder / name
             self.command(
-                SCP + [self.host("DEV") + ":" + base + "/src/dist/rpm/" + name, local]
+                SCP
+                + [
+                    self.host("DEV") + ":" + base + "/src/" + directory + "/" + name,
+                    local,
+                ]
             )
             self.command(
                 SCP + [local, self.host("PROD") + ":" + base + "/delivery/" + name]
@@ -1159,6 +1168,17 @@ class Run:
             SCP + ["-r", local / "PKI", self.host("PROD") + ":" + base + "/medium/"]
         )
 
+    def transfer_whoami_environment(self):
+        """The demo's environment file to PROD's run directory, as delivered."""
+        base = "podman-offline-acceptance/" + self.id
+        self.command(
+            SCP
+            + [
+                str(ROOT / "config/whoami.yaml"),
+                self.host("PROD") + ":" + base + "/whoami.yaml",
+            ]
+        )
+
     def execute_whoami(self):
         """Install the .NET/TypeScript demo app3 offline and check its conversion risks.
 
@@ -1178,15 +1198,22 @@ class Run:
             "dev-down",
         ):
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
-        # Backlog 85: app3 is an optional API, built with config/whoami.yaml.
-        self.step("04-bundle", lambda: self.guest("DEV", "whoami-bundle"))
-        self.step("04-bundle-list", lambda: self.record_bundles("whoami-bundle-list"))
+        # Neutral bundles; the target's environment file registers app3.
+        self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
+        self.step("04-bundle-list", lambda: self.record_bundles("bundle-list"))
         order = ["platform", "identity", "app3"]
         for name in order:
             self.step("05-transfer-" + name, lambda n=name: self.transfer(bundle=n))
         self.step(
             "06-prepare-host",
             lambda: self.guest("PROD", "prepare-host", bundle="platform"),
+        )
+        # Backlog 85: the demo's environment file, placed on the target, decides
+        # app3's registration; every install below deploys with it.
+        self.step("06-environment-file", self.transfer_whoami_environment)
+        self.step(
+            "06-whoami-environment",
+            lambda: self.guest("PROD", "whoami-environment", bundle="app3"),
         )
         for name in order:
             self.step(

@@ -94,9 +94,9 @@ with client ID `inventory` and component `orders` with client ID `orders-web`.
 ### Selection
 
 The catalog is the product. Only listed components are prepared, started in
-dev, scanned for images, built, bundled and guarded. A build environment can
-build a subset of it ([the components of an
-environment](#the-components-of-an-environment)). A directory under
+dev, scanned for images, built, bundled and guarded. A target runs the
+components its environment file lists ([the components of a target
+environment](#the-components-of-a-target-environment)). A directory under
 `components/` without a catalog entry is ignored, even if it is invalid. A
 listed component whose directory is missing is an error, not a silent removal.
 
@@ -146,8 +146,8 @@ Source dev merges the component defaults, then the developer's local
 `config/dev.yaml` (untracked, for every component). A setting replaces the
 whole value; a `SECRET_FILES`/`VOLUME_FILES` ID replaces only that ID's source
 list in the component it starts with, which must declare it. Its reserved
-`overrides` block adds or replaces container variables as a build environment
-file does ([environment overrides](#environment-overrides-configenvironmentyaml));
+`overrides` block adds or replaces container variables as a target environment
+file does ([environment overrides](#environment-overrides-the-targets-environment-file));
 it is no setting and never reaches `build/dev/<id>/config.yaml`. The file is
 excluded from bundles and never read by production `init-config`, `validate`
 or `install`.
@@ -211,7 +211,7 @@ redirect URIs, so they cannot be renamed:
 | `SECRET_FILES`, `VOLUME_FILES` | File-source declarations, not placeholder values |
 | `SECRET_TEMPLATES` | Refused in every config file; the platform's internal name for the Secrets it renders from `ENVIRONMENT` and `MOUNTS` |
 | `ENVIRONMENT`, `MOUNTS` | Each container's environment and mounted files; only in the release's `config.defaults.yaml`, never in the operator's `config.yaml` or a dev file |
-| `overrides` | Only in `config/dev.yaml` and a build environment file `config/<environment>.yaml`: per-component `ENVIRONMENT` overrides ([environment overrides](#environment-overrides-configenvironmentyaml)); never a setting |
+| `overrides` | Only in `config/dev.yaml` and a target environment file `/var/lib/<product>/state/<environment>.yaml`: per-component `ENVIRONMENT` overrides ([environment overrides](#environment-overrides-the-targets-environment-file)); never a setting |
 | `COMPONENT_VERSION` | Only in a container `image`: the component's `VERSION` ([image versions](#image-versions-configimagesyaml)) |
 | Any other name, e.g. `PUBLIC_MY_SETTING` | Only replaces `@@NAME@@` in its own component |
 
@@ -328,12 +328,15 @@ Rules, each refused before anything is written with the file and the next step:
   Declare it either in `ENVIRONMENT` or in the container's manifest `env`,
   never both. The same database password protection applies in both cases.
 
-### Environment overrides: `config/<environment>.yaml`
+### Environment overrides: the target's environment file
 
-One product can be delivered to several environments that need other values
-for a few container variables (log levels, feature switches, limits) and share
-every other declaration (backlog 84). The common values stay in the
-component's `config.defaults.yaml`:
+One product is delivered to several environments (backlogs 84 and 85). Each
+target may run a different set of components, and a few container variables
+(log levels, feature switches, limits, the registration of an optional API)
+may differ, while every other declaration is shared. Bundles and RPMs are
+built once, without any environment; the target's own environment file
+decides at deployment. The common values stay in the component's
+`config.defaults.yaml`:
 
 ```yaml
 # components/app1/config.defaults.yaml
@@ -343,11 +346,13 @@ ENVIRONMENT:
     Features__Reports: "false"
 ```
 
-An environment file names components under `overrides:`; its only other
-top-level key is `components:` ([below](#the-components-of-an-environment)):
+The operator places the environment file in the runtime account's state
+directory, `/var/lib/<product>/state/<environment>.yaml`
+([manual](PRODUCTION-INSTALL.md#6-place-the-environment-file)):
 
 ```yaml
-# config/prod1.yaml
+# /var/lib/myproduct/state/prod1.yaml
+components: [platform, identity, app1]
 overrides:
   app1:
     ENVIRONMENT:
@@ -356,11 +361,12 @@ overrides:
         Reports__MaxRows: "500"
 ```
 
-`./build-bundle.sh --environment prod1` builds with it; app1's container
-`app` then gets all three variables: `Logging__LogLevel__Default:
-Information`, `Features__Reports: "true"` and `Reports__MaxRows: "500"`.
-In dev, the same block is the reserved `overrides` key of `config/dev.yaml`,
-next to its settings and file-source overrides:
+and deploys it with `<product> --environment prod1`. app1's container `app`
+then gets `Logging__LogLevel__Default: Information` (kept),
+`Features__Reports: "true"` (replaced) and `Reports__MaxRows: "500"` (added),
+as the generated ConfigMap `app1-app-env`. The same bundles serve prod2 with
+another file. In dev, the same block is the reserved `overrides` key of
+`config/dev.yaml`, next to its settings and file-source overrides:
 
 ```yaml
 # config/dev.yaml
@@ -390,128 +396,104 @@ How overrides merge (`environment.merge`):
 - A name that differs from a common one only in case is refused, as within
   one file; there is no rule for which spelling wins.
 - A component entry holds only `ENVIRONMENT`. Images, manifests, `MOUNTS`,
-  file sources and settings cannot be overridden. Every other rule above
-  applies to the merged variables: declared secrets of the component,
-  identity's API secret lines, settings placeholders, manifest `env` and
-  `envFrom`, the database password check.
+  settings, `SECRET_FILES` and `VOLUME_FILES` cannot be overridden. Every
+  other rule above applies to the merged variables: declared secrets of the
+  component, identity's API secret lines, settings placeholders, manifest
+  `env` and `envFrom`, the database password check.
 - Errors name the file, component, container and variable, never a value.
 
-Before anything is written, the build checks each overridden component with
-what its declarations decide: names and placeholder syntax, declared secrets
-and generated Secret names, `@@CLIENT_ID@@` without `client.yaml`, and the
-containers in its manifests. A container whose name is itself a `@@NAME@@`
-setting is known only with the operator's settings, so while a component has
-one, its container checks happen at validate and install. An empty entry
-(`{}`) for a container without common `ENVIRONMENT` is not compiled into the
-bundle, so there it must name exactly one container written literally in the
-manifests, or the build refuses it. Setting values,
-credentials and the database check always belong to the installation. Only a
-component whose variables the environment changes gets a rewritten
-`config.defaults.yaml` (comments are not kept, every value keeps its text).
+The precedence on the target, each layer for its own kind of value:
 
-The build environment is chosen when the bundles are built, not at the
-installation. The bundle's `config.defaults.yaml` holds the merged
-`ENVIRONMENT`, and its `bundle.yaml` the dependencies and API secret lines
-derived from it, so the installation needs neither the source checkout nor
-`config/prod1.yaml`. Settings and credentials are still the operator's
-`config.yaml` and delivered files, as without an environment.
+| Value | Source, in order |
+| --- | --- |
+| Settings, `SECRET_FILES`, `VOLUME_FILES` | the operator's `state/<id>/config.yaml`, then the release's `config.defaults.yaml` for what it lacks (`catalog.operator_config`); the gateway's public settings |
+| `ENVIRONMENT` | the release's `config.defaults.yaml`, then the environment file's `overrides:` per variable |
+| `MOUNTS`, manifests, images, roles | the release only |
 
-`--environment <name>` takes lowercase letters, digits and inner hyphens, a
-letter first; `dev` and `images` are refused because `config/dev.yaml` and
-`config/images.yaml` have other meanings. A missing file is an error, and so
-is any top-level key other than `components:` and `overrides:`. Without
-`--environment` the common declarations are built unchanged.
+The environment file never reaches `config.yaml`, and no deployment rewrites
+`config.yaml`.
 
-#### The components of an environment
+#### The components of a target environment
 
-`components:` (backlog 85) lists the environment's components; without it the
-environment has the whole catalog. `bundles.yaml` stays the catalog of every
-component and the gateway/Identity roles:
+`components:` is required on the target: it lists the components this
+installation runs (the target has no source catalog, and every release ever
+delivered is no substitute for one). `<product> --environment prod1`:
 
-```yaml
-# config/prod2.yaml
-components: [platform, identity, app2]
-overrides:
-  app2:
-    ENVIRONMENT:
-      backend:
-        Logging__LogLevel__Default: Debug
-```
+- checks, before it changes anything, that every listed component and every
+  dependency of one has an installed release package in a compatible version
+  and that a dependency is listed too; otherwise it names what is missing and
+  changes nothing (the administrator installs the packages, then the same
+  command runs again). Nothing is added, fetched or left out silently;
+- refuses a listed component the runtime user uninstalled on purpose
+  (`state/uninstalled/<id>`), unless it is named (`<product> --environment
+  prod1 <id>` installs it again);
+- runs `deploy.sh check-environment prod1` in every listed release: the
+  file's structure, an override of a component outside `components:`, and
+  each release's merged `ENVIRONMENT` against its own manifests and
+  declarations (containers, secrets, placeholders, Identity's API lines);
+- then installs the listed components in dependency order, Identity before
+  every component it does not itself depend on, each with `deploy.sh
+  init-config|install --environment prod1`. A component not listed is left
+  as it is: deploying a smaller environment never stops or uninstalls one.
 
-- Only the listed components get a bundle and images; the others' manifests
-  are not read and their credentials are not needed. Order and dependencies
-  follow the catalog's rules. `current-bundles.txt` names exactly the listed
-  components' bundles.
-- An unknown or repeated ID is refused, and so is an empty list ("list at
-  least one component, or omit `components`").
-- Nothing is added: a missing dependency stops the build with both names,
-  for example `config/prod2.yaml: app2 requires identity (it has
-  client.yaml); add identity to components`. Every component requires the
-  gateway when the catalog has one.
-- `overrides:` keeps its meaning for the listed components; an override of a
-  component that is not listed is refused (also `{}`).
-- `./build-bundle.sh --environment prod2 app2` builds only app2 within prod2;
-  a component outside the list is refused. `./build-rpms.sh --environment
-  prod2` wraps exactly the archives `dist/prod2/current-bundles.txt` names and
-  refuses a list that no longer matches the environment. Every run writes
-  `dist/prod2/delivery/` again with exactly the current RPMs and the tools
-  RPM, and that is the directory the supplier delivers: `dist/prod2/rpm/`
-  keeps every RPM ever built (one version has one content), so an RPM of an
-  earlier, larger set is never delivered. A component RPM is delivered only
-  while it wraps the component's current content, recorded beside the RPM as
-  `<rpm>.bundle.sha256`: its `components/<id>/` files and `images.txt`, its
-  descriptor's roles and dependency names (not the version ranges a
-  dependency's new version changes), and its images' IDs and layer digests
-  from `images.tar`;
-  an RPM of the same version with other content, for example after an
-  override changed without a new `VERSION`, is refused with the next step.
-  With an RPM still missing or refused there is no delivery directory, and
-  the directory is published only once it is complete.
+Nothing about the environment is remembered: every run, and every
+`deploy.sh` it calls, reads the file as it is now, so a retry after an
+interruption is the same command, and an edited file applies to every
+component the run installs. `<product>` without `--environment` keeps its
+behavior: every installed release with its release declarations.
 
-An optional API, one only some environments have, keeps Identity's
-`ApiResources__<n>__*` lines out of Identity's `config.defaults.yaml`: each
-environment that lists the API adds them as an override of Identity, with its
-own `<n>` numbering. An Identity line naming a component that is not listed
-is refused ("no listed component owns ..."). Such a product always builds
-with an environment: without one, the API runs unregistered and Identity
-refuses its calls. In the demo, app3 is that API: its lines are in
-`config/whoami.yaml` (platform, identity and app3) and, for dev, in
-`config/dev.yaml.example`'s overrides.
+The bundle's `bundle.yaml` is environment-neutral and names the catalog's
+Identity (`identity`). Only the API roles depend on an environment, so they
+are derived on the target (`catalog.environment_descriptor`): Identity
+derives `api_secrets` from its merged `ENVIRONMENT`, with the environment's
+`components:` as the listed components (an Identity line naming a component
+not listed is refused, "no listed component owns ..."); any other component
+is an API of Identity exactly when the installed Identity's `api_secrets`
+names it, and then requires the installed Identity's series. The installed
+descriptor in `metadata/` records the result, and install refuses an
+Identity release without the line of an installed API (uninstall the API
+first).
 
-The selection never uninstalls anything. A component a later delivery leaves
-out keeps running until the runtime user uninstalls it with its own release's
-`./deploy.sh uninstall` ([manual](PRODUCTION-INSTALL.md#7-everyday-tasks));
-an API goes first, because install refuses an Identity release without the
-line of an installed API. The uninstall writes `state/uninstalled/<id>`
-(the removed version, kept by a retry), which `status` shows: the runtime
-command reads that directory itself, so a status report from an older
-release cannot hide it, and leaves the component out although its release
-stays installed, until `<product> <id>` installs it again, which removes the
-record. The output of an environment goes to its own directory,
-`dist/<name>/` with its `current-bundles.txt` (staging in
-`build/bundle-<name>/`); `./build-rpms.sh --environment <name>` wraps those
-bundles into `dist/<name>/rpm/`. One build never removes another's files.
+An optional API keeps Identity's `ApiResources__<n>__*` lines out of
+Identity's `config.defaults.yaml`: each environment file that lists the API
+adds them as an override of Identity. In the demo, app3 is that API: its
+lines are in `config/whoami.yaml` (platform, identity and app3, the file the
+`--whoami` lab scenario places on the target) and, for dev, in
+`config/dev.yaml.example`'s overrides. Without them app3 runs unregistered
+and Identity refuses its calls.
 
-The directories exist because prod1 and prod2 can contain different bytes for
-the same component version. On one installation a version still has exactly
-one content: if app1 1.4.0 from `dist/prod1/` is installed and the prod1
-overrides change, deliver app1 1.4.1, not a rebuilt 1.4.0: `./build-rpms.sh`
-never replaces an existing RPM, and the administrator command refuses a
-package with the same name and version but other content.
+Removing a component is an explicit uninstall with its own release's
+`./deploy.sh uninstall` ([manual](PRODUCTION-INSTALL.md#9-remove-a-component)),
+after deleting it from `components:`; an API goes first. The uninstall
+writes `state/uninstalled/<id>` (the removed version, kept by a retry),
+which `status` shows and which the runtime command reads itself.
 
-Troubleshooting: a misspelled name stops the build before anything is
-written, naming the file and the place (in a component with a container
-named by a `@@NAME@@` setting, a misspelled container with variables stops
-`validate` and `install` instead):
+Troubleshooting: a misspelled name stops the deployment before anything
+changes, naming the file and the place:
 
 ```text
-ERROR: config/prod1.yaml: overrides.app1.ENVIRONMENT.ap: the component must have exactly one container named ap; it has 0
-ERROR: config/prod1.yaml: overrides.app9: app9 is not a component in bundles.yaml; listed: platform, identity, app1, app2, app3, help
+ERROR: /var/lib/myproduct/state/prod1.yaml: overrides.app1.ENVIRONMENT.ap: the component must have exactly one container named ap; it has 0
+ERROR: no release package of app9. Nothing was changed. The administrator installs the myproduct release packages (sudo myproduct-admin <delivery directory>); then run the same command again
 ```
 
-Correct the container or component name in the environment file (container
-names are in the component's manifests, component IDs in `bundles.yaml`) and
-run the build again.
+Correct the container name (it is in the component's manifests) or the
+component ID in the file, or have the missing package delivered, and run the
+same command again.
+
+#### Deliveries
+
+`./build-rpms.sh [<component> ...]` builds the release RPMs (or reuses one
+that already wraps the same content) and writes `dist/delivery/` with
+exactly that run's RPMs and the tools RPM: the directory the supplier
+delivers, with all components or only those a customer needs.
+`dist/rpm/` keeps every RPM ever built and is never delivered. One version
+has one content: an existing RPM is reused only while it wraps the
+component's current content, recorded beside it as `<rpm>.bundle.sha256`
+(its `components/<id>/` files and `images.txt`, its descriptor without the
+dependency version ranges a dependency's new version changes, and its
+images' IDs and layer digests from `images.tar`; for the tools RPM, its
+files). Other content under the same version is refused with "give ... a new
+VERSION". A refused or failed run leaves no delivery directory.
 
 ### Files with secrets: `MOUNTS`
 

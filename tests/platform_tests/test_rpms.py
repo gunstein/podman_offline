@@ -50,7 +50,7 @@ class ReleaseRpmTests(ProductFixture):
         self.process.side_effect = command
 
     def test_one_side_by_side_package_with_the_unchanged_release(self):
-        (rpm,) = rpms.build(["worker"])
+        rpm = rpms.build(["worker"])[0]
         self.assertEqual(rpm.name, "cedar-worker-1.2.3-1.2.3-1.noarch.rpm")
         self.assertEqual(
             rpm_query(rpm, "--queryformat", "%{NAME} %{VERSION} %{RELEASE} %{ARCH}"),
@@ -103,7 +103,7 @@ class ReleaseRpmTests(ProductFixture):
             return result
 
     def test_erase_needs_a_live_authorization_for_exactly_this_package(self):
-        (rpm,) = rpms.build(["worker"])
+        rpm = rpms.build(["worker"])[0]
         name = "cedar-worker-1.2.3-1.2.3-1"
         started = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
         live = f"{name} {os.getpid()} {started}\n"
@@ -129,8 +129,17 @@ class ReleaseRpmTests(ProductFixture):
         self.assertEqual(self.guard(rpm, 1).returncode, 0)
 
     def test_a_version_is_built_once(self):
-        (rpm,) = rpms.build(["worker"])
+        """The same content is reused; other content under one version is refused."""
+        rpm = rpms.build(["worker"])[0]
         before = rpm.read_bytes()
+        self.assertEqual(rpms.build(["worker"])[0], rpm)
+        self.assertEqual(rpm.read_bytes(), before)
+        self.assertEqual(
+            sorted(p.name for p in (self.source / "dist/delivery").iterdir()),
+            sorted([rpm.name, rpms.build(["worker"])[1].name]),
+        )
+        (self.source / "components/worker/files/notes.txt").write_text("changed\n")
+        self.build_and_unpack()
         with self.assertRaisesRegex(rpms.RpmError, "already exists.*new VERSION"):
             rpms.build(["worker"])
         self.assertEqual(rpm.read_bytes(), before)
@@ -158,88 +167,3 @@ class ReleaseRpmTests(ProductFixture):
         self.assertIn("ERROR: rpmbuild is missing", self.stderr.getvalue())
         self.assertEqual(rpms.main([]), 0)
         self.assertIn("PASS: ./build-rpms.sh completed", self.stdout.getvalue())
-
-
-class EnvironmentRpmTests(ProductFixture):
-    """--environment takes the bundles of dist/<environment>/ (backlog 84).
-
-    rpmbuild is replaced: this checks which archive is wrapped and where the
-    package goes, not the package itself (ReleaseRpmTests).
-    """
-
-    def setUp(self):
-        super().setUp()
-        self.product_name = "cedar"
-        product: dict = copy.deepcopy(WORKER)
-        product["worker"]["env"] = {"main": {"MODE": "common"}}
-        self.write_product(product, version="1.2.3")
-        (self.source / "config").mkdir()
-        (self.source / "config/prod1.yaml").write_text(
-            "overrides:\n  worker:\n    ENVIRONMENT:\n      main:\n        MODE: prod1\n"
-        )
-        self.stack.enter_context(
-            mock.patch.multiple(rpms, ROOT=self.source, DIST=self.source / "dist")
-        )
-        self.stack.enter_context(
-            mock.patch.object(rpms.shutil, "which", return_value="/usr/bin/rpmbuild")
-        )
-        self.wrapped = []
-
-        def build_rpm(archive, product, component, version, target):
-            self.wrapped.append((archive, target))
-            rpm = target / f"{product}-{component}-{version}-{version}-1.noarch.rpm"
-            target.mkdir(parents=True, exist_ok=True)
-            rpm.write_text(archive.name)
-            return rpm
-
-        def build_tools(product, target):
-            version = (self.source / "tools/VERSION").read_text().strip()
-            rpm = target / f"{product}-tools-{version}-1.noarch.rpm"
-            target.mkdir(parents=True, exist_ok=True)
-            rpm.write_text("tools")
-            return rpm
-
-        self.stack.enter_context(mock.patch.object(rpms, "build_rpm", build_rpm))
-        self.stack.enter_context(mock.patch.object(rpms, "build_tools", build_tools))
-
-    def test_the_environment_is_given_once_in_either_spelling(self):
-        for repeated in (
-            ["--environment=prod1", "--environment=prod2"],
-            ["--environment", "prod1", "--environment=prod2"],
-        ):
-            with self.subTest(repeated=repeated):
-                self.assertEqual(rpms.main(repeated), 2)
-        self.assertIn(
-            "ERROR: --environment given more than once", self.stderr.getvalue()
-        )
-        self.assertEqual(self.wrapped, [])
-
-    def test_the_environment_directory_is_read_and_written(self):
-        self.build_and_unpack("prod1")
-        dist = self.source / "dist"
-        rpms.build(environment_name="prod1")
-        self.assertEqual(
-            self.wrapped,
-            [(dist / "prod1/cedar-worker-1.2.3-offline.tar.gz", dist / "prod1/rpm")],
-        )
-        tools = (self.source / "tools/VERSION").read_text().strip()
-        self.assertEqual(
-            sorted(path.name for path in (dist / "prod1/delivery").iterdir()),
-            [
-                "cedar-tools-" + tools + "-1.noarch.rpm",
-                "cedar-worker-1.2.3-1.2.3-1.noarch.rpm",
-            ],
-        )
-        # The common build's archive is never taken for an environment.
-        self.build_and_unpack()
-        (dist / "prod1/cedar-worker-1.2.3-offline.tar.gz").unlink()
-        with self.assertRaisesRegex(
-            rpms.RpmError,
-            "Missing dist/prod1/cedar-worker-1.2.3-offline.tar.gz; run "
-            "./build-bundle.sh --environment prod1 worker",
-        ):
-            rpms.build(["worker"], environment_name="prod1")
-        with self.assertRaisesRegex(
-            catalog.common.DeployError, "missing file config/prod2.yaml"
-        ):
-            rpms.build(["worker"], environment_name="prod2")

@@ -29,6 +29,8 @@ RELEASE_PATH = "/var/lib/{product}/releases/{name}"
 
 ID = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+# An environment file's name, state/<name>.yaml: deployment.common.PRODUCT's rule.
+ENVIRONMENT = re.compile(r"[a-z]([a-z0-9-]{0,30}[a-z0-9])?")
 
 # One RPM file or installed package of this product. component is "" for the
 # tools package; file is a private copy of a delivered RPM, or None.

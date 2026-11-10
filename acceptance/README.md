@@ -11,15 +11,15 @@ environment's CA, the internal variant and the restore:
 python3 acceptance/acceptance.py --run whoami-1 --whoami run
 ```
 
-app3 is an optional API (backlog 85), so the scenario builds the demo's build
-environment `config/whoami.yaml` (`whoami-bundle`): `dist/whoami/current-bundles.txt`
-must name exactly platform, identity and app3, and identity's `bundle.yaml`
-must carry app3's API secret line from the environment's overrides; the
-archives are then copied to `dist/` for the release RPM transport. On PROD,
-`06-whoami-api-registration` requires the delivered registration
-(`state/apis/app3/value`) and the installed identity's `api_secrets`.
-`test_whoami.py` runs the DEV check against stub builds with an extra
-component, a missing one and no registration.
+app3 is an optional API (backlog 85): the scenario builds neutral bundles,
+copies the demo's environment file `config/whoami.yaml` to PROD and places it
+as the runtime account in `state/whoami.yaml` (`06-whoami-environment`,
+`place_environment`, mode 0600); every install of the run then deploys with
+`--environment whoami`. `06-whoami-api-registration` requires that app3's
+credential, its delivered registration (`state/apis/app3/value`) and the key
+of Identity's installed `identity-apis` Secret are the same bytes and that the
+installed Identity's `api_secrets` names app3; `test_whoami.py` checks each
+wrong link fails.
 
 Backlog 69 WP6: the RPM delivery is verified by running the production
 manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd
@@ -38,6 +38,14 @@ controller as the runtime user's laptop (`scp`), or as a declared substitute
 (the lab copies the delivery to a directory instead of mounting a medium,
 which the manual allows). A block runs literally; only the manual's example
 values are replaced, and a changed step ID or example table stops the run.
+The RPMs come from `./build-rpms.sh platform help`: its `dist/delivery/` must
+hold exactly those two release RPMs and the tools RPM, and `05-transfer-rpms`
+delivers that directory (backlog 85). After the upgrade and retirement, the
+`09-manual-environment-*` and `09-manual-uninstall` steps run steps 6, 7 and 9
+of the manual: the environment file sent with `scp`, `myproduct --environment
+prod1` (every listed release checks the file), the uninstall of help from its
+release, the documented stop for the uninstalled but listed help, and its
+reinstall with `myproduct --environment prod1 help`.
 Prompts are answered in a pseudo-terminal as an operator types them; an
 unexpected prompt fails the step.
 
@@ -138,10 +146,11 @@ refuses missing/stale rows or a dev row in production. An installed app missing
 its consumer is still rejected by the item 56 checks.
 
 `upgrade-bundle` now uses `seed_upgrade.py`: an isolated checkout changes exactly
-app1 VERSION plus reference SQL, writes the build environment `config/lab.yaml`
-(an override of app1's `DEMO_CONFIG_LAYER`, backlog 84), builds only its bundle
-with `./build-bundle.sh --environment lab app1`, transfers it as a release RPM,
-and leaves the operator's checkout unchanged. Upgrade explicitly requires `release-v2` in the
+app1 VERSION plus reference SQL, builds only its (neutral) bundle, transfers it
+as a release RPM, and leaves the operator's checkout unchanged. On PROD the
+`upgrade` step places the target environment file `state/lab.yaml` (all five
+components, an override of app1's `DEMO_CONFIG_LAYER`, backlog 85) and
+deploys with `--environment lab`, as every later install of the run does. Upgrade explicitly requires `release-v2` in the
 database. Persistent checks permit only the changed public seed import archive;
 config, credentials, Todo data and sibling assertions remain required. Item 53's
 changed-application-image work is still separate and should extend that builder.
@@ -159,8 +168,9 @@ normal and renamed dev-up steps verify the rendered value and the running
 backend's single environment key and require its absence in the sibling
 backend. Production `healthy()` verifies `defaults` for app1/orders when
 installed, and `environment-lab` for app1 after the app1 upgrade (the `upgrade`
-step records that scenario input in the run directory, `expected-app1-layer`;
-the value is `seed_upgrade.LAYER`), plus sibling isolation for app2/inventory.
+step records that scenario input in the run directory, `expected-app1-layer`,
+with the same value it writes into `state/lab.yaml`), plus sibling isolation
+for app2/inventory.
 The renamed generator carries and renames component dev maps as declarations.
 Owner/help-only scenarios require no app marker. No full environment is printed.
 

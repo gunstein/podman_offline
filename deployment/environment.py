@@ -24,14 +24,14 @@ A component uses only its own secrets: Secret IDs start with the component ID
 ApiResources__<n>__ApiSecrets__0__Value line, which names an API component's
 secret; the platform delivers that value in <identity>-apis (registrations).
 
-Overrides (backlog 84): a build environment file config/<environment>.yaml,
-or the overrides block of config/dev.yaml, adds or replaces single variables
-of named containers (read_overrides). read() merges them into the common
-declarations; every reader (catalog derivation, recipes, ConfigMaps, the
-validate summary) receives the same Overrides value, or None for the common
-declarations alone. A bundle carries the merged result in its own
-config.defaults.yaml (bundle.compiled_defaults), so production reads no
-override file and always passes None.
+Overrides (backlog 84): the overrides block of config/dev.yaml, or a target
+environment file /var/lib/<product>/state/<environment>.yaml (backlog 85),
+adds or replaces single variables of named containers (read_overrides).
+read() merges them into the release's declarations; every reader (catalog
+derivation, recipes, ConfigMaps, the validate summary) receives the same
+Overrides value, or None for the release's declarations alone. Bundles are
+built without any environment: production applies the target's file at
+deployment (deploy.sh install --environment <environment>).
 """
 
 import collections
@@ -54,13 +54,11 @@ CLIENT_SETTINGS = {"CLIENT_ID": "id", "CLIENT_BASE_PATH": "base_path"}
 ForeignLine = collections.namedtuple(
     "ForeignLine", "container key value secrets source"
 )
-# The selected overrides: path is the file shown in messages (relative to the
-# checkout), components maps component -> container -> variable -> text, and
-# selected is a build environment's component set (backlog 85; None means
-# the whole catalog, always in dev). catalog.load_catalog applies selected.
+# The selected overrides: path is the file shown in messages, components
+# maps component -> container -> variable -> text, and selected is a target
+# environment's component set (backlog 85; None in dev, which renders the
+# whole source catalog).
 Overrides = collections.namedtuple("Overrides", "path components selected")
-# config/dev.yaml and config/images.yaml have other meanings.
-RESERVED_ENVIRONMENTS = ("dev", "images")
 # The component set of a build environment file (backlog 85).
 COMPONENTS = "components"
 # Plain YAML scalars that mean null; quoted text such as 'null' is text.
@@ -179,40 +177,42 @@ def where(component, container, env_overrides, key=None):
     return override_place or common_place
 
 
-def environment_file(root, name):
-    """config/<name>.yaml of a build environment; the name is checked first."""
-    # The product name's rule: name becomes config/<name>.yaml and dist/<name>/.
+def environment_path(state, name):
+    """state/<name>.yaml, the operator's environment file on the target (backlog 85).
+
+    The state directory is the runtime account's persistent directory: RPM
+    installation, upgrades and the retirement of releases never touch it.
+    """
+    # The product name's rule; name becomes the file name <name>.yaml.
     if not common.PRODUCT.fullmatch(name):
         raise common.DeployError(
             f"--environment {name!r}: use lowercase letters, digits and inner "
             "hyphens, a letter first and at most 32 characters, for example prod1"
         )
-    if name in RESERVED_ENVIRONMENTS:
-        raise common.DeployError(
-            f"--environment {name}: config/{name}.yaml has another meaning; "
-            "choose another name"
-        )
-    path = root / "config" / (name + ".yaml")
+    path = state / (name + ".yaml")
     if path.is_symlink() or not path.is_file():
         raise common.DeployError(
-            f"--environment {name}: missing file config/{name}.yaml"
+            f"--environment {name}: missing file {path}; place the environment "
+            'file there as the runtime user, see "Place the environment file" in '
+            "the manual"
         )
     return path
 
 
-def read_environment_file(root, name):
-    """The Overrides of config/<name>.yaml: overrides: and components:, both optional.
+def read_environment_file(state, name):
+    """The Overrides of state/<name>.yaml: components: (required) and overrides:.
 
-    components: (backlog 85) lists the environment's components; IDs are
-    checked against the catalog in catalog.load_catalog.
+    components: is the installation's set: the target has no source catalog,
+    and every release ever delivered is no substitute for one. An override
+    of a component outside it is refused here.
     """
-    path = environment_file(root, name)
-    shown = f"config/{name}.yaml"
+    path = environment_path(state, name)
+    shown = str(path)
     document = load(path, OverrideLoader, OVERRIDES_HINT)
     if document is None:
         document = {}
     if not isinstance(document, dict):
-        raise common.DeployError(f"{shown} must contain components: and/or overrides:")
+        raise common.DeployError(f"{shown} must contain components: and overrides:")
     for key in document:
         if key not in (COMPONENTS, common.OVERRIDES):
             raise common.DeployError(
@@ -220,10 +220,18 @@ def read_environment_file(root, name):
                 "components: (a list of component IDs) and overrides: <component>: "
                 "ENVIRONMENT: <container>: <variables>"
             )
-    selected = None
-    if COMPONENTS in document:
-        selected = read_selection(document[COMPONENTS], shown)
+    if COMPONENTS not in document:
+        raise common.DeployError(
+            f"{shown}: components: is missing; list the components of this installation"
+        )
+    selected = read_selection(document[COMPONENTS], shown)
     overrides = read_overrides(document.get(common.OVERRIDES, {}), shown)
+    for component in sorted(overrides.components):
+        if component not in selected:
+            raise common.DeployError(
+                f"{shown}: overrides.{component}: {component} is not in "
+                "components:; add it there or remove its overrides"
+            )
     return overrides._replace(selected=selected)
 
 
@@ -231,8 +239,7 @@ def read_selection(value, shown):
     """components: a nonempty list of component IDs, each once."""
     if value is None or value == []:
         raise common.DeployError(
-            f"{shown}: components: list at least one component, or omit "
-            "components for the whole catalog"
+            f"{shown}: components: list at least one component of this installation"
         )
     if not isinstance(value, list):
         raise common.DeployError(

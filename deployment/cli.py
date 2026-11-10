@@ -3,7 +3,9 @@
 argparse with one subcommand per command (backlog 73). Newer tools call older
 releases' deploy.sh, so the accepted forms are a release interface: validate,
 prepare, install, init-layout, uninstall [<component>] [--delete-data],
-init-config <component> [--set KEY=VALUE ...] and status [--json]. Usage errors exit 2 on stderr,
+init-config <component> [--set KEY=VALUE ...], status [--json] and
+check-environment <environment>; validate, install and init-config also take
+--environment <environment> (backlog 85: state/<environment>.yaml). Usage errors exit 2 on stderr,
 --help exits 0 on stdout, failures exit 1. Operator messages follow
 deployment/output.py.
 """
@@ -22,7 +24,8 @@ from .output import audit, configure, log
 USAGE = (
     "./deploy.sh validate|prepare|install|uninstall [<component>] "
     "[--delete-data] | init-layout | init-config <component> [--set KEY=VALUE ...] "
-    "| status [--json]"
+    "| status [--json] | check-environment <environment>; validate, install and "
+    "init-config take --environment <environment>"
 )
 # Commands that change the target; each start and result goes to the journal.
 AUDITED = ("init-layout", "init-config", "install", "uninstall")
@@ -67,11 +70,36 @@ def parser():
             allow_abbrev=False,
         )
 
-    command("validate", "check declarations without writing", "./deploy.sh validate")
+    def environment_option(parser):
+        parser.add_argument(
+            "--environment",
+            metavar="<environment>",
+            help="apply the target environment file state/<environment>.yaml",
+        )
+
+    environment_option(
+        command(
+            "validate",
+            "check declarations without writing",
+            "./deploy.sh validate [--environment <environment>]",
+        )
+    )
     command(
         "prepare", "render dev YAML from the source checkout", "./deploy.sh prepare"
     )
-    command("install", "install this bundle's component", "./deploy.sh install")
+    environment_option(
+        command(
+            "install",
+            "install this bundle's component",
+            "./deploy.sh install [--environment <environment>]",
+        )
+    )
+    check = command(
+        "check-environment",
+        "check this release against a target environment file; no writes",
+        "./deploy.sh check-environment <environment>",
+    )
+    check.add_argument("environment", metavar="<environment>")
     command(
         "init-layout",
         "create the runtime account's bootstrap file",
@@ -92,8 +120,10 @@ def parser():
     init = command(
         "init-config",
         "create the component's persistent config",
-        "./deploy.sh init-config <component> [--set KEY=VALUE ...]",
+        "./deploy.sh init-config <component> [--set KEY=VALUE ...] "
+        "[--environment <environment>]",
     )
+    environment_option(init)
     init.add_argument("component", type=component_id)
     init.add_argument(
         "--set",
@@ -124,6 +154,8 @@ def audit_subject(command, args):
             subject += " " + args.component
     if getattr(args, "delete_data", False):
         subject += " --delete-data"
+    if getattr(args, "environment", None):
+        subject += " --environment " + args.environment
     return subject
 
 
@@ -145,17 +177,21 @@ def run(args):
             settings = dict(args.set)
             if len(settings) != len(args.set):
                 raise common.DeployError("--set names a setting more than once")
-            deploy.init_config(args.component, settings)
+            deploy.init_config(args.component, settings, args.environment)
         elif args.command == "uninstall":
             removed = deploy.uninstall(args.component, args.delete_data)
             if removed:
                 note = f"; removed installed version {removed}"
+        elif args.command == "install":
+            deploy.install(args.environment)
+        elif args.command == "validate":
+            validation.validate(args.environment)
+        elif args.command == "check-environment":
+            deploy.check_environment(args.environment)
         else:
             {
                 "prepare": deploy.prepare,
-                "install": deploy.install,
                 "init-layout": deploy.init_layout,
-                "validate": validation.validate,
             }[args.command]()
     except subprocess.CalledProcessError as error:
         log.error(f"ERROR: {error}")
@@ -183,7 +219,7 @@ def main(arguments=None):
         args = parse(
             parser(),
             sys.argv[1:] if arguments is None else arguments,
-            flags=("--verbose", "--delete-data", "--json"),
+            flags=("--verbose", "--delete-data", "--json", "--environment"),
         )
     except UsageError as error:
         return error.code

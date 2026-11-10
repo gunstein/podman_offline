@@ -133,17 +133,15 @@ class ParserTests(DeployFixture):
             self.assertEqual(bundle.main(["--help"]), 0)
             self.assertTrue(
                 self.stdout.getvalue().startswith(
-                    "Usage: ./build-bundle.sh [--environment <name>] [<component> ...] [--verbose]"
+                    "Usage: ./build-bundle.sh [<component> ...] [--verbose]"
                 )
             )
+            # Bundles are environment-neutral (backlog 85): no --environment.
             for refused in (
                 ["--verb"],
                 ["--verbose", "--verbose"],
                 ["--", "app1"],
-                ["--environment"],
-                ["--environment", "prod1", "--environment", "prod2"],
-                ["--environment=prod1", "--environment=prod2"],
-                ["--environment", "prod1", "--environment=prod2"],
+                ["--environment", "prod1"],
             ):
                 with self.subTest(refused=refused):
                     self.stderr.truncate(0)
@@ -156,12 +154,32 @@ class ParserTests(DeployFixture):
                     self.assertNotIn("error:", errors)
             build.assert_not_called()
             self.assertEqual(bundle.main(["app1", "help", "--verbose"]), 0)
-            build.assert_called_once_with(["app1", "help"], None)
-            self.assertTrue(output.log.isEnabledFor(logging.DEBUG))
-            build.reset_mock()
-            self.assertEqual(bundle.main(["app1", "--environment", "prod1"]), 0)
-            build.assert_called_once_with(["app1"], "prod1")
+            build.assert_called_once_with(["app1", "help"])
+        self.assertTrue(output.log.isEnabledFor(logging.DEBUG))
         self.assertIn("PASS: ./build-bundle.sh completed", self.stdout.getvalue())
+
+    def test_deploy_environment_option(self):
+        """install, validate and init-config take --environment once (backlog 85)."""
+        for line, expected in (
+            (["install", "--environment", "prod1"], "prod1"),
+            (["validate", "--environment=prod1"], "prod1"),
+            (["init-config", "app", "--environment", "prod1"], "prod1"),
+            (["check-environment", "prod1"], "prod1"),
+            (["install"], None),
+        ):
+            with self.subTest(line=line):
+                args = cli.parse(
+                    cli.parser(), line, flags=("--verbose", "--environment")
+                )
+                self.assertEqual(args.environment, expected)
+        for refused in (
+            ["install", "--environment", "a", "--environment=b"],
+            ["uninstall", "--environment", "a"],
+            ["status", "--environment", "a"],
+            ["check-environment"],
+        ):
+            with self.subTest(refused=refused):
+                self.assertEqual(cli.main(refused), 2)
 
 
 class MessageTests(DeployFixture):

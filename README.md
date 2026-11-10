@@ -134,9 +134,9 @@ names](docs/COMPONENTS.md#reserved-configuration-names).
 | --- | --- |
 | `config/dev.yaml.example` | Small example of local dev overrides |
 | `config/dev.yaml` | Developer overrides, ignored by Git and excluded from bundles |
-| `config/<environment>.yaml` | Optional build environment: `ENVIRONMENT` overrides compiled into bundles by `./build-bundle.sh --environment <environment>` ([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)) |
 | `components/<component>/config.defaults.yaml` | Component settings, secret and volume references, `ENVIRONMENT` and `MOUNTS` |
 | `/var/lib/myproduct/state/<component>/config.yaml` | Authoritative persistent production config |
+| `/var/lib/myproduct/state/<environment>.yaml` | The target's environment file: its components and `ENVIRONMENT` overrides, deployed with `myproduct --environment <environment>` ([environment overrides](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file)) |
 
 Dev merges the component defaults and then the developer's own
 `config/dev.yaml`, which applies to every component. A setting there replaces
@@ -145,8 +145,8 @@ ID's source list, in the component whose ID it starts with; the component must
 already declare the ID. No recursive merge or list concatenation takes place.
 The reserved `overrides` block adds or replaces single container variables
 (`overrides: <component>: ENVIRONMENT: <container>: <variables>`), merged into
-`ENVIRONMENT` exactly as a build environment file is
-([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml));
+`ENVIRONMENT` exactly as a target environment file is
+([environment overrides](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file));
 it is not a setting and never reaches `build/dev/<component>/config.yaml`. Duplicate YAML keys are rejected in each source
 file. Missing `config/dev.yaml` means no overrides; an invalid one fails.
 Production initialization, validation and install never read it, even if a file
@@ -207,8 +207,8 @@ from its own bundle before either app. For a platform/help-only setup, install
 help after platform; Identity and the apps are not required. Prepare each
 component’s certificates/credentials with the certificate script, edit
 component-specific settings, then install. app3 is registered with Identity
-only in bundles built with an environment that includes it (the demo's
-`config/whoami.yaml`, backlog 85). It generates the secret it shares
+only when the target deploys an environment file that registers it (the
+demo's `config/whoami.yaml`, backlog 85). It generates the secret it shares
 with Identity at its first install (`app3-api-secret` in app3's `config.yaml`,
 file `credentials/api-secret/value`). To reuse a value, or to rotate it, write
 it there as the runtime account (mode 0600, one line, no trailing newline)
@@ -380,16 +380,11 @@ One invocation creates one bundle per catalog component and lists them in
 `dist/current-bundles.txt`; older archives in `dist/` are retained, for example
 for uninstalling a removed component. `./build-bundle.sh app1 help` builds only
 the named components, after validating the whole catalog, and leaves
-`dist/current-bundles.txt` unchanged. `./build-bundle.sh --environment prod1`
-(optionally with component names) compiles the `ENVIRONMENT` overrides of
-`config/prod1.yaml` into the bundles and writes them, with their own
-`current-bundles.txt`, to `dist/prod1/`; the source files stay unchanged and
-the installation needs no environment file
-([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)).
-Its `components:` list selects the environment's components; the others get no
-bundle ([the components of an environment](docs/COMPONENTS.md#the-components-of-an-environment)).
-The demo's `config/whoami.yaml` is platform, identity and app3 with app3's
-Identity registration; without it, app3 is built unregistered. Only catalog components are scanned for
+`dist/current-bundles.txt` unchanged. Bundles are environment-neutral: a
+target's environment file selects its components and overrides at
+deployment ([environment overrides](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file)).
+The demo's `config/whoami.yaml` is such a file (platform, identity and app3,
+with app3's Identity registration). Only catalog components are scanned for
 images. Each bundle contains its component's `config.defaults.yaml`, only its
 component,
 `deploy.sh`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
@@ -404,10 +399,10 @@ private files out of shipped directories and retain their declarations.
 ### Release RPMs (backlog 69, phase 1)
 
 After `./build-bundle.sh`, `./build-rpms.sh [<component> ...]` wraps each
-selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`;
-`./build-rpms.sh --environment prod1` takes the bundles `dist/prod1/current-bundles.txt`
-names, writes `dist/prod1/rpm/` and then `dist/prod1/delivery/` with exactly the
-current RPMs and the tools RPM; deliver that directory.
+selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`,
+or reuses one that already wraps the same content, and writes `dist/delivery/`
+with exactly this run's RPMs and the tools RPM: deliver that directory, with all
+components or only those a customer needs ([deliveries](docs/COMPONENTS.md#deliveries)).
 It needs `rpmbuild` (package `rpm-build`) on the build machine. The RPM
 installs the release unchanged under
 `/var/lib/<product>/releases/<product>-<component>-<version>/`; the version
@@ -419,13 +414,14 @@ dependencies and no scriptlet except the erase guard: a plain `dnf remove` or
 `rpm -e` is refused unless `/run/<product>/erase-authorization` names exactly
 that package (written by the administrator command for one removal, backlog
 69 WP4). A version
-is built once; an existing RPM of the same name is never replaced, so a changed
-release needs a new `VERSION`.
+has one content; an existing RPM of the same name is never replaced (it is
+reused while it wraps the same content), so a changed release needs a new
+`VERSION`.
 
-`./build-rpms.sh` without arguments, or with `--tools`, also builds the tools
-RPM `dist/rpm/<product>-tools-<version>-1.noarch.rpm` (version in
-`tools/VERSION`; raise it whenever a file it carries changes, see
-`TOOLS_FILES` in `rpms.py`). It installs the administrator command (WP2):
+Every run also builds (or reuses) the tools RPM
+`dist/rpm/<product>-tools-<version>-1.noarch.rpm` (`--tools` alone builds only
+it; version in `tools/VERSION`; raise it whenever a file it carries changes,
+see `TOOLS_FILES` in `rpms.py`, or the run is refused). It installs the administrator command (WP2):
 
 ```sh
 sudo dnf --disablerepo='*' install /mnt/myproduct-tools-*.rpm   # once per server

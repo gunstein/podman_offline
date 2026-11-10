@@ -4,10 +4,11 @@ PUBLIC_ORIGIN: https://myproduct-proxy:8443
 HTTPS_PORT: 8443
 
 # Reserved: add or replace single container variables, merged into the
-# component's ENVIRONMENT as a build environment file config/<name>.yaml is
+# component's ENVIRONMENT as a target environment file state/<name>.yaml is
 # (docs/COMPONENTS.md, "Environment overrides"). Not a setting.
 # app3 is an optional API (backlog 85): Identity's registration of it lives
-# here for dev and in config/whoami.yaml for builds, not in Identity's
+# here for dev and in config/whoami.yaml (the demo's target environment
+# file) for production, not in Identity's
 # config.defaults.yaml. Without it, dev runs app3 but Identity refuses its
 # API calls.
 overrides:
