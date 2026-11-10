@@ -1315,29 +1315,23 @@ def check_installed_without_environment(product, name):
         )
 
 
-def environment_applied(descriptor, env_overrides, installed):
+def environment_applied(descriptor, env_overrides, installed, records):
     """Whether the completed install of this release has this environment's effect.
 
     The same version, the same descriptor in the environment (its API roles)
     and the same recorded environment_effect (its overrides, and the secret
-    line Identity uses for it); anything else needs an install.
+    line Identity uses for it); anything else needs an install. records are
+    environment_records(), so only a valid record can count as applied.
     """
     name = descriptor["name"]
-    record = catalog.environment_record_path(common.STATE, name)
     if (
         catalog.installed_version(common.STATE, name) != descriptor["version"]
         or installed.get(name) != descriptor
-        or record.is_symlink()
-        or not record.is_file()
+        or name not in records
     ):
         return False
-    try:
-        applied = json.loads(record.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return False
-    if not isinstance(applied, dict):
-        return False
-    applied.pop("environment", None)  # Another file with the same effect is applied.
+    applied = dict(records[name])
+    applied.pop("environment")  # Another file with the same effect is applied.
     current = environment_effect(descriptor, env_overrides, installed)
     return applied == json.loads(json.dumps(current))
 
@@ -1359,7 +1353,8 @@ def check_environment(environment_name, json_output=False):
     settings; its checks are left to install. Install repeats all of this
     with the operator's config (install_checks, effective_documents).
 
-    Needs no bootstrap file and no config. With --json it prints
+    Needs no bootstrap file and no config. It refuses invalid environment
+    records (environment_records), as install does. With --json it prints
     {"applied": ..., "component": ...}: whether the completed install already
     has this environment's effect (environment_applied), so the runtime
     command can leave it as it is.
@@ -1368,6 +1363,9 @@ def check_environment(environment_name, json_output=False):
     descriptor = bundle_descriptor()
     # No bootstrap needed: the runtime command checks before init-layout.
     layout.select_state(descriptor["product"])
+    # Every listed release checks the records too, so an invalid one stops
+    # the runtime command in its checks, before any change.
+    records = environment_records()
     name = descriptor["name"]
     env_overrides = target_environment(environment_name, name)
     if env_overrides is None:
@@ -1411,7 +1409,7 @@ def check_environment(environment_name, json_output=False):
                             f"{secret}, which {name} does not declare in SECRET_FILES"
                         )
     if json_output:
-        applied = environment_applied(effective, env_overrides, installed)
+        applied = environment_applied(effective, env_overrides, installed, records)
         print(json.dumps({"applied": applied, "component": name}, sort_keys=True))
     else:
         log.info(f"[OK] {name} fits environment {environment_name}")

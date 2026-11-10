@@ -107,7 +107,8 @@ below; sections that describe the build-time model are marked
    a word. Review fixes (on `4707ddd`, `733f253`, `4902a67`): both readers check
    all of `state/environment/` by one contract (only a missing directory
    means no records; an unreadable one, a link or another name than
-   `<id>.json` is refused); `status` needs no bootstrap file, so the runtime command
+   `<id>.json` is refused; `check-environment` checks them too, so an
+   invalid record is never reported as applied); `status` needs no bootstrap file, so the runtime command
    refuses before `init-layout`; the message names the component; an
    unfinished uninstall is reported first. Not covered: a first
    environment install interrupted before its record exists (the manual

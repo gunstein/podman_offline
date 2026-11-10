@@ -408,6 +408,10 @@ class TargetEffectTests(ProductFixture):
         for environment_name in (None, "prod1"):
             with self.assertRaisesRegex(common.DeployError, re.escape(message)):
                 deploy.install(environment_name)
+        # The runtime command's checks, also its --json question.
+        for json_output in (False, True):
+            with self.assertRaisesRegex(common.DeployError, re.escape(message)):
+                deploy.check_environment("prod1", json_output)
         with self.assertRaisesRegex(runtime.ToolError, re.escape(message)):
             runtime.environment_installs(common.STATE)
         after = sorted(
@@ -465,6 +469,13 @@ class TargetEffectTests(ProductFixture):
                             f"Invalid environment record {record}; nothing was changed",
                         ):
                             deploy.install(environment_name)
+                    # check-environment too: an invalid record is never "applied".
+                    for json_output in (False, True):
+                        with self.assertRaisesRegex(
+                            common.DeployError,
+                            f"Invalid environment record {record}; nothing was changed",
+                        ):
+                            deploy.check_environment("prod1", json_output)
                     with self.assertRaisesRegex(
                         runtime.ToolError,
                         f"Invalid environment record {record}; nothing was changed",
@@ -504,6 +515,11 @@ class TargetEffectTests(ProductFixture):
                             "changed",
                         ):
                             deploy.install(environment_name)
+                    with self.assertRaisesRegex(
+                        common.DeployError,
+                        f"Invalid environment records {directory}; nothing was changed",
+                    ):
+                        deploy.check_environment("prod1", True)
                     with self.assertRaisesRegex(
                         runtime.ToolError,
                         f"Invalid environment records {directory}; nothing was changed",
