@@ -20,7 +20,7 @@ import renamed_product
 import yaml
 from test_acceptance import runner, shell_code
 
-from deployment import catalog
+from deployment import catalog, environment
 
 ROOT = Path(__file__).resolve().parent.parent
 REMOTE = Path(__file__).with_name("remote.sh").read_text()
@@ -77,6 +77,21 @@ class GeneratorTests(unittest.TestCase):
         self.target = Path(directory.name) / "renamed"
         with contextlib.redirect_stdout(io.StringIO()):
             renamed_product.generate(ROOT, self.target)
+
+    def test_dev_example_keeps_only_renamed_overrides(self):
+        """Backlog 85: the demo's app3 registration and build environments stay out."""
+        self.assertEqual(
+            sorted(path.name for path in (self.target / "config").iterdir()),
+            ["dev.yaml.example", "images.yaml"],
+        )
+        example = yaml.safe_load((self.target / "config/dev.yaml.example").read_text())
+        self.assertNotIn("app3", yaml.safe_dump(example))
+        self.assertEqual(set(example.get("overrides") or {}) - {"login-service"}, set())
+        # The catalog accepts the copied example as dev config.
+        dev = self.target / "config/dev.yaml"
+        dev.write_bytes((self.target / "config/dev.yaml.example").read_bytes())
+        overrides = environment.read_dev_overrides(dev)
+        catalog.load_catalog(self.target, overrides)
 
     def test_catalog_and_components_use_only_new_ids(self):
         descriptors = catalog.source_descriptors(self.target)

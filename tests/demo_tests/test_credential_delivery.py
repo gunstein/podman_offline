@@ -158,10 +158,23 @@ class CredentialDeliveryTests(DeployFixture):
         # (backlogs 72 and 77): Identity's ENVIRONMENT line names app3's own secret,
         # the platform adds envFrom; its own config and manifest declare none.
         self.assertNotIn("envFrom", manifest["spec"]["containers"][0])
-        self.assertIn(
-            "ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'",
-            (REPO / "components/identity/config.defaults.yaml").read_text(),
+        # app3 is an optional API (backlog 85): its line is in the environments
+        # that include app3 and in dev's overrides, not in Identity's own file.
+        line = (
+            "ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'"
         )
+        identity = yaml.safe_load(
+            (REPO / "components/identity/config.defaults.yaml").read_text()
+        )
+        self.assertFalse(
+            [
+                key
+                for key in identity["ENVIRONMENT"]["app"]
+                if key.startswith("ApiResources__")
+            ]
+        )
+        for path in ("config/whoami.yaml", "config/dev.yaml.example"):
+            self.assertIn(line, (REPO / path).read_text())
         # Real API scopes, client-certificate authentication and token signing remain.
         application = (REPO / "apps/identity/Program.cs").read_text()
         self.assertIn('GetSection("ApiResources")', application)

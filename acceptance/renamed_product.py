@@ -174,11 +174,58 @@ def copy_tracked_files(source, target):
         shutil.copy2(str(origin), str(destination))
 
 
+def without_dropped_resources(original, renamed):
+    """Drop every ApiResources__<n>__ line of a resource whose secret line was dropped."""
+    dropped = {
+        match[1]
+        for key in original
+        for match in [
+            re.fullmatch(r"ApiResources__([0-9]+)__ApiSecrets__0__Value", key)
+        ]
+        if match and key not in renamed
+    }
+    return {
+        key: value
+        for key, value in renamed.items()
+        if not any(key.startswith(f"ApiResources__{index}__") for index in dropped)
+    }
+
+
+def rename_config(target):
+    """Rename config/dev.yaml.example's overrides; drop the demo's build environments.
+
+    The overrides keep only renamed components, without lines naming app3's
+    secret (rename_env). Build environment files (config/<name>.yaml, backlog
+    85) select demo components, so the renamed product has none.
+    """
+    path = target / "config/dev.yaml.example"
+    with path.open(encoding="utf-8") as stream:
+        values = yaml.safe_load(stream)
+    overrides = {}
+    for old, entry in (values.pop("overrides", None) or {}).items():
+        if old not in NAMES:
+            continue
+        containers = {
+            name: without_dropped_resources(variables, rename_env(variables))
+            for name, variables in entry["ENVIRONMENT"].items()
+        }
+        containers = {name: lines for name, lines in containers.items() if lines}
+        if containers:
+            overrides[rename(old)] = {"ENVIRONMENT": containers}
+    if overrides:
+        values["overrides"] = overrides
+    dump(path, values)
+    for environment in (target / "config").glob("*.yaml"):
+        if environment.name != "images.yaml":
+            environment.unlink()
+
+
 def generate(source, target):
     """Write the renamed checkout; the target must not exist yet."""
     if target.exists():
         raise SystemExit(f"FAIL: {target} already exists")
     copy_tracked_files(source, target)
+    rename_config(target)
     shutil.rmtree(str(target / "components"))
     with (source / "bundles.yaml").open(encoding="utf-8") as stream:
         catalog = yaml.safe_load(stream)

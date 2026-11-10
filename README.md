@@ -206,7 +206,9 @@ its credentials and install it. For app1/app2, next initialize and install Ident
 from its own bundle before either app. For a platform/help-only setup, install
 help after platform; Identity and the apps are not required. Prepare each
 component’s certificates/credentials with the certificate script, edit
-component-specific settings, then install. app3 generates the secret it shares
+component-specific settings, then install. app3 is registered with Identity
+only in bundles built with an environment that includes it (the demo's
+`config/whoami.yaml`, backlog 85). It generates the secret it shares
 with Identity at its first install (`app3-api-secret` in app3's `config.yaml`,
 file `credentials/api-secret/value`). To reuse a value, or to rotate it, write
 it there as the runtime account (mode 0600, one line, no trailing newline)
@@ -381,7 +383,11 @@ the named components, after validating the whole catalog, and leaves
 `config/prod1.yaml` into the bundles and writes them, with their own
 `current-bundles.txt`, to `dist/prod1/`; the source files stay unchanged and
 the installation needs no environment file
-([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)). Only catalog components are scanned for
+([environment overrides](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)).
+Its `components:` list selects the environment's components; the others get no
+bundle ([the components of an environment](docs/COMPONENTS.md#the-components-of-an-environment)).
+The demo's `config/whoami.yaml` is platform, identity and app3 with app3's
+Identity registration; without it, app3 is built unregistered. Only catalog components are scanned for
 images. Each bundle contains its component's `config.defaults.yaml`, only its
 component,
 `deploy.sh`/`deployment/`, scripts, Quadlet templates, the compiled `bundle.yaml`,
@@ -397,8 +403,8 @@ private files out of shipped directories and retain their declarations.
 
 After `./build-bundle.sh`, `./build-rpms.sh [<component> ...]` wraps each
 selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`;
-`./build-rpms.sh --environment prod1` takes the bundles of `dist/prod1/` and
-writes `dist/prod1/rpm/`.
+`./build-rpms.sh --environment prod1` takes the bundles `dist/prod1/current-bundles.txt`
+names and writes `dist/prod1/rpm/`.
 It needs `rpmbuild` (package `rpm-build`) on the build machine. The RPM
 installs the release unchanged under
 `/var/lib/<product>/releases/<product>-<component>-<version>/`; the version

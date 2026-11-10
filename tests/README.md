@@ -102,7 +102,8 @@ PYTHONPATH=tests python3 -B -m unittest platform_tests.test_mounts
 The platform suite covers config precedence and initialization, declarative
 catalogs, renamed/minimal products, bundles and signatures, credential retention,
 ENVIRONMENT and MOUNTS, environment overrides (`test_environment_overrides.py`,
-backlog 84), source/key validation, database preflight, installed
+backlog 84) and the components of an environment
+(`test_environment_components.py`, backlog 85), source/key validation, database preflight, installed
 status, scoped install/uninstall and fresh-process retry. Backlog 69's RPM
 delivery has `test_rpms.py` and `test_admin.py` (real `rpmbuild`/`rpm -qp` with a
 fake host; skipped without `rpmbuild`) and `test_runtime.py` (the runtime

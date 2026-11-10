@@ -94,7 +94,9 @@ with client ID `inventory` and component `orders` with client ID `orders-web`.
 ### Selection
 
 The catalog is the product. Only listed components are prepared, started in
-dev, scanned for images, built, bundled and guarded. A directory under
+dev, scanned for images, built, bundled and guarded. A build environment can
+build a subset of it ([the components of an
+environment](#the-components-of-an-environment)). A directory under
 `components/` without a catalog entry is ignored, even if it is invalid. A
 listed component whose directory is missing is an error, not a silent removal.
 
@@ -417,10 +419,58 @@ derived from it, so the installation needs neither the source checkout nor
 `--environment <name>` takes lowercase letters, digits and inner hyphens, a
 letter first; `dev` and `images` are refused because `config/dev.yaml` and
 `config/images.yaml` have other meanings. A missing file is an error, and so
-is any other top-level key (`components:` is [backlog
-85](../BACKLOG.md#85-select-the-components-of-a-build-environment), not
-implemented yet). Without `--environment` the common declarations are built
-unchanged. The output of an environment goes to its own directory,
+is any top-level key other than `components:` and `overrides:`. Without
+`--environment` the common declarations are built unchanged.
+
+#### The components of an environment
+
+`components:` (backlog 85) lists the environment's components; without it the
+environment has the whole catalog. `bundles.yaml` stays the catalog of every
+component and the gateway/Identity roles:
+
+```yaml
+# config/prod2.yaml
+components: [platform, identity, app2]
+overrides:
+  app2:
+    ENVIRONMENT:
+      backend:
+        Logging__LogLevel__Default: Debug
+```
+
+- Only the listed components get a bundle and images; the others' manifests
+  are not read and their credentials are not needed. Order and dependencies
+  follow the catalog's rules. `current-bundles.txt` names exactly the listed
+  components' bundles.
+- An unknown or repeated ID is refused, and so is an empty list ("list at
+  least one component, or omit `components`").
+- Nothing is added: a missing dependency stops the build with both names,
+  for example `config/prod2.yaml: app2 requires identity (it has
+  client.yaml); add identity to components`. Every component requires the
+  gateway when the catalog has one.
+- `overrides:` keeps its meaning for the listed components; an override of a
+  component that is not listed is refused (also `{}`).
+- `./build-bundle.sh --environment prod2 app2` builds only app2 within prod2;
+  a component outside the list is refused. `./build-rpms.sh --environment
+  prod2` wraps exactly the archives `dist/prod2/current-bundles.txt` names and
+  refuses a list that no longer matches the environment, so an archive an
+  earlier, larger set left in `dist/prod2/` is never delivered.
+
+An optional API, one only some environments have, keeps Identity's
+`ApiResources__<n>__*` lines out of Identity's `config.defaults.yaml`: each
+environment that lists the API adds them as an override of Identity, with its
+own `<n>` numbering. An Identity line naming a component that is not listed
+is refused ("no listed component owns ..."). Such a product always builds
+with an environment: without one, the API runs unregistered and Identity
+refuses its calls. In the demo, app3 is that API: its lines are in
+`config/whoami.yaml` (platform, identity and app3) and, for dev, in
+`config/dev.yaml.example`'s overrides.
+
+The selection never uninstalls anything. A component a later delivery leaves
+out keeps running until the runtime user uninstalls it with its own release's
+`./deploy.sh uninstall` ([manual](PRODUCTION-INSTALL.md#7-everyday-tasks));
+an API goes first, because install refuses an Identity release without the
+line of an installed API. The output of an environment goes to its own directory,
 `dist/<name>/` with its `current-bundles.txt` (staging in
 `build/bundle-<name>/`); `./build-rpms.sh --environment <name>` wraps those
 bundles into `dist/<name>/rpm/`. One build never removes another's files.

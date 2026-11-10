@@ -6,8 +6,16 @@ HTTPS_PORT: 8443
 # Reserved: add or replace single container variables, merged into the
 # component's ENVIRONMENT as a build environment file config/<name>.yaml is
 # (docs/COMPONENTS.md, "Environment overrides"). Not a setting.
-# overrides:
-#   app1:
-#     ENVIRONMENT:
-#       backend:
-#         Logging__LogLevel__Default: Debug
+# app3 is an optional API (backlog 85): Identity's registration of it lives
+# here for dev and in config/whoami.yaml for builds, not in Identity's
+# config.defaults.yaml. Without it, dev runs app3 but Identity refuses its
+# API calls.
+overrides:
+  identity:
+    ENVIRONMENT:
+      app:
+        ApiResources__0__Name: app3-api
+        ApiResources__0__Scopes__0: app3
+        # app3's own secret (components/app3/config.defaults.yaml); Identity
+        # hashes it itself when it loads it.
+        ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'

@@ -1,0 +1,19 @@
+# The demo's build environment with app3, the optional API (backlog 85):
+#   ./build-bundle.sh --environment whoami
+# The --whoami acceptance scenario installs these bundles. Without this
+# environment the bundles have no app3 registration in Identity.
+components:
+  - platform
+  - identity
+  - app3
+overrides:
+  identity:
+    ENVIRONMENT:
+      app:
+        # One API resource per API component, as in the organisation's
+        # appsettings.json.
+        ApiResources__0__Name: app3-api
+        ApiResources__0__Scopes__0: app3
+        # app3's own secret (components/app3/config.defaults.yaml). It is
+        # delivered while app3 is installed; Identity hashes it itself.
+        ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'

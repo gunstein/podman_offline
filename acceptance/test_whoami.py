@@ -82,6 +82,14 @@ class WhoamiScenarioTests(ScenarioFixture):
             if call.args[:2] == ("PROD", "install")
         ]
         self.assertEqual(installs, ["platform", "identity", "app3"])
+        # Backlog 85: the bundles come from the whoami build environment.
+        dev = [
+            call.args[1]
+            for call in self.harness.guest.call_args_list
+            if call.args[0] == "DEV"
+        ]
+        self.assertIn("whoami-bundle", dev)
+        self.assertNotIn("bundle", dev)
         records = [
             json.loads(line)["step"]
             for line in (self.harness.folder / "record.jsonl").read_text().splitlines()
@@ -91,6 +99,7 @@ class WhoamiScenarioTests(ScenarioFixture):
             "06-prepare-host",
             "06-install-platform",
             "06-install-app3",
+            "06-whoami-api-registration",
             "07-release-protection",
             "07-whoami-chain-mounts",
             "08-credentials",
@@ -480,3 +489,81 @@ class ChainMountCheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhoamiBundleTests(unittest.TestCase):
+    """The DEV step that builds the whoami environment (backlog 85)."""
+
+    def run_step(self, names, api_secrets):
+        """Run the real whoami-bundle action against a stub build-bundle.sh."""
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            build = source / "build-bundle.sh"
+            # The stub writes the given archives; identity's bundle.yaml holds
+            # the given api_secrets. Nothing of the product runs here.
+            build.write_text(
+                "#!/usr/bin/env bash\nset -euo pipefail\n"
+                '[[ "$*" == "--environment whoami" ]]\n'
+                "python3 - <<'STUB'\n"
+                "import hashlib, io, json, tarfile, pathlib\n"
+                "dist = pathlib.Path('dist/whoami'); dist.mkdir(parents=True)\n"
+                f"names = {names!r}\n"
+                "for name in names:\n"
+                "    root = name[: -len('-offline.tar.gz')]\n"
+                "    data = ('api_secrets: ' + json.dumps("
+                f"{api_secrets!r}) + '\\n').encode()\n"
+                "    with tarfile.open(dist / name, 'w:gz') as tar:\n"
+                "        info = tarfile.TarInfo(root + '/bundle.yaml'); info.size = len(data)\n"
+                "        tar.addfile(info, io.BytesIO(data))\n"
+                "    digest = hashlib.sha256((dist / name).read_bytes()).hexdigest()\n"
+                "    (dist / (name + '.sha256')).write_text(digest + '  ' + name + '\\n')\n"
+                "    images = pathlib.Path('build/bundle-whoami') / root / 'images'\n"
+                "    images.mkdir(parents=True); (images / 'images.txt').write_text('x\\n')\n"
+                "(dist / 'current-bundles.txt').write_text(''.join(n + '\\n' for n in names))\n"
+                "STUB\n"
+            )
+            build.chmod(0o700)
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            (source / ".gitignore").write_text("dist/\nbuild/\n")
+            subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", str(source), "-c", "user.name=F", "-c",
+                 "user.email=f@invalid", "commit", "-qm", "fixture"],
+                check=True,
+            )  # fmt: skip
+            code = shell_code(REMOTE, action="whoami-bundle")
+            result = subprocess.run(
+                ["bash", "-se"],
+                input="set -euo pipefail\nproduct_name=myproduct\nsrc="
+                + str(source)
+                + "\n"
+                + code,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            copied = sorted(p.name for p in (source / "dist").glob("*.tar.gz"))
+            return result, copied
+
+    def names(self, *components):
+        return [f"myproduct-{name}-1.0.0-offline.tar.gz" for name in components]
+
+    def test_the_selected_set_with_the_app3_line_passes(self):
+        app3 = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
+        result, copied = self.run_step(self.names("platform", "identity", "app3"), app3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PASS: whoami environment", result.stdout)
+        self.assertEqual(copied, sorted(self.names("platform", "identity", "app3")))
+
+    def test_an_excluded_component_or_a_missing_registration_fails(self):
+        app3 = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
+        for label, names, secrets in (
+            ("app1 bundled", self.names("platform", "identity", "app1", "app3"), app3),
+            ("app3 missing", self.names("platform", "identity"), app3),
+            ("no registration", self.names("platform", "identity", "app3"), {}),
+        ):
+            with self.subTest(label):
+                result, copied = self.run_step(names, secrets)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("PASS:", result.stdout)
+                self.assertEqual(copied, [])

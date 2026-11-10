@@ -1203,6 +1203,49 @@ renamed-dev-down)
     test -z "$output"
     ;;
 bundle-list) cat "$src/dist/current-bundles.txt";;
+whoami-bundle)
+    cd "$src"
+    output=$(git status --porcelain)
+    test -z "$output"
+    # Backlog 85: the demo's build environment with app3, config/whoami.yaml.
+    ./build-bundle.sh --environment whoami
+    mapfile -t listed < dist/whoami/current-bundles.txt
+    built=()
+    for name in "${listed[@]}"; do
+        [[ $name =~ ^"$product_name"-(platform|identity|app3)-[0-9]+\.[0-9]+\.[0-9]+-offline\.tar\.gz$ ]]
+        built+=("${BASH_REMATCH[1]}")
+        (cd dist/whoami && sha256sum -c "$name.sha256")
+    done
+    # Exactly the selected components; app1, app2 and help get no bundle.
+    test "${built[*]}" = 'platform identity app3'
+    # Identity's descriptor carries app3's API secret from the overrides only.
+    identity=${listed[1]%-offline.tar.gz}
+    tar -xzOf "dist/whoami/${listed[1]}" "$identity/bundle.yaml" | python3 -c '
+import sys, yaml
+expected = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
+if yaml.safe_load(sys.stdin)["api_secrets"] != expected:
+    raise SystemExit("FAIL: identity bundle lacks the app3 API secret line")
+'
+    # The release RPM transport (release-rpm) takes the archives from dist/.
+    cp dist/whoami/"$product_name"-*-offline.tar.gz* dist/
+    cat build/bundle-whoami/"$product_name"-*/images/images.txt
+    echo 'PASS: whoami environment: platform, identity and app3 only; app3 registered'
+    ;;
+whoami-bundle-list) cat "$src/dist/whoami/current-bundles.txt";;
+whoami-api-registration)
+    # Identity received app3's secret through the platform (backlog 85).
+    sudo -n test -s "$state/apis/app3/value"
+    as_product python3 - "$state/metadata/identity.json" <<'WHOAMI_API'
+import json
+import sys
+
+expected = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
+with open(sys.argv[1]) as stream:
+    if json.load(stream)["api_secrets"] != expected:
+        raise SystemExit("FAIL: installed identity does not register app3")
+WHOAMI_API
+    echo 'PASS: installed identity registers app3 from the whoami environment'
+    ;;
 renamed-bundle-list) cat "$renamed/dist/current-bundles.txt";;
 renamed-bundle)
     cd "$renamed"

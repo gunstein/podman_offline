@@ -56,11 +56,21 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 85. Select the components of a build environment
 
-Status: **requirement recorded, not implemented** (product owner,
-2026-11-09). It builds on
+Status: **implemented (2026-11-10); real Podman/systemd verification
+outstanding** (requirement: product owner, 2026-11-09). It builds on
 [item 84](#84-environment-specific-container-environment-overrides), which
-is implemented and lab-verified on `9c85e2f`; today an environment file with
-`components:` is refused with a message that this item is not implemented. **Decisions (product owner, 2026-11-09):**
+is implemented and lab-verified on `9c85e2f`. Product tests
+(`tests/platform_tests/test_environment_components.py`, the demo tests) and
+harness tests pass; the `--whoami` scenario now builds the demo's
+`config/whoami.yaml` and checks the selection on DEV and app3's registration
+on PROD, but has not run on the lab. Implementation notes: the integration
+points listed under "Planning and simplicity" were as described on
+`e822637`; `guarded_directories` keeps guarding every catalog ID (it needs
+only `catalog.catalog_components`); the operator manual gained one row,
+"Remove a component a delivery no longer contains" (the release's own
+`./deploy.sh uninstall`, since the runtime command has no uninstall); the
+renamed-product generator drops the demo's build environments and app3's
+lines from its `dev.yaml.example`. The text below is the requirement. **Decisions (product owner, 2026-11-09):**
 the format below (fixed top-level keys `components:` and `overrides:`,
 already in item 84), and option (a) for Identity registrations of optional
 APIs (see "Dependencies and Identity registrations"). Read the latest `main`,

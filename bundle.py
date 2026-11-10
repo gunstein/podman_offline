@@ -78,10 +78,11 @@ def resolved_manifests(paths):
     return result
 
 
-def manifest_images(manifests=None):
-    """Find images in the given manifests, or in every catalog component.
+def manifest_images(manifests=None, names=None):
+    """Find images in the given manifests, the named components or the catalog.
 
-    Directories under components/ that the catalog does not list are never read.
+    Directories under components/ that the catalog does not list are never
+    read, nor components a build environment leaves out (names, backlog 85).
     Image variables are resolved, so pull, build and bundle see the same names.
     """
     documents = []
@@ -89,7 +90,7 @@ def manifest_images(manifests=None):
         paths = sorted(manifests.glob("*.yaml"))
     else:
         try:
-            names = catalog.source_descriptors(ROOT)
+            names = list(catalog.source_descriptors(ROOT)) if names is None else names
         except common.DeployError as error:
             raise BundleError(str(error)) from None
         paths = [
@@ -201,9 +202,10 @@ def generated_secret_guard(config_dirs=None):
 def guarded_directories():
     """Directories whose private files must never enter any archive.
 
-    A product guards every catalog component, not only the bundled one.
+    A product guards every catalog component, not only the bundled one, also
+    those a build environment leaves out: only their IDs are needed here.
     """
-    names = list(catalog.load_catalog(ROOT))
+    names = catalog.catalog_components(ROOT)[2]
     return [ROOT] + [ROOT / "components" / name for name in names]
 
 
@@ -446,9 +448,11 @@ def build(selected=(), environment_name=None):
     selected names catalog components to build; the whole catalog is still
     validated. A partial build leaves current-bundles.txt unchanged,
     because that list names the complete current product. environment_name
-    selects config/<name>.yaml; its overrides are part of every derived
-    descriptor and bundled config.defaults.yaml, and the output goes to
-    dist/<name>/ (output_directories). The source files are never changed.
+    selects config/<name>.yaml: its components: is the product (the others
+    get no bundle and their manifests are not read), its overrides are part of
+    every derived descriptor and bundled config.defaults.yaml, and the output
+    goes to dist/<name>/ (output_directories). The source files are never
+    changed.
     """
     if not (ROOT / "bundles.yaml").exists():
         raise BundleError(f"Missing {ROOT / 'bundles.yaml'}")
@@ -462,6 +466,11 @@ def build(selected=(), environment_name=None):
     # before any output.
     descriptors = catalog.source_descriptors(ROOT, env_overrides)
     unknown = sorted(set(selected) - set(descriptors))
+    if unknown and env_overrides and env_overrides.selected is not None:
+        raise BundleError(
+            ", ".join(unknown) + f" is not in {env_overrides.path} components:; "
+            "build it with an environment that includes it"
+        )
     if unknown:
         raise BundleError(
             "Unknown component " + ", ".join(unknown) + "; see bundles.yaml"
@@ -470,7 +479,7 @@ def build(selected=(), environment_name=None):
     # at validate and install, as without an environment.
     for name in sorted(env_overrides.components if env_overrides else {}):
         check_declarations(name, env_overrides)
-    manifest_images()
+    manifest_images(names=list(descriptors))
     guard = generated_secret_guard(guarded_directories())
     guard(ROOT, ["scripts", "quadlet"])
     shutil.rmtree(stage, ignore_errors=True)

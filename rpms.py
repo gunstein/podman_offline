@@ -315,18 +315,28 @@ def build(selected=(), tools=False, environment_name=None):
     (./build-bundle.sh first, matching its .sha256 file); tools adds the tools
     RPM. Without either, every catalog component and the tools.
     environment_name takes the bundles of that build environment from
-    dist/<name>/ and writes dist/<name>/rpm/ (./build-bundle.sh --environment).
+    dist/<name>/ and writes dist/<name>/rpm/ (./build-bundle.sh --environment):
+    only its components (backlog 85), and only archives its
+    current-bundles.txt names, so an archive an earlier, larger set left in
+    dist/<name>/ is never wrapped.
     """
     if shutil.which("rpmbuild") is None:
         raise RpmError("rpmbuild is missing; install the rpm-build package")
-    dist, option = DIST, ""
+    dist, option, env_overrides, current = DIST, "", None, None
     if environment_name is not None:
-        environment.environment_file(ROOT, environment_name)  # Same name rules.
+        env_overrides = environment.read_environment_file(ROOT, environment_name)
         dist, option = DIST / environment_name, f"--environment {environment_name} "
-    descriptors = catalog.source_descriptors(ROOT)
+        current = current_bundles(dist, option)
+    descriptors = catalog.source_descriptors(ROOT, env_overrides)
     unknown = sorted(set(selected) - set(descriptors))
+    if unknown and env_overrides and env_overrides.selected is not None:
+        raise RpmError(
+            ", ".join(unknown) + f" is not in {env_overrides.path} components:"
+        )
     if unknown:
         raise RpmError("Unknown component " + ", ".join(unknown) + "; see bundles.yaml")
+    if current is not None:
+        check_current_bundles(current, descriptors, dist, option)
     everything = not selected and not tools
     built = []
     for component, descriptor in descriptors.items():
@@ -348,6 +358,32 @@ def build(selected=(), tools=False, environment_name=None):
         built.append(build_tools(catalog.product_name(ROOT), dist / "rpm"))
         log.info(f"[OK] {built[-1].relative_to(ROOT)}")
     return built
+
+
+def current_bundles(dist, option):
+    """The archive names of dist/<environment>/current-bundles.txt."""
+    path = dist / "current-bundles.txt"
+    if not path.is_file():
+        raise RpmError(
+            f"Missing {path.relative_to(ROOT)}; run ./build-bundle.sh {option.strip()}"
+        )
+    return path.read_text(encoding="utf-8").split()
+
+
+def check_current_bundles(current, descriptors, dist, option):
+    """The list names exactly the environment's components in their versions."""
+    expected = {
+        f"{descriptor['product']}-{name}-{descriptor['version']}-offline.tar.gz"
+        for name, descriptor in descriptors.items()
+    }
+    listed = set(current)
+    if listed != expected:
+        stale = sorted(listed - expected) or sorted(expected - listed)
+        raise RpmError(
+            f"{(dist / 'current-bundles.txt').relative_to(ROOT)} does not match "
+            f"the environment's components ({', '.join(stale)}); run "
+            f"./build-bundle.sh {option.strip()}"
+        )
 
 
 def parser():

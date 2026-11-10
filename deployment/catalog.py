@@ -141,13 +141,11 @@ def product_name(root):
     raise common.DeployError(f"{root} has neither bundle.yaml nor bundles.yaml")
 
 
-def load_catalog(root, env_overrides=None):
-    """Read bundles.yaml and validate the graph before any file or host action.
+def catalog_components(root):
+    """Read bundles.yaml and check its structure: the list of every component ID.
 
-    env_overrides (environment.Overrides or None) is the selected build
-    environment or dev's overrides block: Identity's API secret lines are
-    derived from the merged ENVIRONMENT, and every overridden component must
-    be listed here, also when only some bundles are built.
+    Returns (path, document, IDs). Nothing of the components is read, so a
+    build environment can select from it (backlog 85).
     """
     path, data = catalog_document(root)
     entries = data["components"]
@@ -160,25 +158,94 @@ def load_catalog(root, env_overrides=None):
         check_id(name, f"{path}: components")
     if len(set(entries)) != len(entries):
         raise common.DeployError(f"{path}: components lists an ID twice")
-    unknown = (
-        sorted(set(env_overrides.components) - set(entries)) if env_overrides else []
-    )
-    if env_overrides and unknown:
-        raise common.DeployError(
-            f"{env_overrides.path}: overrides.{unknown[0]}: {unknown[0]} is not a "
-            f"component in {path.name}; listed: {', '.join(entries)}"
-        )
+    for key in ("gateway", "identity"):
+        value = data.get(key)
+        if value is not None and value not in entries:
+            raise common.DeployError(
+                f"{path}: {key}: {value!r} must be one of the listed components"
+            )
+    check_id_prefixes(entries, str(path))
+    return path, data, entries
+
+
+def load_catalog(root, env_overrides=None):
+    """Read bundles.yaml and validate the graph before any file or host action.
+
+    env_overrides (environment.Overrides or None) is the selected build
+    environment or dev's overrides block. Its component set (selected; None
+    is the whole catalog) is the product: only those components' files are
+    read, and every dependency must be in it. Identity's API secret lines are
+    derived from the merged ENVIRONMENT, and every overridden component must
+    be selected, also when only some bundles are built.
+    """
+    path, data, entries = catalog_components(root)
+    selected = selected_components(path, entries, env_overrides)
     files = {
         name: registration_files(root / "components" / name, env_overrides)
-        for name in entries
+        for name in selected
     }
-    catalog = derive_entries(path, data, files)
+    check_selected_dependencies(data, selected, files, env_overrides)
+    # Roles outside the set serve nobody here (check_selected_dependencies).
+    document = {
+        "components": selected,
+        "gateway": data.get("gateway") if data.get("gateway") in selected else None,
+        "identity": data.get("identity") if data.get("identity") in selected else None,
+    }
+    catalog = derive_entries(path, document, files)
     for name, entry in catalog.items():
         check_entry(name, entry, f"{path}: components.{name}")
-    check_id_prefixes(catalog, str(path))
     check_owners(catalog, str(path))
     dependency_order(catalog)  # Reject cycles before anything else uses the graph.
     return catalog
+
+
+def selected_components(path, entries, env_overrides):
+    """The environment's components in catalog order; overrides only of those."""
+    selected = env_overrides.selected if env_overrides else None
+    where = env_overrides.path if env_overrides else None
+    for name in selected or []:
+        if name not in entries:
+            raise common.DeployError(
+                f"{where}: components: {name} is not a component in {path.name}; "
+                f"listed: {', '.join(entries)}"
+            )
+    chosen = [name for name in entries if selected is None or name in selected]
+    for name in sorted(env_overrides.components if env_overrides else {}):
+        if name not in entries:
+            raise common.DeployError(
+                f"{where}: overrides.{name}: {name} is not a component in "
+                f"{path.name}; listed: {', '.join(entries)}"
+            )
+        if name not in chosen:
+            raise common.DeployError(
+                f"{where}: overrides.{name}: {name} is not in components:; add it "
+                "there or remove its overrides"
+            )
+    return chosen
+
+
+def check_selected_dependencies(data, selected, files, env_overrides):
+    """Every dependency of a selected component is selected; nothing is added.
+
+    The rules are derive_entries': every component takes the gateway's public
+    settings, and a component with client.yaml registers it with Identity.
+    """
+    gateway, identity = data.get("gateway"), data.get("identity")
+    for name in selected:
+        missing = []
+        if gateway is not None and gateway not in selected:
+            reason = (
+                "it has route.conf" if files[name]["route"] else "its public settings"
+            )
+            missing.append((gateway, reason))
+        if identity is not None and identity not in selected and files[name]["client"]:
+            missing.append((identity, "it has client.yaml"))
+        if missing:
+            dependency, reason = missing[0]
+            raise common.DeployError(
+                f"{env_overrides.path}: {name} requires {dependency} ({reason}); "
+                f"add {dependency} to components"
+            )
 
 
 def registration_files(directory, env_overrides=None):

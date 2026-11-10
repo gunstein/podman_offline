@@ -20,10 +20,6 @@ ENVIRONMENT:
     PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
     HTTPS_PORT: '@@HTTPS_PORT@@'
     ConnectionStrings__Default: 'Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:identity-database-password/password@@;Timeout=5;Include Error Detail=false'
-    # One API resource per API component, as in the organisation's appsettings.json.
-    ApiResources__0__Name: app3-api
-    ApiResources__0__Scopes__0: app3
-    # app3's own secret (components/app3/config.defaults.yaml). It is delivered
-    # while app3 is installed; until then this API resource is inactive.
-    # Identity hashes it itself when it loads it.
-    ApiResources__0__ApiSecrets__0__Value: '@@secret:app3-api-secret/value@@'
+    # app3 is an optional API (backlog 85): its ApiResources__0__* lines are in
+    # the environments that include app3 (config/whoami.yaml) and, for dev, in
+    # config/dev.yaml's overrides (config/dev.yaml.example).

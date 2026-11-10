@@ -1178,8 +1178,9 @@ class Run:
             "dev-down",
         ):
             self.step("03-" + action, lambda a=action: self.guest("DEV", a))
-        self.step("04-bundle", lambda: self.guest("DEV", "bundle"))
-        self.step("04-bundle-list", lambda: self.record_bundles("bundle-list"))
+        # Backlog 85: app3 is an optional API, built with config/whoami.yaml.
+        self.step("04-bundle", lambda: self.guest("DEV", "whoami-bundle"))
+        self.step("04-bundle-list", lambda: self.record_bundles("whoami-bundle-list"))
         order = ["platform", "identity", "app3"]
         for name in order:
             self.step("05-transfer-" + name, lambda n=name: self.transfer(bundle=n))
@@ -1193,6 +1194,10 @@ class Run:
                 lambda n=name: self.guest("PROD", "install", bundle=n),
             )
             self.step("06-healthy-" + name, lambda: self.guest("PROD", "health"))
+        self.step(
+            "06-whoami-api-registration",
+            lambda: self.guest("PROD", "whoami-api-registration", bundle="app3"),
+        )
         self.step("07-check", lambda: self.guest("PROD", "check"))
         self.step(
             "07-release-protection",

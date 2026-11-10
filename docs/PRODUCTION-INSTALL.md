@@ -226,6 +226,7 @@ trusts your organisation's certificates to check it from the user's side.
 | Check the status | runtime user | `myproduct`. When nothing is new it installs nothing, restarts nothing and shows the status table. |
 | After a reboot | nobody | The services start by themselves. Check with `myproduct` as the runtime user. |
 | New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3, and 4 if it contains credentials; without credentials, still remove the medium (`sudo umount /mnt`). Then steps 5 and 6. Settings, credentials and data are kept, and nothing is asked again. |
+| Remove a component a delivery no longer contains | runtime user | A delivery never removes a component; it keeps running. To remove it: `cd /var/lib/myproduct/releases/myproduct-<component>-<version>` (its newest release; `ls /var/lib/myproduct/releases` lists them), then `./deploy.sh uninstall`. Settings, credentials and data are kept. If `myproduct` stops with `uninstall <component> first`, remove that component this way, then run `myproduct` again. |
 | Remove old releases | administrator | Nothing extra: step 3 removes them once the runtime user has installed the newer version. To do it right after an upgrade, repeat step 3. |
 | Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. The HTTPS port cannot be changed after installation. |
 

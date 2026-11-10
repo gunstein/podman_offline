@@ -82,9 +82,10 @@ class DemoRenderTests(DeployFixture):
             docs.extend(yaml.safe_load_all(text))
         kinds = [doc["kind"] for doc in docs]
         self.assertEqual(kinds.count("Pod"), 9)
-        # app3's API secret and recipe, Identity's registration Secret (72), and
-        # app1's report password with the MOUNTS file Secret built from it.
-        self.assertEqual(kinds.count("Secret"), 16)
+        # app3's API secret and recipe and app1's report password with the
+        # MOUNTS file Secret built from it. Identity's registration Secret (72)
+        # exists only in environments with app3's lines (backlog 85).
+        self.assertEqual(kinds.count("Secret"), 15)
         sql = next(
             doc for doc in docs if doc["metadata"]["name"] == "app1-seed-database-files"
         )

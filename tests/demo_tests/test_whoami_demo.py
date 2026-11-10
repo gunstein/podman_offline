@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from deployment import catalog as deployment_catalog
+from deployment import environment as deployment_environment
 
 from helpers.certificate_fixture import CertificateFixture
 
@@ -171,9 +172,15 @@ class WhoamiSourceTests(unittest.TestCase):
         backend_env = yaml.safe_load((COMPONENT / "config.defaults.yaml").read_text())[
             "ENVIRONMENT"
         ]["backend"]
-        identity_env = yaml.safe_load(
-            (ROOT / "components/identity/config.defaults.yaml").read_text()
-        )["ENVIRONMENT"]["app"]
+        # app3 is an optional API (backlog 85): the build environment that
+        # includes it and dev's overrides hold the same Identity lines.
+        environment = deployment_environment.read_environment_file(ROOT, "whoami")
+        self.assertEqual(environment.selected, ["platform", "identity", "app3"])
+        identity_env = environment.components["identity"]["app"]
+        dev = yaml.safe_load((ROOT / "config/dev.yaml.example").read_text())
+        self.assertEqual(
+            dev["overrides"]["identity"]["ENVIRONMENT"]["app"], identity_env
+        )
         reference = "@@secret:app3-api-secret/value@@"
         self.assertEqual(backend_env["Authentication__ApiSecret"], reference)
         self.assertEqual(
@@ -191,7 +198,9 @@ class WhoamiSourceTests(unittest.TestCase):
             config["SECRET_FILES"]["app3-api-secret"],
             [{"path": "credentials/api-secret", "generate": ["value"]}],
         )
-        catalog = deployment_catalog.load_catalog(ROOT)
+        self.assertEqual(deployment_catalog.load_catalog(ROOT)["app3"]["apis"], None)
+        catalog = deployment_catalog.load_catalog(ROOT, environment)
+        self.assertEqual(list(catalog), ["platform", "identity", "app3"])
         self.assertEqual(catalog["app3"]["apis"], "identity")
         self.assertEqual(catalog["identity"]["accepts"]["apis"], "identity-apis")
         self.assertEqual(

@@ -11,6 +11,16 @@ environment's CA, the internal variant and the restore:
 python3 acceptance/acceptance.py --run whoami-1 --whoami run
 ```
 
+app3 is an optional API (backlog 85), so the scenario builds the demo's build
+environment `config/whoami.yaml` (`whoami-bundle`): `dist/whoami/current-bundles.txt`
+must name exactly platform, identity and app3, and identity's `bundle.yaml`
+must carry app3's API secret line from the environment's overrides; the
+archives are then copied to `dist/` for the release RPM transport. On PROD,
+`06-whoami-api-registration` requires the delivered registration
+(`state/apis/app3/value`) and the installed identity's `api_secrets`.
+`test_whoami.py` runs the DEV check against stub builds with an extra
+component, a missing one and no registration.
+
 Backlog 69 WP6: the RPM delivery is verified by running the production
 manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd
 profile P1 and on the strict profile P2:

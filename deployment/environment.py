@@ -55,10 +55,14 @@ ForeignLine = collections.namedtuple(
     "ForeignLine", "container key value secrets source"
 )
 # The selected overrides: path is the file shown in messages (relative to the
-# checkout), components maps component -> container -> variable -> text.
-Overrides = collections.namedtuple("Overrides", "path components")
+# checkout), components maps component -> container -> variable -> text, and
+# selected is a build environment's component set (backlog 85; None means
+# the whole catalog, always in dev). catalog.load_catalog applies selected.
+Overrides = collections.namedtuple("Overrides", "path components selected")
 # config/dev.yaml and config/images.yaml have other meanings.
 RESERVED_ENVIRONMENTS = ("dev", "images")
+# The component set of a build environment file (backlog 85).
+COMPONENTS = "components"
 # Plain YAML scalars that mean null; quoted text such as 'null' is text.
 NULL = re.compile(r"(~|null|Null|NULL|)\Z")
 
@@ -197,26 +201,50 @@ def environment_file(root, name):
 
 
 def read_environment_file(root, name):
-    """The Overrides of config/<name>.yaml; its only top-level key is overrides."""
+    """The Overrides of config/<name>.yaml: overrides: and components:, both optional.
+
+    components: (backlog 85) lists the environment's components; IDs are
+    checked against the catalog in catalog.load_catalog.
+    """
     path = environment_file(root, name)
     shown = f"config/{name}.yaml"
     document = load(path, OverrideLoader, OVERRIDES_HINT)
     if document is None:
         document = {}
     if not isinstance(document, dict):
-        raise common.DeployError(f"{shown} must contain overrides:")
+        raise common.DeployError(f"{shown} must contain components: and/or overrides:")
     for key in document:
-        if key == "components":
-            raise common.DeployError(
-                f"{shown}: components: (an environment's component set, backlog "
-                "85) is not implemented yet; remove it and build the whole catalog"
-            )
-        if key != common.OVERRIDES:
+        if key not in (COMPONENTS, common.OVERRIDES):
             raise common.DeployError(
                 f"{shown}: {key!r} is not allowed; an environment file holds only "
-                "overrides: <component>: ENVIRONMENT: <container>: <variables>"
+                "components: (a list of component IDs) and overrides: <component>: "
+                "ENVIRONMENT: <container>: <variables>"
             )
-    return read_overrides(document.get(common.OVERRIDES, {}), shown)
+    selected = None
+    if COMPONENTS in document:
+        selected = read_selection(document[COMPONENTS], shown)
+    overrides = read_overrides(document.get(common.OVERRIDES, {}), shown)
+    return overrides._replace(selected=selected)
+
+
+def read_selection(value, shown):
+    """components: a nonempty list of component IDs, each once."""
+    if value is None or value == []:
+        raise common.DeployError(
+            f"{shown}: components: list at least one component, or omit "
+            "components for the whole catalog"
+        )
+    if not isinstance(value, list):
+        raise common.DeployError(
+            f"{shown}: components: must be a list of component IDs"
+        )
+    seen = []
+    for name in value:
+        check_name(name, shown, COMPONENTS, "component ID")
+        if name in seen:
+            raise common.DeployError(f"{shown}: components: lists {name} twice")
+        seen.append(name)
+    return seen
 
 
 def read_dev_overrides(path):
@@ -270,7 +298,7 @@ def read_overrides(block, shown):
                 check_values(values, f"{shown}: {here}") if values else {}
             )
         components[component] = result
-    return Overrides(shown, components)
+    return Overrides(shown, components, None)
 
 
 def check_mapping(value, shown, place, what):

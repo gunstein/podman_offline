@@ -438,8 +438,8 @@ class EnvironmentBuildTests(OverrideFixture):
             ("reserved dev", "dev", None, "config/dev.yaml has another meaning"),
             ("reserved images", "images", None, "config/images.yaml has another"),
             ("missing file", "prod9", None, "missing file config/prod9.yaml"),
-            ("components", "prod3", "components: [shop]\n",
-             "config/prod3.yaml: components: .* is not implemented yet"),
+            ("empty components", "prod3", "components: []\n",
+             "config/prod3.yaml: components: list at least one component"),
             ("other key", "prod3", "DB_USER: x\n",
              "config/prod3.yaml: 'DB_USER' is not allowed"),
             ("unknown component", "prod3",
@@ -753,7 +753,7 @@ class CompiledTextTests(OverrideFixture):
             "LineSeparator": "a\u2028b",
         }
         overrides = environment.Overrides(
-            "config/prod1.yaml", {"shop": {"main": values}}
+            "config/prod1.yaml", {"shop": {"main": values}}, None
         )
         path = self.source / "components/shop/config.defaults.yaml"
         compiled = self.defaults_file(
