@@ -458,6 +458,42 @@ class TargetEffectTests(ProductFixture):
                         record.touch()
             record.unlink()
             record.write_text(valid)
+            # The directory itself: a file, a link and a dangling link.
+            directory = record.parent
+            moved = self.root / "records"
+            directory.rename(moved)
+            for label, damage in (
+                ("file", lambda: directory.write_text("x")),
+                ("link", lambda: directory.symlink_to(moved)),
+                ("dangling link", lambda: directory.symlink_to(self.root / "absent")),
+            ):
+                with self.subTest(label):
+                    damage()
+                    before = sorted(
+                        (str(path), path.is_file() and path.read_bytes())
+                        for path in common.STATE.rglob("*")
+                    )
+                    self.use_root(releases["ledger"])
+                    for environment_name in (None, "prod1"):
+                        with self.assertRaisesRegex(
+                            common.DeployError,
+                            f"Invalid environment records {directory}; nothing was "
+                            "changed",
+                        ):
+                            deploy.install(environment_name)
+                    with self.assertRaisesRegex(
+                        runtime.ToolError,
+                        f"Invalid environment records {directory}; nothing was changed",
+                    ):
+                        runtime.environment_installs(common.STATE)
+                    after = sorted(
+                        (str(path), path.is_file() and path.read_bytes())
+                        for path in common.STATE.rglob("*")
+                    )
+                    self.assertEqual(after, before)
+                    self.assertTrue((common.STATE / "apis/ledger/value").is_file())
+                    directory.unlink()
+            moved.rename(directory)
             self.assertEqual(
                 runtime.environment_installs(common.STATE),
                 {"accounts": "prod1", "ledger": "prod1"},

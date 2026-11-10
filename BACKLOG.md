@@ -104,8 +104,8 @@ below; sections that describe the build-time model are marked
    first install, `deploy.sh install` too), naming that environment; the
    environment record holds its name for this. Otherwise a forgotten flag
    removed the overrides, or an API's registration with Identity, without
-   a word. Review fixes (on `4707ddd`): an invalid record is refused by
-   both readers; `status` needs no bootstrap file, so the runtime command
+   a word. Review fixes (on `4707ddd`, `733f253`): an invalid record, or an
+   invalid `state/environment` itself, is refused by both readers; `status` needs no bootstrap file, so the runtime command
    refuses before `init-layout`; the message names the component; an
    unfinished uninstall is reported first. Not covered: a first
    environment install interrupted before its record exists (the manual

@@ -212,8 +212,10 @@ def environment_installs(state):
     mapping) and "api_secret" (a mapping or null); anything else is refused.
     """
     directory = state / "environment"
-    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
-        raise ToolError(f"Invalid environment records {directory}")
+    if directory.is_symlink() or (
+        os.path.lexists(str(directory)) and not directory.is_dir()
+    ):
+        raise ToolError(f"Invalid environment records {directory}; nothing was changed")
     if not directory.exists():
         return {}
     result = {}

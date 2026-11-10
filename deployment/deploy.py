@@ -1238,6 +1238,15 @@ def recorded_environment(name):
     (then an install without it changes nothing it applied).
     """
     record = catalog.environment_record_path(common.STATE, name)
+    directory = record.parent
+    # The directory first, as environment_installs: a file or a link there
+    # would make the record look missing.
+    if directory.is_symlink() or (
+        os.path.lexists(str(directory)) and not directory.is_dir()
+    ):
+        raise common.DeployError(
+            f"Invalid environment records {directory}; nothing was changed"
+        )
     if not os.path.lexists(str(record)):
         return None
     try:

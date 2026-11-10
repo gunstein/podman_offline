@@ -328,7 +328,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `status reports an incomplete or inactive component` (step 7) | runtime user | Run the same command again a minute later (with `--environment prod1` if you used it); a service may still be starting. If it stays, ask for help (see below). |
 | `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. Repeat the same command (with `--environment prod1` if you used it); it resumes the unfinished component first. |
 | `Missing /var/lib/myproduct/state/prod1.yaml` (step 7) | runtime user | Step 6. |
-| `<component> was installed with --environment prod1 ...; nothing was changed` (step 7) | runtime user | Run the command it names, `myproduct --environment prod1`. |
+| `<component> was installed with --environment prod1 ...; nothing was changed` (step 7) | runtime user | Run the command it names, `myproduct --environment prod1`, with the component after it when it names one (`myproduct --environment prod1 <component>`). |
 | `no release package of ...` or `... needs ... installed: ...`, then `Nothing was changed` (step 7) | administrator | Install the delivery with the missing or matching release packages (step 3). |
 | `... requires ...; add ... to components:` (step 7) | supplier, runtime user | The environment file lacks a component another one needs; add the named line under `components:`. |
 | `... is not in components:` or `... cannot be overridden` or `... must have exactly one container named ...` (step 7) | supplier | The environment file does not fit the delivered releases; nothing was changed. Ask the supplier for a corrected file. |
