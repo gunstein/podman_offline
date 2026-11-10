@@ -131,31 +131,57 @@ def status_report(path):
         ) from None
 
 
-def selected(report, order, versions, component, product):
+def uninstalled(state):
+    """Components the runtime user removed with deploy.sh uninstall (backlog 85).
+
+    Read from state/uninstalled/ itself, the one record deploy.sh uninstall
+    writes, not from a status report: the report comes from one release,
+    which may be older than the record and not know it. Links and other
+    files are refused, as deployment.catalog.uninstalled_components does.
+    """
+    directory = state / "uninstalled"
+    if directory.is_symlink():
+        raise ToolError(f"Refuse symlinked uninstall records: {directory}")
+    if not directory.exists():
+        return []
+    names = []
+    for record in sorted(directory.iterdir()):
+        if record.name.startswith("."):
+            continue  # An interrupted atomic write leaves only a temporary file.
+        if (
+            not host.ID.fullmatch(record.name)
+            or record.is_symlink()
+            or not record.is_file()
+        ):
+            raise ToolError(f"Invalid uninstall record {record}")
+        names.append(record.name)
+    return names
+
+
+def selected(report, order, versions, component, product, removed):
     """The components to install now: pending first, then incomplete ones.
 
-    A component the runtime user uninstalled stays out (backlog 85; an older
-    release's report has no "uninstalled"), until <product> <component>
-    installs it again. An unfinished uninstall is finished, never reinstalled.
+    removed (uninstalled()) stays out until <product> <component> installs it
+    again. An unfinished uninstall is finished, never reinstalled.
     """
-    if component:
-        return [component]
     pending = report["pending"]
     if pending and pending["operation"] == "uninstall":
         raise ToolError(
-            f"The uninstall of {pending['component']} is unfinished; run its "
-            './deploy.sh uninstall again (see the manual, "Remove a component")'
+            f"The uninstall of {pending['component']} is unfinished; run the same "
+            "./deploy.sh uninstall command in its release again (with --delete-data "
+            'if you gave it); see the manual, "Remove a component"'
         )
+    if component:
+        return [component]
     targets = (
         [pending["component"]] if pending and pending["component"] in order else []
     )
-    uninstalled = report.get("uninstalled") or []
     current = {item["name"]: item for item in report["components"]}
     for name in order:
         item = current.get(name)
         if name in targets:
             continue
-        if name in uninstalled and not item:
+        if name in removed and not item:
             log.info(
                 f"[OK] {name} was uninstalled; run {product} {name} to install it again"
             )
@@ -289,7 +315,10 @@ def install(product, args):
     first = found[order[0]][1]
     deployed(first, "init-layout")
     versions = {name: found[name][0].version for name in order}
-    targets = selected(status_report(first), order, versions, args.component, product)
+    removed = uninstalled(host.LIB / product / "state")
+    targets = selected(
+        status_report(first), order, versions, args.component, product, removed
+    )
     for component in targets:
         package, path, descriptor = found[component]
         config = host.LIB / product / "state" / component / "config.yaml"

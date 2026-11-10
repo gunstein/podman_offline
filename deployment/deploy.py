@@ -1312,10 +1312,11 @@ def uninstall(component=None, delete_data=False):
             shutil.rmtree(common.STATE / component)
     removed = catalog.installed_version(common.STATE, component)
     # Before the marker goes: the runtime command must not install the
-    # component again (backlog 85). A retry finds the pending record.
-    write_install_record(
-        catalog.uninstalled_path(common.STATE, component), (removed or "") + "\n"
-    )
+    # component again (backlog 85). A retry finds the pending record; once
+    # the marker is gone it keeps the record written with the version.
+    record = catalog.uninstalled_path(common.STATE, component)
+    if removed is not None or not record.is_file():
+        write_install_record(record, (removed or "") + "\n")
     # Marker first: metadata without a marker is an unfinished install, never the reverse.
     for path in (marker, catalog.metadata_path(common.STATE, component)):
         if path.exists():

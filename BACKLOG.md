@@ -81,15 +81,21 @@ lines from its `dev.yaml.example`.
    `<product> <component>` installs it again, which removes the record.
    Without it the next `<product>` run reinstalled the component, because
    nothing else tells "uninstalled on purpose" from "never installed".
-   An unfinished uninstall is never reinstalled by the runtime command.
+   An unfinished uninstall is never reinstalled by the runtime command. The
+   runtime command reads `state/uninstalled/` itself: its status report may
+   come from an older release that does not know the record.
 2. A delivery is `dist/<environment>/delivery/`: every `./build-rpms.sh
    --environment` run writes it again with exactly the selected components'
    current RPMs and the current tools RPM, and the supplier delivers that
    directory. `dist/<environment>/rpm/` keeps every RPM ever built (one
    version has one content); the administrator command installs every
    product RPM of the directory it is given, so delivering `rpm/` after a
-   smaller set would have reinstalled an excluded component. Builds without
-   an environment are unchanged (their `dist/rpm/` has the same limit for a
+   smaller set would have reinstalled an excluded component. A reused RPM
+   is delivered only while it wraps the component's current content (its
+   `components/<id>/` files and `images.txt`, `<rpm>.bundle.sha256`; not the
+   archive bytes, which change with every build, and not a dependency's
+   range in `bundle.yaml`), and the directory is published only when
+   complete. Builds without an environment are unchanged (their `dist/rpm/` has the same limit for a
    component removed from the catalog; not in this item's scope).
 
 The text below is the requirement. **Decisions (product owner, 2026-11-09):**

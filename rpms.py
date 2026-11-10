@@ -354,6 +354,11 @@ def build(selected=(), tools=False, environment_name=None):
         if checksum.read_text().split()[0] != sha256(archive):
             raise RpmError(f"{archive.name} does not match its .sha256 file")
         built.append(build_rpm(archive, product, component, version, dist / "rpm"))
+        # Which bundle content this RPM wraps, so write_delivery can tell a
+        # reused RPM from one of an earlier bundle with the same version.
+        Path(str(built[-1]) + BUNDLE_SUFFIX).write_text(
+            bundle_content(archive) + "\n", encoding="utf-8"
+        )
         log.info(f"[OK] {built[-1].relative_to(ROOT)}")
     if everything or tools:
         built.append(build_tools(catalog.product_name(ROOT), dist / "rpm"))
@@ -363,6 +368,35 @@ def build(selected=(), tools=False, environment_name=None):
     return built
 
 
+# Beside each component RPM: bundle_content() of the archive it wraps.
+BUNDLE_SUFFIX = ".bundle.sha256"
+
+
+def bundle_content(archive):
+    """SHA256 of the component's own content in a bundle: its declarations and images.
+
+    Taken from the bundle's checksums.sha256 lines for components/<id>/ (the
+    manifests and config.defaults.yaml with its environment's overrides) and
+    images/images.txt. Not the archive's bytes, which change with every build
+    (tar and gzip times), and not bundle.yaml or the shared tools code: a
+    dependency's new version changes the ranges in bundle.yaml, and an
+    earlier release of this component stays a valid delivery then.
+    """
+    root = archive.name[: -len("-offline.tar.gz")]
+    with tarfile.open(str(archive)) as tar:
+        member = tar.extractfile(root + "/checksums.sha256")
+        if member is None:
+            raise RpmError(f"{archive.name} has no checksums.sha256")
+        lines = member.read().decode("utf-8").splitlines()
+    own = sorted(
+        line
+        for line in lines
+        if line.split("  ", 1)[-1].startswith("components/")
+        or line.endswith("  images/images.txt")
+    )
+    return hashlib.sha256("\n".join(own).encode("utf-8")).hexdigest()
+
+
 def write_delivery(dist, descriptors, option):
     """dist/<environment>/delivery/: exactly the RPMs of the current delivery.
 
@@ -370,8 +404,11 @@ def write_delivery(dist, descriptors, option):
     is given, so the supplier delivers this one, not dist/<environment>/rpm/,
     which keeps every RPM ever built (one version has one content). It is
     written again by every --environment run: the selected components' RPMs
-    in their current versions and the current tools RPM. A missing one leaves
-    no delivery directory at all.
+    in their current versions and the current tools RPM. A missing one, or a
+    component RPM built from another archive than the current one (same
+    version, other content), leaves no delivery directory at all. The
+    directory is filled beside it and renamed only when complete, so a
+    failed copy never leaves a smaller delivery that looks intended.
     """
     product = catalog.product_name(ROOT)
     tools = (ROOT / "tools/VERSION").read_text().strip()
@@ -381,8 +418,9 @@ def write_delivery(dist, descriptors, option):
         for name, descriptor in descriptors.items()
     }
     wanted["--tools"] = f"{product}-tools-{tools}-1.noarch.rpm"
-    delivery = dist / "delivery"
+    delivery, partial = dist / "delivery", dist / ".delivery-partial"
     shutil.rmtree(str(delivery), ignore_errors=True)
+    shutil.rmtree(str(partial), ignore_errors=True)
     missing = [
         name for name, rpm in wanted.items() if not (dist / "rpm" / rpm).is_file()
     ]
@@ -393,9 +431,26 @@ def write_delivery(dist, descriptors, option):
             + f"; run ./build-rpms.sh {option}"
             + " ".join(missing)
         )
-    delivery.mkdir()
-    for rpm in wanted.values():
-        shutil.copy2(str(dist / "rpm" / rpm), str(delivery / rpm))
+    for name, descriptor in descriptors.items():
+        rpm = dist / "rpm" / wanted[name]
+        archive = dist / (
+            f"{descriptor['product']}-{name}-{descriptor['version']}-offline.tar.gz"
+        )
+        wrapped = Path(str(rpm) + BUNDLE_SUFFIX)
+        current = bundle_content(archive) + "\n"
+        if not wrapped.is_file() or wrapped.read_text(encoding="utf-8") != current:
+            raise RpmError(
+                f"{delivery.relative_to(ROOT)} not written: {rpm.name} wraps another "
+                f"{archive.name} than the current one; one version has one content, "
+                f"so give {name} a new VERSION and build it again"
+            )
+    try:
+        partial.mkdir()
+        for rpm in wanted.values():
+            shutil.copy2(str(dist / "rpm" / rpm), str(partial / rpm))
+        partial.rename(delivery)
+    finally:
+        shutil.rmtree(str(partial), ignore_errors=True)
     log.info(f"[OK] {delivery.relative_to(ROOT)}: deliver this directory")
 
 

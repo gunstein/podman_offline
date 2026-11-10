@@ -457,8 +457,13 @@ overrides:
   `dist/prod2/delivery/` again with exactly the current RPMs and the tools
   RPM, and that is the directory the supplier delivers: `dist/prod2/rpm/`
   keeps every RPM ever built (one version has one content), so an RPM of an
-  earlier, larger set is never delivered. With an RPM still missing there is
-  no delivery directory, and the error names the command.
+  earlier, larger set is never delivered. A component RPM is delivered only
+  while it wraps the component's current content (its `components/<id>/`
+  files and `images.txt`, recorded beside the RPM as `<rpm>.bundle.sha256`);
+  an RPM of the same version with other content, for example after an
+  override changed without a new `VERSION`, is refused with the next step.
+  With an RPM still missing or refused there is no delivery directory, and
+  the directory is published only once it is complete.
 
 An optional API, one only some environments have, keeps Identity's
 `ApiResources__<n>__*` lines out of Identity's `config.defaults.yaml`: each
@@ -475,9 +480,11 @@ out keeps running until the runtime user uninstalls it with its own release's
 `./deploy.sh uninstall` ([manual](PRODUCTION-INSTALL.md#7-everyday-tasks));
 an API goes first, because install refuses an Identity release without the
 line of an installed API. The uninstall writes `state/uninstalled/<id>`
-(the removed version), reported by `status --json`: the runtime command
-leaves that component out although its release stays installed, until
-`<product> <id>` installs it again, which removes the record. The output of an environment goes to its own directory,
+(the removed version, kept by a retry), which `status` shows: the runtime
+command reads that directory itself, so a status report from an older
+release cannot hide it, and leaves the component out although its release
+stays installed, until `<product> <id>` installs it again, which removes the
+record. The output of an environment goes to its own directory,
 `dist/<name>/` with its `current-bundles.txt` (staging in
 `build/bundle-<name>/`); `./build-rpms.sh --environment <name>` wraps those
 bundles into `dist/<name>/rpm/`. One build never removes another's files.

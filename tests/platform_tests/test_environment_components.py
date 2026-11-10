@@ -390,6 +390,52 @@ class SelectionRpmTests(SelectionFixture):
             ],
         )
 
+    def test_an_rpm_of_an_earlier_archive_is_not_delivered(self):
+        """Same version, other bundle bytes: the reused RPM is refused."""
+        bundle.build(environment_name="prod1")
+        rpms.build(environment_name="prod1")
+        self.put(
+            "config/prod1.yaml",
+            environment_file(
+                ["accounts", "ledger", "reports"],
+                accounts={
+                    "main": dict(
+                        registration(0, "ledger"), **registration(1, "reports")
+                    )
+                },
+                reports={"main": {"Export": "changed"}},
+            ),
+        )
+        (self.source / "components/accounts/VERSION").write_text("1.1.0\n")
+        bundle.build(environment_name="prod1")
+        with self.assertRaisesRegex(
+            rpms.RpmError,
+            "dist/prod1/delivery not written: myproduct-reports-1.0.0-1.0.0-1.noarch.rpm "
+            "wraps another myproduct-reports-1.0.0-offline.tar.gz than the current "
+            "one; one version has one content, so give reports a new VERSION",
+        ):
+            rpms.build(["accounts"], environment_name="prod1")
+        self.assertFalse((bundle.DIST / "prod1/delivery").exists())
+
+    def test_a_failed_copy_leaves_no_delivery(self):
+        bundle.build(environment_name="prod1")
+        rpms.build(environment_name="prod1")
+        copies = []
+
+        def copy(source, target):
+            copies.append(target)
+            if len(copies) == 2:
+                raise OSError("disk full")
+            return shutil.copyfile(source, target)
+
+        with mock.patch.object(rpms.shutil, "copy2", copy), self.assertRaises(OSError):
+            rpms.build(
+                ["--never"] if False else [], tools=True, environment_name="prod1"
+            )
+        self.assertEqual(len(copies), 2)
+        self.assertFalse((bundle.DIST / "prod1/delivery").exists())
+        self.assertFalse((bundle.DIST / "prod1/.delivery-partial").exists())
+
     def test_a_delivery_with_a_missing_rpm_is_not_written(self):
         bundle.build(environment_name="prod1")
         delivery = bundle.DIST / "prod1/delivery"
@@ -463,7 +509,14 @@ class SelectionInstallTests(SelectionFixture):
             order = ["accounts", "ledger", "reports"]
             versions = {"accounts": "1.1.0", "ledger": "1.0.0", "reports": "1.0.0"}
             with contextlib.redirect_stdout(io.StringIO()) as shown:
-                targets = runtime.selected(report, order, versions, None, "myproduct")
+                targets = runtime.selected(
+                    report,
+                    order,
+                    versions,
+                    None,
+                    "myproduct",
+                    runtime.uninstalled(common.STATE),
+                )
             self.assertEqual(targets, [])
             self.assertIn("ledger was uninstalled", shown.getvalue())
             # A plain status run reports it, without an error.
@@ -534,12 +587,20 @@ class DependencyTests(ProductFixture):
                 self.install(releases[name])
         installed = catalog.load_installed_metadata(common.STATE)
         self.assertEqual(sorted(installed), ["gateway", "manual"])
-        # Uninstall leaves a record; installing again removes it.
+        # Uninstall leaves a record; installing again removes it. An uninstall
+        # interrupted after the marker is gone keeps the version on retry.
         with self.environment():
             self.use_root(releases["manual"])
+            failing = mock.patch.object(
+                deploy.registrations, "clear_pending", side_effect=OSError("stop")
+            )
+            with failing, contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(OSError):
+                    deploy.uninstall()
+            record = catalog.uninstalled_path(common.STATE, "manual")
+            self.assertFalse((common.STATE / "installed/manual").exists())
             with contextlib.redirect_stdout(io.StringIO()):
                 deploy.uninstall()
-            record = catalog.uninstalled_path(common.STATE, "manual")
             self.assertEqual(record.read_text(), "1.0.0\n")
             self.install(releases["manual"])
             self.assertFalse(record.exists())

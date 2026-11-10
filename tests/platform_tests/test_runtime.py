@@ -50,7 +50,6 @@ class FakeReleases:
         self.rpm_lines = []
         self.installed = {}  # component -> version completed
         self.pending = None
-        self.uninstalled = []  # components removed with deploy.sh uninstall
         self.fail = set()  # components whose install fails
         self.calls = []
 
@@ -90,7 +89,6 @@ class FakeReleases:
                             if not self.pending or self.pending["component"] != name
                         ],
                         "pending": self.pending,
-                        "uninstalled": self.uninstalled,
                     }
                 )
             )
@@ -104,8 +102,10 @@ class FakeReleases:
                 self.pending = {"operation": "install", "component": component}
                 return done(status=1)
             self.installed[component] = version
-            if component in self.uninstalled:
-                self.uninstalled.remove(component)
+            # deploy.sh install removes the uninstall record (backlog 85).
+            record = self.lib / "cedar/state/uninstalled" / component
+            if record.is_file():
+                record.unlink()
             if self.pending and self.pending["component"] == component:
                 self.pending = None
         return done()
@@ -293,7 +293,11 @@ class RuntimeTests(unittest.TestCase):
         """Backlog 85: its release stays installed, but the runtime user removed it."""
         self.first_run()
         del self.releases.installed["worker"]
-        self.releases.uninstalled.append("worker")
+        # The record deploy.sh uninstall writes; the status report comes from
+        # web's release and, like a release before backlog 85, never names it.
+        record = self.root / "var-lib/cedar/state/uninstalled/worker"
+        record.parent.mkdir(parents=True)
+        record.write_text("1.0.0\n")
         self.releases.calls.clear()
         self.assertEqual(self.run_command(), 0, self.stderr.getvalue())
         self.assertNotIn("install", self.releases.commands("worker"))
@@ -306,7 +310,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("worker", self.releases.installed)
         self.assertEqual(self.run_command("worker"), 0, self.stderr.getvalue())
         self.assertEqual(self.releases.installed["worker"], "1.0.0")
-        self.assertEqual(self.releases.uninstalled, [])
+        self.assertFalse(record.exists())
 
     def test_an_unfinished_uninstall_is_never_installed_again(self):
         self.first_run()
@@ -317,11 +321,22 @@ class RuntimeTests(unittest.TestCase):
         }
         self.releases.calls.clear()
         self.assertEqual(self.run_command(), 1)
-        self.assertIn(
-            "The uninstall of worker is unfinished; run its ./deploy.sh uninstall again",
+        self.assertRegex(
             self.stderr.getvalue(),
+            "The uninstall of worker is unfinished; run the same ./deploy.sh "
+            "uninstall command in its release again .with --delete-data if you gave it.",
         )
         self.assertNotIn(("worker", ["install"]), self.releases.calls)
+
+    def test_a_named_component_still_finishes_a_pending_uninstall_first(self):
+        self.first_run()
+        self.releases.pending = {
+            "operation": "uninstall",
+            "component": "worker",
+            "owners": [],
+        }
+        self.assertEqual(self.run_command("worker"), 1)
+        self.assertIn("The uninstall of worker is unfinished", self.stderr.getvalue())
 
     def test_a_named_component_is_installed_again_with_its_current_config(self):
         self.first_run()
