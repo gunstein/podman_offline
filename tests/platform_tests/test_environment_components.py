@@ -6,11 +6,14 @@ overrides at deployment. Expected names and values are written out here,
 never computed with the selection under test.
 """
 
+import base64
+import collections
 import contextlib
 import copy
 import io
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -18,12 +21,15 @@ from unittest import mock
 import bundle
 import rpms
 import yaml
-from deployment import catalog, common, deploy, status
+from deployment import catalog, cli, common, deploy, status
 
 from helpers.product_fixture import RENAMED, ProductFixture
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import host  # pyright: ignore[reportMissingImports] - tools/ above
 import runtime  # pyright: ignore[reportMissingImports] - tools/ above
+
+Package = collections.namedtuple("Package", "version")
 
 
 def api_pod(name):
@@ -155,9 +161,138 @@ class TargetEffectTests(ProductFixture):
 
     def setUp(self):
         super().setUp()
-        self.write_product(copy.deepcopy(PRODUCT))
+        product = copy.deepcopy(PRODUCT)
+        # Two keys of one secret and a second secret: Identity may name any.
+        product["ledger"]["defaults"]["SECRET_FILES"] = {
+            "ledger-api-secret": [
+                {"path": "credentials/api-secret", "generate": ["value", "alternate"]}
+            ],
+            "ledger-api-key": [{"path": "credentials/api-key", "generate": ["value"]}],
+        }
+        product["ledger"]["env"]["main"]["Authentication__ApiKey"] = (
+            "@@secret:ledger-api-key/value@@"
+        )
+        self.write_product(product)
         self.releases_built = self.build_and_unpack()
         shutil.rmtree(self.source)
+
+    def identity_api_value(self):
+        """The value Identity's rendered accounts-apis Secret holds for ledger."""
+        path = common.QUADLET_DIR / "myproduct-accounts.yaml"
+        for document in yaml.safe_load_all(path.read_text()):
+            if document and document["metadata"]["name"] == "accounts-apis":
+                return base64.b64decode(
+                    document["data"]["ApiResources__0__ApiSecrets__0__Value"]
+                )
+        raise AssertionError("no accounts-apis Secret")
+
+    def run_runtime(self, environment_name):
+        """tools/runtime.py's install, each deploy.sh call run by its release in-process.
+
+        Only the host is simulated: the installed packages are the unpacked
+        releases, /var/lib/myproduct/state is the fixture's state, and the
+        final plain status (which asks systemd) passes.
+        """
+        lib = self.root / "var-lib"
+        (lib / "myproduct").mkdir(parents=True, exist_ok=True)
+        if not (lib / "myproduct/state").exists():
+            (lib / "myproduct/state").symlink_to(common.STATE)
+        found = {
+            name: (
+                Package(catalog.load_bundle_descriptor(path)["version"]),
+                path,
+                yaml.safe_load((path / "bundle.yaml").read_text()),
+            )
+            for name, path in self.releases_built.items()
+        }
+        installs = []
+
+        def deploy_sh(path, *command, capture=False):
+            if command[0] == "init-layout" or command == ("status",):
+                return subprocess.CompletedProcess(command, 0, "", "")
+            self.use_root(path)
+            if command[0] == "install":
+                installs.append(path.name.split("-")[1])
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(list(command))
+            return subprocess.CompletedProcess(
+                command, code, out.getvalue(), err.getvalue()
+            )
+
+        args = runtime.parser("myproduct").parse_args(
+            ["--environment", environment_name]
+        )
+        with mock.patch.multiple(
+            runtime,
+            check_account=mock.Mock(),
+            releases=mock.Mock(return_value=found),
+            deploy=deploy_sh,
+        ), mock.patch.object(host, "LIB", lib), self.environment():
+            with contextlib.redirect_stdout(io.StringIO()):
+                runtime.install("myproduct", args)
+        return installs
+
+    def test_a_resumed_install_is_decided_again_after_identity(self):
+        """Pending first, then the environment in order: the API role is applied."""
+        releases = self.releases_built
+        self.place_environment("prod1", environment_file(["accounts", "ledger"]))
+        with self.environment():
+            for name in ("accounts", "ledger"):
+                self.install(releases[name], environment_name="prod1")
+            # A reinstall of ledger stops at its service start.
+            failing = mock.patch.object(
+                deploy, "restart_service", side_effect=OSError("power loss")
+            )
+            with failing, self.assertRaises(OSError):
+                self.install(releases["ledger"], environment_name="prod1")
+            self.assertEqual(status.collect()["pending"]["component"], "ledger")
+        # Meanwhile the file makes ledger an API of accounts.
+        self.place_environment(
+            "prod1",
+            environment_file(["accounts", "ledger"], registration(0, "ledger")),
+        )
+        installs = self.run_runtime("prod1")
+        self.assertEqual(installs, ["ledger", "accounts", "ledger"])
+        installed = catalog.load_installed_metadata(common.STATE)
+        self.assertEqual(installed["ledger"]["apis"], "accounts")
+        self.assertTrue((common.STATE / "apis/ledger/value").is_file())
+        with self.environment():
+            self.assertIsNone(status.collect()["pending"])
+            # The same command again changes nothing.
+            self.assertEqual(self.run_runtime("prod1"), [])
+
+    def test_another_secret_line_for_an_api_is_not_yet_applied(self):
+        """Identity names another key or secret of ledger: ledger delivers it again."""
+        releases = self.releases_built
+        self.place_environment(
+            "prod1",
+            environment_file(["accounts", "ledger"], registration(0, "ledger")),
+        )
+        with self.environment():
+            for name in ("accounts", "ledger"):
+                self.install(releases[name], environment_name="prod1")
+            for secret, path in (
+                ("ledger-api-secret/alternate", "credentials/api-secret/alternate"),
+                ("ledger-api-key/value", "credentials/api-key/value"),
+            ):
+                with self.subTest(secret):
+                    line = {
+                        "ApiResources__0__Name": "ledger",
+                        "ApiResources__0__ApiSecrets__0__Value": f"@@secret:{secret}@@",
+                    }
+                    self.place_environment(
+                        "prod1", environment_file(["accounts", "ledger"], line)
+                    )
+                    self.assertFalse(self.applied("accounts"))
+                    self.install(releases["accounts"], environment_name="prod1")
+                    self.assertFalse(self.applied("ledger"))
+                    self.install(releases["ledger"], environment_name="prod1")
+                    self.assertTrue(self.applied("ledger"))
+                    self.assertTrue(self.applied("accounts"))
+                    value = (common.STATE / "ledger" / path).read_bytes()
+                    self.assertTrue(value)
+                    self.assertEqual(self.identity_api_value(), value)
 
     def applied(self, name, environment_name="prod1"):
         """deploy.sh check-environment <environment> --json, as the runtime asks it."""
@@ -180,7 +315,7 @@ class TargetEffectTests(ProductFixture):
                 json.loads(
                     catalog.environment_record_path(common.STATE, "ledger").read_text()
                 ),
-                {},
+                {"api_secret": None, "overrides": {}},
             )
             # An override changes: only accounts, which it names, is not applied.
             self.place_environment(
@@ -363,7 +498,13 @@ class DeliveryTests(ProductFixture):
 
     def setUp(self):
         super().setUp()
-        self.write_product(copy.deepcopy(PRODUCT))
+        product = copy.deepcopy(PRODUCT)
+        # A component file with the name of the bundle's checksum list.
+        product["ledger"]["mounts"] = {
+            "main": {"/etc/checksums.sha256": "checksums.sha256"}
+        }
+        product["ledger"]["files"] = {"checksums.sha256": "first\n"}
+        self.write_product(product)
         self.wrapped = stub_rpms(self)
         self.tools = (
             "myproduct-tools-" + (self.source / "tools/VERSION").read_text().strip()
@@ -444,6 +585,7 @@ class DeliveryTests(ProductFixture):
         bundle.build()
         rpms.build()
         for relative, old, new in (
+            ("components/ledger/files/checksums.sha256", "first", "second"),
             ("quadlet/template.kube", "Restart=on-failure", "Restart=no"),
             ("deployment/output.py", '"""', '"""Changed. '),
             ("scripts/prepare-host.sh", "\n", "\n# changed\n"),
@@ -454,13 +596,13 @@ class DeliveryTests(ProductFixture):
                 bundle.build()
                 with self.assertRaisesRegex(
                     rpms.RpmError,
-                    "myproduct-accounts-1.0.0-1.0.0-1.noarch.rpm already exists "
+                    "myproduct-ledger-1.0.0-1.0.0-1.noarch.rpm already exists "
                     "with other content",
                 ):
-                    rpms.build(["accounts"])
+                    rpms.build(["ledger"])
                 (self.source / relative).write_text(original)
                 bundle.build()
-                rpms.build(["accounts"])  # The same content again: reused.
+                rpms.build(["ledger"])  # The same content again: reused.
 
     def replace_text(self, relative, old, new, count=-1):
         path = self.source / relative

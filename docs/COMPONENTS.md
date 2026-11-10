@@ -447,10 +447,12 @@ delivered is no substitute for one). `<product> --environment prod1`:
 The selection is not remembered: every run, and every `deploy.sh` it calls,
 reads the file as it is now, so a retry after an interruption is the same
 command, and an edited file takes effect with the next run. Each install
-records only the overrides it applied to its own component
-(`state/environment/<id>.json`, removed by uninstall), the one way to tell
-an unchanged component from one whose overrides changed in the same
-version. `<product>` without `--environment` keeps its
+records only what it applied from the environment to its own component
+(`state/environment/<id>.json`, removed by uninstall): its overrides and,
+for an API, the secret line Identity names it with. It is the one way to
+tell an unchanged component from one whose overrides, or whose secret in
+Identity, changed in the same version. An unfinished install is finished
+first; then every listed component is decided in order, that one too. `<product>` without `--environment` keeps its
 behavior: every installed release with its release declarations.
 
 The bundle's `bundle.yaml` is environment-neutral and names the catalog's

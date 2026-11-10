@@ -176,6 +176,10 @@ def run(args):
     try:
         if args.command == "status":
             return status.status(json_output=args.json), note
+        if args.command == "check-environment" and args.json:
+            # Machine output only, as status --json: no PASS line after it.
+            deploy.check_environment(args.environment, True)
+            return 0, note
         if args.command == "init-config":
             settings = dict(args.set)
             if len(settings) != len(args.set):

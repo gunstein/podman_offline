@@ -1216,8 +1216,9 @@ def effective_config(config, path, component, env_overrides=None):
     """Validate a component's config; add PUBLIC_HOSTNAME and ENVIRONMENT/MOUNTS recipes; no writes.
 
     The result is transient: validation and materialization use it, nobody
-    writes it to config.yaml. env_overrides (dev only; environment.Overrides)
-    must be the same value effective_documents receives.
+    writes it to config.yaml. env_overrides (environment.Overrides: dev's
+    overrides block, or the target environment file of --environment; None
+    without either) must be the same value effective_documents receives.
     """
     validate_component_config(config, component, path)
     derived = with_client_settings(with_derived(config, path), component)

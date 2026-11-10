@@ -2841,13 +2841,15 @@ release-rpm)
 rpms.build_rpm(Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], Path("dist/rpm"))' \
             "dist/$archive" "$product_name" "$bundle" "$requested_version"
     fi
-    tools=(dist/rpm/"$product_name"-tools-*.noarch.rpm)
-    [[ -f ${tools[0]} ]] || { ./build-rpms.sh --tools; tools=(dist/rpm/"$product_name"-tools-*.noarch.rpm); }
-    (( ${#tools[@]} == 1 )) || { echo "FAIL: expected one tools RPM in dist/rpm" >&2; exit 1; }
+    # This tree's tools: built, or reused only with the same content (rpms.py
+    # refuses other content under one tools VERSION); dist/rpm keeps others.
+    ./build-rpms.sh --tools
+    tools="dist/rpm/$product_name-tools-$(cat tools/VERSION)-1.noarch.rpm"
+    [[ -f $tools ]] || { echo "FAIL: missing $tools" >&2; exit 1; }
     delivery="dist/release-$bundle-$requested_version"
     rm -rf "$delivery"
     mkdir -p "$delivery"
-    cp "$rpm_file" "${tools[0]}" "$delivery/"
+    cp "$rpm_file" "$tools" "$delivery/"
     ls "$delivery"
     ;;
 rpm-nothing-changed)

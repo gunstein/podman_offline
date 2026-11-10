@@ -14,9 +14,10 @@ across releases):
 
 1. deploy.sh init-layout: the account's bootstrap file.
 2. deploy.sh status --json: what is installed and what is pending.
-3. A pending component first, then each component not installed in its
-   release's version; a completed one is skipped (with --environment, only
-   when it already has the environment's effect, below). With <component>,
+3. A pending install is finished first and the status read again; then each
+   component not installed in its release's version, in order; a completed
+   one is skipped (with --environment, only when it already has the
+   environment's effect, below). With <component>,
    only that one, also when it is complete, so a changed config.yaml takes
    effect.
 4. A component without config.yaml gets one from deploy.sh init-config. For
@@ -201,12 +202,14 @@ def complete(report, name, version):
 
 
 def selected(report, order, versions, component, product, removed, environment=None):
-    """The components to install now: pending first, then incomplete ones.
+    """The components to install now, in order: the incomplete ones.
 
-    removed (uninstalled()) stays out until <product> <component> installs it
-    again. An unfinished uninstall is finished, never reinstalled. With an
-    environment a completed component stays in the list: install decides at
-    its turn whether it already has the environment's effect (applied).
+    A pending install was finished before (install), so report is the status
+    after it. removed (uninstalled()) stays out until <product> <component>
+    installs it again. An unfinished uninstall is finished, never
+    reinstalled. With an environment a completed component stays in the
+    list: install decides at its turn whether it already has the
+    environment's effect (applied).
     """
     pending = report["pending"]
     if pending and pending["operation"] == "uninstall":
@@ -217,13 +220,9 @@ def selected(report, order, versions, component, product, removed, environment=N
         )
     if component:
         return [component]
-    targets = (
-        [pending["component"]] if pending and pending["component"] in order else []
-    )
     current = {item["name"]: item for item in report["components"]}
+    targets = []
     for name in order:
-        if name in targets:
-            continue
         if name in removed and not current.get(name):
             log.info(
                 f"[OK] {name} was uninstalled; run {product} {name} to install it again"
@@ -447,6 +446,8 @@ def install(product, args):
     if args.environment:
         found = environment_releases(product, args, found)
         option = ["--environment", args.environment]
+    # The command to repeat in messages, with the environment it ran with.
+    again = " ".join([product] + option)
     order = install_order(product, found)
     if args.component and args.component not in found:
         raise ToolError(
@@ -469,24 +470,10 @@ def install(product, args):
             f"The {pending['operation']} of {pending['component']} is unfinished, and "
             f"{pending['component']} is not in this environment; finish it first"
         )
-    targets = selected(
-        report, order, versions, args.component, product, removed, args.environment
-    )
     done = []
-    for component in targets:
+
+    def install_component(component):
         package, path, descriptor = found[component]
-        # At its turn: an install before it (Identity) can change its API role.
-        if (
-            args.environment
-            and not args.component
-            and complete(report, component, package.version)
-            and applied(path, args.environment)
-        ):
-            log.info(
-                f"[OK] {component} {package.version} is installed with environment "
-                f"{args.environment}"
-            )
-            continue
         config = host.LIB / product / "state" / component / "config.yaml"
         if not config.exists():
             settings = []
@@ -501,12 +488,42 @@ def install(product, args):
         ):
             log.warning(
                 f"WARNING: {config} exists; --public-origin and --ip-address apply only "
-                f"to a new config. Edit it, then run {product} {component}"
+                f"to a new config. Edit it, then run {again} {component}"
             )
         move_credentials(product, component)
         deployed(path, "install", *option)
         done.append(component)
         log.info(f"[OK] {component} {package.version} installed")
+
+    # An unfinished install is finished first, then the status is read again,
+    # so every component is then decided in order (Identity before its APIs),
+    # the resumed one included.
+    if (
+        pending
+        and pending["operation"] == "install"
+        and pending["component"] in order
+        and not args.component
+    ):
+        install_component(pending["component"])
+        report = status_report(first)
+    targets = selected(
+        report, order, versions, args.component, product, removed, args.environment
+    )
+    for component in targets:
+        package, path, _ = found[component]
+        # At its turn: an install before it (Identity) can change its API role.
+        if (
+            args.environment
+            and not args.component
+            and complete(report, component, package.version)
+            and applied(path, args.environment)
+        ):
+            log.info(
+                f"[OK] {component} {package.version} is installed with environment "
+                f"{args.environment}"
+            )
+            continue
+        install_component(component)
     # Delivered credentials are taken only by an install of their component;
     # say so instead of leaving them unused without a word.
     for component in order:
@@ -514,11 +531,11 @@ def install(product, args):
         if component not in done and incoming.is_dir() and any(incoming.iterdir()):
             log.warning(
                 f"WARNING: {incoming} holds delivered files that {component} does not "
-                f"use yet; run {product} {component} to install it with them"
+                f"use yet; run {again} {component} to install it with them"
             )
     if deploy(found[order[-1]][1], "status").returncode != 0:
         raise ToolError(
-            f"status reports an incomplete or inactive component; run {product} again, "
+            f"status reports an incomplete or inactive component; run {again} again, "
             'or see "If a command stops" in the manual'
         )
 

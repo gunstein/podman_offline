@@ -72,7 +72,12 @@ compares them at the component's turn); `check-environment` checks the
 dependencies the environment gives a release and refuses another
 component's secret outside Identity; it needs no bootstrap file, so all
 checks precede `init-layout`; the RPM content covers every release file;
-the `--rpm-manual` upgrade is delivered from its own directory.
+the `--rpm-manual` upgrade is delivered from its own directory. Second
+review (on `a8e6220`): the record also holds the secret line Identity names
+an API with; a pending install is finished first and the status read
+again, so it is decided after Identity; `check-environment --json` prints
+only the JSON; a component file named `checksums.sha256` is listed;
+`release-rpm` delivers the tree's own tools RPM (`./build-rpms.sh --tools`).
 
 **Revised decision (product owner with human reviewers, 2026-11-10).**
 Component selection and environment overrides move from the bundle build to

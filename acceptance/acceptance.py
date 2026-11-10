@@ -416,12 +416,16 @@ class Run:
         # delivery directory, and the tools RPM of the same tree.
         self.guest("DEV", "release-rpm", version, bundle=bundle)
         rpm = archive[: -len("-offline.tar.gz")] + "-" + version + "-1.noarch.rpm"
-        tools = self.ssh(
-            "DEV",
-            "cd " + shlex.quote(base + "/" + tree + "/dist/rpm")
-            + " && ls " + shlex.quote(self.product) + "-tools-*.noarch.rpm",
-        ).split()  # fmt: skip
-        if len(tools) != 1 or not re.fullmatch(r"[a-z0-9.-]+\.noarch\.rpm", tools[0]):
+        # release-rpm's directory holds this RPM and the tree's own tools RPM.
+        source = base + "/" + tree + "/dist/release-" + bundle + "-" + version
+        tools = [
+            name
+            for name in self.ssh("DEV", "cd " + shlex.quote(source) + " && ls").split()
+            if name != rpm
+        ]
+        if len(tools) != 1 or not re.fullmatch(
+            re.escape(self.product) + r"-tools-[0-9.]+-1\.noarch\.rpm", tools[0]
+        ):
             raise RuntimeError("Unexpected tools RPM on DEV: " + repr(tools))
         delivery = base + "/rpm-" + bundle + "-" + version
         self.ssh(
@@ -433,7 +437,7 @@ class Run:
             self.command(
                 SCP
                 + [
-                    self.host("DEV") + ":" + base + "/" + tree + "/dist/rpm/" + name,
+                    self.host("DEV") + ":" + source + "/" + name,
                     local,
                 ]
             )

@@ -213,7 +213,7 @@ def check_release(release, product, component, version):
     files = {
         str(path.relative_to(release))
         for path in release.rglob("*")
-        if path.is_file() and path.name != "checksums.sha256"
+        if path.is_file() and path != release / "checksums.sha256"
     }
     if set(listed) != files or any(
         sha256(release / name) != digest for name, digest in listed.items()

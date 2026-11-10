@@ -288,7 +288,8 @@ def build_release(version, descriptor):
     checksums = [
         f"{sha256(path)}  {path.relative_to(target)}"
         for path in sorted(target.rglob("*"))
-        if path.is_file() and path.name != "checksums.sha256"
+        # Only the list itself; a component file may have the same name.
+        if path.is_file() and path != target / "checksums.sha256"
     ]
     (target / "checksums.sha256").write_text(
         "\n".join(checksums) + "\n",

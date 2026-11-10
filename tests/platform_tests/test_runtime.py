@@ -543,6 +543,18 @@ class EnvironmentTests(RuntimeTests):
         )
         self.assertEqual(self.releases.installed, {})
 
+    def test_messages_name_the_command_with_its_environment(self):
+        self.place("prod1", "components: [web, api]\n")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        incoming = self.lib / "cedar/incoming/api"
+        incoming.mkdir(parents=True)
+        (incoming / "token").write_text("delivered")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        self.assertIn(
+            "use yet; run cedar --environment prod1 api to install it with them",
+            self.stderr.getvalue(),
+        )
+
     def test_a_changed_environment_installs_only_the_changed_components(self):
         """The same versions: only what the file now changes is installed again."""
         self.place("prod1", "components: [web, api, worker]\n")

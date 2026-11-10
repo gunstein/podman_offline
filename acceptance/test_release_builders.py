@@ -170,18 +170,24 @@ class ExpectedImageTests(unittest.TestCase):
 class ReleaseRpmDeliveryTests(unittest.TestCase):
     """release-rpm: an upgrade's own delivery directory, not dist/rpm (backlog 85)."""
 
-    def test_the_delivery_holds_only_the_release_and_the_tools(self):
+    def run_release_rpm(self, tools_in_dist, build_status=0):
+        """The real release-rpm shell code on a tree with tools/VERSION 0.3.6.
+
+        ./build-rpms.sh stands in: --tools adds this tree's tools RPM when it is
+        missing, or exits with build_status (rpms.py refusing other content).
+        """
         tree = Path(self.enterContext(tempfile.TemporaryDirectory()))
         rpm = tree / "dist/rpm"
         rpm.mkdir(parents=True)
+        (tree / "tools").mkdir()
+        (tree / "tools/VERSION").write_text("0.3.6\n")
         # What earlier ./build-rpms.sh runs leave: RPMs of other versions and
         # their content records beside the RPM this step wraps.
         names = [
             "myproduct-help-0.3.1-0.3.1-1.noarch.rpm",
             "myproduct-help-0.3.2-0.3.2-1.noarch.rpm",
             "myproduct-platform-0.4.3-0.4.3-1.noarch.rpm",
-            "myproduct-tools-0.3.6-1.noarch.rpm",
-        ]
+        ] + [f"myproduct-tools-{version}-1.noarch.rpm" for version in tools_in_dist]
         for name in names:
             (rpm / name).write_text(name)
             (rpm / (name + ".bundle.sha256")).write_text("0" * 64 + "\n")
@@ -193,6 +199,13 @@ class ReleaseRpmDeliveryTests(unittest.TestCase):
             cwd=str(tree / "dist"),
             check=True,
         )
+        (tree / "build-rpms.sh").write_text(
+            "#!/bin/sh\nset -e\n"
+            '[ "$1" = --tools ] || exit 9\n'
+            f"[ {build_status} = 0 ] || exit {build_status}\n"
+            "touch dist/rpm/myproduct-tools-$(cat tools/VERSION)-1.noarch.rpm\n"
+        )
+        (tree / "build-rpms.sh").chmod(0o755)
         binaries = tree / "bin"
         binaries.mkdir()
         (binaries / "rpmbuild").write_text("#!/bin/sh\nexit 1\n")
@@ -219,15 +232,28 @@ class ReleaseRpmDeliveryTests(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        delivery = tree / "dist/release-help-0.3.2"
-        self.assertEqual(
-            sorted(path.name for path in delivery.iterdir()),
-            [
-                "myproduct-help-0.3.2-0.3.2-1.noarch.rpm",
-                "myproduct-tools-0.3.6-1.noarch.rpm",
-            ],
-        )
+        return result, tree / "dist/release-help-0.3.2"
+
+    def test_the_delivery_holds_only_the_release_and_the_trees_tools(self):
+        for label, tools in (
+            ("an older tools RPM beside", ["0.3.5", "0.3.6"]),
+            ("only an older tools RPM", ["0.3.5"]),
+        ):
+            with self.subTest(label):
+                result, delivery = self.run_release_rpm(tools)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    sorted(path.name for path in delivery.iterdir()),
+                    [
+                        "myproduct-help-0.3.2-0.3.2-1.noarch.rpm",
+                        "myproduct-tools-0.3.6-1.noarch.rpm",
+                    ],
+                )
+
+    def test_tools_with_other_content_under_their_version_stop_the_step(self):
+        result, delivery = self.run_release_rpm(["0.3.6"], build_status=1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(delivery.exists())
 
 
 if __name__ == "__main__":

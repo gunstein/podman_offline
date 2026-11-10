@@ -842,12 +842,13 @@ def uninstalled_path(state, name):
 
 
 def environment_record_path(state, name):
-    """The overrides the component's completed install applied (backlog 85).
+    """What the component's completed install applied from its environment (backlog 85).
 
-    The component's own entry of the environment file ({} without one),
-    written by install just before the completion marker. The runtime
-    command compares it (deploy.sh check-environment --json): the same
-    version installed with other overrides is not yet this environment.
+    deploy.environment_effect: its own entry of the environment file and,
+    for an API, the secret line Identity names it with; written by install
+    just before the completion marker. The runtime command compares it
+    (deploy.sh check-environment --json): the same version installed with
+    another effect is not yet this environment.
     """
     return state / "environment" / (name + ".json")
 

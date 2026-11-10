@@ -641,8 +641,9 @@ class ScenarioTests(unittest.TestCase):
         harness.ssh = mock.Mock()
         harness.host = lambda role: role.lower()
         harness.guest = mock.Mock()
-        harness.ssh = mock.Mock(return_value="shop-tools-0.3.2-1.noarch.rpm\n")
         rpm = "shop-gateway-0.4.7-0.4.7-1.noarch.rpm"
+        # release-rpm's directory: this RPM and the tree's tools RPM (backlog 85).
+        harness.ssh = mock.Mock(return_value=rpm + "\nshop-tools-0.3.2-1.noarch.rpm\n")
         (harness.folder / rpm).write_bytes(b"rpm")
         harness.meta["bundles_built"] = runner.bundle_versions(
             "build noise\nshop-gateway-0.4.7-offline.tar.gz\n", "shop"
@@ -664,13 +665,11 @@ class ScenarioTests(unittest.TestCase):
         # Backlog 69: the release RPM and the tools RPM of the renamed tree.
         self.assertEqual(harness.guest.call_args_list[0],
                          mock.call("DEV", "release-rpm", "0.4.7", bundle="gateway"))  # fmt: skip
-        self.assertIn(
-            "dev:podman-offline-acceptance/transfer/renamed/dist/rpm/" + rpm, sources
+        release = (
+            "dev:podman-offline-acceptance/transfer/renamed/dist/release-gateway-0.4.7/"
         )
-        self.assertIn(
-            "dev:podman-offline-acceptance/transfer/renamed/dist/rpm/shop-tools-0.3.2-1.noarch.rpm",
-            sources,
-        )
+        self.assertIn(release + rpm, sources)
+        self.assertIn(release + "shop-tools-0.3.2-1.noarch.rpm", sources)
         self.assertIn(
             "prod:podman-offline-acceptance/transfer/rpm-gateway-0.4.7/" + rpm, targets
         )

@@ -169,7 +169,8 @@ sudo myproduct-admin --credentials /mnt
 `PASS: myproduct-admin completed`. The files are copied for the runtime user;
 their contents are never shown. A repeat says `is already there`. The
 runtime user's next installation of that component takes them (step 7); for
-a component that is already installed, that is `myproduct <component>`.
+a component that is already installed, that is `myproduct <component>`
+(with an environment file: `myproduct --environment prod1 <component>`).
 
 Then remove the medium:
 
@@ -267,7 +268,7 @@ trusts your organisation's certificates to check it from the user's side.
 | New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3, and 4 if it contains credentials; without credentials, still remove the medium (`sudo umount /mnt`). Then steps 5 and 7. Settings, credentials, data and the environment file are kept, and nothing is asked again. |
 | Remove a component a delivery no longer contains | runtime user | Step 9. |
 | Remove old releases | administrator | Nothing extra: step 3 removes them once the runtime user has installed the newer version. To do it right after an upgrade, repeat step 3. |
-| Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. The HTTPS port cannot be changed after installation. |
+| Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. With an environment file, write `myproduct --environment prod1 <component>` each time. The HTTPS port cannot be changed after installation. |
 
 ## 9. Remove a component
 
@@ -328,7 +329,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `... was uninstalled but is in components:` (step 7) | runtime user | Delete that line from the environment file (step 9), or install the component again with the command the message names. |
 | `The uninstall of ... is unfinished` | runtime user | Run the same two lines of step 9 again. |
 | `WARNING: older releases kept ...` | administrator | Normal before the runtime user's first `myproduct`; a later step 3 removes them. If it repeats afterwards, ask for help with the reason it names; the releases are kept. |
-| `WARNING: ... holds delivered files that <component> does not use yet` | runtime user | Run the command it names, `myproduct <component>`. |
+| `WARNING: ... holds delivered files that <component> does not use yet` | runtime user | Run the command it names, `myproduct <component>` (with an environment file, `myproduct --environment prod1 <component>`). |
 | `... is left after removing ...` or `... has no installed release package` | administrator, supplier | Files that no package owns remain in a release folder; every later step 3 stops here until it is resolved. Ask the supplier before deleting anything. |
 
 ### Repair the tools

@@ -476,8 +476,10 @@ def check_manifests(
     Every path (install, prepare) runs this before generating any
     secret: declarations are validated before any Podman command. Production
     install has already checked the user-manager environment at this point.
-    env_overrides is dev's overrides block; production passes None, because a
-    bundle's config.defaults.yaml already holds its environment's overrides.
+    env_overrides (environment.Overrides) is dev's overrides block, or the
+    target environment file of --environment (backlog 85); None without
+    either. Bundles are environment-neutral, so production passes the
+    file's overrides here, as dev passes its block.
     """
     documents = validate_component(
         config,
@@ -985,26 +987,35 @@ def write_installed_metadata(descriptor):
     )
 
 
-def component_overrides(env_overrides, name):
-    """The environment file's entry for this component; {} without one."""
-    if env_overrides is None:
-        return {}
-    return env_overrides.components.get(name) or {}
+def environment_effect(descriptor, env_overrides, known):
+    """What an install applies from the environment, beyond the release itself.
+
+    The environment file's entry for this component ({} without one), and
+    for an API the secret line of the installed Identity that names it
+    (api_secrets: index and "<secret id>/<key>"), whose value this
+    component's install delivers to Identity. known holds the installed
+    descriptors (and this one).
+    """
+    name, identity = descriptor["name"], descriptor["identity"]
+    owner = known.get(identity) if identity not in (None, name) else None
+    return {
+        "overrides": (env_overrides.components.get(name) or {})
+        if env_overrides is not None
+        else {},
+        "api_secret": owner["api_secrets"].get(name) if owner else None,
+    }
 
 
-def write_installed_marker(descriptor, env_overrides=None):
+def write_installed_marker(descriptor, effect):
     """Publish the completed version before acknowledging the install attempt.
 
-    The overrides this install applied are recorded just before it
+    effect (environment_effect) is recorded just before it
     (catalog.environment_record_path). An earlier uninstall record goes with
     it: the component is installed again.
     """
     write_install_record(
         catalog.environment_record_path(common.STATE, descriptor["name"]),
-        json.dumps(
-            component_overrides(env_overrides, descriptor["name"]), sort_keys=True
-        )
-        + "\n",
+        json.dumps(effect, sort_keys=True) + "\n",
     )
     write_install_record(
         common.STATE / "installed" / descriptor["name"], descriptor["version"] + "\n"
@@ -1057,7 +1068,9 @@ def install_component_plan(
     write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
-    write_installed_marker(descriptor, env_overrides)
+    write_installed_marker(
+        descriptor, environment_effect(descriptor, env_overrides, known)
+    )
     registrations.clear_pending()
     run("podman", "ps", "--all", "--pod")
 
@@ -1192,7 +1205,8 @@ def environment_applied(descriptor, env_overrides, installed):
     """Whether the completed install of this release has this environment's effect.
 
     The same version, the same descriptor in the environment (its API roles)
-    and the same recorded overrides; anything else needs an install.
+    and the same recorded environment_effect (its overrides, and the secret
+    line Identity uses for it); anything else needs an install.
     """
     name = descriptor["name"]
     record = catalog.environment_record_path(common.STATE, name)
@@ -1207,7 +1221,8 @@ def environment_applied(descriptor, env_overrides, installed):
         applied = json.loads(record.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
         return False
-    return applied == json.loads(json.dumps(component_overrides(env_overrides, name)))
+    current = environment_effect(descriptor, env_overrides, installed)
+    return applied == json.loads(json.dumps(current))
 
 
 def check_environment(environment_name, json_output=False):
