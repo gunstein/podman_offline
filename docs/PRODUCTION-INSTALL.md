@@ -208,8 +208,9 @@ otherwise go on with step 7.
 scp prod1.yaml produser@server1.example.org:/var/lib/myproduct/state/
 ```
 
-The file is then `/var/lib/myproduct/state/prod1.yaml`, owned by `produser`;
-the folder `/var/lib/myproduct/state` can be read only by `produser`. At the
+The file is then `/var/lib/myproduct/state/prod1.yaml`, owned by `produser`.
+The folder `/var/lib/myproduct/state` can be opened only by `produser`, so
+no one else can read the file, whatever its own permissions. At the
 console without a laptop, create the same file there as the runtime user
 with an editor, for example `vi /var/lib/myproduct/state/prod1.yaml`, and
 type what the supplier gave you. The file is yours: installing a delivery,
@@ -286,8 +287,10 @@ cd /var/lib/myproduct/releases/myproduct-<component>-<version>
 **Expected:** `[OK] Uninstalled <component>; shared network retained; data
 preserved`. Its settings, credentials and data are kept; its address in the
 browser and its sign-in registration stop working. Later runs of `myproduct`
-leave it out (`[OK] <component> was uninstalled`); `myproduct <component>`
-(or `myproduct --environment prod1 <component>`) installs it again. If
+leave it out (`[OK] <component> was uninstalled`). To install it again,
+run `myproduct <component>`; with an environment file, first add its line
+under `components:` again, then run `myproduct --environment prod1
+<component>`. If
 `myproduct` stops with `uninstall <component> first`, remove that component
 this way first, then run the same `myproduct` command again. After an
 interruption, run the same two lines again.

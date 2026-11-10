@@ -299,6 +299,19 @@ def select(product):
     return root
 
 
+def select_state(product):
+    """The production state directory, without the bootstrap file; reads only.
+
+    For deploy.sh check-environment, which the runtime command runs before
+    init-layout creates the bootstrap: the root is the one install_root
+    accepts, so this selects the same directory as select.
+    """
+    root = expected_root(product)
+    check_root(root)
+    common.STATE = root / "state"
+    return root
+
+
 def check_user_manager(root):
     """Services must use the same Podman storage and Quadlets as this process.
 

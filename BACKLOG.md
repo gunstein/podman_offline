@@ -65,6 +65,14 @@ environment) and `--rpm-manual` scenarios exercise it but have not run on
 the lab; the `9c85e2f` runs in [RESULTS](acceptance/RESULTS.md) predate this
 model. It builds on
 [item 84](#84-environment-specific-container-environment-overrides).
+Review fixes (2026-11-10, on `04151a7`): a changed override or API role
+in the same version is installed again (each install records its own
+overrides in `state/environment/<id>.json`; `check-environment --json`
+compares them at the component's turn); `check-environment` checks the
+dependencies the environment gives a release and refuses another
+component's secret outside Identity; it needs no bootstrap file, so all
+checks precede `init-layout`; the RPM content covers every release file;
+the `--rpm-manual` upgrade is delivered from its own directory.
 
 **Revised decision (product owner with human reviewers, 2026-11-10).**
 Component selection and environment overrides move from the bundle build to
@@ -75,8 +83,9 @@ below; sections that describe the build-time model are marked
 1. Bundles and RPMs are environment-neutral. A supplier delivers all
    components or only some.
 2. The operator places the environment file
-   `/var/lib/<product>/state/<name>.yaml` on the target (runtime user,
-   mode 0600). It lives outside the release trees, so it survives upgrades,
+   `/var/lib/<product>/state/<name>.yaml` on the target, as the runtime
+   user; the state directory, which only that user can open, protects it
+   whatever the file's own mode (review, 2026-11-10). It lives outside the release trees, so it survives upgrades,
    RPM installation and release retirement. `components:` is required there;
    `overrides:` keeps item 84's meaning. An override of a component outside
    `components:` is refused.
@@ -129,9 +138,10 @@ force:**
    version has one content) and is not delivered: the administrator command
    installs every product RPM of the directory it is given. A reused RPM
    is delivered only while it wraps the component's current content
-   (`<rpm>.bundle.sha256`: its `components/<id>/` files and `images.txt`, its
-   descriptor without the dependency version ranges, and its images' IDs and
-   layer digests; not the archive bytes, which change with every build, and
+   (`<rpm>.bundle.sha256`: every file of the release, including its own
+   `deploy.sh`, `deployment/`, `scripts/` and `quadlet/` (review,
+   2026-11-10), its descriptor without the dependency version ranges, and
+   its images' IDs and layer digests; not the archive bytes, which change with every build, and
    not a dependency's range, which a dependency's new version changes);
    other content under the same version is refused ("give it a new
    VERSION"), and the directory is published only when complete. The tools

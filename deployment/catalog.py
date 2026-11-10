@@ -25,6 +25,7 @@ from . import render as rendering
 RESERVED_IDS = (
     "installed",
     "uninstalled",
+    "environment",
     "metadata",
     "routes",
     "clients",
@@ -208,18 +209,21 @@ def load_catalog(root, env_overrides=None):
 def environment_descriptor(descriptor, env_overrides, installed, root=None):
     """This release's descriptor in a target environment (backlog 85).
 
-    The bundle's descriptor is environment-neutral; only the API roles can
-    differ between environments, because an environment may add Identity's
-    ApiResources__<n>__ApiSecrets__0__Value lines. So:
+        The bundle's descriptor is environment-neutral; only the API roles can
+        differ between environments, because an environment may add Identity's
+        ApiResources__<n>__ApiSecrets__0__Value lines. So:
 
-    - Identity derives api_secrets (and accepts apis) from its merged
-      ENVIRONMENT, with the environment's components as the listed ones, by
-      the catalog's own rule (api_secret_mapping).
-    - Any other component is an API of Identity exactly when the installed
-      Identity's api_secrets names it (the installed Identity's mapping is
-      authoritative); it then requires the installed Identity's series.
+        - Identity derives api_secrets (and accepts apis) from its merged
+          ENVIRONMENT, with the environment's components as the listed ones, by
+          the catalog's own rule (api_secret_mapping).
+        - Any other component is an API of Identity exactly when the installed
+          Identity's api_secrets names it (the installed Identity's mapping is
+          authoritative); it then requires the installed Identity's series. It
+          may name no other component's secret.
 
-    Without an environment the bundle's descriptor is used unchanged.
+    Every dependency of the result must be in the environment's components:.
+
+        Without an environment the bundle's descriptor is used unchanged.
     """
     if env_overrides is None:
         return descriptor
@@ -238,12 +242,35 @@ def environment_descriptor(descriptor, env_overrides, installed, root=None):
         result["accepts"].pop("apis", None)
         if mapping:
             result["accepts"]["apis"] = environment.owner_secret_name(name)
-    elif identity is not None:
-        owner = installed.get(identity)
+    else:
+        # Only Identity may name another component's secret (the catalog's
+        # rule), also when the line comes from the environment's overrides.
+        api_secret_mapping(
+            identity,
+            {
+                name: {
+                    "foreign": environment.foreign_lines(
+                        root / "components" / name, env_overrides
+                    )
+                }
+            },
+        )
+        owner = installed.get(identity) if identity is not None else None
         registered = owner is not None and name in owner["api_secrets"]
         result["apis"] = identity if registered else None
         if owner is not None and registered and identity not in result["requires"]:
             result["requires"][identity] = compatible_range(owner["version"])
+    outside = sorted(set(result["requires"]) - set(env_overrides.selected))
+    if outside:
+        reason = (
+            f" (the installed {identity} registers {name} as an API)"
+            if result["apis"] and identity in outside
+            else ""
+        )
+        raise common.DeployError(
+            f"{env_overrides.path}: {name} requires {', '.join(outside)}{reason}; "
+            "add it to components:"
+        )
     check_entry(name, result, f"{name} in environment {env_overrides.path}")
     return result
 
@@ -303,7 +330,7 @@ def api_secret_mapping(identity, files):
                 raise common.DeployError(
                     f"{where}: no listed component owns {line.secrets[0]}; a secret ID "
                     "starts with the ID of the component that declares it, which "
-                    "must be in the catalog and in a build environment's components:"
+                    "must be in the catalog and in the environment's components:"
                 )
             api, index = owners[0], int(match[1])
             if api in mapping or index in [e["index"] for e in mapping.values()]:
@@ -812,6 +839,17 @@ def uninstalled_path(state, name):
     run, because its release stays installed. A later install removes it.
     """
     return state / "uninstalled" / name
+
+
+def environment_record_path(state, name):
+    """The overrides the component's completed install applied (backlog 85).
+
+    The component's own entry of the environment file ({} without one),
+    written by install just before the completion marker. The runtime
+    command compares it (deploy.sh check-environment --json): the same
+    version installed with other overrides is not yet this environment.
+    """
+    return state / "environment" / (name + ".json")
 
 
 def uninstalled_components(state):

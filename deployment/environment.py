@@ -59,7 +59,7 @@ ForeignLine = collections.namedtuple(
 # environment's component set (backlog 85; None in dev, which renders the
 # whole source catalog).
 Overrides = collections.namedtuple("Overrides", "path components selected")
-# The component set of a build environment file (backlog 85).
+# The component set of a target environment file (backlog 85).
 COMPONENTS = "components"
 # Plain YAML scalars that mean null; quoted text such as 'null' is text.
 NULL = re.compile(r"(~|null|Null|NULL|)\Z")

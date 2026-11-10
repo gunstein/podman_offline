@@ -15,8 +15,10 @@ across releases):
 1. deploy.sh init-layout: the account's bootstrap file.
 2. deploy.sh status --json: what is installed and what is pending.
 3. A pending component first, then each component not installed in its
-   release's version; a completed one is skipped. With <component>, only that
-   one, also when it is complete, so a changed config.yaml takes effect.
+   release's version; a completed one is skipped (with --environment, only
+   when it already has the environment's effect, below). With <component>,
+   only that one, also when it is complete, so a changed config.yaml takes
+   effect.
 4. A component without config.yaml gets one from deploy.sh init-config. For
    the gateway the answers (public origin and IP address, asked the first
    time; the port from /etc/<product>/host.conf) are written with it in one
@@ -37,9 +39,14 @@ install get --environment). Before anything changes: every listed component
 and every dependency of one must have an installed release package in a
 compatible version, a dependency must be listed too, a listed component may
 not have been uninstalled on purpose (unless named), and every listed
-release checks the file (deploy.sh check-environment). Components not
-listed are left as they are. Nothing about the environment is remembered:
-the file is read again by every run and by every deploy.sh it calls.
+release checks the file (deploy.sh check-environment, also the dependencies
+the environment gives it, such as Identity for an API). These checks come
+before init-layout. A completed component is installed again when the
+environment's effect differs from what its last install applied
+(check-environment --json, at its turn: Identity's install before it can
+change its API role). Components not listed are left as they are. The
+selection is not remembered: the file is read again by every run and by
+every deploy.sh it calls; each install records only its own overrides.
 """
 
 import json
@@ -187,11 +194,19 @@ def uninstalled(state):
     return names
 
 
-def selected(report, order, versions, component, product, removed):
+def complete(report, name, version):
+    """Whether the status report has name's install completed in version."""
+    item = {item["name"]: item for item in report["components"]}.get(name)
+    return bool(item and item["complete"] and item["version"] == version)
+
+
+def selected(report, order, versions, component, product, removed, environment=None):
     """The components to install now: pending first, then incomplete ones.
 
     removed (uninstalled()) stays out until <product> <component> installs it
-    again. An unfinished uninstall is finished, never reinstalled.
+    again. An unfinished uninstall is finished, never reinstalled. With an
+    environment a completed component stays in the list: install decides at
+    its turn whether it already has the environment's effect (applied).
     """
     pending = report["pending"]
     if pending and pending["operation"] == "uninstall":
@@ -207,18 +222,29 @@ def selected(report, order, versions, component, product, removed):
     )
     current = {item["name"]: item for item in report["components"]}
     for name in order:
-        item = current.get(name)
         if name in targets:
             continue
-        if name in removed and not item:
+        if name in removed and not current.get(name):
             log.info(
                 f"[OK] {name} was uninstalled; run {product} {name} to install it again"
             )
-        elif item and item["complete"] and item["version"] == versions[name]:
-            log.info(f"[OK] {name} {item['version']} is installed")
+        elif complete(report, name, versions[name]) and not environment:
+            log.info(f"[OK] {name} {versions[name]} is installed")
         else:
             targets.append(name)
     return targets
+
+
+def applied(path, environment):
+    """deploy.sh check-environment --json: the install already has the environment."""
+    result = deploy(path, "check-environment", environment, "--json", capture=True)
+    try:
+        return json.loads(result.stdout)["applied"] is True and result.returncode == 0
+    except (ValueError, KeyError, TypeError):
+        detail = (result.stderr or "").strip().splitlines()
+        raise ToolError(
+            "deploy.sh check-environment failed" + (": " + detail[-1] if detail else "")
+        ) from None
 
 
 def suggested_address():
@@ -428,11 +454,12 @@ def install(product, args):
             + ", ".join(order)
         )
     first = found[order[0]][1]
-    deployed(first, "init-layout")
     if args.environment:
-        # Every listed release checks the file before the first change.
+        # Every listed release checks the file before the first change, even
+        # before init-layout writes the bootstrap file.
         for component in order:
             deployed(found[component][1], "check-environment", args.environment)
+    deployed(first, "init-layout")
     versions = {name: found[name][0].version for name in order}
     removed = uninstalled(host.LIB / product / "state")
     report = status_report(first)
@@ -442,9 +469,24 @@ def install(product, args):
             f"The {pending['operation']} of {pending['component']} is unfinished, and "
             f"{pending['component']} is not in this environment; finish it first"
         )
-    targets = selected(report, order, versions, args.component, product, removed)
+    targets = selected(
+        report, order, versions, args.component, product, removed, args.environment
+    )
+    done = []
     for component in targets:
         package, path, descriptor = found[component]
+        # At its turn: an install before it (Identity) can change its API role.
+        if (
+            args.environment
+            and not args.component
+            and complete(report, component, package.version)
+            and applied(path, args.environment)
+        ):
+            log.info(
+                f"[OK] {component} {package.version} is installed with environment "
+                f"{args.environment}"
+            )
+            continue
         config = host.LIB / product / "state" / component / "config.yaml"
         if not config.exists():
             settings = []
@@ -463,12 +505,13 @@ def install(product, args):
             )
         move_credentials(product, component)
         deployed(path, "install", *option)
+        done.append(component)
         log.info(f"[OK] {component} {package.version} installed")
     # Delivered credentials are taken only by an install of their component;
     # say so instead of leaving them unused without a word.
     for component in order:
         incoming = host.LIB / product / "incoming" / component
-        if component not in targets and incoming.is_dir() and any(incoming.iterdir()):
+        if component not in done and incoming.is_dir() and any(incoming.iterdir()):
             log.warning(
                 f"WARNING: {incoming} holds delivered files that {component} does not "
                 f"use yet; run {product} {component} to install it with them"

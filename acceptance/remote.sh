@@ -2826,7 +2826,9 @@ admin-erase-guard)
     ;;
 release-rpm)
     # Backlog 69: the RPM of one built bundle, beside the others in dist/rpm,
-    # and the tools RPM of the same tree, as a supplier would deliver them.
+    # and the tools RPM of the same tree, as a supplier would deliver them:
+    # dist/release-<bundle>-<version>/ holds exactly those two (backlog 85;
+    # dist/rpm also keeps earlier RPMs and their .bundle.sha256 records).
     command -v rpmbuild >/dev/null || sudo -n dnf -y -q install rpm-build
     archive="$product_name-$bundle-$requested_version-offline.tar.gz"
     tree=$src
@@ -2840,8 +2842,13 @@ rpms.build_rpm(Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], Path("d
             "dist/$archive" "$product_name" "$bundle" "$requested_version"
     fi
     tools=(dist/rpm/"$product_name"-tools-*.noarch.rpm)
-    [[ -f ${tools[0]} ]] || ./build-rpms.sh --tools
-    ls dist/rpm
+    [[ -f ${tools[0]} ]] || { ./build-rpms.sh --tools; tools=(dist/rpm/"$product_name"-tools-*.noarch.rpm); }
+    (( ${#tools[@]} == 1 )) || { echo "FAIL: expected one tools RPM in dist/rpm" >&2; exit 1; }
+    delivery="dist/release-$bundle-$requested_version"
+    rm -rf "$delivery"
+    mkdir -p "$delivery"
+    cp "$rpm_file" "${tools[0]}" "$delivery/"
+    ls "$delivery"
     ;;
 rpm-nothing-changed)
     # After the preflight stop (backlog 69 WP6): only the tools are installed.

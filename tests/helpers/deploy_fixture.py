@@ -42,9 +42,10 @@ class DeployFixture(unittest.TestCase):
         }
         for name, path in paths.items():
             self.stack.enter_context(mock.patch.object(common, name, path))
-        self.stack.enter_context(
-            mock.patch.object(layout, "select", return_value=self.root / "install")
-        )
+        for name in ("select", "select_state"):
+            self.stack.enter_context(
+                mock.patch.object(layout, name, return_value=self.root / "install")
+            )
         self.stack.enter_context(mock.patch.object(layout, "check_user_manager"))
         self.process = self.stack.enter_context(mock.patch.object(subprocess, "run"))
         # Containers report healthy unless a test says otherwise (backlog 34).

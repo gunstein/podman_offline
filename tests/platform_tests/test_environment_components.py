@@ -9,6 +9,7 @@ never computed with the selection under test.
 import contextlib
 import copy
 import io
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -149,6 +150,125 @@ class TargetSelectionTests(ProductFixture):
         self.assertIn("reports", (common.STATE / "prod1.yaml").read_text())
 
 
+class TargetEffectTests(ProductFixture):
+    """The same versions, another file: what changed is installed again."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_product(copy.deepcopy(PRODUCT))
+        self.releases_built = self.build_and_unpack()
+        shutil.rmtree(self.source)
+
+    def applied(self, name, environment_name="prod1"):
+        """deploy.sh check-environment <environment> --json, as the runtime asks it."""
+        self.use_root(self.releases_built[name])
+        with contextlib.redirect_stdout(io.StringIO()) as shown:
+            deploy.check_environment(environment_name, True)
+        answer = json.loads(shown.getvalue().splitlines()[-1])
+        self.assertEqual(answer["component"], name)
+        return answer["applied"]
+
+    def test_a_changed_override_or_api_role_is_not_yet_applied(self):
+        releases = self.releases_built
+        self.place_environment("prod1", environment_file(["accounts", "ledger"]))
+        with self.environment():
+            for name in ("accounts", "ledger"):
+                self.install(releases[name], environment_name="prod1")
+            self.assertTrue(self.applied("accounts"))
+            self.assertTrue(self.applied("ledger"))
+            self.assertEqual(
+                json.loads(
+                    catalog.environment_record_path(common.STATE, "ledger").read_text()
+                ),
+                {},
+            )
+            # An override changes: only accounts, which it names, is not applied.
+            self.place_environment(
+                "prod1",
+                environment_file(["accounts", "ledger"], {"Logging__Level": "Debug"}),
+            )
+            self.assertFalse(self.applied("accounts"))
+            self.assertTrue(self.applied("ledger"))
+            self.install(releases["accounts"], environment_name="prod1")
+            self.assertTrue(self.applied("accounts"))
+            output = catalog.component_paths("accounts")[2]
+            self.assertIn("Debug", output.read_text())
+            # Identity now registers ledger: ledger's role changes only once the
+            # new Identity is installed, which the runtime does first.
+            self.place_environment(
+                "prod1",
+                environment_file(
+                    ["accounts", "ledger"],
+                    dict(registration(0, "ledger"), Logging__Level="Debug"),
+                ),
+            )
+            self.assertFalse(self.applied("accounts"))
+            self.assertTrue(self.applied("ledger"))
+            self.install(releases["accounts"], environment_name="prod1")
+            self.assertFalse(self.applied("ledger"))
+            self.install(releases["ledger"], environment_name="prod1")
+            self.assertTrue(self.applied("ledger"))
+            self.assertEqual(
+                catalog.load_installed_metadata(common.STATE)["ledger"]["apis"],
+                "accounts",
+            )
+            # Uninstall removes the record with the marker and metadata.
+            self.use_root(releases["ledger"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                deploy.uninstall()
+            self.assertFalse(
+                catalog.environment_record_path(common.STATE, "ledger").exists()
+            )
+
+    def test_effective_dependencies_and_foreign_secrets_are_refused_first(self):
+        releases = self.releases_built
+        self.place_environment(
+            "prod1",
+            environment_file(["accounts", "ledger"], registration(0, "ledger")),
+        )
+        with self.environment():
+            for name in ("accounts", "ledger"):
+                self.install(releases[name], environment_name="prod1")
+            # ledger alone: the installed accounts makes it an API of accounts.
+            self.place_environment("solo", environment_file(["ledger"]))
+            # Only Identity may name another component's secret, also in an override.
+            foreign = {
+                "components": ["accounts", "ledger", "reports"],
+                "overrides": {
+                    "ledger": {
+                        "ENVIRONMENT": {
+                            "main": {
+                                "ApiResources__0__ApiSecrets__0__Value": (
+                                    "@@secret:reports-api-secret/value@@"
+                                )
+                            }
+                        }
+                    }
+                },
+            }
+            self.place_environment("foreign", yaml.safe_dump(foreign))
+            before = sorted(str(path) for path in common.STATE.rglob("*"))
+            self.use_root(releases["ledger"])
+            for name, pattern in (
+                (
+                    "solo",
+                    (
+                        "ledger requires accounts \\(the installed accounts registers "
+                        "ledger as an API\\); add it to components:"
+                    ),
+                ),
+                ("foreign", "reports-api-secret is another component's secret"),
+            ):
+                with self.subTest(name):
+                    with self.assertRaisesRegex(common.DeployError, pattern):
+                        deploy.check_environment(name)
+                    with self.assertRaisesRegex(common.DeployError, pattern):
+                        deploy.install(name)
+                    self.assertEqual(
+                        sorted(str(path) for path in common.STATE.rglob("*")), before
+                    )
+
+
 class TargetDependencyTests(ProductFixture):
     """A selected component's dependency must be selected and installed."""
 
@@ -204,17 +324,20 @@ class TargetDependencyTests(ProductFixture):
 
 
 def stub_rpms(fixture):
-    """rpmbuild stands in; selection, reuse, files and the delivery are real."""
+    """rpmbuild stands in; selection, reuse, files and the delivery are real.
+
+    Returns the list of what the stand-in wrapped, in order.
+    """
     fixture.stack.enter_context(
         mock.patch.multiple(rpms, ROOT=fixture.source, DIST=fixture.source / "dist")
     )
     fixture.stack.enter_context(
         mock.patch.object(rpms.shutil, "which", return_value="/usr/bin/rpmbuild")
     )
-    fixture.wrapped = []
+    wrapped = []
 
     def build_rpm(archive, product, component, version, target):
-        fixture.wrapped.append(archive.name)
+        wrapped.append(archive.name)
         rpm = target / f"{product}-{component}-{version}-{version}-1.noarch.rpm"
         rpms.refuse_existing(rpm, component)
         target.mkdir(parents=True, exist_ok=True)
@@ -227,11 +350,12 @@ def stub_rpms(fixture):
         rpms.refuse_existing(rpm, "tools")
         target.mkdir(parents=True, exist_ok=True)
         rpm.write_text("tools")
-        fixture.wrapped.append(rpm.name)
+        wrapped.append(rpm.name)
         return rpm
 
     fixture.stack.enter_context(mock.patch.object(rpms, "build_rpm", build_rpm))
     fixture.stack.enter_context(mock.patch.object(rpms, "build_tools", build_tools))
+    return wrapped
 
 
 class DeliveryTests(ProductFixture):
@@ -240,7 +364,7 @@ class DeliveryTests(ProductFixture):
     def setUp(self):
         super().setUp()
         self.write_product(copy.deepcopy(PRODUCT))
-        stub_rpms(self)
+        self.wrapped = stub_rpms(self)
         self.tools = (
             "myproduct-tools-" + (self.source / "tools/VERSION").read_text().strip()
         )
@@ -314,6 +438,35 @@ class DeliveryTests(ProductFixture):
                 ):
                     rpms.build([refused])
                 self.assertFalse((bundle.DIST / "delivery").exists())
+
+    def test_the_releases_own_runtime_files_are_its_content(self):
+        """deploy.sh's code, scripts and Quadlet policy ship in every release."""
+        bundle.build()
+        rpms.build()
+        for relative, old, new in (
+            ("quadlet/template.kube", "Restart=on-failure", "Restart=no"),
+            ("deployment/output.py", '"""', '"""Changed. '),
+            ("scripts/prepare-host.sh", "\n", "\n# changed\n"),
+        ):
+            with self.subTest(relative):
+                original = (self.source / relative).read_text()
+                self.replace_text(relative, old, new, count=1)
+                bundle.build()
+                with self.assertRaisesRegex(
+                    rpms.RpmError,
+                    "myproduct-accounts-1.0.0-1.0.0-1.noarch.rpm already exists "
+                    "with other content",
+                ):
+                    rpms.build(["accounts"])
+                (self.source / relative).write_text(original)
+                bundle.build()
+                rpms.build(["accounts"])  # The same content again: reused.
+
+    def replace_text(self, relative, old, new, count=-1):
+        path = self.source / relative
+        text = path.read_text()
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, count))
 
     def test_tools_changed_without_a_new_version_are_refused(self):
         bundle.build()

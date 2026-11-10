@@ -17,6 +17,7 @@ from unittest import mock
 import manual_run
 
 REMOTE = Path(__file__).with_name("remote.sh").read_text()
+ROOT = Path(__file__).resolve().parents[1]
 VALUES = {
     "delivery": "/srv/delivery",
     "account": "myproduct-ops",
@@ -360,10 +361,21 @@ class ScenarioTests(unittest.TestCase):
             "PROD_IP": "192.0.2.77",
             "HTTPS_PORT": "8443",
         }
-        names = []
-        run.step.side_effect = lambda name, action: names.append(name)
+        names, actions = [], {}
+
+        def step(name, action):
+            names.append(name)
+            actions[name] = action
+
+        run.step.side_effect = step
         manual_run.execute(run, strict=True)
         self.assertEqual(names[0], "03-build-images")
+        # The upgrade is delivered from its own directory, never dist/rpm/ with
+        # every earlier RPM and its .bundle.sha256 record (backlog 85).
+        old = (ROOT / "components/help/VERSION").read_text().strip().split(".")
+        new = ".".join(old[:2] + [str(int(old[2]) + 1)])
+        actions["08-transfer-rpms"]()
+        run.transfer_rpms.assert_called_with("dist/release-help-" + new)
         self.assertIn("06-fapolicyd-p2", names)
         manual = [name for name in names if "-manual-" in name]
         # Each ordinary manual step runs, including the stops and the repair.

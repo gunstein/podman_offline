@@ -613,7 +613,7 @@ def execute(run, strict=False):
         lambda: run.guest("DEV", "help-upgrade-bundle", new, bundle="help"),
     )
     run.step("08-help-rpm", lambda: run.guest("DEV", "release-rpm", new, bundle="help"))
-    run.step("08-transfer-rpms", lambda: run.transfer_rpms("dist/rpm"))
+    run.step("08-transfer-rpms", lambda: run.transfer_rpms("dist/release-help-" + new))
     admin(
         "09-manual-admin-upgrade",
         lambda out: check_admin_upgrade(out, values, new, old),

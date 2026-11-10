@@ -985,11 +985,27 @@ def write_installed_metadata(descriptor):
     )
 
 
-def write_installed_marker(descriptor):
+def component_overrides(env_overrides, name):
+    """The environment file's entry for this component; {} without one."""
+    if env_overrides is None:
+        return {}
+    return env_overrides.components.get(name) or {}
+
+
+def write_installed_marker(descriptor, env_overrides=None):
     """Publish the completed version before acknowledging the install attempt.
 
-    An earlier uninstall record goes with it: the component is installed again.
+    The overrides this install applied are recorded just before it
+    (catalog.environment_record_path). An earlier uninstall record goes with
+    it: the component is installed again.
     """
+    write_install_record(
+        catalog.environment_record_path(common.STATE, descriptor["name"]),
+        json.dumps(
+            component_overrides(env_overrides, descriptor["name"]), sort_keys=True
+        )
+        + "\n",
+    )
     write_install_record(
         common.STATE / "installed" / descriptor["name"], descriptor["version"] + "\n"
     )
@@ -1011,7 +1027,9 @@ def install_preconditions(checked):
     return network, network_text, archive
 
 
-def install_component_plan(descriptor, checked, known, imports, updates, removals):
+def install_component_plan(
+    descriptor, checked, known, imports, updates, removals, env_overrides=None
+):
     """Apply a staged install in the established validation/write/restart order."""
     name = descriptor["name"]
     components = list(checked)
@@ -1039,7 +1057,7 @@ def install_component_plan(descriptor, checked, known, imports, updates, removal
     write_component_units_and_imports(rendered, network, network_text)
     write_changed_owner_imports(components, changed, imports, known)
     restart_component_services(components, changed, pending, known)
-    write_installed_marker(descriptor)
+    write_installed_marker(descriptor, env_overrides)
     registrations.clear_pending()
     run("podman", "ps", "--all", "--pod")
 
@@ -1138,7 +1156,9 @@ def install_components(environment_name=None):
             )
         }
         check_selected_keys(effective, config_path, checked[name][1], name)
-        install_component_plan(descriptor, checked, known, imports, updates, removals)
+        install_component_plan(
+            descriptor, checked, known, imports, updates, removals, env_overrides
+        )
 
 
 def install(environment_name=None):
@@ -1168,7 +1188,29 @@ def target_environment(environment_name, component):
     return env_overrides
 
 
-def check_environment(environment_name):
+def environment_applied(descriptor, env_overrides, installed):
+    """Whether the completed install of this release has this environment's effect.
+
+    The same version, the same descriptor in the environment (its API roles)
+    and the same recorded overrides; anything else needs an install.
+    """
+    name = descriptor["name"]
+    record = catalog.environment_record_path(common.STATE, name)
+    if (
+        catalog.installed_version(common.STATE, name) != descriptor["version"]
+        or installed.get(name) != descriptor
+        or record.is_symlink()
+        or not record.is_file()
+    ):
+        return False
+    try:
+        applied = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return applied == json.loads(json.dumps(component_overrides(env_overrides, name)))
+
+
+def check_environment(environment_name, json_output=False):
     """deploy.sh check-environment <name>: this release in the environment; no writes.
 
     What the declarations decide without config or credentials, so the
@@ -1176,14 +1218,24 @@ def check_environment(environment_name):
     anything: the file (environment.read_environment_file), the merged
     ENVIRONMENT (names, placeholder syntax, SECRET_FILES declarations and
     generated Secret names, client settings, the containers of the
-    manifests), Identity's API secret lines against the listed components,
-    and for any other component the declaration of a secret Identity's
-    overrides name. A container name written as a @@NAME@@ setting is known
-    only with settings; its checks are left to install. Install repeats all
-    of this with the operator's config (install_checks, effective_documents).
+    manifests), the descriptor in the environment (environment_descriptor:
+    Identity's API secret lines against the listed components, no other
+    component naming a foreign secret, every dependency listed, also
+    Identity for an API the installed Identity registers), and for any other
+    component the declaration of a secret Identity's overrides name. A
+    container name written as a @@NAME@@ setting is known only with
+    settings; its checks are left to install. Install repeats all of this
+    with the operator's config (install_checks, effective_documents).
+
+    Needs no bootstrap file and no config. With --json it prints
+    {"applied": ..., "component": ...}: whether the completed install already
+    has this environment's effect (environment_applied), so the runtime
+    command can leave it as it is.
     """
-    service_user()
+    service_identity()
     descriptor = bundle_descriptor()
+    # No bootstrap needed: the runtime command checks before init-layout.
+    layout.select_state(descriptor["product"])
     name = descriptor["name"]
     env_overrides = target_environment(environment_name, name)
     if env_overrides is None:
@@ -1212,9 +1264,11 @@ def check_environment(environment_name):
                 name, container, values, containers, env_overrides
             )
     identity = descriptor["identity"]
-    if name == identity:
-        catalog.environment_descriptor(descriptor, env_overrides, {})
-    elif identity is not None:
+    installed = catalog.load_installed_metadata(common.STATE)
+    # The API roles, the dependencies in the environment and the rule that
+    # only Identity names another component's secret.
+    effective = catalog.environment_descriptor(descriptor, env_overrides, installed)
+    if name != identity and identity is not None:
         declared = defaults.get(common.SECRET_FILES) or {}
         for values in (env_overrides.components.get(identity) or {}).values():
             for value in values.values():
@@ -1224,7 +1278,11 @@ def check_environment(environment_name):
                             f"{env_overrides.path}: overrides.{identity} names "
                             f"{secret}, which {name} does not declare in SECRET_FILES"
                         )
-    log.info(f"[OK] {name} fits environment {environment_name}")
+    if json_output:
+        applied = environment_applied(effective, env_overrides, installed)
+        print(json.dumps({"applied": applied, "component": name}, sort_keys=True))
+    else:
+        log.info(f"[OK] {name} fits environment {environment_name}")
 
 
 def uninstall_plan(component, delete_data, installed, product):
@@ -1348,6 +1406,7 @@ def uninstall(component=None, delete_data=False):
         api,
         marker,
         catalog.metadata_path(common.STATE, component),
+        catalog.environment_record_path(common.STATE, component),
         catalog.uninstalled_path(common.STATE, component),
     ):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
@@ -1412,7 +1471,11 @@ def uninstall(component=None, delete_data=False):
     if removed is not None or not record.is_file():
         write_install_record(record, (removed or "") + "\n")
     # Marker first: metadata without a marker is an unfinished install, never the reverse.
-    for path in (marker, catalog.metadata_path(common.STATE, component)):
+    for path in (
+        marker,
+        catalog.metadata_path(common.STATE, component),
+        catalog.environment_record_path(common.STATE, component),
+    ):
         if path.exists():
             path.unlink()
     registrations.clear_pending()

@@ -52,6 +52,7 @@ class FakeReleases:
         self.pending = None
         self.fail = set()  # components whose install fails
         self.check_fail = set()  # components whose check-environment fails
+        self.changed = set()  # completed components whose environment changed
         self.calls = []
 
     def add(self, component, version, descriptor=None):
@@ -94,7 +95,15 @@ class FakeReleases:
                 )
             )
         if command[0] == "check-environment":
-            return done(status=1 if component in self.check_fail else 0)
+            if component in self.check_fail:
+                return done(status=1)
+            if command[-1] == "--json":
+                applied = (
+                    self.installed.get(component) == version
+                    and component not in self.changed
+                )
+                return done(json.dumps({"applied": applied, "component": component}))
+            return done()
         if command[0] == "init-config":
             config = self.lib / "cedar/state" / command[1] / "config.yaml"
             config.parent.mkdir(parents=True, exist_ok=True)
@@ -109,6 +118,7 @@ class FakeReleases:
                 self.pending = {"operation": "install", "component": component}
                 return done(status=1)
             self.installed[component] = version
+            self.changed.discard(component)
             # deploy.sh install removes the uninstall record (backlog 85).
             record = self.lib / "cedar/state/uninstalled" / component
             if record.is_file():
@@ -476,9 +486,9 @@ class EnvironmentTests(RuntimeTests):
         self.assertEqual(
             self.releases.commands(),
             [
+                "check-environment prod1",
+                "check-environment prod1",
                 "init-layout",
-                "check-environment prod1",
-                "check-environment prod1",
                 "status --json",
                 WEB_INIT.replace(
                     "init-config web", "init-config web --environment prod1"
@@ -526,11 +536,45 @@ class EnvironmentTests(RuntimeTests):
         self.place("prod1", "components: [web, api]\n")
         self.releases.check_fail.add("api")
         self.assertEqual(self.environment_run(), 1)
+        # Not even the bootstrap file is written (init-layout).
         self.assertEqual(
             self.releases.commands(),
-            ["init-layout", "check-environment prod1", "check-environment prod1"],
+            ["check-environment prod1", "check-environment prod1"],
         )
         self.assertEqual(self.releases.installed, {})
+
+    def test_a_changed_environment_installs_only_the_changed_components(self):
+        """The same versions: only what the file now changes is installed again."""
+        self.place("prod1", "components: [web, api, worker]\n")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        self.releases.calls.clear()
+        self.releases.changed.add("worker")
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        self.assertEqual(
+            [name for name, command in self.releases.calls if command[0] == "install"],
+            ["worker"],
+        )
+        self.assertIn(
+            "[OK] web 1.0.0 is installed with environment prod1", self.stdout.getvalue()
+        )
+        # Asked at each component's turn, after the installs before it.
+        self.assertEqual(
+            self.releases.commands("worker"),
+            [
+                "check-environment prod1",
+                "check-environment prod1 --json",
+                "install --environment prod1",
+                "status",
+            ],
+        )
+        # Nothing changed: nothing is installed, and a named one always is.
+        self.releases.calls.clear()
+        self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+        self.assertNotIn("install --environment prod1", self.releases.commands())
+        self.assertEqual(self.environment_run("api"), 0, self.stderr.getvalue())
+        self.assertEqual(
+            self.releases.commands("api")[-1], "install --environment prod1"
+        )
 
     def test_an_uninstalled_listed_component_stops_until_it_is_named(self):
         self.place("prod1", "components: [web, api, worker]\n")

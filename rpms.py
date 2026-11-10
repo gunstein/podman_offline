@@ -322,32 +322,31 @@ def bundle_content(archive):
 
     Three parts, each read from the bundle itself:
 
-    - its own files: the checksums.sha256 lines for components/<id>/ (the
-      manifests and config.defaults.yaml with its environment's overrides)
-      and images/images.txt;
+    - every file of the release (its checksums.sha256 lines): the
+      component's manifests and declarations, images/images.txt, and the
+      release's own deploy.sh, deployment/, scripts/, quadlet/ and documents,
+      which the release runs or ships; except bundle.yaml and
+      images/images.tar, which follow;
     - its descriptor (bundle.yaml) with the names of its dependencies but not
       their version ranges: a dependency's new version changes those ranges,
       and an earlier release of this component stays a valid delivery then;
-      roles, routes, clients, apis, accepts and api_secrets all count;
     - its images: image IDs and layer digests from images.tar's manifest.json,
       so the same tag with other content is a change.
 
-    The archive's bytes change with every build (tar and gzip times), and the
-    shared tools code is no part of a component's release content.
+    The archive's bytes change with every build (tar and gzip times).
     """
     root = archive.name[: -len("-offline.tar.gz")]
     with tarfile.open(str(archive)) as tar:
         lines = member_bytes(tar, root + "/checksums.sha256").decode("utf-8")
         descriptor = yaml.safe_load(member_bytes(tar, root + "/bundle.yaml"))
         images = image_identity(tar, root + "/images/images.tar")
-    own = sorted(
+    files = sorted(
         line
         for line in lines.splitlines()
-        if line.split("  ", 1)[-1].startswith("components/")
-        or line.endswith("  images/images.txt")
+        if line.split("  ", 1)[-1] not in ("bundle.yaml", "images/images.tar")
     )
     descriptor = dict(descriptor, requires=sorted(descriptor["requires"]))
-    content = {"files": own, "descriptor": descriptor, "images": images}
+    content = {"files": files, "descriptor": descriptor, "images": images}
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 

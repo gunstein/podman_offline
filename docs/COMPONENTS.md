@@ -430,16 +430,27 @@ delivered is no substitute for one). `<product> --environment prod1`:
 - runs `deploy.sh check-environment prod1` in every listed release: the
   file's structure, an override of a component outside `components:`, and
   each release's merged `ENVIRONMENT` against its own manifests and
-  declarations (containers, secrets, placeholders, Identity's API lines);
+  declarations (containers, secrets, placeholders, Identity's API lines),
+  and the dependencies the environment gives a release: an API the
+  installed Identity registers needs Identity listed too. Only Identity may
+  name another component's secret, also in an override. These checks come
+  before anything is written, the account's bootstrap file included;
 - then installs the listed components in dependency order, Identity before
   every component it does not itself depend on, each with `deploy.sh
-  init-config|install --environment prod1`. A component not listed is left
-  as it is: deploying a smaller environment never stops or uninstalls one.
+  init-config|install --environment prod1`. A component already installed in
+  its release's version is installed again only when the environment's
+  effect on it changed: its overrides, or its API role after Identity's
+  install (`deploy.sh check-environment prod1 --json`, at its turn). A
+  component not listed is left as it is: deploying a smaller environment
+  never stops or uninstalls one.
 
-Nothing about the environment is remembered: every run, and every
-`deploy.sh` it calls, reads the file as it is now, so a retry after an
-interruption is the same command, and an edited file applies to every
-component the run installs. `<product>` without `--environment` keeps its
+The selection is not remembered: every run, and every `deploy.sh` it calls,
+reads the file as it is now, so a retry after an interruption is the same
+command, and an edited file takes effect with the next run. Each install
+records only the overrides it applied to its own component
+(`state/environment/<id>.json`, removed by uninstall), the one way to tell
+an unchanged component from one whose overrides changed in the same
+version. `<product>` without `--environment` keeps its
 behavior: every installed release with its release declarations.
 
 The bundle's `bundle.yaml` is environment-neutral and names the catalog's
@@ -489,10 +500,12 @@ delivers, with all components or only those a customer needs.
 `dist/rpm/` keeps every RPM ever built and is never delivered. One version
 has one content: an existing RPM is reused only while it wraps the
 component's current content, recorded beside it as `<rpm>.bundle.sha256`
-(its `components/<id>/` files and `images.txt`, its descriptor without the
-dependency version ranges a dependency's new version changes, and its
-images' IDs and layer digests from `images.tar`; for the tools RPM, its
-files). Other content under the same version is refused with "give ... a new
+(every file of the release, including its own `deploy.sh`, `deployment/`,
+`scripts/` and `quadlet/`; its descriptor without the dependency version
+ranges a dependency's new version changes; and its images' IDs and layer
+digests from `images.tar`; for the tools RPM, its files). A change to the
+shared code therefore needs a new VERSION of every component delivered
+with it. Other content under the same version is refused with "give ... a new
 VERSION". A refused or failed run leaves no delivery directory.
 
 ### Files with secrets: `MOUNTS`

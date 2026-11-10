@@ -1108,8 +1108,10 @@ class Run:
         """Copy the RPMs built on DEV through the controller into PROD's delivery.
 
         dist/delivery/ is what ./build-rpms.sh wrote for its components and the
-        supplier delivers (backlog 85); dist/rpm/ keeps every RPM ever built and
-        is taken only for an upgrade built outside the checkout's catalog.
+        supplier delivers (backlog 85); an upgrade built outside the checkout's
+        catalog is delivered from dist/release-<bundle>-<version>/ (the
+        release-rpm action). Never dist/rpm/: it keeps every RPM ever built
+        and their .bundle.sha256 records.
         """
         base = "podman-offline-acceptance/" + self.id
         names = self.ssh(

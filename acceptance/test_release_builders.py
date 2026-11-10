@@ -167,5 +167,68 @@ class ExpectedImageTests(unittest.TestCase):
         self.assertIn("FAIL: the installed YAML does not name", result.stderr)
 
 
+class ReleaseRpmDeliveryTests(unittest.TestCase):
+    """release-rpm: an upgrade's own delivery directory, not dist/rpm (backlog 85)."""
+
+    def test_the_delivery_holds_only_the_release_and_the_tools(self):
+        tree = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        rpm = tree / "dist/rpm"
+        rpm.mkdir(parents=True)
+        # What earlier ./build-rpms.sh runs leave: RPMs of other versions and
+        # their content records beside the RPM this step wraps.
+        names = [
+            "myproduct-help-0.3.1-0.3.1-1.noarch.rpm",
+            "myproduct-help-0.3.2-0.3.2-1.noarch.rpm",
+            "myproduct-platform-0.4.3-0.4.3-1.noarch.rpm",
+            "myproduct-tools-0.3.6-1.noarch.rpm",
+        ]
+        for name in names:
+            (rpm / name).write_text(name)
+            (rpm / (name + ".bundle.sha256")).write_text("0" * 64 + "\n")
+        archive = "myproduct-help-0.3.2-offline.tar.gz"
+        (tree / "dist" / archive).write_text("bundle")
+        subprocess.run(
+            "sha256sum " + archive + " > " + archive + ".sha256",
+            shell=True,
+            cwd=str(tree / "dist"),
+            check=True,
+        )
+        binaries = tree / "bin"
+        binaries.mkdir()
+        (binaries / "rpmbuild").write_text("#!/bin/sh\nexit 1\n")
+        (binaries / "rpmbuild").chmod(0o755)
+        script = (
+            "set -euo pipefail\n"
+            + base.shell_code(
+                Path(__file__).with_name("remote.sh").read_text(), action="release-rpm"
+            )
+            + "\n"
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            env=dict(
+                os.environ,
+                PATH=str(binaries) + os.pathsep + os.environ["PATH"],
+                product_name="myproduct",
+                bundle="help",
+                requested_version="0.3.2",
+                src=str(tree),
+                renamed=str(tree / "absent"),
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        delivery = tree / "dist/release-help-0.3.2"
+        self.assertEqual(
+            sorted(path.name for path in delivery.iterdir()),
+            [
+                "myproduct-help-0.3.2-0.3.2-1.noarch.rpm",
+                "myproduct-tools-0.3.6-1.noarch.rpm",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

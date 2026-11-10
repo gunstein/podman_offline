@@ -88,6 +88,13 @@ class BootstrapTests(LayoutFixture):
         # The identity home is unchanged.
         self.assertEqual(common.HOME, self.home)
 
+    def test_select_state_needs_no_bootstrap_and_selects_the_same_state(self):
+        """check-environment runs before init-layout (backlog 85)."""
+        self.assertEqual(layout.select_state(PRODUCT), self.install)
+        self.assertEqual(common.STATE, self.install / "state")
+        self.assertFalse(self.path.exists())
+        self.assertIsNone(common.QUADLET_DIR)
+
     def test_missing_file_names_the_file_and_the_required_line(self):
         with self.assertRaisesRegex(
             common.DeployError, "Missing .*orders.env.*INSTALL_ROOT=.*var-lib/orders"

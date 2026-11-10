@@ -4,7 +4,7 @@ argparse with one subcommand per command (backlog 73). Newer tools call older
 releases' deploy.sh, so the accepted forms are a release interface: validate,
 prepare, install, init-layout, uninstall [<component>] [--delete-data],
 init-config <component> [--set KEY=VALUE ...], status [--json] and
-check-environment <environment>; validate, install and init-config also take
+check-environment <environment> [--json]; validate, install and init-config also take
 --environment <environment> (backlog 85: state/<environment>.yaml). Usage errors exit 2 on stderr,
 --help exits 0 on stdout, failures exit 1. Operator messages follow
 deployment/output.py.
@@ -24,7 +24,7 @@ from .output import audit, configure, log
 USAGE = (
     "./deploy.sh validate|prepare|install|uninstall [<component>] "
     "[--delete-data] | init-layout | init-config <component> [--set KEY=VALUE ...] "
-    "| status [--json] | check-environment <environment>; validate, install and "
+    "| status [--json] | check-environment <environment> [--json]; validate, install and "
     "init-config take --environment <environment>"
 )
 # Commands that change the target; each start and result goes to the journal.
@@ -97,9 +97,12 @@ def parser():
     check = command(
         "check-environment",
         "check this release against a target environment file; no writes",
-        "./deploy.sh check-environment <environment>",
+        "./deploy.sh check-environment <environment> [--json]",
     )
     check.add_argument("environment", metavar="<environment>")
+    check.add_argument(
+        "--json", action=Once, default=False, help="machine output for the runtime"
+    )
     command(
         "init-layout",
         "create the runtime account's bootstrap file",
@@ -187,7 +190,7 @@ def run(args):
         elif args.command == "validate":
             validation.validate(args.environment)
         elif args.command == "check-environment":
-            deploy.check_environment(args.environment)
+            deploy.check_environment(args.environment, args.json)
         else:
             {
                 "prepare": deploy.prepare,
