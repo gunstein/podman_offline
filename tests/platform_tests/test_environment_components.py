@@ -12,6 +12,8 @@ import contextlib
 import copy
 import io
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -395,6 +397,27 @@ class TargetEffectTests(ProductFixture):
             self.install(releases["reports"], environment_name="plain")
             self.install(releases["reports"])
 
+    def assert_refused_by_both(self, message):
+        """deploy.sh install (with and without the environment) and the runtime reader."""
+        before = sorted(
+            (str(path), path.is_file() and path.read_bytes())
+            for path in common.STATE.rglob("*")
+            if not str(path).startswith(str(common.STATE / "environment"))
+        )
+        self.use_root(self.releases_built["ledger"])
+        for environment_name in (None, "prod1"):
+            with self.assertRaisesRegex(common.DeployError, re.escape(message)):
+                deploy.install(environment_name)
+        with self.assertRaisesRegex(runtime.ToolError, re.escape(message)):
+            runtime.environment_installs(common.STATE)
+        after = sorted(
+            (str(path), path.is_file() and path.read_bytes())
+            for path in common.STATE.rglob("*")
+            if not str(path).startswith(str(common.STATE / "environment"))
+        )
+        self.assertEqual(after, before)
+        self.assertTrue((common.STATE / "apis/ledger/value").is_file())
+
     def test_an_invalid_environment_record_is_refused_by_both_readers(self):
         """deploy.sh install and the runtime command: one contract, before any change."""
         releases = self.releases_built
@@ -494,6 +517,38 @@ class TargetEffectTests(ProductFixture):
                     self.assertTrue((common.STATE / "apis/ledger/value").is_file())
                     directory.unlink()
             moved.rename(directory)
+            # A name the writer never produces, beside the valid records.
+            for entry in ("ledger", "Ledger.json", "ledger.yaml"):
+                with self.subTest(entry):
+                    stray = directory / entry
+                    stray.write_text(valid)
+                    self.assert_refused_by_both(
+                        f"Invalid environment record {stray}; nothing was changed"
+                    )
+                    stray.unlink()
+            # A directory that cannot be searched is not a missing one.
+            real_lstat = os.lstat
+
+            def denied(path, *args, **kwargs):
+                if str(path) == str(directory):
+                    raise PermissionError(13, "Permission denied", str(path))
+                return real_lstat(path, *args, **kwargs)
+
+            with self.subTest("permission denied"):
+                with mock.patch.object(os, "lstat", denied):
+                    self.assert_refused_by_both(
+                        f"Invalid environment records {directory}; nothing was changed"
+                    )
+            if os.getuid() != 0:  # Real file modes do not stop root.
+                with self.subTest("mode 000"):
+                    directory.chmod(0)
+                    try:
+                        self.assert_refused_by_both(
+                            f"Invalid environment records {directory}; nothing "
+                            "was changed"
+                        )
+                    finally:
+                        directory.chmod(0o700)
             self.assertEqual(
                 runtime.environment_installs(common.STATE),
                 {"accounts": "prod1", "ledger": "prod1"},

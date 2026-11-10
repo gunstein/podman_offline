@@ -207,26 +207,34 @@ def environment_installs(state):
     with the environment's name and what it applied, as uninstalled() reads
     state/uninstalled/: a component whose last install got overrides or an
     API secret line from an environment. The same contract as
-    deployment/deploy.py recorded_environment: a regular file (no link, no
-    directory) with exactly "environment" (text or null), "overrides" (a
-    mapping) and "api_secret" (a mapping or null); anything else is refused.
+    deployment/deploy.py environment_records: only a missing directory
+    means no records; one that is not a directory, a link, or cannot be
+    read is refused; every name but a dot file is <component>.json, a
+    regular file with exactly "environment" (text or null), "overrides" (a
+    mapping) and "api_secret" (a mapping or null).
     """
     directory = state / "environment"
-    if directory.is_symlink() or (
-        os.path.lexists(str(directory)) and not directory.is_dir()
-    ):
-        raise ToolError(f"Invalid environment records {directory}; nothing was changed")
-    if not directory.exists():
+    try:
+        info = os.lstat(str(directory))
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("directory required")
+        entries = sorted(os.listdir(str(directory)))
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError):
+        raise ToolError(
+            f"Invalid environment records {directory}; nothing was changed"
+        ) from None
     result = {}
-    for record in sorted(directory.iterdir()):
-        if record.name.startswith("."):
+    for entry in entries:
+        if entry.startswith("."):
             continue  # An interrupted atomic write leaves only a temporary file.
-        name = record.name[: -len(".json")] if record.name.endswith(".json") else ""
+        record = directory / entry
+        name = entry[: -len(".json")] if entry.endswith(".json") else ""
         try:
-            if not host.ID.fullmatch(name) or record.is_symlink():
-                raise ValueError(name)
-            if not record.is_file():
+            if not host.ID.fullmatch(name):
+                raise ValueError("name")
+            if not stat.S_ISREG(os.lstat(str(record)).st_mode):
                 raise ValueError("regular file required")
             data = json.loads(record.read_text(encoding="utf-8"))
             if (

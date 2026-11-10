@@ -460,8 +460,10 @@ without it, because that would remove them silently (an API would lose its
 registration with Identity). `<product>` stops before its first install and
 `deploy.sh install` refuses, both naming `--environment <name>` from the
 record, which holds the environment's name for this. After `deploy.sh
-uninstall` the record is gone. An invalid record (not a regular file, or
-not exactly its three fields) stops both, before any change. The record is
+uninstall` the record is gone. An invalid record (not a regular file, not
+exactly its three fields, or any other name than `<id>.json`), or a
+records directory that is not a readable directory, stops both, before
+any change. The record is
 written when an install completes, so a component's first install with an
 environment, interrupted before that, is repeated with the same option.
 

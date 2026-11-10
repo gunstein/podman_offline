@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -1226,45 +1227,71 @@ def target_environment(environment_name, component):
     return env_overrides
 
 
+RECORD_FIELDS = {"environment", "overrides", "api_secret"}
+
+
+def environment_records():
+    """{component: record} of every environment record in state/environment/.
+
+    The same contract as tools/runtime.py environment_installs, which the
+    runtime command applies to the same directory. Only a directory that
+    does not exist means no records; one that is not a directory, a link, or
+    cannot be read is refused. In it every name except an interrupted
+    write's dot file must be <component>.json, a regular file (no link)
+    with a JSON object of exactly "environment" (text or null),
+    "overrides" (a mapping) and "api_secret" (a mapping or null).
+    """
+    directory = common.STATE / "environment"
+    try:
+        info = os.lstat(str(directory))
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("directory required")
+        entries = sorted(os.listdir(str(directory)))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        raise common.DeployError(
+            f"Invalid environment records {directory}; nothing was changed"
+        ) from None
+    records = {}
+    for entry in entries:
+        if entry.startswith("."):
+            continue  # An interrupted atomic write leaves only a temporary file.
+        record = directory / entry
+        name = entry[: -len(".json")] if entry.endswith(".json") else ""
+        try:
+            if not common.ID.fullmatch(name):
+                raise ValueError("name")
+            if not stat.S_ISREG(os.lstat(str(record)).st_mode):
+                raise ValueError("regular file required")
+            data = json.loads(record.read_text(encoding="utf-8"))
+            if (
+                not isinstance(data, dict)
+                or set(data) != RECORD_FIELDS
+                or not isinstance(data["environment"], (str, type(None)))
+                or not isinstance(data["overrides"], dict)
+                or not isinstance(data["api_secret"], (dict, type(None)))
+            ):
+                raise ValueError("fields")
+        except (OSError, UnicodeError, ValueError):
+            raise common.DeployError(
+                f"Invalid environment record {record}; nothing was changed"
+            ) from None
+        records[name] = data
+    return records
+
+
 def recorded_environment(name):
     """The environment of name's last install, when that install applied anything from it.
 
-    Read from the record write_installed_marker wrote (missing: None). A
-    record that exists must be a regular file (no link, no directory) with
-    a JSON object of exactly "environment" (text or null), "overrides" (a
-    mapping) and "api_secret" (a mapping or null); anything else is refused,
-    as tools/runtime.py environment_installs refuses it. None also when the
-    environment gave the component no overrides and no API secret line
-    (then an install without it changes nothing it applied).
+    Every record is checked (environment_records), not only name's: an
+    invalid one stops the install before any change. None without a record,
+    or when the environment gave the component no overrides and no API
+    secret line (then an install without it changes nothing it applied).
     """
-    record = catalog.environment_record_path(common.STATE, name)
-    directory = record.parent
-    # The directory first, as environment_installs: a file or a link there
-    # would make the record look missing.
-    if directory.is_symlink() or (
-        os.path.lexists(str(directory)) and not directory.is_dir()
-    ):
-        raise common.DeployError(
-            f"Invalid environment records {directory}; nothing was changed"
-        )
-    if not os.path.lexists(str(record)):
+    data = environment_records().get(name)
+    if data is None:
         return None
-    try:
-        if record.is_symlink() or not record.is_file():
-            raise ValueError("regular file required")
-        data = json.loads(record.read_text(encoding="utf-8"))
-        if (
-            not isinstance(data, dict)
-            or set(data) != {"environment", "overrides", "api_secret"}
-            or not isinstance(data["environment"], (str, type(None)))
-            or not isinstance(data["overrides"], dict)
-            or not isinstance(data["api_secret"], (dict, type(None)))
-        ):
-            raise ValueError("fields")
-    except (OSError, UnicodeError, ValueError):
-        raise common.DeployError(
-            f"Invalid environment record {record}; nothing was changed"
-        ) from None
     applied = data["overrides"] or data["api_secret"]
     return data["environment"] if data["environment"] and applied else None
 
