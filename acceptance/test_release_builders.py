@@ -170,7 +170,7 @@ class ExpectedImageTests(unittest.TestCase):
 class ReleaseRpmDeliveryTests(unittest.TestCase):
     """release-rpm: an upgrade's own delivery directory, not dist/rpm (backlog 85)."""
 
-    def run_release_rpm(self, tools_in_dist, build_status=0):
+    def run_release_rpm(self, tools_in_dist, build_status=0, earlier=False):
         """The real release-rpm shell code on a tree with tools/VERSION 0.3.6.
 
         ./build-rpms.sh stands in: --tools adds this tree's tools RPM when it is
@@ -199,6 +199,9 @@ class ReleaseRpmDeliveryTests(unittest.TestCase):
             cwd=str(tree / "dist"),
             check=True,
         )
+        if earlier:  # A delivery an earlier run of this step left.
+            (tree / "dist/release-help-0.3.2").mkdir()
+            (tree / "dist/release-help-0.3.2/old.noarch.rpm").write_text("old")
         (tree / "build-rpms.sh").write_text(
             "#!/bin/sh\nset -e\n"
             '[ "$1" = --tools ] || exit 9\n'
@@ -251,9 +254,13 @@ class ReleaseRpmDeliveryTests(unittest.TestCase):
                 )
 
     def test_tools_with_other_content_under_their_version_stop_the_step(self):
-        result, delivery = self.run_release_rpm(["0.3.6"], build_status=1)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(delivery.exists())
+        for earlier in (False, True):
+            with self.subTest(earlier=earlier):
+                result, delivery = self.run_release_rpm(
+                    ["0.3.6"], build_status=1, earlier=earlier
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(delivery.exists())
 
 
 if __name__ == "__main__":

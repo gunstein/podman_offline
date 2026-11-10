@@ -320,8 +320,8 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `This host is not prepared for myproduct` | administrator | Step 3 first. |
 | `myproduct runs as produser on this host`, or `Run myproduct as the runtime account, not as root` | you | Log in as the runtime user (step 5). |
 | `... differ from the files in /var/lib/myproduct/state/...` (step 7) | credential provider | A newly delivered credential differs from the one in use. Nothing was copied. Confirm which is right; the runtime user removes the wrong copy in `/var/lib/myproduct/incoming/...`. |
-| `status reports an incomplete or inactive component` (step 7) | runtime user | Run `myproduct` again a minute later; a service may still be starting. If it stays, ask for help (see below). |
-| `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. The next `myproduct` resumes the unfinished component first. |
+| `status reports an incomplete or inactive component` (step 7) | runtime user | Run the same command again a minute later (with `--environment prod1` if you used it); a service may still be starting. If it stays, ask for help (see below). |
+| `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. Repeat the same command (with `--environment prod1` if you used it); it resumes the unfinished component first. |
 | `Missing /var/lib/myproduct/state/prod1.yaml` (step 7) | runtime user | Step 6. |
 | `no release package of ...` or `... needs ... installed: ...`, then `Nothing was changed` (step 7) | administrator | Install the delivery with the missing or matching release packages (step 3). |
 | `... requires ...; add ... to components:` (step 7) | supplier, runtime user | The environment file lacks a component another one needs; add the named line under `components:`. |
