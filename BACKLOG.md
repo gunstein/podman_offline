@@ -238,13 +238,16 @@ implementation.
 
 ## 84. Environment-specific container environment overrides
 
-Status: **implemented (2026-11-09); real Podman/systemd verification
-outstanding.** Agreed product requirement, high priority (product owner,
-2026-11-09). Product and acceptance-harness tests pass; the dev probe
-(`acceptance/environment_update_test.py`) and the PROD app1 upgrade built
-for the environment `lab` (`acceptance/seed_upgrade.py`, `config_layers
-prod`) are implemented but not yet run on the lab, so
-[RESULTS](acceptance/RESULTS.md) has no row for them. The contract is in
+Status: **implemented and lab-verified on `9c85e2f`** (code review approved
+2026-11-09; agreed product requirement, high priority, product owner
+2026-11-09). The fixed matrix and both `--rpm-manual` runs passed CLEAN on
+`9c85e2f`, including the dev probe (`acceptance/environment_update_test.py`)
+and the PROD app1 upgrade built for the environment `lab`
+(`acceptance/seed_upgrade.py`, `config_layers prod`); see
+[RESULTS](acceptance/RESULTS.md). Local tests only:
+`./build-rpms.sh --environment` with real `rpmbuild` and an interrupted
+install of an environment-built release; `--status-retry` was not rerun on
+`9c85e2f`. The contract is in
 [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml).
 Implementation notes, checked against `8cc668f`: the functions named below
 were unchanged since `8b7161b`; `./build-rpms.sh` (`rpms.py`) is new and
