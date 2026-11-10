@@ -62,10 +62,11 @@ matrix, `--status-retry` and both `--rpm-manual` runs; see
 [RESULTS](acceptance/RESULTS.md). They cover the environment file on the
 target, the API registration through it (`--whoami`), the app1 upgrade with
 the `lab` file, and the manual's environment, uninstall and `dist/delivery/`
-steps. Product tests only, no lab step: plain `myproduct` after an
-environment install with an upgraded API (option C), another API secret line
-for the same version, a pending API with a changed environment, and invalid
-environment records. Product tests:
+steps. Lab steps added after `9c00aca`, not yet run: in `--whoami`,
+`10-environment-plain` (option C with app3 as a named component, not an
+upgrade), `10-environment-records`, `10-environment-rotate` (another secret
+line for the same version) and `10-environment-pending` (a pending API with a
+changed file); see [acceptance/README.md](acceptance/README.md). Product tests:
 `tests/platform_tests/test_environment_components.py`,
 `test_environment_overrides.py`, `test_runtime.py` and the demo tests. It builds on
 [item 84](#84-environment-specific-container-environment-overrides).

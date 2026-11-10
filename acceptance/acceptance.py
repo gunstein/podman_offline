@@ -1288,6 +1288,22 @@ class Run:
         self.meta["whoami_injected"] = WHOAMI_INJECTED["restored"]
         self.step("10-whoami-restored-e2e", lambda: self.guest("DEV", "whoami-e2e"))
         self.step("10-check-restored", lambda: self.guest("PROD", "check"))
+        # Backlog 85 on the target, app3 being Identity's API through the file:
+        # an install without the environment, invalid records, another secret
+        # line for the same version, and a pending app3 with a changed file.
+        for name in ("plain", "records", "rotate", "pending"):
+            self.step(
+                "10-environment-" + name,
+                lambda n=name: self.guest(
+                    "PROD", "whoami-environment-" + n, bundle="app3"
+                ),
+            )
+            if name in ("rotate", "pending"):
+                self.step(
+                    "10-environment-" + name + "-e2e",
+                    lambda: self.guest("DEV", "whoami-e2e"),
+                )
+        self.step("10-check-environment", lambda: self.guest("PROD", "check"))
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True
 

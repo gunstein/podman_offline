@@ -1015,6 +1015,81 @@ invocations() {
 }
 # A command expected to fail; its output is indented so that an "Error:" line
 # from dnf is evidence here, not a harness failure.
+# Backlog 85 lab steps: the state the runtime account owns (every file's
+# digest, except interrupted-write temporaries) and each container's start
+# time; equal fingerprints mean nothing was written and nothing restarted.
+environment_fingerprint() {
+    sudo -n find "$state" "$install_root/config/containers/systemd" -type f ! -name '.*' -print0 \
+        | sort -z | sudo -n xargs -0 sha256sum
+    as_product podman ps --all --format '{{.Names}} {{.StartedAt}}' | sort
+}
+# The components a runtime run installed, in order, against the expected
+# list (words); every other listed component must be reported as unchanged.
+environment_installs() {
+    python3 - "$1" "$2" <<'RUNTIME_INSTALLS'
+import re
+import sys
+
+output, expected = sys.argv[1], sys.argv[2].split()
+installed = re.findall(r"^\[OK\] (\S+) \S+ installed$", output, re.MULTILINE)
+if installed != expected:
+    raise SystemExit(f"FAIL: installed {installed}, expected {expected}")
+if "PASS:" not in output:
+    raise SystemExit("FAIL: the runtime command did not complete")
+print(f"PASS: installed {installed or 'nothing'}")
+RUNTIME_INSTALLS
+}
+# Point Identity's app3 line in state/whoami.yaml at another key of app3's secret.
+whoami_api_key() {
+    as_product python3 - "$state/whoami.yaml" "$1" <<'WHOAMI_KEY'
+import re
+import sys
+from pathlib import Path
+
+path, key = Path(sys.argv[1]), sys.argv[2]
+text, count = re.subn(r"@@secret:app3-api-secret/\w+@@", f"@@secret:app3-api-secret/{key}@@", path.read_text())
+if count != 1:
+    raise SystemExit("FAIL: expected one app3 secret line in whoami.yaml")
+path.write_text(text)
+print(f"PASS: whoami.yaml names app3-api-secret/{key}")
+WHOAMI_KEY
+}
+# Identity's metadata, app3's environment record and Identity's identity-apis
+# Secret all follow the key the file names; the Secret holds that key's bytes.
+whoami_api_check() {
+    as_product python3 - "$state" "$install_root/config/containers/systemd/$product_name-identity.yaml" "$1" <<'WHOAMI_KEY_CHECK'
+import base64
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+state, identity_yaml, key = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+expected = {"index": 0, "secret": "app3-api-secret/" + key}
+if json.loads((state / "metadata/identity.json").read_text())["api_secrets"] != {"app3": expected}:
+    raise SystemExit("FAIL: installed identity does not name " + expected["secret"])
+if json.loads((state / "environment/app3.json").read_text())["api_secret"] != expected:
+    raise SystemExit("FAIL: app3's environment record does not name " + expected["secret"])
+value = (state / "app3/credentials/api-secret" / key).read_bytes()
+secrets = [
+    doc for doc in yaml.safe_load_all(identity_yaml.read_text())
+    if doc and doc.get("kind") == "Secret" and doc["metadata"]["name"] == "identity-apis"
+]
+line = "ApiResources__0__ApiSecrets__0__Value"
+if len(secrets) != 1 or base64.b64decode(secrets[0]["data"].get(line, "")) != value:
+    raise SystemExit("FAIL: identity-apis does not hold app3's " + key)
+print("PASS: identity, app3's record and identity-apis follow " + expected["secret"])
+WHOAMI_KEY_CHECK
+}
+# The runtime command as the account; its output in $output, shown, and a
+# failure stops the step with that output.
+runtime_completed() {
+    local status=0
+    output=$(as_product "$product_name" "$@" 2>&1) || status=$?
+    printf '%s\n' "$output"
+    [[ $status == 0 ]] || { echo "FAIL: $product_name $* exited $status"; exit 1; }
+}
 expect_refusal() {
     local status=0 output
     output=$("$@" 2>&1) || status=$?
@@ -1219,6 +1294,106 @@ whoami-environment)
     # the target as the runtime account (the manual's step 6).
     place_environment whoami < "$base/whoami.yaml"
     echo 'PASS: whoami environment file placed in the state directory'
+    ;;
+whoami-environment-plain)
+    # Backlog 85, option C: app3 is an API of Identity through the
+    # environment, without own overrides. Without --environment its install
+    # is refused before any change, by deploy.sh and by the runtime command.
+    before=$(environment_fingerprint)
+    expect_refusal as_product bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$product"
+    grep -Fq "app3 was installed with --environment whoami, which gave it overrides or an API secret line; an install without it would remove them. Run $product_name --environment whoami app3" <<< "$refusal_output"
+    expect_refusal as_product "$product_name" app3
+    grep -Fq "app3 was installed with --environment whoami, which gave it overrides or an API secret line; nothing was changed. Run $product_name --environment whoami app3" <<< "$refusal_output"
+    [[ $(environment_fingerprint) == "$before" ]] || { echo 'FAIL: a refused install changed state or restarted a container'; exit 1; }
+    echo 'PASS: an install without the environment is refused; state and containers unchanged'
+    ;;
+whoami-environment-records)
+    # Backlog 85: an invalid environment record (bad JSON, a stray name)
+    # stops every entry before any change; restored, nothing is reinstalled.
+    record="$state/environment/app3.json"
+    kept=$(sudo -n cat "$record")
+    before=$(environment_fingerprint)
+    for damaged in "$record" "$state/environment/app3"; do
+        if [[ $damaged == "$record" ]]; then
+            as_product sh -c 'printf "{" > "$1"' - "$record"
+        else
+            as_product sh -c 'umask 077 && cat > "$1"' - "$damaged" <<< "$kept"
+        fi
+        message="Invalid environment record $damaged; nothing was changed"
+        expect_refusal as_product "$product_name" --environment whoami
+        grep -Fq "$message" <<< "$refusal_output"
+        expect_refusal as_product bash -c 'cd "$1" && exec bash ./deploy.sh install' bash "$product"
+        grep -Fq "$message" <<< "$refusal_output"
+        expect_refusal as_product "$product_name" app3
+        grep -Fq "$message" <<< "$refusal_output"
+        if [[ $damaged == "$record" ]]; then
+            as_product sh -c 'umask 077 && cat > "$1"' - "$record" <<< "$kept"
+        else
+            as_product rm -f -- "$damaged"
+        fi
+        [[ $(environment_fingerprint) == "$before" ]] || { echo "FAIL: a refusal for $damaged changed state"; exit 1; }
+    done
+    runtime_completed --environment whoami
+    environment_installs "$output" ""
+    [[ $(environment_fingerprint) == "$before" ]] || { echo 'FAIL: the restored records led to an install'; exit 1; }
+    echo 'PASS: invalid records refused everywhere before any change; restored, nothing reinstalled'
+    ;;
+whoami-environment-rotate)
+    # Backlog 85: Identity names another key of app3's secret (a copy of its
+    # value, so app3 itself is unchanged). Only Identity's line changes, so
+    # app3 is installed again for the secret line alone, after Identity.
+    as_product sh -c 'umask 077 && cp -- "$1/value" "$1/rotated"' - "$state/app3/credentials/api-secret"
+    whoami_api_key rotated
+    runtime_completed --environment whoami
+    environment_installs "$output" "identity app3"
+    whoami_api_check rotated
+    echo 'PASS: another secret line installed Identity, then app3; the registration follows'
+    ;;
+whoami-environment-pending)
+    # Backlog 85: app3's install stops after its pending record (an injected
+    # daemon-reload failure, as the status-retry probe does); meanwhile the
+    # file names the value key again. The runtime command finishes app3,
+    # installs Identity, then decides app3 again: installed once more.
+    as_product bash -c 'cd "$1" && exec python3 -I -B - "$1"' bash "$product" <<'PENDING_INSTALL'
+import subprocess
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from deployment import cli  # noqa: E402
+
+real_run = subprocess.run
+injected = []
+
+
+def command(args, **kwargs):
+    if list(map(str, args)) == ["systemctl", "--user", "daemon-reload"]:
+        injected.append(args)
+        raise subprocess.CalledProcessError(73, args)
+    return real_run(args, **kwargs)
+
+
+subprocess.run = command
+code = cli.main(["install", "--environment", "whoami"])
+if not injected or code != 1:
+    raise SystemExit("FAIL: the injected failure did not stop app3's install")
+print("PASS: app3's install stopped after its pending record")
+PENDING_INSTALL
+    # status --json exits 1 while an install is pending; its JSON is the answer.
+    report=$(as_product bash "$product/deploy.sh" status --json || true)
+    pending=$(python3 -c 'import json, sys; p = json.loads(sys.argv[1])["pending"]; print(p and p["operation"] + " " + p["component"])' "$report")
+    [[ $pending == "install app3" ]] || { echo "FAIL: pending is '$pending', not app3's install"; exit 1; }
+    whoami_api_key value
+    runtime_completed --environment whoami
+    environment_installs "$output" "app3 identity app3"
+    whoami_api_check value
+    report=$(as_product bash "$product/deploy.sh" status --json || true)
+    pending=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["pending"])' "$report")
+    [[ $pending == None ]] || { echo "FAIL: still pending: $pending"; exit 1; }
+    before=$(environment_fingerprint)
+    runtime_completed --environment whoami
+    environment_installs "$output" ""
+    [[ $(environment_fingerprint) == "$before" ]] || { echo 'FAIL: the repeat changed state'; exit 1; }
+    echo 'PASS: the resumed app3 was decided again after Identity; a repeat installs nothing'
     ;;
 whoami-api-registration)
     # Identity received app3's own secret through the platform (backlog 85):

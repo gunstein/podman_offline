@@ -21,6 +21,29 @@ of Identity's installed `identity-apis` Secret are the same bytes and that the
 installed Identity's `api_secrets` names app3; `test_whoami.py` checks each
 wrong link fails.
 
+After the restore, four steps check backlog 85's target rules on PROD, app3
+being Identity's API through the file. Each step compares a fingerprint
+(every state and Quadlet file's digest, and each container's start time).
+
+- `10-environment-plain`: `./deploy.sh install` and `myproduct app3`
+  without `--environment` are refused with the option C message, and the
+  fingerprint is unchanged. app3 has no own overrides; only its API secret
+  line makes it refused. The trigger is a named component, not an upgrade.
+- `10-environment-records`: a damaged `state/environment/app3.json` and a
+  stray `state/environment/app3` stop `myproduct --environment whoami`,
+  `./deploy.sh install` and `myproduct app3`, all before any change. Once
+  restored, `myproduct --environment whoami` installs nothing.
+- `10-environment-rotate`: Identity's line names `app3-api-secret/rotated`,
+  a copy of app3's `value`, so app3 itself is unchanged.
+  `myproduct --environment whoami` installs Identity, then app3, for the
+  secret line alone. Identity's metadata, app3's record and Identity's
+  `identity-apis` Secret follow the key, and the DEV e2e still signs in.
+- `10-environment-pending`: app3's install stops after its pending record,
+  through an injected `daemon-reload` failure as in the status-retry probe.
+  The file names `value` again. `myproduct --environment whoami` installs
+  app3, Identity, then app3 again, and leaves no pending record. A repeat
+  installs nothing.
+
 Backlog 69 WP6: the RPM delivery is verified by running the production
 manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd
 profile P1 and on the strict profile P2:

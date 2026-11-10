@@ -125,6 +125,14 @@ class WhoamiScenarioTests(ScenarioFixture):
             "10-whoami-restore",
             "10-whoami-restored-e2e",
             "10-check-restored",
+            # Backlog 85: the four target-environment cases, then a check.
+            "10-environment-plain",
+            "10-environment-records",
+            "10-environment-rotate",
+            "10-environment-rotate-e2e",
+            "10-environment-pending",
+            "10-environment-pending-e2e",
+            "10-check-environment",
         ]
         self.assertEqual([step for step in records if step in ordered], ordered)
         for other in ("app1", "app2", "help", "registry", "example"):
@@ -163,6 +171,153 @@ class WhoamiScenarioTests(ScenarioFixture):
             self.assertEqual(runner.main(), 0)
         self.assertTrue(run.return_value.whoami)
         run.return_value.execute.assert_called_once()
+
+
+class EnvironmentStepTests(unittest.TestCase):
+    """Backlog 85's lab steps: their Python parts, run as the guest runs them."""
+
+    def run_python(self, heredoc, *arguments):
+        return subprocess.run(
+            [sys.executable, "-", *map(str, arguments)],
+            input=shell_code(REMOTE, heredoc=heredoc),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def run_plain(self, deploy_output, runtime_output, changed=False):
+        """whoami-environment-plain with as_product and the fingerprint stubbed."""
+        script = (
+            "set -euo pipefail\nproduct_name=myproduct product=/R\n"
+            + shell_code(REMOTE, function="expect_refusal")
+            + "\nas_product() {\n"
+            + '    if [[ $1 == bash ]]; then printf "%s\\n" "$DEPLOY"; else printf "%s\\n" "$RUNTIME"; fi\n'
+            + "    return 1\n}\n"
+            + 'environment_fingerprint() { echo "state $CHANGED"; }\n'
+            + shell_code(REMOTE, action="whoami-environment-plain")
+        )
+        return subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "DEPLOY": deploy_output,
+                "RUNTIME": runtime_output,
+                "CHANGED": "",
+            },
+        )
+
+    def test_the_plain_step_expects_the_products_own_messages(self):
+        """The strings the step greps, worded as the product tests pin them
+        (test_environment_components, test_runtime)."""
+        deploy = (
+            "ERROR: app3 was installed with --environment whoami, which gave it "
+            "overrides or an API secret line; an install without it would remove "
+            "them. Run myproduct --environment whoami app3 (or ./deploy.sh install "
+            "--environment whoami); nothing was changed"
+        )
+        runtime = (
+            "ERROR: app3 was installed with --environment whoami, which gave it "
+            "overrides or an API secret line; nothing was changed. Run myproduct "
+            "--environment whoami app3"
+        )
+        result = self.run_plain(deploy, runtime)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "PASS: an install without the environment is refused", result.stdout
+        )
+        result = self.run_plain("ERROR: something else", runtime)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_every_step_has_its_action(self):
+        for name in ("plain", "records", "rotate", "pending"):
+            self.assertRegex(REMOTE, r"(?m)^whoami-environment-" + name + r"\)$")
+        compile(shell_code(REMOTE, heredoc="PENDING_INSTALL"), "pending", "exec")
+
+    def test_the_installs_of_a_runtime_run_are_read_in_order(self):
+        output = (
+            "[OK] platform 0.4.3 is installed with environment whoami\n"
+            "[OK] identity 0.4.3 installed\n"
+            "[OK] app3 0.1.0 installed\n"
+            "PASS: myproduct completed\n"
+        )
+        self.assertEqual(
+            self.run_python("RUNTIME_INSTALLS", output, "identity app3").returncode, 0
+        )
+        for expected in ("app3 identity", "identity", ""):
+            with self.subTest(expected):
+                result = self.run_python("RUNTIME_INSTALLS", output, expected)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("FAIL: installed", result.stderr)
+        unfinished = output.replace("PASS: myproduct completed\n", "")
+        result = self.run_python("RUNTIME_INSTALLS", unfinished, "identity app3")
+        self.assertIn("did not complete", result.stderr)
+
+    def test_the_key_edit_changes_only_identitys_app3_line(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = root / "whoami.yaml"
+        source = Path(__file__).resolve().parents[1] / "config/whoami.yaml"
+        path.write_text(source.read_text())
+        result = self.run_python("WHOAMI_KEY", path, "rotated")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import yaml
+
+        document = yaml.safe_load(path.read_text())
+        self.assertEqual(
+            document["overrides"]["identity"]["ENVIRONMENT"]["app"][
+                "ApiResources__0__ApiSecrets__0__Value"
+            ],
+            "@@secret:app3-api-secret/rotated@@",
+        )
+        self.assertEqual(
+            path.read_text().replace("/rotated@@", "/value@@"), source.read_text()
+        )
+
+    def test_the_key_check_reads_metadata_record_and_secret(self):
+        import base64
+
+        import yaml
+
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        state = root / "state"
+        for directory in ("metadata", "environment", "app3/credentials/api-secret"):
+            (state / directory).mkdir(parents=True)
+        entry = {"index": 0, "secret": "app3-api-secret/rotated"}
+        (state / "metadata/identity.json").write_text(
+            json.dumps({"api_secrets": {"app3": entry}})
+        )
+        (state / "environment/app3.json").write_text(
+            json.dumps({"api_secret": entry, "environment": "whoami", "overrides": {}})
+        )
+        (state / "app3/credentials/api-secret/rotated").write_bytes(b"secret-bytes")
+        identity = root / "myproduct-identity.yaml"
+
+        def secret(value):
+            line = "ApiResources__0__ApiSecrets__0__Value"
+            identity.write_text(
+                yaml.safe_dump_all(
+                    [
+                        {"kind": "Pod", "metadata": {"name": "identity"}},
+                        {
+                            "kind": "Secret",
+                            "metadata": {"name": "identity-apis"},
+                            "data": {line: base64.b64encode(value).decode()},
+                        },
+                    ]
+                )
+            )
+
+        secret(b"secret-bytes")
+        result = self.run_python("WHOAMI_KEY_CHECK", state, identity, "rotated")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        secret(b"other-bytes")
+        result = self.run_python("WHOAMI_KEY_CHECK", state, identity, "rotated")
+        self.assertIn("identity-apis does not hold", result.stderr)
+        secret(b"secret-bytes")
+        result = self.run_python("WHOAMI_KEY_CHECK", state, identity, "value")
+        self.assertIn("installed identity does not name", result.stderr)
 
 
 class WhoamiRemoteTests(unittest.TestCase):
