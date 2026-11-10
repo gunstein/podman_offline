@@ -131,20 +131,35 @@ def status_report(path):
         ) from None
 
 
-def selected(report, order, versions, component):
-    """The components to install now: pending first, then incomplete ones."""
+def selected(report, order, versions, component, product):
+    """The components to install now: pending first, then incomplete ones.
+
+    A component the runtime user uninstalled stays out (backlog 85; an older
+    release's report has no "uninstalled"), until <product> <component>
+    installs it again. An unfinished uninstall is finished, never reinstalled.
+    """
     if component:
         return [component]
     pending = report["pending"]
+    if pending and pending["operation"] == "uninstall":
+        raise ToolError(
+            f"The uninstall of {pending['component']} is unfinished; run its "
+            './deploy.sh uninstall again (see the manual, "Remove a component")'
+        )
     targets = (
         [pending["component"]] if pending and pending["component"] in order else []
     )
+    uninstalled = report.get("uninstalled") or []
     current = {item["name"]: item for item in report["components"]}
     for name in order:
         item = current.get(name)
         if name in targets:
             continue
-        if item and item["complete"] and item["version"] == versions[name]:
+        if name in uninstalled and not item:
+            log.info(
+                f"[OK] {name} was uninstalled; run {product} {name} to install it again"
+            )
+        elif item and item["complete"] and item["version"] == versions[name]:
             log.info(f"[OK] {name} {item['version']} is installed")
         else:
             targets.append(name)
@@ -274,7 +289,7 @@ def install(product, args):
     first = found[order[0]][1]
     deployed(first, "init-layout")
     versions = {name: found[name][0].version for name in order}
-    targets = selected(status_report(first), order, versions, args.component)
+    targets = selected(status_report(first), order, versions, args.component, product)
     for component in targets:
         package, path, descriptor = found[component]
         config = host.LIB / product / "state" / component / "config.yaml"

@@ -264,7 +264,9 @@ configuration names; those reports are kept unchanged.
 ```sh
 ./dev/build-images.sh
 ./dev/pull-images.sh
-cp config/dev.yaml.example config/dev.yaml   # optional local overrides
+cp config/dev.yaml.example config/dev.yaml   # optional local overrides; an existing
+                                             # dev.yaml needs the example's overrides
+                                             # block for app3's Identity registration
 chmod 600 config/dev.yaml
 ./dev/demo-credentials.sh                    # demo only: CA, certificates, users
 ./deploy.sh validate                            # every component, no writes or Podman
@@ -404,7 +406,8 @@ private files out of shipped directories and retain their declarations.
 After `./build-bundle.sh`, `./build-rpms.sh [<component> ...]` wraps each
 selected bundle in an unsigned RPM, `dist/rpm/<product>-<component>-<version>-<version>-1.noarch.rpm`;
 `./build-rpms.sh --environment prod1` takes the bundles `dist/prod1/current-bundles.txt`
-names and writes `dist/prod1/rpm/`.
+names, writes `dist/prod1/rpm/` and then `dist/prod1/delivery/` with exactly the
+current RPMs and the tools RPM; deliver that directory.
 It needs `rpmbuild` (package `rpm-build`) on the build machine. The RPM
 installs the release unchanged under
 `/var/lib/<product>/releases/<product>-<component>-<version>/`; the version

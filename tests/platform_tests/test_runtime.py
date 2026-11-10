@@ -50,6 +50,7 @@ class FakeReleases:
         self.rpm_lines = []
         self.installed = {}  # component -> version completed
         self.pending = None
+        self.uninstalled = []  # components removed with deploy.sh uninstall
         self.fail = set()  # components whose install fails
         self.calls = []
 
@@ -89,6 +90,7 @@ class FakeReleases:
                             if not self.pending or self.pending["component"] != name
                         ],
                         "pending": self.pending,
+                        "uninstalled": self.uninstalled,
                     }
                 )
             )
@@ -102,6 +104,8 @@ class FakeReleases:
                 self.pending = {"operation": "install", "component": component}
                 return done(status=1)
             self.installed[component] = version
+            if component in self.uninstalled:
+                self.uninstalled.remove(component)
             if self.pending and self.pending["component"] == component:
                 self.pending = None
         return done()
@@ -284,6 +288,40 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.run_command(), 0, self.stderr.getvalue())
         self.assertEqual(self.releases.commands("api"), ["install"])
         self.assertEqual(self.releases.installed["api"], "1.1.0")
+
+    def test_an_uninstalled_component_stays_out_until_it_is_named(self):
+        """Backlog 85: its release stays installed, but the runtime user removed it."""
+        self.first_run()
+        del self.releases.installed["worker"]
+        self.releases.uninstalled.append("worker")
+        self.releases.calls.clear()
+        self.assertEqual(self.run_command(), 0, self.stderr.getvalue())
+        self.assertNotIn("install", self.releases.commands("worker"))
+        self.assertIn(
+            "[OK] worker was uninstalled; run cedar worker to install it again",
+            self.stdout.getvalue(),
+        )
+        # A later run still leaves it out; naming it installs it again.
+        self.assertEqual(self.run_command(), 0, self.stderr.getvalue())
+        self.assertNotIn("worker", self.releases.installed)
+        self.assertEqual(self.run_command("worker"), 0, self.stderr.getvalue())
+        self.assertEqual(self.releases.installed["worker"], "1.0.0")
+        self.assertEqual(self.releases.uninstalled, [])
+
+    def test_an_unfinished_uninstall_is_never_installed_again(self):
+        self.first_run()
+        self.releases.pending = {
+            "operation": "uninstall",
+            "component": "worker",
+            "owners": [],
+        }
+        self.releases.calls.clear()
+        self.assertEqual(self.run_command(), 1)
+        self.assertIn(
+            "The uninstall of worker is unfinished; run its ./deploy.sh uninstall again",
+            self.stderr.getvalue(),
+        )
+        self.assertNotIn(("worker", ["install"]), self.releases.calls)
 
     def test_a_named_component_is_installed_again_with_its_current_config(self):
         self.first_run()

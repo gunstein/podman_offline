@@ -70,7 +70,29 @@ only `catalog.catalog_components`); the operator manual gained one row,
 "Remove a component a delivery no longer contains" (the release's own
 `./deploy.sh uninstall`, since the runtime command has no uninstall); the
 renamed-product generator drops the demo's build environments and app3's
-lines from its `dev.yaml.example`. The text below is the requirement. **Decisions (product owner, 2026-11-09):**
+lines from its `dev.yaml.example`.
+
+**Decisions after the review (product owner, 2026-11-10):**
+
+1. An explicit uninstall is remembered in state: `deploy.sh uninstall`
+   writes `state/uninstalled/<component>` (the removed version), `status
+   --json` reports it as `uninstalled`, the runtime command's automatic run
+   leaves the component out although its release stays installed, and
+   `<product> <component>` installs it again, which removes the record.
+   Without it the next `<product>` run reinstalled the component, because
+   nothing else tells "uninstalled on purpose" from "never installed".
+   An unfinished uninstall is never reinstalled by the runtime command.
+2. A delivery is `dist/<environment>/delivery/`: every `./build-rpms.sh
+   --environment` run writes it again with exactly the selected components'
+   current RPMs and the current tools RPM, and the supplier delivers that
+   directory. `dist/<environment>/rpm/` keeps every RPM ever built (one
+   version has one content); the administrator command installs every
+   product RPM of the directory it is given, so delivering `rpm/` after a
+   smaller set would have reinstalled an excluded component. Builds without
+   an environment are unchanged (their `dist/rpm/` has the same limit for a
+   component removed from the catalog; not in this item's scope).
+
+The text below is the requirement. **Decisions (product owner, 2026-11-09):**
 the format below (fixed top-level keys `components:` and `overrides:`,
 already in item 84), and option (a) for Identity registrations of optional
 APIs (see "Dependencies and Identity registrations"). Read the latest `main`,

@@ -343,8 +343,8 @@ ENVIRONMENT:
     Features__Reports: "false"
 ```
 
-An environment file names components under `overrides:`, its only
-top-level key:
+An environment file names components under `overrides:`; its only other
+top-level key is `components:` ([below](#the-components-of-an-environment)):
 
 ```yaml
 # config/prod1.yaml
@@ -453,8 +453,12 @@ overrides:
 - `./build-bundle.sh --environment prod2 app2` builds only app2 within prod2;
   a component outside the list is refused. `./build-rpms.sh --environment
   prod2` wraps exactly the archives `dist/prod2/current-bundles.txt` names and
-  refuses a list that no longer matches the environment, so an archive an
-  earlier, larger set left in `dist/prod2/` is never delivered.
+  refuses a list that no longer matches the environment. Every run writes
+  `dist/prod2/delivery/` again with exactly the current RPMs and the tools
+  RPM, and that is the directory the supplier delivers: `dist/prod2/rpm/`
+  keeps every RPM ever built (one version has one content), so an RPM of an
+  earlier, larger set is never delivered. With an RPM still missing there is
+  no delivery directory, and the error names the command.
 
 An optional API, one only some environments have, keeps Identity's
 `ApiResources__<n>__*` lines out of Identity's `config.defaults.yaml`: each
@@ -470,7 +474,10 @@ The selection never uninstalls anything. A component a later delivery leaves
 out keeps running until the runtime user uninstalls it with its own release's
 `./deploy.sh uninstall` ([manual](PRODUCTION-INSTALL.md#7-everyday-tasks));
 an API goes first, because install refuses an Identity release without the
-line of an installed API. The output of an environment goes to its own directory,
+line of an installed API. The uninstall writes `state/uninstalled/<id>`
+(the removed version), reported by `status --json`: the runtime command
+leaves that component out although its release stays installed, until
+`<product> <id>` installs it again, which removes the record. The output of an environment goes to its own directory,
 `dist/<name>/` with its `current-bundles.txt` (staging in
 `build/bundle-<name>/`); `./build-rpms.sh --environment <name>` wraps those
 bundles into `dist/<name>/rpm/`. One build never removes another's files.

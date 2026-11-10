@@ -187,9 +187,20 @@ class EnvironmentRpmTests(ProductFixture):
 
         def build_rpm(archive, product, component, version, target):
             self.wrapped.append((archive, target))
-            return target / f"{product}-{component}.rpm"
+            rpm = target / f"{product}-{component}-{version}-{version}-1.noarch.rpm"
+            target.mkdir(parents=True, exist_ok=True)
+            rpm.write_text(archive.name)
+            return rpm
+
+        def build_tools(product, target):
+            version = (self.source / "tools/VERSION").read_text().strip()
+            rpm = target / f"{product}-tools-{version}-1.noarch.rpm"
+            target.mkdir(parents=True, exist_ok=True)
+            rpm.write_text("tools")
+            return rpm
 
         self.stack.enter_context(mock.patch.object(rpms, "build_rpm", build_rpm))
+        self.stack.enter_context(mock.patch.object(rpms, "build_tools", build_tools))
 
     def test_the_environment_is_given_once_in_either_spelling(self):
         for repeated in (
@@ -206,10 +217,18 @@ class EnvironmentRpmTests(ProductFixture):
     def test_the_environment_directory_is_read_and_written(self):
         self.build_and_unpack("prod1")
         dist = self.source / "dist"
-        rpms.build(["worker"], environment_name="prod1")
+        rpms.build(environment_name="prod1")
         self.assertEqual(
             self.wrapped,
             [(dist / "prod1/cedar-worker-1.2.3-offline.tar.gz", dist / "prod1/rpm")],
+        )
+        tools = (self.source / "tools/VERSION").read_text().strip()
+        self.assertEqual(
+            sorted(path.name for path in (dist / "prod1/delivery").iterdir()),
+            [
+                "cedar-tools-" + tools + "-1.noarch.rpm",
+                "cedar-worker-1.2.3-1.2.3-1.noarch.rpm",
+            ],
         )
         # The common build's archive is never taken for an environment.
         self.build_and_unpack()

@@ -318,7 +318,8 @@ def build(selected=(), tools=False, environment_name=None):
     dist/<name>/ and writes dist/<name>/rpm/ (./build-bundle.sh --environment):
     only its components (backlog 85), and only archives its
     current-bundles.txt names, so an archive an earlier, larger set left in
-    dist/<name>/ is never wrapped.
+    dist/<name>/ is never wrapped; dist/<name>/delivery/ then holds exactly
+    the current delivery (write_delivery).
     """
     if shutil.which("rpmbuild") is None:
         raise RpmError("rpmbuild is missing; install the rpm-build package")
@@ -357,7 +358,45 @@ def build(selected=(), tools=False, environment_name=None):
     if everything or tools:
         built.append(build_tools(catalog.product_name(ROOT), dist / "rpm"))
         log.info(f"[OK] {built[-1].relative_to(ROOT)}")
+    if environment_name is not None:
+        write_delivery(dist, descriptors, option)
     return built
+
+
+def write_delivery(dist, descriptors, option):
+    """dist/<environment>/delivery/: exactly the RPMs of the current delivery.
+
+    The administrator command installs every product RPM of the directory it
+    is given, so the supplier delivers this one, not dist/<environment>/rpm/,
+    which keeps every RPM ever built (one version has one content). It is
+    written again by every --environment run: the selected components' RPMs
+    in their current versions and the current tools RPM. A missing one leaves
+    no delivery directory at all.
+    """
+    product = catalog.product_name(ROOT)
+    tools = (ROOT / "tools/VERSION").read_text().strip()
+    wanted = {
+        name: f"{descriptor['product']}-{name}-{descriptor['version']}-"
+        f"{descriptor['version']}-1.noarch.rpm"
+        for name, descriptor in descriptors.items()
+    }
+    wanted["--tools"] = f"{product}-tools-{tools}-1.noarch.rpm"
+    delivery = dist / "delivery"
+    shutil.rmtree(str(delivery), ignore_errors=True)
+    missing = [
+        name for name, rpm in wanted.items() if not (dist / "rpm" / rpm).is_file()
+    ]
+    if missing:
+        raise RpmError(
+            f"{delivery.relative_to(ROOT)} not written: no RPM yet for "
+            + ", ".join(missing)
+            + f"; run ./build-rpms.sh {option}"
+            + " ".join(missing)
+        )
+    delivery.mkdir()
+    for rpm in wanted.values():
+        shutil.copy2(str(dist / "rpm" / rpm), str(delivery / rpm))
+    log.info(f"[OK] {delivery.relative_to(ROOT)}: deliver this directory")
 
 
 def current_bundles(dist, option):
@@ -395,7 +434,9 @@ def parser():
         ),
         description=(
             "Wrap built bundles as RPMs and build the tools RPM; without "
-            "components or --tools, every catalog component and the tools."
+            "components or --tools, every catalog component (or every component "
+            "of the --environment) and the tools. With --environment, "
+            "dist/<name>/delivery/ holds exactly the RPMs to deliver."
         ),
         allow_abbrev=False,
     )

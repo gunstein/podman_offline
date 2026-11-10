@@ -1226,25 +1226,56 @@ expected = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
 if yaml.safe_load(sys.stdin)["api_secrets"] != expected:
     raise SystemExit("FAIL: identity bundle lacks the app3 API secret line")
 '
-    # The release RPM transport (release-rpm) takes the archives from dist/.
-    cp dist/whoami/"$product_name"-*-offline.tar.gz* dist/
+    # The release RPM transport (release-rpm) takes the archives from dist/;
+    # only the listed archives, their checksums and signatures.
+    for name in "${listed[@]}"; do cp dist/whoami/"$name" dist/whoami/"$name".* dist/; done
     cat build/bundle-whoami/"$product_name"-*/images/images.txt
     echo 'PASS: whoami environment: platform, identity and app3 only; app3 registered'
     ;;
 whoami-bundle-list) cat "$src/dist/whoami/current-bundles.txt";;
 whoami-api-registration)
-    # Identity received app3's secret through the platform (backlog 85).
-    sudo -n test -s "$state/apis/app3/value"
-    as_product python3 - "$state/metadata/identity.json" <<'WHOAMI_API'
+    # Identity received app3's own secret through the platform (backlog 85):
+    # the expected value is app3's credential, not what the product rendered.
+    as_product python3 - "$state" "$install_root/config/containers/systemd/$product_name-identity.yaml" <<'WHOAMI_API'
+import base64
 import json
 import sys
+from pathlib import Path
 
-expected = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
-with open(sys.argv[1]) as stream:
-    if json.load(stream)["api_secrets"] != expected:
-        raise SystemExit("FAIL: installed identity does not register app3")
+import yaml
+
+LINE = "ApiResources__0__ApiSecrets__0__Value"
+
+
+def check_registration(state, identity_yaml):
+    """app3's secret == its registration == the key of Identity's identity-apis Secret."""
+    expected = {"app3": {"index": 0, "secret": "app3-api-secret/value"}}
+    if json.loads((state / "metadata/identity.json").read_text())["api_secrets"] != expected:
+        raise RuntimeError("installed identity does not register app3")
+    secret = (state / "app3/credentials/api-secret/value").read_bytes()
+    if not secret or (state / "apis/app3/value").read_bytes() != secret:
+        raise RuntimeError("the app3 registration is not app3's secret")
+    rendered = [
+        doc
+        for doc in yaml.safe_load_all(identity_yaml.read_text())
+        if doc and doc.get("kind") == "Secret" and doc["metadata"]["name"] == "identity-apis"
+    ]
+    if len(rendered) != 1 or base64.b64decode(rendered[0]["data"].get(LINE, "")) != secret:
+        raise RuntimeError("identity's installed identity-apis Secret lacks app3's secret")
+
+
+def main():
+    check_registration(Path(sys.argv[1]), Path(sys.argv[2]))
+    print("PASS: app3's secret is its registration and identity's installed identity-apis key")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, yaml.YAMLError) as error:
+        # Fixed texts only; never a value.
+        raise SystemExit("FAIL: " + (str(error) if isinstance(error, RuntimeError) else "registration files unreadable"))
 WHOAMI_API
-    echo 'PASS: installed identity registers app3 from the whoami environment'
     ;;
 renamed-bundle-list) cat "$renamed/dist/current-bundles.txt";;
 renamed-bundle)

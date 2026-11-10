@@ -22,7 +22,15 @@ from . import render as rendering
 
 # Directories and files the target state directory uses for shared state. A component with
 # one of these IDs would share a path with that state, so the IDs are reserved.
-RESERVED_IDS = ("installed", "metadata", "routes", "clients", "apis", "files")
+RESERVED_IDS = (
+    "installed",
+    "uninstalled",
+    "metadata",
+    "routes",
+    "clients",
+    "apis",
+    "files",
+)
 
 # Registration roles. routes and clients come from a file in the component
 # and arrive at their owner in an imported volume; an API secret is the API's
@@ -232,16 +240,17 @@ def check_selected_dependencies(data, selected, files, env_overrides):
     """
     gateway, identity = data.get("gateway"), data.get("identity")
     for name in selected:
-        missing = []
+        dependency = reason = None
         if gateway is not None and gateway not in selected:
+            dependency = gateway
             reason = (
                 "it has route.conf" if files[name]["route"] else "its public settings"
             )
-            missing.append((gateway, reason))
-        if identity is not None and identity not in selected and files[name]["client"]:
-            missing.append((identity, "it has client.yaml"))
-        if missing:
-            dependency, reason = missing[0]
+        elif (
+            identity is not None and identity not in selected and files[name]["client"]
+        ):
+            dependency, reason = identity, "it has client.yaml"
+        if dependency:
             raise common.DeployError(
                 f"{env_overrides.path}: {name} requires {dependency} ({reason}); "
                 f"add {dependency} to components"
@@ -302,7 +311,8 @@ def api_secret_mapping(identity, files):
             if not owners:
                 raise common.DeployError(
                     f"{where}: no listed component owns {line.secrets[0]}; a secret ID "
-                    "starts with the ID of the component that declares it"
+                    "starts with the ID of the component that declares it, which "
+                    "must be in the catalog and in a build environment's components:"
                 )
             api, index = owners[0], int(match[1])
             if api in mapping or index in [e["index"] for e in mapping.values()]:
@@ -796,6 +806,34 @@ def component_paths(component):
             f"Refuse symlinked component state or output paths for {component}"
         )
     return config, files, output, quadlet
+
+
+def uninstalled_path(state, name):
+    """The record that an explicit uninstall removed this component (backlog 85).
+
+    The runtime command installs every delivered release; without this
+    record a component the operator removed would come back with the next
+    run, because its release stays installed. A later install removes it.
+    """
+    return state / "uninstalled" / name
+
+
+def uninstalled_components(state):
+    """Names with an uninstall record; links and other files are refused."""
+    directory = state / "uninstalled"
+    if directory.is_symlink():
+        raise common.DeployError(f"Refuse symlinked uninstall records: {directory}")
+    if not directory.exists():
+        return []
+    names = []
+    for record in sorted(directory.iterdir()):
+        if record.name.startswith("."):
+            continue  # An interrupted atomic write leaves only a temporary file.
+        check_id(record.name, str(record))
+        if record.is_symlink() or not record.is_file():
+            raise common.DeployError(f"Invalid uninstall record {record}")
+        names.append(record.name)
+    return names
 
 
 def installed_version(state, name):

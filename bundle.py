@@ -502,7 +502,10 @@ def parser():
     result = arguments.Parser(
         prog="./build-bundle.sh",
         usage="./build-bundle.sh [--environment <name>] [<component> ...] [--verbose]",
-        description="Build offline bundles; without components, every catalog component.",
+        description=(
+            "Build offline bundles; without components, every catalog component, "
+            "or every component of the --environment"
+        ),
         allow_abbrev=False,
     )
     result.add_argument(

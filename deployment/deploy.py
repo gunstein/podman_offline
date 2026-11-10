@@ -979,10 +979,16 @@ def write_installed_metadata(descriptor):
 
 
 def write_installed_marker(descriptor):
-    """Publish the completed version before acknowledging the install attempt."""
+    """Publish the completed version before acknowledging the install attempt.
+
+    An earlier uninstall record goes with it: the component is installed again.
+    """
     write_install_record(
         common.STATE / "installed" / descriptor["name"], descriptor["version"] + "\n"
     )
+    record = catalog.uninstalled_path(common.STATE, descriptor["name"])
+    if record.is_file():
+        record.unlink()
 
 
 def install_preconditions(checked):
@@ -1248,6 +1254,7 @@ def uninstall(component=None, delete_data=False):
         api,
         marker,
         catalog.metadata_path(common.STATE, component),
+        catalog.uninstalled_path(common.STATE, component),
     ):
         if any(parent.is_symlink() for parent in [path] + list(path.parents)):
             raise common.DeployError("Refuse symlinked uninstall state or output paths")
@@ -1304,6 +1311,11 @@ def uninstall(component=None, delete_data=False):
         if (common.STATE / component).exists():
             shutil.rmtree(common.STATE / component)
     removed = catalog.installed_version(common.STATE, component)
+    # Before the marker goes: the runtime command must not install the
+    # component again (backlog 85). A retry finds the pending record.
+    write_install_record(
+        catalog.uninstalled_path(common.STATE, component), (removed or "") + "\n"
+    )
     # Marker first: metadata without a marker is an unfinished install, never the reverse.
     for path in (marker, catalog.metadata_path(common.STATE, component)):
         if path.exists():

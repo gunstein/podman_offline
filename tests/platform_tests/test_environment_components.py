@@ -9,15 +9,20 @@ import contextlib
 import copy
 import io
 import shutil
+import sys
 import tarfile
+from pathlib import Path
 from unittest import mock
 
 import bundle
 import rpms
 import yaml
-from deployment import catalog, common, deploy
+from deployment import catalog, common, deploy, status
 
 from helpers.product_fixture import RENAMED, ProductFixture, pod
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import runtime  # pyright: ignore[reportMissingImports] - tools/ above
 
 
 def api_pod(name):
@@ -305,15 +310,23 @@ class SelectionRpmTests(SelectionFixture):
         self.wrapped = []
 
         def build_rpm(archive, product, component, version, target):
+            """Stands in for rpmbuild; the selection and the files are real."""
             self.wrapped.append(archive.name)
-            return target / f"{product}-{component}.rpm"
+            rpm = target / f"{product}-{component}-{version}-{version}-1.noarch.rpm"
+            rpms.refuse_existing(rpm, component)
+            target.mkdir(parents=True, exist_ok=True)
+            rpm.write_text(archive.name)
+            return rpm
+
+        def build_tools(product, target):
+            version = (self.source / "tools/VERSION").read_text().strip()
+            rpm = target / f"{product}-tools-{version}-1.noarch.rpm"
+            target.mkdir(parents=True, exist_ok=True)
+            rpm.write_text("tools")
+            return rpm
 
         self.stack.enter_context(mock.patch.object(rpms, "build_rpm", build_rpm))
-        self.stack.enter_context(
-            mock.patch.object(
-                rpms, "build_tools", lambda product, target: target / "tools.rpm"
-            )
-        )
+        self.stack.enter_context(mock.patch.object(rpms, "build_tools", build_tools))
 
     def test_a_stale_archive_of_a_larger_set_is_never_wrapped(self):
         bundle.build(environment_name="prod1")
@@ -336,6 +349,57 @@ class SelectionRpmTests(SelectionFixture):
             rpms.RpmError, "ledger is not in config/prod1.yaml"
         ):
             rpms.build(["ledger"], environment_name="prod1")
+
+    def test_the_delivery_holds_exactly_the_current_rpms(self):
+        """A larger delivery, then a smaller one: the old RPM is never delivered."""
+        delivery = bundle.DIST / "prod1/delivery"
+        bundle.build(environment_name="prod1")
+        rpms.build(environment_name="prod1")
+        tools = "myproduct-tools-" + (self.source / "tools/VERSION").read_text().strip()
+        self.assertEqual(
+            sorted(path.name for path in delivery.iterdir()),
+            [
+                "myproduct-accounts-1.0.0-1.0.0-1.noarch.rpm",
+                "myproduct-ledger-1.0.0-1.0.0-1.noarch.rpm",
+                "myproduct-reports-1.0.0-1.0.0-1.noarch.rpm",
+                tools + "-1.noarch.rpm",
+            ],
+        )
+        # prod1 drops ledger; accounts gets a new version, reports stays.
+        self.put(
+            "config/prod1.yaml",
+            environment_file(
+                ["accounts", "reports"], accounts={"main": registration(0, "reports")}
+            ),
+        )
+        (self.source / "components/accounts/VERSION").write_text("1.1.0\n")
+        bundle.build(environment_name="prod1")
+        rpms.build(["accounts"], environment_name="prod1")
+        # Every RPM ever built stays in rpm/; the delivery has only the current.
+        self.assertTrue(
+            (
+                bundle.DIST / "prod1/rpm/myproduct-ledger-1.0.0-1.0.0-1.noarch.rpm"
+            ).is_file()
+        )
+        self.assertEqual(
+            sorted(path.name for path in delivery.iterdir()),
+            [
+                "myproduct-accounts-1.1.0-1.1.0-1.noarch.rpm",
+                "myproduct-reports-1.0.0-1.0.0-1.noarch.rpm",
+                tools + "-1.noarch.rpm",
+            ],
+        )
+
+    def test_a_delivery_with_a_missing_rpm_is_not_written(self):
+        bundle.build(environment_name="prod1")
+        delivery = bundle.DIST / "prod1/delivery"
+        with self.assertRaisesRegex(
+            rpms.RpmError,
+            "dist/prod1/delivery not written: no RPM yet for ledger, reports, "
+            "--tools; run ./build-rpms.sh --environment prod1 ledger reports --tools",
+        ):
+            rpms.build(["accounts"], environment_name="prod1")
+        self.assertFalse(delivery.exists())
 
     def test_a_list_from_another_set_is_refused(self):
         bundle.build(environment_name="prod1")
@@ -392,6 +456,20 @@ class SelectionInstallTests(SelectionFixture):
                 installed["accounts"]["api_secrets"],
                 {"reports": {"index": 0, "secret": "reports-api-secret/value"}},
             )
+            # The next runtime run leaves ledger out although its release stays:
+            # the real status report and the runtime command's own selection.
+            report = status.collect()
+            self.assertEqual(report["uninstalled"], ["ledger"])
+            order = ["accounts", "ledger", "reports"]
+            versions = {"accounts": "1.1.0", "ledger": "1.0.0", "reports": "1.0.0"}
+            with contextlib.redirect_stdout(io.StringIO()) as shown:
+                targets = runtime.selected(report, order, versions, None, "myproduct")
+            self.assertEqual(targets, [])
+            self.assertIn("ledger was uninstalled", shown.getvalue())
+            # A plain status run reports it, without an error.
+            with contextlib.redirect_stdout(io.StringIO()) as shown:
+                status.status()
+            self.assertIn("Uninstalled: ledger", shown.getvalue())
 
 
 class DependencyTests(ProductFixture):
@@ -456,6 +534,15 @@ class DependencyTests(ProductFixture):
                 self.install(releases[name])
         installed = catalog.load_installed_metadata(common.STATE)
         self.assertEqual(sorted(installed), ["gateway", "manual"])
+        # Uninstall leaves a record; installing again removes it.
+        with self.environment():
+            self.use_root(releases["manual"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                deploy.uninstall()
+            record = catalog.uninstalled_path(common.STATE, "manual")
+            self.assertEqual(record.read_text(), "1.0.0\n")
+            self.install(releases["manual"])
+            self.assertFalse(record.exists())
         self.assertEqual(installed["gateway"]["accepts"], {"routes": "gateway-routes"})
         self.assertEqual(
             sorted(path.name for path in (common.STATE / "routes").iterdir()),

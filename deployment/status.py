@@ -83,10 +83,17 @@ def collect():
                 ),
             }
         )
+    # Removed on purpose; the runtime command leaves them out (backlog 85).
+    uninstalled = catalog.uninstalled_components(common.STATE)
     # Validate all state files before the first host query.
     for component in components:
         component["state"] = unit_state(component["unit"])
-    return {"product": product, "components": components, "pending": pending}
+    return {
+        "product": product,
+        "components": components,
+        "pending": pending,
+        "uninstalled": uninstalled,
+    }
 
 
 def status(json_output=False):
@@ -108,6 +115,8 @@ def status(json_output=False):
             )
         if not report["components"]:
             print("No installed components.")
+        if report["uninstalled"]:
+            print("Uninstalled: " + ", ".join(report["uninstalled"]))
         print("Product: " + report["product"])
         pending = report["pending"]
         if pending is None:

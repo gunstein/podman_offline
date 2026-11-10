@@ -567,3 +567,79 @@ class WhoamiBundleTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("PASS:", result.stdout)
                 self.assertEqual(copied, [])
+
+
+class WhoamiApiRegistrationTests(unittest.TestCase):
+    """The PROD check of app3's registration, against fixture state files."""
+
+    def state(self, directory, registration=b"app3-secret", rendered=b"app3-secret"):
+        import base64
+
+        import yaml
+
+        state = Path(directory) / "state"
+        files = {
+            "metadata/identity.json": json.dumps(
+                {
+                    "api_secrets": {
+                        "app3": {"index": 0, "secret": "app3-api-secret/value"}
+                    }
+                }
+            ).encode(),
+            "app3/credentials/api-secret/value": b"app3-secret",
+            "apis/app3/value": registration,
+        }
+        for relative, data in files.items():
+            (state / relative).parent.mkdir(parents=True, exist_ok=True)
+            (state / relative).write_bytes(data)
+        identity = Path(directory) / "myproduct-identity.yaml"
+        secret = {
+            "kind": "Secret",
+            "metadata": {"name": "identity-apis"},
+            "data": {
+                "ApiResources__0__ApiSecrets__0__Value": base64.b64encode(
+                    rendered
+                ).decode()
+            },
+        }
+        identity.write_text(
+            yaml.safe_dump_all([{"kind": "Pod", "metadata": {"name": "x"}}, secret])
+        )
+        return state, identity
+
+    def check(self):
+        from test_components import guest_code
+
+        return guest_code("WHOAMI_API")["check_registration"]
+
+    def test_the_secret_registration_and_identity_key_agree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.check()(*self.state(directory))
+
+    def test_each_wrong_link_fails(self):
+        for label, kwargs, cause in (
+            (
+                "registration",
+                {"registration": b"other"},
+                "registration is not app3's secret",
+            ),
+            (
+                "rendered",
+                {"rendered": b"other"},
+                "identity-apis Secret lacks app3's secret",
+            ),
+            (
+                "empty registration",
+                {"registration": b""},
+                "registration is not app3's secret",
+            ),
+        ):
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(RuntimeError, cause) as raised:
+                    self.check()(*self.state(directory, **kwargs))
+                self.assertNotIn("app3-secret", str(raised.exception))
+        with tempfile.TemporaryDirectory() as directory:
+            state, identity = self.state(directory)
+            (state / "metadata/identity.json").write_text('{"api_secrets": {}}')
+            with self.assertRaisesRegex(RuntimeError, "does not register app3"):
+                self.check()(state, identity)
