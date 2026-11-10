@@ -56,9 +56,11 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 85. Select the components of a build environment
 
-Status: **requirement recorded** (product owner, 2026-11-09); implementation
-follows [item 84](#84-environment-specific-container-environment-overrides)
-and must not start before it. **Decisions (product owner, 2026-11-09):**
+Status: **requirement recorded, not implemented** (product owner,
+2026-11-09). It builds on
+[item 84](#84-environment-specific-container-environment-overrides), which
+is implemented and lab-verified on `9c85e2f`; today an environment file with
+`components:` is refused with a message that this item is not implemented. **Decisions (product owner, 2026-11-09):**
 the format below (fixed top-level keys `components:` and `overrides:`,
 already in item 84), and option (a) for Identity registrations of optional
 APIs (see "Dependencies and Identity registrations"). Read the latest `main`,
@@ -101,6 +103,51 @@ overrides:             # item 84: per component, only ENVIRONMENT
         ApiResources__0__ApiSecrets__0__Value: '@@secret:app1-api-secret/value@@'
 ```
 
+`config/prod2.yaml` (platform, identity and app2) is the example under
+"Overrides of the selected components" below.
+
+`config/dev.yaml` keeps its settings, its file-source overrides and item 84's
+reserved `overrides` block, unchanged. Dev component selection is outside
+this item.
+
+### Overrides of the selected components
+
+`components:` decides which components the environment's product has.
+`overrides:` keeps exactly item 84's meaning (existing behavior, see item 84
+and [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-configenvironmentyaml)):
+for each selected component it is merged into the `ENVIRONMENT` of that
+component's `config.defaults.yaml`. A variable with the same name replaces
+the common value, a new variable is added, every other variable stays;
+there is no deletion syntax. New in this item: an override of a component
+outside `components:` is refused (today overrides are checked against the
+whole catalog).
+
+`overrides:` is not a general overlay of the manifests (item 84 rules,
+unchanged here):
+
+- `ENVIRONMENT` reaches a container as the generated ConfigMap
+  `<component>-<container>-env` and Secret `<component>-<container>-env-secret`
+  through `envFrom`, both built from the effective (merged) declarations.
+  The manifest's own `env` entries stay as written.
+- The same variable in the effective `ENVIRONMENT` and in that container's
+  manifest `env` is refused, also when the names differ only in case; a
+  container with hand-written `envFrom` cannot use `ENVIRONMENT`.
+- Hand-written ConfigMaps get no merge or override mechanism; a ConfigMap
+  mounted as files is not changed by overrides. `MOUNTS`, images, manifests,
+  settings and file sources cannot be overridden.
+- A variable an environment may change must therefore be declared in
+  `ENVIRONMENT` (in the common file, or first in the environment's override).
+
+Example (illustrative values, not the shipped demo):
+
+```yaml
+# components/app2/config.defaults.yaml (common)
+ENVIRONMENT:
+  backend:
+    Logging__LogLevel__Default: Information
+    Features__Export: "false"
+```
+
 ```yaml
 # config/prod2.yaml
 components:
@@ -112,12 +159,13 @@ overrides:
     ENVIRONMENT:
       backend:
         Logging__LogLevel__Default: Debug
+        Export__MaxRows: "1000"
 ```
 
-`config/dev.yaml` keeps its settings and file-source overrides; item 84's
-reserved block is then named `overrides` (not `components`), with the same
-structure as `overrides` in an environment file. Dev component selection is
-outside this item.
+In prod2, app2's `backend` gets `Logging__LogLevel__Default: Debug`
+(replaced), `Features__Export: "false"` (kept) and `Export__MaxRows: "1000"`
+(added), as the ConfigMap `app2-backend-env`. app1 is not in prod2, so an
+`overrides.app1` entry in this file would be refused.
 
 ### Component selection
 
@@ -168,8 +216,11 @@ discarded to make a component set pass.
 app3's registration lines move out of the common Identity file: into
 `config/dev.yaml`'s `overrides` (and `dev.yaml.example`) for dev, and into
 each environment that includes app3. A build without `--environment` then
-has app3 without its Identity registration, so app3's API calls are refused
-(as the validation rules read today it passes; confirm in the analysis). The
+has app3 without its Identity registration, so app3's API calls are refused.
+That build passes validation (checked by reading `e822637`:
+`catalog.api_secret_mapping` examines only lines that name another
+component's secret, so app3's own secret line leaves `apis` empty and adds
+no dependency); a product test of this item confirms it. The
 documentation says that a product with an optional API always builds with
 an environment.
 
@@ -186,9 +237,15 @@ environment's bundles; a partial build leaves it unchanged (today's rule).
 `dist/` keeps earlier archives on purpose (a removed component may still be
 installed somewhere), so stale archives from an earlier, larger set must not
 be picked up by accident: everything that takes "the current product" reads
-that list, including `./build-rpms.sh` (item 69), which today takes every
-catalog component's archive from `dist/` and must take the selected
-environment's list and directory instead.
+that list. Existing since item 84: `./build-rpms.sh --environment <name>`
+(`rpms.py`) takes its archives from `dist/<name>/` and writes
+`dist/<name>/rpm/`. Remaining here: `rpms.build` still derives the component
+list from the whole source catalog (`catalog.source_descriptors(ROOT)`), so
+with a smaller set it would ask for archives of excluded components, or wrap
+an archive an earlier, larger set left in `dist/<name>/`. It must wrap
+exactly the selected environment's current bundles (the archives
+`dist/<name>/current-bundles.txt` names, for the versions of the selected
+set), and a selected component missing from that list is an error.
 
 Compiled descriptors describe the selected environment consistently, and
 bundles stay usable offline without the source catalog or environment file.
@@ -201,11 +258,18 @@ stays an explicit uninstall (`deploy.sh uninstall app1`, with the existing
 dependency, registration and data-retention rules); the operator manual
 says so. With the RPM delivery (item 69), app1's release stays installed and
 running until that uninstall, and `<product>-admin` keeps its release (the
-retirement rule never removes a component's newest release).
+retirement rule never removes a component's newest release). Its route and
+client registrations stay active until then too. An excluded API is the one
+ordering constraint: install refuses an Identity release without the API
+secret line of an installed API (`deploy.check_api_secret_lines`, existing),
+so the API is uninstalled before the smaller environment's Identity is
+installed; the manual names that order.
 
 ### Verification
 
-Extend the existing fixtures and tests to cover:
+Item 84's tests (merge, null, case, containers, compile, isolated install)
+stay as they are and are not repeated here. Extend the existing fixtures and
+tests to cover:
 
 - two environments with different explicit component sets;
 - no `components:` meaning the full catalog;
@@ -214,14 +278,25 @@ Extend the existing fixtures and tests to cover:
 - a missing gateway or Identity dependency;
 - an included Identity declaration naming an excluded API's secret
   (refused);
-- a valid environment-specific API registration with item 84 overrides;
+- a valid environment-specific API registration with item 84 overrides
+  (prod1 with app1 and its Identity lines; prod2 without both), with
+  Identity's descriptor (`api_secrets`, `accepts`) and bundled
+  `ENVIRONMENT` matching each environment;
+- an override of a component outside the selected set (refused, also an
+  empty `{}` entry and in a partial build), and overrides of selected
+  components merged as in item 84 (one replaced, one kept, one added);
+- a build without `--environment` after app3's lines moved out of the
+  common Identity file (passes; app3 has no API registration);
 - excluded components with an unavailable image, a malformed manifest or
   missing credentials having no effect on the selected build;
 - correct descriptors, image lists and `current-bundles.txt`;
 - repeated builds after reducing the set (no stale archive selected,
-  `build-rpms.sh` included);
+  `build-rpms.sh --environment` included: it wraps only the listed
+  archives);
 - isolated installation of the selected bundles;
-- an explicit uninstall when an installation moves to a smaller set.
+- an explicit uninstall when an installation moves to a smaller set,
+  including an excluded API: the new Identity release is refused until the
+  API is uninstalled.
 
 Real acceptance: on a fresh installation, the selected components run and
 the excluded component's containers, units and registrations (routes,
@@ -235,6 +310,24 @@ overrides. No automatic dependency completion, generic manifest overlay or
 second product model. The YAML format and the Identity treatment are
 decided above; record any change to the dependency rules here before
 implementation.
+
+Integration points on `e822637` (recheck before starting):
+
+- `environment.read_environment_file` refuses `components:`; it accepts the
+  list and returns it with the `Overrides`.
+- `catalog.load_catalog(root, env_overrides)` checks override IDs against the
+  whole catalog and reads every listed component's `ENVIRONMENT`
+  (`registration_files`); with a selection both use the selected set, so
+  Identity's line for an excluded API fails as "no listed component owns".
+- `bundle.build` reads every catalog manifest through `manifest_images()`;
+  with a selection only the selected components' manifests are read.
+  `bundle.check_declarations` already runs only for overridden components.
+  `generated_secret_guard(guarded_directories())` reads every catalog
+  component's config files (not manifests or credentials) to keep private
+  files out of bundles; keeping it over the whole catalog is the simpler
+  and safer choice unless a test shows it breaks a requirement above.
+- `dev/pull-images.sh` and `dev/build-images.sh` call `manifest_images()`
+  for the whole catalog; dev selection is outside this item, so they stay.
 
 ## 84. Environment-specific container environment overrides
 
