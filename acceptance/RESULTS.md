@@ -29,40 +29,53 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-9c85e2f` | 45 | CLEAN PASS |
-| normal | `normal-9c85e2f` | 118 | CLEAN PASS |
-| `--first-app app2` | `app2-9c85e2f` | 112 | CLEAN PASS |
-| `--identity-only` | `identity-9c85e2f` | 52 | CLEAN PASS |
-| `--help-only` | `help-9c85e2f` | 46 | CLEAN PASS |
-| `--platform-help-only` | `platform-help-9c85e2f` | 25 | CLEAN PASS |
-| `--renamed-product` | `renamed-9c85e2f` | 56 | CLEAN PASS |
+| `--whoami` | `whoami-9c00aca` | 48 | CLEAN PASS |
+| normal | `normal-9c00aca` | 118 | CLEAN PASS |
+| `--first-app app2` | `app2-9c00aca` | 112 | CLEAN PASS |
+| `--identity-only` | `identity-9c00aca` | 52 | CLEAN PASS |
+| `--help-only` | `help-9c00aca` | 46 | CLEAN PASS |
+| `--platform-help-only` | `platform-help-9c00aca` | 25 | CLEAN PASS |
+| `--renamed-product` | `renamed-9c00aca` | 56 | CLEAN PASS |
 
-All on `9c85e2f` (2026-11-09, one batch with both `--rpm-manual` runs below),
-clean detached checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and
-PROD, no failed or skipped step; the step counts equal the previous matrix.
-This commit is backlog 84 (environment-specific `ENVIRONMENT` overrides) with
-its three review rounds, on top of `8cc668f`.
+All on `9c00aca` (2026-11-10, one batch of ten runs with `--status-retry`
+and both `--rpm-manual` runs below), clean detached checkout of
+`claude/compassionate-wright-mzz19z`, Oracle Linux Server 9.8 and Podman
+5.8.2 on DEV and PROD, no failed or skipped step. This commit is backlog 85's
+revised model (component selection and `ENVIRONMENT` overrides applied on
+the target from `state/<environment>.yaml`; neutral bundles and RPMs; the
+product owner's option C) with its review rounds, on top of backlog 84.
+`--whoami` has 48 steps (45 before, for the environment file); the other
+matrix step counts are unchanged.
 
-Backlog 84 in these runs: in normal, `03-database-runtime` ran the extended
-`environment_update_test.py`: after a first `./dev/dev.sh up`, a variable
-added to `config.defaults.yaml` and two overrides in `config/dev.yaml`'s
-`overrides` block (one regular container, one `always` init container that
-prints its value) reached the new containers with their exact values, the
-common `EXISTING_SETTING` was kept and the generated secret was unchanged.
-In normal and `--first-app app2`, `10-build-upgrade` built the app1 upgrade with `./build-bundle.sh
---environment lab app1` from an isolated checkout whose `config/lab.yaml`
-overrides app1's `DEMO_CONFIG_LAYER`; it was delivered as a release RPM and
-installed with `sudo myproduct-admin <directory>`. After the upgrade, PROD's
-installed YAML and the running app1 backend had `environment-lab` (the
-scenario's expectation, `seed_upgrade.LAYER`), app2 did not receive the
-variable, the database held `release-v2`, and `10-persistent-after` found
-config and credentials unchanged (only the public seed archive changed).
-Before that upgrade, and in the scenarios without it, `healthy()` found the
-release default `defaults` wherever app1 (or renamed's orders) was
-installed, so builds without `--environment` behave as before. Not covered by the lab:
-`./build-rpms.sh --environment <name>` (the harness wraps the copied archive
-with `rpms.build_rpm`; the command has local tests only) and an interruption
-and retry of an environment-built release.
+Backlog 84/85 in these runs:
+
+- `--whoami`: the bundles were built without an environment. The demo's
+  `config/whoami.yaml` (components platform, identity and app3, and
+  Identity's override with app3's API registration) was copied to PROD and
+  placed as the runtime account in the state directory
+  (`06-environment-file`, `06-whoami-environment`) before any install.
+  Every PROD install used `--environment whoami`. Then `whoami-api-registration`
+  found Identity's installed `api_secrets` naming app3. app3's own
+  generated secret, its registration (`state/apis/app3/value`) and the key
+  of Identity's installed `identity-apis` Secret were the same bytes.
+- normal and `--first-app app2`: the app1 upgrade was a neutral bundle.
+  Before its validate and install, `upgrade` placed a `lab` environment
+  file on PROD (components platform, identity, app1, app2 and help, and
+  app1's `DEMO_CONFIG_LAYER: environment-lab`), and every later install of
+  the run used `--environment lab`. After the upgrade, PROD's installed YAML
+  and the running app1 backend had `environment-lab`, app2 did not receive
+  the variable, the database held `release-v2`, and `10-persistent-after`
+  found config and credentials unchanged. Before it, and in the scenarios
+  without it, `healthy()` found the release default `defaults`.
+- In normal, `03-database-runtime` ran `environment_update_test.py`: dev's
+  `config/dev.yaml` `overrides` block (unchanged by backlog 85) reached a
+  regular and an `always` init container with their exact values.
+
+Not covered by the lab (product and harness tests only): a plain
+`myproduct` after an environment install with an upgraded API (option C:
+refused, nothing changed), another API secret line in Identity for the same
+version, a pending API install with a changed environment file, and the
+refusal of invalid environment records.
 
 As before, every scenario delivered its PROD releases as RPMs built on DEV and
 installed them with `sudo myproduct-admin <directory>` (which also prepared
@@ -91,21 +104,20 @@ the earlier matrices are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `status-retry-9c85e2f` | 113 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-9c85e2f` | 58 | CLEAN PASS |
-| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-9c85e2f` | 59 | CLEAN PASS |
+| `--status-retry` | `status-retry-9c00aca` | 113 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-9c00aca` | 63 | CLEAN PASS |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-9c00aca` | 64 | CLEAN PASS |
 
-Status/retry: on `9c85e2f` (2026-11-10, after the matrix), clean detached
-checkout, no failed or skipped step; OS and Podman versions were not
-extracted from this run's `EVIDENCE.md`. A same-version failure stays pending
+Status/retry: on `9c00aca` (2026-11-10, in the same batch), clean detached
+checkout, OS and Podman as the matrix, no failed or skipped step. A same-version failure stays pending
 with the old container active, a plain retry completes, and the restore
 leaves protected code unchanged.
 The `--host-setup` scenario (the `release.py` manual) was removed in backlog
 69 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): both on `9c85e2f` (2026-11-09), same checkout, OS
-and Podman as the matrix; backlog 84 added one sentence to the manual and no
-command. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
+RPM manual (backlog 69 WP6): both on `9c00aca` (2026-11-10), same checkout, OS
+and Podman as the matrix. Five steps more than before, for backlog 85's manual
+steps 6, 7 and 9. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
 reset (`strict_fapolicyd: true`). In both runs every operator step ran the
 command block of `docs/PRODUCTION-INSTALL.md` literally (only its example
 values replaced), with the answers typed at the prompts and the runtime user
@@ -122,8 +134,20 @@ podman had loaded the new image and completed in a fresh login; the next
 admin run removing the older help and its tree with the guard still closed;
 with a tools module removed, the documented symptom, `rpm -q`, the documented
 reinstall and a working admin command; the journal lines for sharing; no
-FANOTIFY/AVC event. Not covered: mounting a medium, the restart after newer
-tools.
+FANOTIFY/AVC event. Backlog 85, with the manual's blocks:
+- the first delivery was `./build-rpms.sh platform help` with exactly those
+  two release RPMs and the tools RPM in `dist/delivery/`;
+- the help upgrade came from its own `dist/release-help-<version>/`;
+- `prod1.yaml` (`components: [platform, help]`) was copied with the
+  manual's `scp` line;
+- `myproduct --environment prod1` checked it in both releases ("fits
+  environment prod1");
+- `./deploy.sh uninstall` in help's release removed help with its data
+  kept;
+- the same environment command then stopped with help still listed;
+- `myproduct --environment prod1 help` installed it again.
+
+Not covered: mounting a medium, the restart after newer tools.
 
 The protected-release and production-layout matrices and the RPM prototype
 have no run on the current code; their last runs are in the git history. The

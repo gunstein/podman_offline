@@ -56,14 +56,18 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 85. Select the components of a target environment
 
-Status: **implemented, revised model (2026-11-10); real Podman/systemd
-verification outstanding**. Product tests
-(`tests/platform_tests/test_environment_components.py`,
-`test_environment_overrides.py`, `test_runtime.py`, the demo tests) and
-harness tests pass. The `--whoami`, normal (app1 upgrade with the lab
-environment) and `--rpm-manual` scenarios exercise it but have not run on
-the lab; the `9c85e2f` runs in [RESULTS](acceptance/RESULTS.md) predate this
-model. It builds on
+Status: **implemented and lab-verified on `9c00aca`, revised model
+(2026-11-10)**; code review approved. All ten lab runs were CLEAN PASS: the
+matrix, `--status-retry` and both `--rpm-manual` runs; see
+[RESULTS](acceptance/RESULTS.md). They cover the environment file on the
+target, the API registration through it (`--whoami`), the app1 upgrade with
+the `lab` file, and the manual's environment, uninstall and `dist/delivery/`
+steps. Product tests only, no lab step: plain `myproduct` after an
+environment install with an upgraded API (option C), another API secret line
+for the same version, a pending API with a changed environment, and invalid
+environment records. Product tests:
+`tests/platform_tests/test_environment_components.py`,
+`test_environment_overrides.py`, `test_runtime.py` and the demo tests. It builds on
 [item 84](#84-environment-specific-container-environment-overrides).
 Review fixes (2026-11-10, on `04151a7`): a changed override or API role
 in the same version is installed again (each install records its own
@@ -487,8 +491,8 @@ overrides come from the target's environment file
 The merge, null, case, container and `envFrom` rules below stay in force;
 the sections "Build interface and artifact layout" and "Compile the
 overrides into the bundle", and the build parts of the validation and
-acceptance sections, are superseded. Real Podman/systemd verification of the
-target application is outstanding (item 85). The contract is in
+acceptance sections, are superseded. The target application is lab-verified on
+`9c00aca` (item 85). The contract is in
 [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file).
 The analysis below is based on `8b7161b`. Read the latest `main`, [AGENTS.md](AGENTS.md),
 [the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
