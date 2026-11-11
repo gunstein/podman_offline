@@ -29,7 +29,7 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-9c00aca` | 48 | CLEAN PASS |
+| `--whoami` | `whoami-fe99456` | 55 | CLEAN PASS |
 | normal | `normal-9c00aca` | 118 | CLEAN PASS |
 | `--first-app app2` | `app2-9c00aca` | 112 | CLEAN PASS |
 | `--identity-only` | `identity-9c00aca` | 52 | CLEAN PASS |
@@ -44,8 +44,11 @@ and both `--rpm-manual` runs below), clean detached checkout of
 revised model (component selection and `ENVIRONMENT` overrides applied on
 the target from `state/<environment>.yaml`; neutral bundles and RPMs; the
 product owner's option C) with its review rounds, on top of backlog 84.
-`--whoami` has 48 steps (45 before, for the environment file); the other
-matrix step counts are unchanged.
+The other matrix step counts are unchanged. `--whoami` ran again on
+`fe99456` (2026-11-11, clean detached checkout, same OS and Podman), which
+adds backlog 85's four lab steps to the harness; the product is the same as
+on `9c00aca` (no product file differs). It has 55 steps: 45 before backlog 85,
+three for the environment file and seven for those steps.
 
 Backlog 84/85 in these runs:
 
@@ -71,11 +74,30 @@ Backlog 84/85 in these runs:
   `config/dev.yaml` `overrides` block (unchanged by backlog 85) reached a
   regular and an `always` init container with their exact values.
 
-Not covered by the lab (product and harness tests only): a plain
-`myproduct` after an environment install with an upgraded API (option C:
-refused, nothing changed), another API secret line in Identity for the same
-version, a pending API install with a changed environment file, and the
-refusal of invalid environment records.
+- `--whoami` on `fe99456`, after the restore, app3 being Identity's API
+  through the file. Each step compared a fingerprint of every state and
+  Quadlet file's digest and each container's start time.
+  - `10-environment-plain`: `./deploy.sh install` and `myproduct app3`
+    without `--environment` were refused with option C's message, nothing
+    changed. The trigger was a named component, not an upgrade.
+  - `10-environment-records`: a damaged `app3.json` and a stray
+    `state/environment/app3` stopped `myproduct --environment whoami`,
+    `./deploy.sh install` and `myproduct app3`, nothing changed. Restored,
+    the environment command installed nothing.
+  - `10-environment-rotate`: with Identity's line on
+    `app3-api-secret/rotated` (a copy of `value`), the command installed
+    `['identity', 'app3']`. Identity's metadata, app3's record and
+    `identity-apis` followed the key, and the DEV e2e passed with
+    introspection.
+  - `10-environment-pending`: app3's install was stopped after its pending
+    record by an injected `daemon-reload` failure, and the file was changed
+    back. The command installed app3, Identity, then app3 again, no record
+    stayed pending, a repeat installed nothing, and the DEV e2e passed.
+    `10-check-environment` passed.
+
+Not covered by the lab: an option C refusal triggered by a real upgrade,
+and another secret line whose bytes differ (rotation needs both sides);
+both have product tests.
 
 As before, every scenario delivered its PROD releases as RPMs built on DEV and
 installed them with `sudo myproduct-admin <directory>` (which also prepared
