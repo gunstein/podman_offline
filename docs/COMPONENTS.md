@@ -1048,7 +1048,11 @@ export APP_LOG_LEVEL=Debug
   `config.yaml` replaces needs no variable.
 - An inserted value follows the place's rules, as a setting's would (an
   `ENVIRONMENT` value without surrounding spaces or quotes, for example).
-  Messages never show a value. A variable does not make a value secret:
+  The messages about a variable itself (not set, invalid name, `@@` in it,
+  an unsafe or refused value) never show its value. A value that becomes a
+  name (an image reference, a container or resource name) is no secret:
+  later messages, Podman, systemd and the installed YAML show it like any
+  name. A variable does not make a value secret:
   credentials belong in `SECRET_FILES` with `@@secret:<id>/<key>@@`.
 - `init-config` checks the resolved values but writes the references into
   `config.yaml`, so the next command uses the value exported then.

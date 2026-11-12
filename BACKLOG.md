@@ -63,7 +63,9 @@ Status: **implemented with product tests (2026-11-12); no lab run**
 fixes (on `1219bb1`): `check_unresolved` refuses any `@@` in a key (a key is
 never filled in), as the old output check did; the renamed-product
 generator renames and drops only real `@@secret:...@@` references
-(`templates.PART`), never escaped text.
+(`templates.PART`), never escaped text. Second review (on `b3a018e`): a
+`ConfigMap` data value that is not text (a list or map) is checked like any
+other value, as the old output check did.
 
 **Decision (product owner, 2026-11-12).** In template text `@@@@` is the
 literal `@@`, and nothing else is: one rule, no other escape syntax, flag or
@@ -126,7 +128,9 @@ Status: **implemented with product tests (2026-11-12); no lab run**
 fixes (on `1219bb1`): image errors show the image as written, never the
 resolved value (the fully-qualified check runs where that is known); the
 manual says that a variable used only by a component's own settings stops
-the command at that component, after the ones before it. Builds on
+the command at that component, after the ones before it. Second review (on
+`b3a018e`): identifiers from a variable showing in later messages (pull,
+manifest checks) are accepted by the decision under rule 8. Builds on
 the substitution of [item 63](#63-parameterise-image-versions-with-build-time-variables)
 (build-time images), [item 84](#84-environment-specific-container-environment-overrides)
 (`ENVIRONMENT` overrides) and
@@ -164,7 +168,13 @@ Rules:
    is refused, so no inserted value can look like one.
 8. The places' own checks (unsafe text in `ENVIRONMENT`, Secret handling)
    stay as they are. A reference does not make a value secret: credentials
-   use `SECRET_FILES` and `@@secret:...@@`.
+   use `SECRET_FILES` and `@@secret:...@@`. **Messages (product owner,
+   2026-11-12, after review):** the resolver's own messages (a missing
+   variable, an invalid name, a value with `@@`, an unsafe inserted value,
+   a refused image) never show a value. A value that becomes an identifier
+   (an image reference, a container or resource name) is not confidential:
+   later messages, Podman, systemd and the installed YAML show it as they
+   show any literal name.
 9. Layers are merged first; only the effective value is resolved, so an
    overridden default needs no variable.
 10. Literal text and the existing placeholders behave as before.

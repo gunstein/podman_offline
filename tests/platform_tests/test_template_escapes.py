@@ -166,6 +166,19 @@ class ParserTests(ProductFixture):
                 with self.assertRaisesRegex(common.DeployError, "in a key"):
                     rendering.check_unresolved(document)
 
+    def test_configmap_data_beyond_text_is_checked_as_other_values(self):
+        """The review's case: a list in ConfigMap data was stringified unchecked."""
+        for data in (
+            {"text": ["prefix @@MISSING@@"]},
+            {"text": {"nested": "x @@MISSING@@"}},
+        ):
+            with self.subTest(data):
+                with self.assertRaisesRegex(common.DeployError, "Unreplaced @@"):
+                    rendering.check_unresolved({"kind": "ConfigMap", "data": data})
+        rendering.check_unresolved(
+            {"kind": "ConfigMap", "data": {"text": ["@@NAME@@", "a @@@@ b"]}}
+        )
+
     def test_a_setting_is_resolved_once(self):
         with environ(HOST="h.example"):
             self.assertEqual(

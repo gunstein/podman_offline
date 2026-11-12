@@ -1365,16 +1365,20 @@ def check_unresolved(value):
 
     The source is checked, not the output: escaped @@@@ is a literal @@ in
     the output and must stay allowed there. A placeholder works as a whole
-    value ("@@NAME@@", "@@$NAME@@") and, embedded, only in ConfigMap data,
-    which configmap_data composes (and checks) itself.
+    value ("@@NAME@@", "@@$NAME@@") and, embedded, only in a text value of
+    ConfigMap data, which configmap_data composes (and checks) itself.
     """
     if isinstance(value, dict):
         configmap = value.get("kind") == "ConfigMap"
         for key, item in value.items():
             check_key(key)
             if configmap and key == "data" and isinstance(item, dict):
-                for data_key in item:  # Their values: configmap_data.
+                for data_key, data_value in item.items():
                     check_key(data_key)
+                    # configmap_data composes text values; anything else is
+                    # only replace()d, so it is checked as any other value.
+                    if not isinstance(data_value, str):
+                        check_unresolved(data_value)
             else:
                 check_unresolved(item)
     elif isinstance(value, list):
