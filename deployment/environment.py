@@ -114,7 +114,8 @@ def owner_secret_name(component):
 def secret_ids(value):
     """The SECRET_FILES IDs a value references with @@secret:<id>/<key>@@."""
     ids = []
-    for match in templates.TOKEN.finditer(value):
+    # An escaped @@@@secret:...@@@@ is text and names no secret (backlog 87).
+    for match in templates.placeholders(value):
         reference = templates.SECRET_REF.fullmatch(match[1])
         if reference:
             ids.append(reference[1])
@@ -392,11 +393,11 @@ def check_values(values, where):
             raise common.DeployError(
                 f"{where}: {key} must be one line of text, not a list or map"
             )
-        if "@@" in templates.TOKEN.sub("", value):
+        if templates.malformed(value):
             raise common.DeployError(
                 f"{where}: {key}: malformed placeholder (an @@ without its closing @@)"
             )
-        for match in templates.TOKEN.finditer(value):
+        for match in templates.placeholders(value):
             if match[1].startswith("$"):
                 # Resolved when the line is rendered (backlog 86).
                 templates.environment_name(match[1], f"{where}: {key}")
@@ -552,8 +553,9 @@ def check_client_settings(component, container_name, values, config, env_overrid
     config needs only the settings with_client_settings derives from it.
     """
     for key, value in values.items():
+        used = {match[1] for match in templates.placeholders(value)}
         for name in CLIENT_SETTINGS:
-            if f"@@{name}@@" in value and name not in config:
+            if name in used and name not in config:
                 raise common.DeployError(
                     f"{where(component, container_name, env_overrides, key)}: "
                     f"{key}: @@{name}@@ comes from client.yaml, which "

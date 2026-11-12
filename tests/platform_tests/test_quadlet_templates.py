@@ -15,7 +15,8 @@ INVALID = (
     "@@UNIT_NAME",
     "@@PRODUCT NAME@@",
     "@@UNIT_NAME@@@@",
-    "@@@@",
+    # @@@@ is a literal @@ (backlog 87); six @ are an escape and a stray @@.
+    "@@@@@@",
     "{name}",
     "{product}",
     "@@UNIT_NAME@@ {product}",

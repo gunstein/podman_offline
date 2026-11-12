@@ -94,10 +94,11 @@ def init_config(component, settings=None, environment_name=None):
     # The gateway's public settings complete the defaults for validation only;
     # they stay in the gateway's config.yaml, which install reads again.
     public = catalog.gateway_settings(descriptor["public_from"])
-    config = rendering.component_defaults(component, overrides={**values, **public})
-    # Written with its @@$NAME@@ references; only validation uses their values
-    # (backlog 86), so no exported value is frozen into config.yaml.
-    written = rendering.merged_defaults(component, overrides={**values, **public})
+    config = rendering.component_defaults(component, overrides=values, resolved=public)
+    # Written with its @@$NAME@@ references and @@@@ escapes; only validation
+    # uses their values (backlogs 86, 87), so nothing exported is frozen into
+    # config.yaml, and the next command resolves the file once.
+    written = rendering.merged_defaults(component, overrides=values)
     # The release's own declarations (ENVIRONMENT, MOUNTS, manifests) are
     # checked as validate does, before the file exists; credentials may follow.
     descriptor = catalog.environment_descriptor(
@@ -421,7 +422,9 @@ def dev_settings():
         source = descriptor["public_from"]
         if source:
             check_dev_shared_settings(component, source)
-        overrides = (
+        # The source's public settings are final text already: added, not
+        # resolved again (backlog 87: an escaped @@ stays literal).
+        public = (
             catalog.public_settings(
                 settings[source], common.BUILD / "dev" / source / "config.yaml"
             )
@@ -429,7 +432,7 @@ def dev_settings():
             else None
         )
         settings[component] = rendering.component_defaults(
-            component, overrides=overrides, dev=True
+            component, dev=True, resolved=public
         )
     return known, settings, env_overrides
 

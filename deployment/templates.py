@@ -2,8 +2,13 @@
 
 Three placeholder sources: @@NAME@@ a setting, @@secret:<id>/<key>@@ a
 Secret's key, and @@$NAME@@ a variable of the process environment
-(environment_value; backlog 86). Every pass is one pass: inserted text is
-never read as a placeholder.
+(environment_value; backlog 86). @@@@ is a literal @@ (backlog 87).
+
+Every template is read once, left to right, by one pattern (PART): at each
+@@ an escape @@@@ is tried before a placeholder @@...@@, so @@@@NAME@@@@ is
+the text @@NAME@@, never a placeholder. The result is output: nothing parses
+it again, and an inserted value (a setting, a variable, a secret) is never
+template source.
 
 The recipes (config["SECRET_TEMPLATES"], Secret name -> key -> text) come only
 from ENVIRONMENT and MOUNTS (environment.with_recipes, mounts.with_recipes) in
@@ -20,7 +25,9 @@ import yaml
 
 from . import common
 
-TOKEN = re.compile(r"@@(.*?)@@", re.DOTALL)
+# An escape first, then a placeholder: the one way templates are read.
+ESCAPE = "@@@@"
+PART = re.compile(r"@@@@|@@(.*?)@@", re.DOTALL)
 CONFIG_NAME = re.compile(r"[A-Z0-9_]+\Z")
 SECRET_REF = re.compile(r"secret:([a-z0-9-]+)/([-._a-zA-Z0-9]+)\Z")
 # @@$NAME@@: a variable of the process environment (backlog 86).
@@ -59,18 +66,47 @@ def environment_value(name, where):
     return value
 
 
-def environment_text(text, where):
-    """text with its @@$NAME@@ references resolved; other placeholders stay.
+def placeholders(text):
+    """text's placeholder matches, left to right; an escape @@@@ is none."""
+    return [match for match in PART.finditer(text) if match[0] != ESCAPE]
 
-    One pass: a resolved value is never read again (environment_value).
+
+def malformed(text):
+    """Whether an @@ in text is neither an escape nor part of a placeholder."""
+    return "@@" in PART.sub("", text)
+
+
+def environment_text(text, where):
+    """text with its @@$NAME@@ references resolved; everything else as written.
+
+    For checks and the environment record, never for output: escapes and
+    the other placeholders stay, so the text is still the template it was.
+    A resolved value is never read again (environment_value).
     """
 
     def replacement(match):
-        if not match[1].startswith("$"):
+        if match[0] == ESCAPE or not match[1].startswith("$"):
             return match[0]
         return environment_value(environment_name(match[1], where), where)
 
-    return TOKEN.sub(replacement, text)
+    return PART.sub(replacement, text)
+
+
+def setting_text(text, where):
+    """A setting's final text: @@$NAME@@ resolved and @@@@ made @@, once.
+
+    A setting is no template for other settings or secrets, so any other
+    placeholder in it is refused (render.resolve_settings).
+    """
+
+    def resolve(group, field):
+        if group is not None or not field.startswith("$"):
+            raise common.DeployError(
+                f"{where}: a setting may use only @@$NAME@@, and @@@@ for a literal @@"
+            )
+        return environment_value(field[1:], where)
+
+    return substitute(text, resolve, where)
 
 
 def declarations(config):
@@ -117,23 +153,35 @@ def reference(match, where):
 
 
 def tokens(text, where):
-    """Check syntax and expose names for declaration-only dependency checks."""
-    if "@@" in TOKEN.sub("", text):
+    """Check syntax and expose names for declaration-only dependency checks.
+
+    Escapes are text, not placeholders: @@@@secret:db/password@@@@ names no
+    secret.
+    """
+    if malformed(text):
         raise common.DeployError(f"{where}: malformed placeholder")
-    return [(match,) + reference(match, where) for match in TOKEN.finditer(text)]
+    return [(match,) + reference(match, where) for match in placeholders(text)]
 
 
 def substitute(text, resolve, where):
-    """One non-recursive pass; the caller supplies the allowed sources/policy."""
+    """One non-recursive pass; the caller supplies the allowed sources/policy.
+
+    @@@@ becomes @@ and each placeholder its value, in one left-to-right
+    scan of text (PART); the output is never scanned again. An inserted
+    value holding @@ is refused, as before: it is not template source, so
+    it cannot carry an escape, and it would read as an unresolved placeholder.
+    """
     tokens(text, where)
 
     def replacement(match):
-        return resolve(*reference(match, where))
+        if match[0] == ESCAPE:
+            return "@@"
+        value = resolve(*reference(match, where))
+        if "@@" in value:
+            raise common.DeployError(f"{where}: unresolved placeholder marker")
+        return value
 
-    result = TOKEN.sub(replacement, text)
-    if "@@" in result:
-        raise common.DeployError(f"{where}: unresolved placeholder marker")
-    return result
+    return PART.sub(replacement, text)
 
 
 def config_value(config, name, where):

@@ -54,6 +54,65 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 87. A literal `@@` in templates: `@@@@`
+
+Status: **implemented with product tests (2026-11-12); no lab run**
+(requirement: product owner, 2026-11-12). Tests:
+`tests/platform_tests/test_template_escapes.py`. Shares the parser with
+[item 86](#86-process-environment-variables-in-placeholders-name).
+
+**Decision (product owner, 2026-11-12).** In template text `@@@@` is the
+literal `@@`, and nothing else is: one rule, no other escape syntax, flag or
+migration. The escaped output is never read as a placeholder again.
+
+| Template text | Output |
+| --- | --- |
+| `SELECT @@@@VERSION;` | `SELECT @@VERSION;` |
+| `@@@@NAME@@@@` | `@@NAME@@` |
+| `@@@@$HOSTNAME@@@@` | `@@$HOSTNAME@@` |
+| `@@@@secret:db/password@@@@` | `@@secret:db/password@@` |
+| `Literal @@@@NAME@@@@; configured value @@NAME@@` (with `NAME: example`) | `Literal @@NAME@@; configured value example` |
+
+The escaped names are not looked up and no secret is read.
+
+### How it is read
+
+One pattern, `templates.PART` (`@@@@|@@(.*?)@@`), reads a template once,
+left to right; at each `@@` it tries the escape before a placeholder.
+`substitute` writes `@@` for an escape and the value for a placeholder,
+and its output is never scanned again. Runs of `@` are therefore fixed:
+four are `@@`, eight are `@@@@`, six are `@@` and a stray `@@`, which is a
+malformed placeholder. A `@@` that is neither an escape nor part of a
+placeholder stays malformed; an unknown placeholder stays refused.
+
+An inserted value (a setting, an exported variable, a secret, an image
+variable) is never template source, so it cannot carry an escape: a value
+that holds `@@` is refused where it is inserted, as before. Escaping makes
+the characters literal; each place's own rules still apply (an image
+reference still may not contain `@@`).
+
+The check for unfilled placeholders reads the **source**, not the output
+(`render.check_unresolved` instead of searching the rendered YAML for
+`@@`): the output may now hold a literal `@@`. It refuses the same
+placeholders as before: any not a whole value outside `ConfigMap` data.
+
+### Templates and plain contents
+
+Templates (the escape applies): settings (top-level text, read for
+`@@$NAME@@`), `ENVIRONMENT` lines and overrides, `ConfigMap` data text,
+other manifest text (only escapes there; placeholders stay whole values),
+image fields and `config/images.yaml` values, files rendered through
+`MOUNTS`, and the Quadlet templates. Never changed: a `SECRET_FILES` file
+mounted with `@@secret:<id>/<key>@@` as a `MOUNTS` source, credential
+files, `VOLUME_FILES` archives and any other file.
+
+Bundles ship the template text as written (`@@@@` included); the target
+applies the escape once. The operator's `config.yaml` keeps it too; dev's
+`build/dev/<component>/config.yaml` holds final values and is never read as
+input. A setting is resolved once: the gateway's public settings, already
+final, are added after the dependent's own settings are resolved
+(`render.component_defaults`' `resolved`).
+
 ## 86. Process environment variables in placeholders (`@@$NAME@@`)
 
 Status: **implemented with product tests (2026-11-12); no lab run**

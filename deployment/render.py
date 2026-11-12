@@ -43,7 +43,6 @@ class UniqueKeyLoader(yaml.SafeLoader):
 # COMPONENT_VERSION. Bundles ship the resolved, literal references.
 IMAGE_VARIABLES = "config/images.yaml"
 IMAGE_NAME = re.compile(r"[A-Z][A-Z0-9_]*\Z")
-IMAGE_TOKEN = re.compile(r"@@([^@]*)@@")
 # Names that already mean something else: reserved or derived config names.
 IMAGE_RESERVED = (
     "COMPONENT_VERSION",
@@ -80,7 +79,7 @@ def image_variables(root):
             raise common.DeployError(f"{path}: {name} is a reserved name; rename it")
         if isinstance(value, str):
             # Build time (backlog 86): the building process's variables.
-            value = data[name] = templates.environment_text(value, f"{path}: {name}")
+            value = data[name] = templates.setting_text(value, f"{path}: {name}")
         if not isinstance(value, str) or not value:
             raise common.DeployError(
                 f"{path}: {name} must be a nonempty text value; quote numbers "
@@ -133,23 +132,31 @@ def resolve_images(documents, variables, component, path):
                 continue
             where = f"{path}: container {container.get('name')!r}"
 
-            def value(match, where=where):
-                name = match[1]
-                if name.startswith("$"):
-                    # Build time (backlog 86): the building process's variable.
-                    return templates.environment_value(
-                        templates.environment_name(name, where), where
-                    )
-                if name == "COMPONENT_VERSION":
-                    return component_version(component, where)
-                if name not in variables:
+            def value(group, field, where=where):
+                if group is not None:
                     raise common.DeployError(
-                        f"{where}: image uses @@{name}@@, which is not in "
+                        f"{where}: an image may not use a secret placeholder"
+                    )
+                if field.startswith("$"):
+                    # Build time (backlog 86): the building process's variable.
+                    return templates.environment_value(field[1:], where)
+                if field == "COMPONENT_VERSION":
+                    return component_version(component, where)
+                if field not in variables:
+                    raise common.DeployError(
+                        f"{where}: image uses @@{field}@@, which is not in "
                         f"{IMAGE_VARIABLES}; add it there or fix the name"
                     )
-                return variables[name]
+                if "@@" in variables[field]:
+                    raise common.DeployError(
+                        f"{where}: @@{field}@@ gives no valid reference "
+                        f"after {IMAGE_VARIABLES}; check its values"
+                    )
+                return variables[field]
 
-            resolved = IMAGE_TOKEN.sub(value, image)
+            # One pass, as every template (templates.substitute): @@@@ is a
+            # literal @@, which the reference check below then refuses.
+            resolved = templates.substitute(image, value, where)
             if "@@" in resolved or any(c.isspace() for c in resolved):
                 raise common.DeployError(
                     f"{where}: image {resolved!r} is not a valid reference after "
@@ -189,7 +196,7 @@ def placeholders_outside_images(value, key=None):
         for item in value:
             found |= placeholders_outside_images(item)
     elif isinstance(value, str):
-        found = {match[1] for match in IMAGE_TOKEN.finditer(value)}
+        found = {match[1] for match in templates.placeholders(value)}
     return found
 
 
@@ -296,19 +303,21 @@ def has_environment_reference(value):
 
 
 def resolve_settings(config, path):
-    """The settings with their @@$NAME@@ references resolved, then validated.
+    """The settings with @@$NAME@@ resolved and @@@@ made @@, then validated.
 
-    Deploy time (backlog 86): call after the layers are merged, so only the
-    effective value of a setting is resolved, and before anything uses the
-    values (PUBLIC_HOSTNAME, credentials, rendering). SECRET_FILES and
-    VOLUME_FILES are declarations, not settings, and keep their text.
+    Deploy time (backlog 86): call once, after the layers are merged, so only
+    the effective value of a setting is resolved, and before anything uses
+    the values (PUBLIC_HOSTNAME, credentials, rendering). Its output is final
+    text: never pass a resolved value through it again (component_defaults'
+    resolved). SECRET_FILES and VOLUME_FILES are declarations, not settings,
+    and keep their text.
     """
     result = dict(config)
     for key, value in config.items():
         if key not in (common.SECRET_FILES, common.VOLUME_FILES) and isinstance(
             value, str
         ):
-            result[key] = templates.environment_text(value, f"{key} in {path}")
+            result[key] = templates.setting_text(value, f"{key} in {path}")
     return validate_config(result, path)
 
 
@@ -355,14 +364,20 @@ def merged_defaults(component, overrides=None, dev=False):
     return validate_config(config, local if dev else defaults)
 
 
-def component_defaults(component, overrides=None, dev=False):
-    """merged_defaults with its references resolved (resolve_settings), validated."""
+def component_defaults(component, overrides=None, dev=False, resolved=None):
+    """merged_defaults with its references resolved (resolve_settings), validated.
+
+    resolved holds settings that are already final text (the gateway's
+    public settings): they are added after the resolution, never resolved
+    again, so an escaped @@ in them stays literal.
+    """
     source = (
         common.ROOT / "config/dev.yaml"
         if dev
         else common.ROOT / "components" / component / "config.defaults.yaml"
     )
     config = resolve_settings(merged_defaults(component, overrides, dev), source)
+    config.update(resolved or {})
     materialized = (
         (common.BUILD / "dev" if dev else common.STATE) / component / "config.yaml"
     )
@@ -686,6 +701,12 @@ def replace(value, config):
             key = match.group(1)
             if key not in config:
                 raise common.DeployError(f"Missing {key} in config.yaml")
+            # An inserted value is never template text, so it cannot carry an
+            # escape: @@ in it is refused, as in every other place (backlog 87).
+            if isinstance(config[key], str) and "@@" in config[key]:
+                raise common.DeployError(
+                    f"The value of {key} contains @@; a value is not template text"
+                )
             return config[key]
         # A whole "@@$NAME@@" value: the process environment's text (backlog 86).
         if value.startswith("@@$") and value.endswith("@@") and value.count("@@") == 2:
@@ -693,6 +714,11 @@ def replace(value, config):
             return templates.environment_value(
                 templates.environment_name(value[2:-2], where), where
             )
+        # Text without placeholders: its @@@@ escapes become @@, once (backlog
+        # 87). Text with an embedded placeholder is left for ConfigMap data
+        # (configmap_data) or refused by check_unresolved.
+        if not templates.malformed(value) and not templates.placeholders(value):
+            return templates.substitute(value, None, "a manifest value")
 
     return value
 
@@ -1317,6 +1343,33 @@ def named_containers(documents):
     return found
 
 
+def check_unresolved(value):
+    """Refuse a placeholder replace() cannot fill, read from the source text.
+
+    The source is checked, not the output: escaped @@@@ is a literal @@ in
+    the output and must stay allowed there. A placeholder works as a whole
+    value ("@@NAME@@", "@@$NAME@@") and, embedded, only in ConfigMap data,
+    which configmap_data composes (and checks) itself.
+    """
+    if isinstance(value, dict):
+        configmap = value.get("kind") == "ConfigMap"
+        for key, item in value.items():
+            if not (configmap and key == "data"):
+                check_unresolved(item)
+    elif isinstance(value, list):
+        for item in value:
+            check_unresolved(item)
+    elif isinstance(value, str):
+        whole = common.PH.fullmatch(value) or (
+            value.startswith("@@$") and value.endswith("@@") and value.count("@@") == 2
+        )
+        if not whole and (templates.malformed(value) or templates.placeholders(value)):
+            raise common.DeployError(
+                'Unreplaced @@...@@. Only whole values like "@@NAME@@" are '
+                "supported; write @@@@ for a literal @@."
+            )
+
+
 def effective_documents(
     config,
     path,
@@ -1351,10 +1404,7 @@ def effective_documents(
             for before, doc in zip(original, rendered):
                 if isinstance(doc, dict) and doc["kind"] == "ConfigMap":
                     doc["data"] = configmap_data(before, doc, config)
-            if "@@" in yaml.safe_dump_all(rendered, sort_keys=False):
-                raise common.DeployError(
-                    'Unreplaced @@...@@. Only whole values like "@@NAME@@" are supported.'
-                )
+            check_unresolved(original)
         except common.DeployError as error:
             raise common.DeployError(f"{manifest} (config {path}): {error}") from None
         if component:

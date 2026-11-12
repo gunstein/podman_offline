@@ -296,8 +296,9 @@ ENVIRONMENT:
 - Placeholders: `@@NAME@@` is a setting from the top part (or a shared public
   setting); `@@secret:<id>/<key>@@` is the file `<key>` of `SECRET_FILES.<id>`;
   `@@$NAME@@` is a variable of the process environment
-  ([environment variables](#environment-variables-name)). There is no other
-  form, and a secret is always declared in `SECRET_FILES` with its path.
+  ([environment variables](#environment-variables-name)); `@@@@` is a literal
+  `@@` ([a literal @@](#a-literal--in-templates)). There is no other form,
+  and a secret is always declared in `SECRET_FILES` with its path.
 - Every value is the text as written: `UMASK: 0022`, `ENABLED: yes` and
   `VERSION: 1.10` reach the container unchanged. Quote values that start with
   `@@`.
@@ -1061,6 +1062,45 @@ installs a component again when a variable its overrides use has a new
 value, and not otherwise. A reference in `config.yaml` or in the release's
 own `ENVIRONMENT` follows the rule for any config change: run
 `<product> --environment <name> <component>` (or `<product> <component>`).
+
+## A literal `@@` in templates
+
+In template text `@@@@` is a literal `@@`; that is the only escape:
+
+```sql
+-- components/orders/files/init.sql, rendered through MOUNTS
+SELECT @@@@VERSION;
+-- Literal @@@@DB_USER@@@@; configured value @@DB_USER@@
+```
+
+becomes, with `DB_USER: orders`:
+
+```sql
+SELECT @@VERSION;
+-- Literal @@DB_USER@@; configured value orders
+```
+
+- Each template is read once, left to right, and at every `@@` the escape
+  is tried first. The result is output and is never read as a template
+  again, so `@@@@NAME@@@@`, `@@@@$HOSTNAME@@@@` and
+  `@@@@secret:db/password@@@@` give the text `@@NAME@@`, `@@$HOSTNAME@@`
+  and `@@secret:db/password@@`: nothing is looked up, no secret is read.
+- Runs of `@`: four are `@@`, eight are `@@@@`; six are `@@` and a stray
+  `@@`, a malformed placeholder. A `@@` that is neither an escape nor part
+  of a placeholder is still refused.
+- Templates: settings (top-level text), `ENVIRONMENT` lines and overrides,
+  `ConfigMap` data, other manifest text (escapes only; a placeholder there
+  is still a whole value), image fields and `config/images.yaml` values,
+  files rendered through `MOUNTS`, and the Quadlet templates.
+- Not templates, never changed: a `SECRET_FILES` file mounted with
+  `@@secret:<id>/<key>@@` as a `MOUNTS` source, every credential file,
+  `VOLUME_FILES` archives and any other file.
+- A value put into a template (a setting, an exported variable, a secret,
+  an image variable) is never template text, so a value holding `@@` is
+  still refused where it is put. Escaping makes the characters literal; the
+  place's own rules still apply: an image reference may not contain `@@`.
+- Bundles ship the template text as written; the target applies the escape
+  once.
 
 ## Image versions: `config/images.yaml`
 

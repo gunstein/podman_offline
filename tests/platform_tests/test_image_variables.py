@@ -220,7 +220,10 @@ class ImageVariableTests(ProductFixture):
         for value, message in (
             ("https://artifactory.example.test", "has a URL scheme"),
             ("artifactory.example.test/a b", "not a valid reference"),
-            ("artifactory@@example", "not a valid reference"),
+            # A stray @@ in config/images.yaml is a malformed placeholder; an
+            # escaped one is a literal @@, which no image reference may hold.
+            ("artifactory@@example", "malformed placeholder"),
+            ("artifactory@@@@example", "gives no valid reference"),
         ):
             with self.subTest(value=value):
                 self.variables.write_text("ARTIFACTORY_2: '" + value + "'\n")
