@@ -318,6 +318,22 @@ class BundleTests(ProductFixture):
         )
         self.assertNotIn("build", installed.read_text())
 
+    def test_image_messages_show_the_image_as_written(self):
+        """Never the exported value: each image refusal names the source text."""
+        manifest = self.source / "components/shop/manifests/10-resources.yaml"
+        for value, reason in (
+            ("private-marker registry", "is not a valid reference"),
+            ("https://private-marker", "has a URL scheme"),
+            ("private-marker", "must be fully qualified"),
+        ):
+            with self.subTest(value), environ(REGISTRY=value):
+                with self.assertRaises(common.DeployError) as raised:
+                    rendering.load_manifest(manifest)
+                message = str(raised.exception)
+                self.assertIn(reason, message)
+                self.assertIn("'@@$REGISTRY@@/shop:1'", message)
+                self.assertNotIn("private-marker", message)
+
     def test_a_missing_build_variable_stops_the_build(self):
         with environ(**VALUES), self.assertRaisesRegex(
             bundle.BundleError, "environment variable REGISTRY is not set"

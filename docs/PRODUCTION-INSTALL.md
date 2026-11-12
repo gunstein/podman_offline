@@ -251,7 +251,12 @@ If the supplier's settings or environment file use a value of your shell,
 written `@@$NAME@@` (for example `@@$LOG_HOST@@`), export each such variable
 in the runtime user's shell first, every time, for example
 `export LOG_HOST=logs.example.org`. A variable that is not set stops the
-command before it changes anything and names it.
+command and names it. One that the environment file's settings for a
+container use is found before anything changes; one used only in a
+component's own settings is found when that component is installed, so the
+components before it may already be installed. Either way, export it and
+run the same command again: what is installed stays, and the command
+continues.
 
 The first time it asks two questions:
 

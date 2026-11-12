@@ -68,6 +68,41 @@ def images(directory, components="*"):
     )
 
 
+class EscapedSecretTests(unittest.TestCase):
+    """Escaped @@@@secret:...@@@@ is text: never renamed, never dropped (backlog 87)."""
+
+    def test_only_real_secret_references_are_renamed_or_dropped(self):
+        for values, expected in (
+            # The review's two cases: literal text stays as written.
+            (
+                {"Literal": "@@@@secret:app3-token/value@@@@"},
+                {"Literal": "@@@@secret:app3-token/value@@@@"},
+            ),
+            (
+                {"Literal": "@@@@secret:app1-token/value@@@@"},
+                {"Literal": "@@@@secret:app1-token/value@@@@"},
+            ),
+            # Real references still behave as before.
+            (
+                {"Real": "@@secret:app1-token/value@@"},
+                {"Real": "@@secret:orders-token/value@@"},
+            ),
+            ({"Api": "@@secret:app3-api-secret/value@@"}, {}),
+            (
+                {"Both": "@@@@secret:app1-x/k@@@@ @@secret:app1-x/k@@"},
+                {"Both": "@@@@secret:app1-x/k@@@@ @@secret:orders-x/k@@"},
+            ),
+        ):
+            with self.subTest(values):
+                self.assertEqual(renamed_product.rename_env(values), expected)
+        self.assertEqual(
+            renamed_product.rename_secrets(
+                "a=@@@@secret:app1-x/k@@@@\nb=@@secret:app1-x/k@@\n"
+            ),
+            "a=@@@@secret:app1-x/k@@@@\nb=@@secret:orders-x/k@@\n",
+        )
+
+
 class GeneratorTests(unittest.TestCase):
     """The renamed product differs from the demo only in declarations."""
 

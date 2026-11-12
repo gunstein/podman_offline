@@ -59,7 +59,11 @@ Open items follow, newest first. Finished and superseded items were removed on
 Status: **implemented with product tests (2026-11-12); no lab run**
 (requirement: product owner, 2026-11-12). Tests:
 `tests/platform_tests/test_template_escapes.py`. Shares the parser with
-[item 86](#86-process-environment-variables-in-placeholders-name).
+[item 86](#86-process-environment-variables-in-placeholders-name). Review
+fixes (on `1219bb1`): `check_unresolved` refuses any `@@` in a key (a key is
+never filled in), as the old output check did; the renamed-product
+generator renames and drops only real `@@secret:...@@` references
+(`templates.PART`), never escaped text.
 
 **Decision (product owner, 2026-11-12).** In template text `@@@@` is the
 literal `@@`, and nothing else is: one rule, no other escape syntax, flag or
@@ -118,7 +122,11 @@ final, are added after the dependent's own settings are resolved
 Status: **implemented with product tests (2026-11-12); no lab run**
 (requirement: product owner, 2026-11-12). Tests:
 `tests/platform_tests/test_process_environment.py` and the demo test
-`test_certificates_and_deployment_resolve_one_exported_host_name`. Builds on
+`test_certificates_and_deployment_resolve_one_exported_host_name`. Review
+fixes (on `1219bb1`): image errors show the image as written, never the
+resolved value (the fully-qualified check runs where that is known); the
+manual says that a variable used only by a component's own settings stops
+the command at that component, after the ones before it. Builds on
 the substitution of [item 63](#63-parameterise-image-versions-with-build-time-variables)
 (build-time images), [item 84](#84-environment-specific-container-environment-overrides)
 (`ENVIRONMENT` overrides) and

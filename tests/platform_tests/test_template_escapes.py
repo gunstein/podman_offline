@@ -155,6 +155,17 @@ class ParserTests(ProductFixture):
             rendering.replace({"v": "@@NAME@@"}, {"NAME": MARKER + "@@"})
         self.assertNotIn(MARKER, str(raised.exception))
 
+    def test_keys_are_never_templates(self):
+        """A key is not filled in, so any @@ in one is refused, as before."""
+        for document in (
+            {"kind": "Pod", "metadata": {"annotations": {"@@MISSING@@": "v"}}},
+            {"kind": "Pod", "metadata": {"annotations": {"a@@@@b": "v"}}},
+            {"kind": "ConfigMap", "data": {"@@NAME@@": "v"}},
+        ):
+            with self.subTest(document):
+                with self.assertRaisesRegex(common.DeployError, "in a key"):
+                    rendering.check_unresolved(document)
+
     def test_a_setting_is_resolved_once(self):
         with environ(HOST="h.example"):
             self.assertEqual(
@@ -306,6 +317,17 @@ class RenderingTests(ProductFixture):
         self.assertEqual(secret_data(install, "shop-raw"), {"key": RAW})
         # Read again, the literal text would fail or change: no second pass.
         reread(self, SQL_RENDERED, settings(DB_USER="shop"))
+
+    def test_a_placeholder_key_stops_the_rendering(self):
+        """The review's case: dev prepare wrote it unresolved at 1219bb1."""
+        product = shop()
+        product["shop"]["manifests"][0]["metadata"]["annotations"] = {
+            "@@MISSING@@": "value"
+        }
+        self.write_product(product)
+        with self.assertRaisesRegex(common.DeployError, "Unreplaced @@...@@ in a key"):
+            self.prepare()
+        self.assertFalse((common.BUILD / "install.yaml").exists())
 
     def test_an_unescaped_stray_at_pair_still_fails(self):
         product = shop()

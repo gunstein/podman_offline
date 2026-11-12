@@ -157,15 +157,24 @@ def resolve_images(documents, variables, component, path):
             # One pass, as every template (templates.substitute): @@@@ is a
             # literal @@, which the reference check below then refuses.
             resolved = templates.substitute(image, value, where)
+            # The image as written, never the result: an exported variable's
+            # value is never shown (backlog 86).
             if "@@" in resolved or any(c.isspace() for c in resolved):
                 raise common.DeployError(
-                    f"{where}: image {resolved!r} is not a valid reference after "
-                    f"{IMAGE_VARIABLES}; check its values"
+                    f"{where}: image {image!r} is not a valid reference after "
+                    f"{IMAGE_VARIABLES} and the environment; check their values"
                 )
             if "://" in resolved:
                 raise common.DeployError(
-                    f"{where}: image {resolved!r} has a URL scheme; give only the "
-                    f"registry host and path in {IMAGE_VARIABLES}"
+                    f"{where}: image {image!r} has a URL scheme; give only the "
+                    f"registry host and path in {IMAGE_VARIABLES} or the variable"
+                )
+            if not qualified(resolved):
+                # Checked here, while the image as written is known, so that
+                # find_images never shows a value it got from the environment.
+                raise common.DeployError(
+                    f"{where}: image {image!r} must be fully qualified (a registry "
+                    "host with a dot or port, or localhost, then /)"
                 )
             container["image"] = resolved
     for name in sorted(set(variables) & placeholders_outside_images(documents)):
@@ -1343,6 +1352,14 @@ def named_containers(documents):
     return found
 
 
+def check_key(key):
+    """A key is never filled in or unescaped, so no @@ may be in one."""
+    if isinstance(key, str) and "@@" in key:
+        raise common.DeployError(
+            "Unreplaced @@...@@ in a key; placeholders work only in values"
+        )
+
+
 def check_unresolved(value):
     """Refuse a placeholder replace() cannot fill, read from the source text.
 
@@ -1354,7 +1371,11 @@ def check_unresolved(value):
     if isinstance(value, dict):
         configmap = value.get("kind") == "ConfigMap"
         for key, item in value.items():
-            if not (configmap and key == "data"):
+            check_key(key)
+            if configmap and key == "data" and isinstance(item, dict):
+                for data_key in item:  # Their values: configmap_data.
+                    check_key(data_key)
+            else:
                 check_unresolved(item)
     elif isinstance(value, list):
         for item in value:
@@ -1510,6 +1531,16 @@ def materialize(
     return yaml.safe_dump_all(docs, sort_keys=False), volumes
 
 
+def qualified(image):
+    """registry/name with a registry host that has a dot or port, or localhost."""
+    registry, separator, name = image.partition("/")
+    return bool(
+        separator
+        and name
+        and ("." in registry or ":" in registry or registry == "localhost")
+    )
+
+
 def find_images(documents):
     """Find unique, fully qualified images in pod specs."""
     images = set()
@@ -1526,12 +1557,7 @@ def find_images(documents):
                 raise common.DeployError(
                     f"Image {image}: placeholders are not supported in {where}"
                 )
-            registry, separator, name = image.partition("/")
-            if (
-                not separator
-                or not name
-                or not ("." in registry or ":" in registry or registry == "localhost")
-            ):
+            if not qualified(image):
                 raise common.DeployError(
                     f"Image {image} must be fully qualified in {where}"
                 )

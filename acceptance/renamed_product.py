@@ -27,6 +27,11 @@ from pathlib import Path
 
 import yaml
 
+# The product's own template reader (backlog 87: @@@@ is a literal @@):
+# only real placeholders are renamed, escaped text stays as written.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from deployment import templates
+
 NAMES = {
     "platform": "gateway",
     "identity": "login-service",
@@ -87,11 +92,30 @@ def rename_route(text):
     return text
 
 
+def secret_ids(text):
+    """The IDs of text's real @@secret:<id>/<key>@@ references (escapes are text)."""
+    ids = []
+    for match in templates.placeholders(text):
+        reference = templates.SECRET_REF.fullmatch(match[1])
+        if reference:
+            ids.append(reference[1])
+    return ids
+
+
 def rename_secrets(text):
-    """Rename the component prefix of every @@secret:<id>/<key>@@ reference."""
-    return re.sub(
-        r"@@secret:([a-z0-9-]+)/", lambda match: f"@@secret:{rename(match[1])}/", text
-    )
+    """Rename the component prefix of every real @@secret:<id>/<key>@@ reference."""
+
+    def replacement(match):
+        reference = (
+            None
+            if match[0] == templates.ESCAPE
+            else (templates.SECRET_REF.fullmatch(match[1]))
+        )
+        if not reference:
+            return match[0]
+        return f"@@secret:{rename(reference[1])}/{reference[2]}@@"
+
+    return templates.PART.sub(replacement, text)
 
 
 def rename_env(values):
@@ -103,14 +127,9 @@ def rename_env(values):
     result = {}
     for key, value in values.items():
         if isinstance(value, str):
-            ids = re.findall(r"@@secret:([a-z0-9-]+)/", value)
-            if any(rename(name) == name for name in ids):
+            if any(rename(name) == name for name in secret_ids(value)):
                 continue  # Not a renamed component's secret: app3's.
-            value = re.sub(
-                r"@@secret:([a-z0-9-]+)/",
-                lambda match: f"@@secret:{rename(match[1])}/",
-                value,
-            )
+            value = rename_secrets(value)
         result[key] = value
     return result
 
