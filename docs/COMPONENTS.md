@@ -294,9 +294,10 @@ ENVIRONMENT:
   release therefore always brings its own environment, while the operator's
   values stay.
 - Placeholders: `@@NAME@@` is a setting from the top part (or a shared public
-  setting); `@@secret:<id>/<key>@@` is the file `<key>` of `SECRET_FILES.<id>`.
-  There is no other form, and a secret is always declared in `SECRET_FILES`
-  with its path.
+  setting); `@@secret:<id>/<key>@@` is the file `<key>` of `SECRET_FILES.<id>`;
+  `@@$NAME@@` is a variable of the process environment
+  ([environment variables](#environment-variables-name)). There is no other
+  form, and a secret is always declared in `SECRET_FILES` with its path.
 - Every value is the text as written: `UMASK: 0022`, `ENABLED: yes` and
   `VERSION: 1.10` reach the container unchanged. Quote values that start with
   `@@`.
@@ -995,6 +996,72 @@ rendered value and `printenv PUBLIC_ENDPOINT` inside the consuming proxy. It
 follows the ConfigMap reference, so the same check covers the renamed `shop`
 gateway and all six scenarios without generic deploy-code changes.
 
+## Environment variables: `@@$NAME@@`
+
+`@@$NAME@@` is the variable `NAME` of the environment of the process that
+runs the command (backlog 86). It works wherever text is filled in, and only
+there:
+
+| Place | Resolved | From |
+| --- | --- | --- |
+| A setting (top-level text) in `config.defaults.yaml`, `config/dev.yaml` or the operator's `config.yaml` | after the layers are merged, before anything is validated or derived | the developer's shell in dev; the runtime user's shell on the target |
+| `ENVIRONMENT` lines and their overrides | when the line is rendered; `check-environment` checks that each variable is set | as above |
+| `ConfigMap` data text, and a whole manifest value `"@@$NAME@@"` | when the manifests are rendered | as above |
+| A file rendered through `MOUNTS` | when its Secret is composed | as above |
+| An image field, a `config/images.yaml` value | when the manifests are read: build, pull, dev | the build or dev process; a bundle ships the literal image |
+
+A bundle keeps every other reference as written, so the build machine's
+values never reach a target, and the target's installed YAML holds the
+resolved values, so a service started later by systemd does not depend on
+anyone's shell. `SECRET_FILES` and `VOLUME_FILES` entries, Secret IDs,
+component lists and other structure are never filled in.
+
+```yaml
+# config/dev.yaml
+PUBLIC_ORIGIN: "https://@@$HOSTNAME@@:8443"
+overrides:
+  app1:
+    ENVIRONMENT:
+      backend:
+        Logging__LogLevel__Default: "@@$APP_LOG_LEVEL@@"
+```
+
+```sh
+export HOSTNAME="$(hostname -f)"   # a name clients reach and the certificate covers
+export APP_LOG_LEVEL=Debug
+./dev/demo-credentials.sh && ./dev/dev.sh up
+```
+
+- A shell variable reaches the command only when exported. Nothing runs
+  `hostname` or picks another value: a variable that is not set stops the
+  command, naming the variable and the place ("export it ..., then run the
+  command again"). An exported empty variable is empty text, and the place's
+  own checks decide whether that is valid.
+- Names are `[A-Za-z_][A-Za-z0-9_]*` and case-sensitive. Only the
+  variables a value names are read.
+- A value is plain text: no number, boolean or YAML is read from it (so
+  `HTTPS_PORT`, an integer, cannot come from one), nothing in it runs, and it
+  is never read as a placeholder; a value containing `@@` is refused. The
+  container's own `$NAME` and `${NAME}` stay as written.
+- The layers are merged first: a default that `config/dev.yaml` or
+  `config.yaml` replaces needs no variable.
+- An inserted value follows the place's rules, as a setting's would (an
+  `ENVIRONMENT` value without surrounding spaces or quotes, for example).
+  Messages never show a value. A variable does not make a value secret:
+  credentials belong in `SECRET_FILES` with `@@secret:<id>/<key>@@`.
+- `init-config` checks the resolved values but writes the references into
+  `config.yaml`, so the next command uses the value exported then.
+- `dev/demo-credentials.sh` takes the certificate's host name from the same
+  resolved `PUBLIC_ORIGIN` the deployment uses.
+
+On the target, export the variables in the runtime user's shell before
+`<product>`. An unchanged reference with a new value: the environment
+record holds the resolved overrides, so `<product> --environment <name>`
+installs a component again when a variable its overrides use has a new
+value, and not otherwise. A reference in `config.yaml` or in the release's
+own `ENVIRONMENT` follows the rule for any config change: run
+`<product> --environment <name> <component>` (or `<product> <component>`).
+
 ## Image versions: `config/images.yaml`
 
 Shared registry addresses and image versions are set in one file at the root
@@ -1021,6 +1088,9 @@ POSTGRES_VER: '17.11'
   value may hold a registry host with port and path, not only a tag.
 - `@@COMPONENT_VERSION@@` is built in: the component's own `VERSION`, for an
   image released together with its component.
+- `@@$NAME@@` (an image field, or inside a `config/images.yaml` value) is the
+  variable of the building process ([environment variables](#environment-variables-name)):
+  the bundle ships the literal result.
 - Several registries are ordinary variables. Changing one changes only the
   images that use it; literal images are never changed.
 - Placeholders work only in the `image` of `containers` and

@@ -397,14 +397,18 @@ def check_values(values, where):
                 f"{where}: {key}: malformed placeholder (an @@ without its closing @@)"
             )
         for match in templates.TOKEN.finditer(value):
-            if not (
+            if match[1].startswith("$"):
+                # Resolved when the line is rendered (backlog 86).
+                templates.environment_name(match[1], f"{where}: {key}")
+            elif not (
                 templates.CONFIG_NAME.fullmatch(match[1])
                 or templates.SECRET_REF.fullmatch(match[1])
             ):
                 # Never repeat the text: a value pasted by mistake stays private.
                 raise common.DeployError(
                     f"{where}: {key}: unknown or nested placeholder; use "
-                    "@@NAME@@ for a setting or @@secret:<id>/<key>@@ for a secret"
+                    "@@NAME@@ for a setting, @@$NAME@@ for an environment variable "
+                    "or @@secret:<id>/<key>@@ for a secret"
                 )
     return values
 
@@ -453,6 +457,10 @@ def with_recipes(config, component, env_overrides=None):
     for container, values in environments.items():
         secret = {}
         for key, value in values.items():
+            # Each variable a line uses is set, named with the line's place
+            # (backlog 86); the rendering resolves them again.
+            here = where(component, container, env_overrides, key)
+            templates.environment_text(value, f"{here}: {key}")
             if not is_secret_line(value) or foreign_secrets(component, value):
                 continue
             for name in secret_ids(value):

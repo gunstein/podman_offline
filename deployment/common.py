@@ -23,6 +23,12 @@ QUADLET_TEMPLATE = ROOT / "quadlet" / "template.kube"
 STATE: Path = None  # type: ignore[assignment]
 QUADLET_DIR: Path = None  # type: ignore[assignment]
 
+# The environment @@$NAME@@ references resolve from (backlog 86): that of the
+# process running the command (the developer's in dev, the runtime user's on
+# the target, the build's for image fields). Only referenced names are read
+# (templates.environment_value); tests replace it with their own dictionary.
+ENVIRON = os.environ
+
 SECRET_FILES = "SECRET_FILES"
 SECRET_TEMPLATES = "SECRET_TEMPLATES"
 # Each container's environment; only in the release's config.defaults.yaml.
@@ -30,9 +36,9 @@ ENVIRONMENT = "ENVIRONMENT"
 # Files mounted into each container; only in the release's config.defaults.yaml.
 MOUNTS = "MOUNTS"
 VOLUME_FILES = "VOLUME_FILES"
-# Per-component ENVIRONMENT overrides: the only top-level key of a build
-# environment file config/<environment>.yaml, and a reserved block of
-# config/dev.yaml (backlog 84; deployment/environment.py).
+# Per-component ENVIRONMENT overrides: a key of a target environment file
+# state/<environment>.yaml, and a reserved block of config/dev.yaml
+# (backlogs 84 and 85; deployment/environment.py).
 OVERRIDES = "overrides"
 
 IMPORT_SOURCE = "volume.podman.io/import-source"

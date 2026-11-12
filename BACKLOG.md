@@ -54,6 +54,118 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 86. Process environment variables in placeholders (`@@$NAME@@`)
+
+Status: **implemented with product tests (2026-11-12); no lab run**
+(requirement: product owner, 2026-11-12). Tests:
+`tests/platform_tests/test_process_environment.py` and the demo test
+`test_certificates_and_deployment_resolve_one_exported_host_name`. Builds on
+the substitution of [item 63](#63-parameterise-image-versions-with-build-time-variables)
+(build-time images), [item 84](#84-environment-specific-container-environment-overrides)
+(`ENVIRONMENT` overrides) and
+[item 85](#85-select-the-components-of-a-target-environment) (target
+environments, same-version reinstall).
+
+**Decision (product owner, 2026-11-12).** A third placeholder source next to
+`@@NAME@@` (a setting, or an image variable in an image field) and
+`@@secret:<id>/<key>@@` (a Secret): `@@$NAME@@` is the variable `NAME` of
+the environment of the process that runs the command. One syntax, no
+`@@env:NAME@@` or alias; plain `$NAME` and `${NAME}` stay untouched for the
+container's own shell. It is general, not a case for `PUBLIC_ORIGIN`:
+
+```yaml
+PUBLIC_ORIGIN: "https://@@$HOSTNAME@@:8443"
+SERVICE_LABEL: "@@$SERVICE_LABEL@@"
+LOG_ENDPOINT: "https://@@$LOG_HOST@@:9443"
+```
+
+Rules:
+
+1. Only referenced variables are read; the process environment never
+   becomes settings.
+2. A reference may be the whole text, part of a text, or one of several.
+3. Names are `[A-Za-z_][A-Za-z0-9_]*`, case-sensitive; another name after
+   `$` is refused.
+4. A missing variable stops the command with the variable, the place and
+   "export it, then run the command again"; no value is ever printed.
+5. An empty variable is empty text; the place's own checks decide whether
+   that is valid.
+6. Values are text; no boolean, number or YAML is inferred (so
+   `HTTPS_PORT`, an integer, cannot come from one).
+7. No shell, command substitution, defaults or recursion: a value is used
+   as text and is never read as a placeholder. A value that contains `@@`
+   is refused, so no inserted value can look like one.
+8. The places' own checks (unsafe text in `ENVIRONMENT`, Secret handling)
+   stay as they are. A reference does not make a value secret: credentials
+   use `SECRET_FILES` and `@@secret:...@@`.
+9. Layers are merged first; only the effective value is resolved, so an
+   overridden default needs no variable.
+10. Literal text and the existing placeholders behave as before.
+
+A shell variable reaches Python only when exported. Nothing runs `hostname`
+or falls back to another value:
+
+```sh
+export HOSTNAME="$(hostname -f)"
+./dev/dev.sh up
+```
+
+The developer chooses a host name that clients reach and the certificate
+covers.
+
+### Where references work and when they resolve
+
+| Place | Example | Resolved | From |
+| --- | --- | --- | --- |
+| A setting in `config.defaults.yaml`, `config/dev.yaml` or the operator's `config.yaml` (top-level text, not `SECRET_FILES`/`VOLUME_FILES`) | `PUBLIC_ORIGIN: "https://@@$HOSTNAME@@:8443"` | after the layers are merged, before any validation (`PUBLIC_HOSTNAME`, credentials, rendering): dev `dev_settings`, `init-config`, `validate`, `install` | the command's process: the developer in dev, the runtime user on the target |
+| `ENVIRONMENT` lines and their overrides (`config/dev.yaml`, `state/<environment>.yaml`) | `Logging__LogLevel__Default: "@@$APP_LOG_LEVEL@@"` | when the line is rendered (ConfigMap or Secret), after the overrides are merged; `check-environment` checks that each variable is set | as above |
+| `ConfigMap` data text and whole manifest values (`"@@$NAME@@"`) | `endpoint: "https://@@$LOG_HOST@@:9443"` | when the manifests are rendered | as above |
+| Files rendered through `MOUNTS` | `server=@@$LOG_HOST@@` | when the file's Secret is composed | as above |
+| Image fields and `config/images.yaml` values (item 63) | `image: "@@$REGISTRY@@/app:1"` | when the manifests are read: build, pull and dev; the bundle ships the literal reference | the build or dev process |
+| Bundles | | never: settings, `ENVIRONMENT`, manifests and `MOUNTS` files keep their references, so the build host's values never reach a target | |
+
+Not places: Secret IDs, `SECRET_FILES`/`VOLUME_FILES` entries, component
+lists, keys and other structure. `init-config` validates the resolved values
+but writes the references into the operator's `config.yaml`; an existing
+config is never changed.
+
+### Same version, new value
+
+An unchanged reference can resolve to another value. item 85's environment
+record (`state/environment/<id>.json`) holds the **resolved** overrides, so
+`<product> --environment <name>` installs a component again when an
+exported value its overrides use has changed, and not when it is the same.
+No other value file is added. A reference in `config.yaml` or in the
+release's own `ENVIRONMENT` follows the rule for any config change: run
+`<product> --environment <name> <component>` (or `<product> <component>`).
+
+### Certificates
+
+`dev/demo-credentials.sh` takes the host name from `deploy.dev_settings()`,
+the same resolved `PUBLIC_ORIGIN` the deployment uses;
+`dev/generate-certificates.sh` only receives it and keeps refusing a
+certificate for another host name. (`dev/prepare-dev-credentials.sh` does
+not exist.)
+
+### Implementation scope
+
+One small resolver in `deployment/templates.py` (`environment_value`,
+`environment_text`; the process environment is `common.ENVIRON`, the
+deploy commands' own environment), used by the existing paths: settings
+(`render.resolve_settings`, called by `component_defaults`,
+`catalog.operator_config` and `catalog.gateway_settings`), the template
+pass (`templates.reference`/`config_value`: `ENVIRONMENT`, `ConfigMap`
+text, `MOUNTS` files), whole manifest values (`render.replace`), images
+(`render.resolve_images`, `image_variables`), and the environment record
+(`deploy.environment_effect`). No configuration file, dependency, migration
+or other syntax.
+
+Verification: product tests with explicit values and isolated environments
+for every place and rule above, an isolated bundle with different build and
+target values, `init-config`, the same-version flow and the retry and
+option C rules; harness tests where the harness changes. No lab step is
+planned in this item.
+
 ## 85. Select the components of a target environment
 
 Status: **implemented and lab-verified on `9c00aca`, revised model

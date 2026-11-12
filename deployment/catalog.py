@@ -769,7 +769,9 @@ def gateway_settings(gateway, state=None):
         raise common.DeployError(
             f"Missing {path}; restore the installed {gateway} config first"
         )
-    return public_settings(rendering.load_config(path), path)
+    return public_settings(
+        rendering.resolve_settings(rendering.load_config(path), path), path
+    )
 
 
 # Maps whose IDs are completed one by one from the release defaults.
@@ -790,7 +792,8 @@ def operator_config(descriptor, path, state=None):
     the release's config.defaults.yaml, so a new release can add one without
     an operator edit; nothing is written. PUBLIC_ORIGIN and HTTPS_PORT come
     from the gateway's config.yaml; another component's config.yaml may not
-    set them. No writes.
+    set them. @@$NAME@@ references are resolved from the process environment
+    (rendering.resolve_settings). No writes.
     """
     config = rendering.load_config(path)
     gateway = descriptor["public_from"]
@@ -814,6 +817,9 @@ def operator_config(descriptor, path, state=None):
                 if name not in config[key]:
                     config[key] = dict(config[key], **{name: entry})
                     added.append(f"{key}.{name}")
+    # Merged first, then resolved (backlog 86): only the effective values;
+    # the gateway's own config is resolved by gateway_settings.
+    config = rendering.resolve_settings(config, path)
     config.update(gateway_settings(gateway, state))
     return config, added
 

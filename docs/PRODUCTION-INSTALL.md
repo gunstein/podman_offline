@@ -247,6 +247,12 @@ what it needs is installed as a release package; if not, it names what is
 missing and changes nothing: the administrator installs the missing packages
 (step 3), then run the same command again.
 
+If the supplier's settings or environment file use a value of your shell,
+written `@@$NAME@@` (for example `@@$LOG_HOST@@`), export each such variable
+in the runtime user's shell first, every time, for example
+`export LOG_HOST=logs.example.org`. A variable that is not set stops the
+command before it changes anything and names it.
+
 The first time it asks two questions:
 
 ```text
@@ -273,6 +279,7 @@ trusts your organisation's certificates to check it from the user's side.
 | New delivery (upgrade) | administrator, then runtime user | Steps 1 and 3, and 4 if it contains credentials; without credentials, still remove the medium (`sudo umount /mnt`). Then steps 5 and 7. Settings, credentials, data and the environment file are kept, and nothing is asked again. |
 | Remove a component a delivery no longer contains | runtime user | Step 9. |
 | Remove old releases | administrator | Nothing extra: step 3 removes them once the runtime user has installed the newer version. To do it right after an upgrade, repeat step 3. |
+| Change an exported value (`@@$NAME@@`) | runtime user | Export the new value, then run the step 7 command. With an environment file, a component whose overrides use it is installed again; for a value used in a `config.yaml`, add the component (`myproduct --environment prod1 <component>`). |
 | Change a setting | runtime user | Edit `/var/lib/myproduct/state/<component>/config.yaml` (for example with `vi`), then `myproduct <component>`. After changing the gateway's public address, run `myproduct <component>` for every component, the gateway first. With an environment file, write `myproduct --environment prod1 <component>` each time. The HTTPS port cannot be changed after installation. |
 
 ## 9. Remove a component
@@ -328,6 +335,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `status reports an incomplete or inactive component` (step 7) | runtime user | Run the same command again a minute later (with `--environment prod1` if you used it); a service may still be starting. If it stays, ask for help (see below). |
 | `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. Repeat the same command (with `--environment prod1` if you used it); it resumes the unfinished component first. |
 | `Missing /var/lib/myproduct/state/prod1.yaml` (step 7) | runtime user | Step 6. |
+| `environment variable <NAME> is not set` (step 7) | runtime user | Export it in this shell (`export <NAME>=...`, the value the supplier names), then run the same command again. |
 | `<component> was installed with --environment prod1 ...; nothing was changed` (step 7) | runtime user | Run the command it names, `myproduct --environment prod1`, with the component after it when it names one (`myproduct --environment prod1 <component>`). |
 | `no release package of ...` or `... needs ... installed: ...`, then `Nothing was changed` (step 7) | administrator | Install the delivery with the missing or matching release packages (step 3). |
 | `... requires ...; add ... to components:` (step 7) | supplier, runtime user | The environment file lacks a component another one needs; add the named line under `components:`. |

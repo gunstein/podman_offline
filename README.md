@@ -147,7 +147,11 @@ The reserved `overrides` block adds or replaces single container variables
 (`overrides: <component>: ENVIRONMENT: <container>: <variables>`), merged into
 `ENVIRONMENT` exactly as a target environment file is
 ([environment overrides](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file));
-it is not a setting and never reaches `build/dev/<component>/config.yaml`. Duplicate YAML keys are rejected in each source
+it is not a setting and never reaches `build/dev/<component>/config.yaml`.
+A text value may name an exported variable of your shell as `@@$NAME@@`, for
+example `PUBLIC_ORIGIN: "https://@@$HOSTNAME@@:8443"` after
+`export HOSTNAME="$(hostname -f)"`
+([environment variables](docs/COMPONENTS.md#environment-variables-name)). Duplicate YAML keys are rejected in each source
 file. Missing `config/dev.yaml` means no overrides; an invalid one fails.
 Production initialization, validation and install never read it, even if a file
 is copied into a release by hand. `IP_ADDRESS` belongs to platform because only

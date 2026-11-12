@@ -78,6 +78,9 @@ def image_variables(root):
             )
         if name in IMAGE_RESERVED:
             raise common.DeployError(f"{path}: {name} is a reserved name; rename it")
+        if isinstance(value, str):
+            # Build time (backlog 86): the building process's variables.
+            value = data[name] = templates.environment_text(value, f"{path}: {name}")
         if not isinstance(value, str) or not value:
             raise common.DeployError(
                 f"{path}: {name} must be a nonempty text value; quote numbers "
@@ -101,7 +104,7 @@ def load_manifest(path):
 
 
 def resolve_images(documents, variables, component, path):
-    """Replace @@NAME@@ in each container image; refuse image variables elsewhere."""
+    """Replace @@NAME@@ and @@$NAME@@ in each container image; refuse image variables elsewhere."""
     defaults = component / "config.defaults.yaml"
     settings = load_yaml(defaults) if defaults.is_file() else None
     for name in sorted(set(variables) & set(settings or {})):
@@ -132,6 +135,11 @@ def resolve_images(documents, variables, component, path):
 
             def value(match, where=where):
                 name = match[1]
+                if name.startswith("$"):
+                    # Build time (backlog 86): the building process's variable.
+                    return templates.environment_value(
+                        templates.environment_name(name, where), where
+                    )
                 if name == "COMPONENT_VERSION":
                     return component_version(component, where)
                 if name not in variables:
@@ -265,11 +273,12 @@ def validate_config(config, path):
         )
 
     for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
-        if key in config:
+        # A value with @@$NAME@@ is checked once resolved (resolve_settings).
+        if key in config and not has_environment_reference(config[key]):
             value = config[key]
             if not isinstance(value, str) or not value or "\x00" in value:
                 raise common.DeployError(f"{key} in {path} must be non-empty text")
-    if "DB_PORT" in config:
+    if "DB_PORT" in config and not has_environment_reference(config["DB_PORT"]):
         port = config["DB_PORT"]
         if (
             not re.fullmatch(r"[0-9]{1,5}", port)
@@ -280,6 +289,27 @@ def validate_config(config, path):
             )
 
     return config
+
+
+def has_environment_reference(value):
+    return isinstance(value, str) and "@@$" in value
+
+
+def resolve_settings(config, path):
+    """The settings with their @@$NAME@@ references resolved, then validated.
+
+    Deploy time (backlog 86): call after the layers are merged, so only the
+    effective value of a setting is resolved, and before anything uses the
+    values (PUBLIC_HOSTNAME, credentials, rendering). SECRET_FILES and
+    VOLUME_FILES are declarations, not settings, and keep their text.
+    """
+    result = dict(config)
+    for key, value in config.items():
+        if key not in (common.SECRET_FILES, common.VOLUME_FILES) and isinstance(
+            value, str
+        ):
+            result[key] = templates.environment_text(value, f"{key} in {path}")
+    return validate_config(result, path)
 
 
 def load_config(path):
@@ -308,11 +338,12 @@ def merge_config(*paths, overrides=None):
     return validate_config(config, paths[-1] if paths else "config")
 
 
-def component_defaults(component, overrides=None, dev=False):
-    """Build complete config from the component defaults and, in dev, config/dev.yaml.
+def merged_defaults(component, overrides=None, dev=False):
+    """The component defaults and, in dev, config/dev.yaml, merged; not resolved.
 
     Each layer file is optional; a component without settings needs none.
     config/dev.yaml is the developer's local, untracked override (dev_layer).
+    init-config writes this, so @@$NAME@@ references stay references.
     """
     defaults = common.ROOT / "components" / component / "config.defaults.yaml"
     local = common.ROOT / "config/dev.yaml"
@@ -321,7 +352,17 @@ def component_defaults(component, overrides=None, dev=False):
     if dev and (local.exists() or local.is_symlink()):
         config = dev_layer(config, local, component)
     config.update(overrides or {})
-    validate_config(config, local if dev else defaults)
+    return validate_config(config, local if dev else defaults)
+
+
+def component_defaults(component, overrides=None, dev=False):
+    """merged_defaults with its references resolved (resolve_settings), validated."""
+    source = (
+        common.ROOT / "config/dev.yaml"
+        if dev
+        else common.ROOT / "components" / component / "config.defaults.yaml"
+    )
+    config = resolve_settings(merged_defaults(component, overrides, dev), source)
     materialized = (
         (common.BUILD / "dev" if dev else common.STATE) / component / "config.yaml"
     )
@@ -646,6 +687,12 @@ def replace(value, config):
             if key not in config:
                 raise common.DeployError(f"Missing {key} in config.yaml")
             return config[key]
+        # A whole "@@$NAME@@" value: the process environment's text (backlog 86).
+        if value.startswith("@@$") and value.endswith("@@") and value.count("@@") == 2:
+            where = "a manifest value"
+            return templates.environment_value(
+                templates.environment_name(value[2:-2], where), where
+            )
 
     return value
 

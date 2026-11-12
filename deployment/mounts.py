@@ -177,9 +177,12 @@ def with_recipes(config, component):
                     )
                 continue
             text = file_text(component, source, where)
+            # Each variable the file uses is set, named with its place (backlog 86).
+            templates.environment_text(text, f"{where}: {source}")
             for match, group, field in templates.tokens(text, f"{where}: {source}"):
                 if group is None:
-                    if field not in config:
+                    # @@$NAME@@ is the process environment's (backlog 86).
+                    if not field.startswith("$") and field not in config:
                         raise common.DeployError(
                             f"{where}: {source} uses {match[0]}, which is not a "
                             "setting of this component"

@@ -95,6 +95,9 @@ def init_config(component, settings=None, environment_name=None):
     # they stay in the gateway's config.yaml, which install reads again.
     public = catalog.gateway_settings(descriptor["public_from"])
     config = rendering.component_defaults(component, overrides={**values, **public})
+    # Written with its @@$NAME@@ references; only validation uses their values
+    # (backlog 86), so no exported value is frozen into config.yaml.
+    written = rendering.merged_defaults(component, overrides={**values, **public})
     # The release's own declarations (ENVIRONMENT, MOUNTS, manifests) are
     # checked as validate does, before the file exists; credentials may follow.
     descriptor = catalog.environment_descriptor(
@@ -109,7 +112,7 @@ def init_config(component, settings=None, environment_name=None):
         catalog.imported_secrets(descriptor),
         env_overrides,
     )
-    config = {key: value for key, value in config.items() if key not in public}
+    config = {key: value for key, value in written.items() if key not in public}
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
     # Written beside the target, then linked: link fails if the config exists,
@@ -991,18 +994,28 @@ def write_installed_metadata(descriptor):
 def environment_effect(descriptor, env_overrides, known):
     """What an install applies from the environment, beyond the release itself.
 
-    The environment file's entry for this component ({} without one), and
-    for an API the secret line of the installed Identity that names it
-    (api_secrets: index and "<secret id>/<key>"), whose value this
-    component's install delivers to Identity. known holds the installed
-    descriptors (and this one).
+    The environment file's entry for this component ({} without one), with
+    its @@$NAME@@ references resolved (backlog 86: the same reference with
+    another exported value is another effect), and for an API the secret line
+    of the installed Identity that names it (api_secrets: index and
+    "<secret id>/<key>"), whose value this component's install delivers to
+    Identity. known holds the installed descriptors (and this one).
     """
     name, identity = descriptor["name"], descriptor["identity"]
     owner = known.get(identity) if identity not in (None, name) else None
+    entry = (env_overrides.components.get(name) or {}) if env_overrides else {}
+    overrides = {
+        container: {
+            key: templates.environment_text(
+                value,
+                f"{environment.where(name, container, env_overrides, key)}: {key}",
+            )
+            for key, value in values.items()
+        }
+        for container, values in entry.items()
+    }
     return {
-        "overrides": (env_overrides.components.get(name) or {})
-        if env_overrides is not None
-        else {},
+        "overrides": overrides,
         "api_secret": owner["api_secrets"].get(name) if owner else None,
     }
 
@@ -1344,7 +1357,8 @@ def check_environment(environment_name, json_output=False):
     anything: the file (environment.read_environment_file), the merged
     ENVIRONMENT (names, placeholder syntax, SECRET_FILES declarations and
     generated Secret names, client settings, the containers of the
-    manifests), the descriptor in the environment (environment_descriptor:
+    manifests, every @@$NAME@@ variable set), the descriptor in the
+    environment (environment_descriptor:
     Identity's API secret lines against the listed components, no other
     component naming a foreign secret, every dependency listed, also
     Identity for an API the installed Identity registers), and for any other
@@ -1389,6 +1403,13 @@ def check_environment(environment_name, json_output=False):
         environment.check_client_settings(
             name, container, values, client, env_overrides
         )
+        # Every exported variable a line uses is set (backlog 86), so the
+        # runtime command stops for a missing one before it changes anything.
+        for key, value in values.items():
+            templates.environment_text(
+                value,
+                f"{environment.where(name, container, env_overrides, key)}: {key}",
+            )
         if literal:
             environment.check_container(
                 name, container, values, containers, env_overrides
