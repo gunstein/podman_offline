@@ -171,6 +171,9 @@ class ParserTests(ProductFixture):
         for data in (
             {"text": ["prefix @@MISSING@@"]},
             {"text": {"nested": "x @@MISSING@@"}},
+            # The third review's case: only the document is a ConfigMap; a
+            # nested kind: ConfigMap is an ordinary mapping.
+            {"text": {"kind": "ConfigMap", "data": {"nested": "prefix @@MISSING@@"}}},
         ):
             with self.subTest(data):
                 with self.assertRaisesRegex(common.DeployError, "Unreplaced @@"):
@@ -339,6 +342,27 @@ class RenderingTests(ProductFixture):
         }
         self.write_product(product)
         with self.assertRaisesRegex(common.DeployError, "Unreplaced @@...@@ in a key"):
+            self.prepare()
+        self.assertFalse((common.BUILD / "install.yaml").exists())
+
+    def test_a_nested_configmap_shape_is_no_configmap(self):
+        """The third review's case through deploy.prepare(): refused, nothing written."""
+        product = shop()
+        product["shop"]["manifests"].append(
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "shop-config"},
+                "data": {
+                    "text": {
+                        "kind": "ConfigMap",
+                        "data": {"nested": "prefix @@MISSING@@"},
+                    }
+                },
+            }
+        )
+        self.write_product(product)
+        with self.assertRaisesRegex(common.DeployError, "Unreplaced @@"):
             self.prepare()
         self.assertFalse((common.BUILD / "install.yaml").exists())
 

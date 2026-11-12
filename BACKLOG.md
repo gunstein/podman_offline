@@ -65,7 +65,10 @@ never filled in), as the old output check did; the renamed-product
 generator renames and drops only real `@@secret:...@@` references
 (`templates.PART`), never escaped text. Second review (on `b3a018e`): a
 `ConfigMap` data value that is not text (a list or map) is checked like any
-other value, as the old output check did.
+other value, as the old output check did. Third review (on `841a3dd`): only
+the document itself is a `ConfigMap`; a nested `kind: ConfigMap` mapping is
+an ordinary value (`check_unresolved` for the document, `check_values`
+below it).
 
 **Decision (product owner, 2026-11-12).** In template text `@@@@` is the
 literal `@@`, and nothing else is: one rule, no other escape syntax, flag or

@@ -1360,30 +1360,39 @@ def check_key(key):
         )
 
 
-def check_unresolved(value):
-    """Refuse a placeholder replace() cannot fill, read from the source text.
+def check_unresolved(document):
+    """Refuse a placeholder replace() cannot fill, read from one source document.
 
     The source is checked, not the output: escaped @@@@ is a literal @@ in
     the output and must stay allowed there. A placeholder works as a whole
     value ("@@NAME@@", "@@$NAME@@") and, embedded, only in a text value of
-    ConfigMap data, which configmap_data composes (and checks) itself.
+    this document's own ConfigMap data, which configmap_data composes (and
+    checks) itself. Everything else, nested mappings included, is checked
+    by check_values.
     """
+    if not (isinstance(document, dict) and document.get("kind") == "ConfigMap"):
+        check_values(document)
+        return
+    for key, item in document.items():
+        check_key(key)
+        if key == "data" and isinstance(item, dict):
+            for data_key, data_value in item.items():
+                check_key(data_key)
+                if not isinstance(data_value, str):
+                    check_values(data_value)  # Not composed: an ordinary value.
+        else:
+            check_values(item)
+
+
+def check_values(value):
+    """Every key and value below: no @@ in a key, only whole placeholders."""
     if isinstance(value, dict):
-        configmap = value.get("kind") == "ConfigMap"
         for key, item in value.items():
             check_key(key)
-            if configmap and key == "data" and isinstance(item, dict):
-                for data_key, data_value in item.items():
-                    check_key(data_key)
-                    # configmap_data composes text values; anything else is
-                    # only replace()d, so it is checked as any other value.
-                    if not isinstance(data_value, str):
-                        check_unresolved(data_value)
-            else:
-                check_unresolved(item)
+            check_values(item)
     elif isinstance(value, list):
         for item in value:
-            check_unresolved(item)
+            check_values(item)
     elif isinstance(value, str):
         whole = common.PH.fullmatch(value) or (
             value.startswith("@@$") and value.endswith("@@") and value.count("@@") == 2
@@ -1429,7 +1438,8 @@ def effective_documents(
             for before, doc in zip(original, rendered):
                 if isinstance(doc, dict) and doc["kind"] == "ConfigMap":
                     doc["data"] = configmap_data(before, doc, config)
-            check_unresolved(original)
+            for document in original:
+                check_unresolved(document)
         except common.DeployError as error:
             raise common.DeployError(f"{manifest} (config {path}): {error}") from None
         if component:
