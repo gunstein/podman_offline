@@ -26,6 +26,9 @@ state=$install_root/state
 # Python steps read these from the environment; sudo passes them with env.
 export PRODUCT_NAME=$product_name SERVICE_USER=$service_user PRODUCT_ROOT=$install_root PRODUCT_STATE=$state
 as_root_env=(env PRODUCT_NAME="$product_name" SERVICE_USER="$service_user" PRODUCT_ROOT="$install_root" PRODUCT_STATE="$state")
+# Backlog 86: the lab's config/dev.yaml takes the dev public host from this
+# exported variable (dev-up), so every DEV action exports it the same way.
+export DEV_PUBLIC_HOST=myproduct-proxy
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
 # The renamed product generated from $src by acceptance/renamed_product.py.
@@ -1082,11 +1085,13 @@ if len(secrets) != 1 or base64.b64decode(secrets[0]["data"].get(line, "")) != va
 print("PASS: identity, app3's record and identity-apis follow " + expected["secret"])
 WHOAMI_KEY_CHECK
 }
+# Variables the runtime command gets exported (backlog 86), NAME=value each.
+runtime_env=()
 # The runtime command as the account; its output in $output, shown, and a
 # failure stops the step with that output.
 runtime_completed() {
     local status=0
-    output=$(as_product "$product_name" "$@" 2>&1) || status=$?
+    output=$(as_product env "${runtime_env[@]}" "$product_name" "$@" 2>&1) || status=$?
     printf '%s\n' "$output"
     [[ $status == 0 ]] || { echo "FAIL: $product_name $* exited $status"; exit 1; }
 }
@@ -1217,6 +1222,14 @@ dev-up)
     cd "$src"
     cp config/dev.yaml.example config/dev.yaml
     chmod 600 config/dev.yaml
+    # Backlog 86: the public origin from the developer's exported variable.
+    # Unset, demo-credentials.sh stops before it issues any certificate.
+    origin='PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"'
+    sed -i "s|^PUBLIC_ORIGIN: https://myproduct-proxy:8443\$|$origin|" config/dev.yaml
+    grep -Fqx "$origin" config/dev.yaml
+    expect_refusal env -u DEV_PUBLIC_HOST ./dev/demo-credentials.sh
+    grep -Fq "environment variable DEV_PUBLIC_HOST is not set" <<< "$refusal_output"
+    test ! -e build/dev/platform/credentials/web/web.crt
     # The shipped demo provisions its credentials explicitly before generic dev up.
     ./dev/demo-credentials.sh
     # Every catalog component validates with its dev config before dev up (backlog 23).
@@ -1227,6 +1240,10 @@ dev-up)
     ./dev/dev.sh up
     config_layers dev
     seed_content dev
+    # The certificate and the deployment resolved the same exported name.
+    grep -Fqx "PUBLIC_ORIGIN: https://$DEV_PUBLIC_HOST:8443" build/dev/platform/config.yaml
+    openssl x509 -in build/dev/platform/credentials/web/web.crt -noout -checkhost "$DEV_PUBLIC_HOST" | grep -q ' does match certificate'
+    echo "PASS: PUBLIC_ORIGIN and the web certificate use the exported $DEV_PUBLIC_HOST"
     ;;
 venv)
     cd "$src"
@@ -1394,6 +1411,55 @@ PENDING_INSTALL
     environment_installs "$output" ""
     [[ $(environment_fingerprint) == "$before" ]] || { echo 'FAIL: the repeat changed state'; exit 1; }
     echo 'PASS: the resumed app3 was decided again after Identity; a repeat installs nothing'
+    ;;
+whoami-variables)
+    # Backlogs 86 and 87 on PROD: app3's overrides in the environment file
+    # use an exported variable and escaped text. Missing, the command stops
+    # in its checks; each new value installs app3 again, the same value does
+    # not; the running container gets exactly the text. Then the file is
+    # restored and app3 installed without the lines.
+    file="$state/whoami.yaml"
+    as_product cp -p -- "$file" "$file.before-variables"
+    as_product python3 - "$file" <<'LAB_LINES'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+document = yaml.safe_load(path.read_text())
+overrides = document.setdefault("overrides", {})
+backend = overrides.setdefault("app3", {}).setdefault("ENVIRONMENT", {}).setdefault("backend", {})
+backend["Lab__Level"] = "@@$APP3_LAB_LEVEL@@"
+backend["Lab__Literal"] = (
+    "SELECT @@@@VERSION; @@@@secret:app3-api-secret/value@@@@ @@@@$APP3_LAB_LEVEL@@@@"
+)
+path.write_text(yaml.safe_dump(document, sort_keys=False))
+print("PASS: app3's overrides use @@$APP3_LAB_LEVEL@@ and escaped text")
+LAB_LINES
+    literal='Lab__Literal=SELECT @@VERSION; @@secret:app3-api-secret/value@@ @@$APP3_LAB_LEVEL@@'
+    before=$(environment_fingerprint)
+    expect_refusal as_product "$product_name" --environment whoami
+    grep -Fq "environment variable APP3_LAB_LEVEL is not set" <<< "$refusal_output"
+    [[ $(environment_fingerprint) == "$before" ]] || { echo 'FAIL: the missing variable changed state'; exit 1; }
+    for level in Information Debug Debug; do
+        runtime_env=("APP3_LAB_LEVEL=$level")
+        expected=app3
+        [[ $level == "${previous:-}" ]] && expected=
+        runtime_completed --environment whoami
+        environment_installs "$output" "$expected"
+        container_env=$(as_product podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' app3-whoami-backend)
+        grep -Fqx "Lab__Level=$level" <<< "$container_env" || { echo "FAIL: app3's backend lacks Lab__Level=$level"; exit 1; }
+        grep -Fqx "$literal" <<< "$container_env" || { echo "FAIL: app3's backend lacks the literal text"; exit 1; }
+        previous=$level
+    done
+    as_product mv -- "$file.before-variables" "$file"
+    runtime_env=()
+    runtime_completed --environment whoami
+    environment_installs "$output" app3
+    container_env=$(as_product podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' app3-whoami-backend)
+    if grep -q '^Lab__' <<< "$container_env"; then echo 'FAIL: the restored file left Lab__ variables'; exit 1; fi
+    echo 'PASS: exported values reached app3 once per change; escaped text stayed literal; restored'
     ;;
 whoami-api-registration)
     # Identity received app3's own secret through the platform (backlog 85):

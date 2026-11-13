@@ -29,13 +29,13 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-fe99456` | 55 | CLEAN PASS |
-| normal | `normal-9c00aca` | 118 | CLEAN PASS |
+| `--whoami` | `whoami-5da79f9` | 55 | CLEAN PASS |
+| normal | `normal-5da79f9` | 118 | CLEAN PASS |
 | `--first-app app2` | `app2-9c00aca` | 112 | CLEAN PASS |
 | `--identity-only` | `identity-9c00aca` | 52 | CLEAN PASS |
 | `--help-only` | `help-9c00aca` | 46 | CLEAN PASS |
 | `--platform-help-only` | `platform-help-9c00aca` | 25 | CLEAN PASS |
-| `--renamed-product` | `renamed-9c00aca` | 56 | CLEAN PASS |
+| `--renamed-product` | `renamed-5da79f9` | 56 | CLEAN PASS |
 
 All on `9c00aca` (2026-11-10, one batch of ten runs with `--status-retry`
 and both `--rpm-manual` runs below), clean detached checkout of
@@ -49,6 +49,20 @@ The other matrix step counts are unchanged. `--whoami` ran again on
 adds backlog 85's four lab steps to the harness; the product is the same as
 on `9c00aca` (no product file differs). It has 55 steps: 45 before backlog 85,
 three for the environment file and seven for those steps.
+
+Backlogs 86 (`@@$NAME@@`) and 87 (`@@@@`): `--whoami`, normal,
+`--renamed-product` and `--rpm-manual` (P1) ran on `5da79f9` (2026-11-12,
+one batch, clean detached checkout, same OS and Podman), all CLEAN PASS
+with the same step counts as before. Their product changes touch every
+rendering path (settings, `ENVIRONMENT`, `ConfigMap`, `MOUNTS`, image
+fields, the unfilled-placeholder check, `init-config`) and the
+renamed-product generator. These runs are a regression check only: no
+demo file and no step uses `@@$NAME@@` or `@@@@`, so the two features
+themselves have product and harness tests only. The other six runs
+(`--first-app app2`, `--identity-only`, `--help-only`,
+`--platform-help-only`, `--status-retry`, `--rpm-manual
+--strict-fapolicyd`) are still those on `9c00aca` and have not run on the
+backlog 86/87 code.
 
 Backlog 84/85 in these runs:
 
@@ -127,7 +141,7 @@ the earlier matrices are listed in
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--status-retry` | `status-retry-9c00aca` | 113 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-9c00aca` | 63 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-5da79f9` | 63 | CLEAN PASS |
 | `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-9c00aca` | 64 | CLEAN PASS |
 
 Status/retry: on `9c00aca` (2026-11-10, in the same batch), clean detached
@@ -137,8 +151,9 @@ leaves protected code unchanged.
 The `--host-setup` scenario (the `release.py` manual) was removed in backlog
 69 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): both on `9c00aca` (2026-11-10), same checkout, OS
-and Podman as the matrix. Five steps more than before, for backlog 85's manual
+RPM manual (backlog 69 WP6): P2 on `9c00aca` (2026-11-10), P1 again on
+`5da79f9` (2026-11-12, with the same 63 steps), same OS and Podman as the
+matrix. Five steps more than before, for backlog 85's manual
 steps 6, 7 and 9. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
 reset (`strict_fapolicyd: true`). In both runs every operator step ran the
 command block of `docs/PRODUCTION-INSTALL.md` literally (only its example

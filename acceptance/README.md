@@ -43,6 +43,21 @@ being Identity's API through the file. Each step compares a fingerprint
   The file names `value` again. `myproduct --environment whoami` installs
   app3, Identity, then app3 again, and leaves no pending record. A repeat
   installs nothing.
+- `10-variables` (backlogs 86 and 87): app3's overrides get
+  `Lab__Level: '@@$APP3_LAB_LEVEL@@'` and `Lab__Literal` with escaped
+  `@@@@VERSION`, `@@@@secret:...@@@@` and `@@@@$APP3_LAB_LEVEL@@@@`.
+  Unexported, `myproduct --environment whoami` stops in its checks with
+  nothing changed. With `Information`, then `Debug`, it installs app3 each
+  time; with `Debug` again, nothing. The running backend's environment
+  (`podman inspect`) has the value and exactly the literal text. The file
+  is then restored and app3 installed without the lines; `10-variables-e2e`
+  signs in again.
+
+`03-dev-up` (normal and `--whoami`, backlog 86) sets the lab's
+`config/dev.yaml` to `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`.
+Without the variable, `dev/demo-credentials.sh` stops before any
+certificate. With it (every DEV action exports `DEV_PUBLIC_HOST`), the dev
+config and the web certificate use the exported name.
 
 Backlog 69 WP6: the RPM delivery is verified by running the production
 manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd

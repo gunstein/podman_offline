@@ -56,8 +56,12 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 87. A literal `@@` in templates: `@@@@`
 
-Status: **implemented with product tests (2026-11-12); no lab run**
-(requirement: product owner, 2026-11-12). Tests:
+Status: **implemented, code review approved on `5da79f9`; regression lab
+CLEAN PASS on `5da79f9` (as item 86); its own lab step added, not yet
+run** (requirement: product owner, 2026-11-12). Lab: `--whoami`'s
+`10-variables` checks escaped text in an `ENVIRONMENT` override in the
+running container. Product tests only: a `MOUNTS` file, `ConfigMap` and
+manifest text, and bundles. Tests:
 `tests/platform_tests/test_template_escapes.py`. Shares the parser with
 [item 86](#86-process-environment-variables-in-placeholders-name). Review
 fixes (on `1219bb1`): `check_unresolved` refuses any `@@` in a key (a key is
@@ -124,9 +128,14 @@ final, are added after the dependent's own settings are resolved
 
 ## 86. Process environment variables in placeholders (`@@$NAME@@`)
 
-Status: **implemented with product tests (2026-11-12); no lab run**
-(requirement: product owner, 2026-11-12). Tests:
-`tests/platform_tests/test_process_environment.py` and the demo test
+Status: **implemented, code review approved on `5da79f9`; regression lab
+CLEAN PASS on `5da79f9` (`--whoami`, normal, `--renamed-product`,
+`--rpm-manual`); its own lab steps added, not yet run** (requirement: product owner, 2026-11-12). Lab:
+`03-dev-up` (an exported dev public host) and `--whoami`'s `10-variables`
+(an override with an exported variable, same-version reinstall, a missing
+variable); see [acceptance/README.md](acceptance/README.md). Product tests
+only: build-host and target-host values in one bundle, `MOUNTS` and other
+places. Tests: `tests/platform_tests/test_process_environment.py` and the demo test
 `test_certificates_and_deployment_resolve_one_exported_host_name`. Review
 fixes (on `1219bb1`): image errors show the image as written, never the
 resolved value (the fully-qualified check runs where that is known); the

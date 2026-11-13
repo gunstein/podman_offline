@@ -132,6 +132,9 @@ class WhoamiScenarioTests(ScenarioFixture):
             "10-environment-rotate-e2e",
             "10-environment-pending",
             "10-environment-pending-e2e",
+            # Backlogs 86 and 87: a variable and escaped text in app3's overrides.
+            "10-variables",
+            "10-variables-e2e",
             "10-check-environment",
         ]
         self.assertEqual([step for step in records if step in ordered], ordered)
@@ -231,9 +234,53 @@ class EnvironmentStepTests(unittest.TestCase):
         result = self.run_plain("ERROR: something else", runtime)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_the_variable_lines_are_added_to_app3s_overrides(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path = root / "whoami.yaml"
+        source = Path(__file__).resolve().parents[1] / "config/whoami.yaml"
+        path.write_text(source.read_text())
+        result = self.run_python("LAB_LINES", path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import yaml
+
+        document = yaml.safe_load(path.read_text())
+        self.assertEqual(
+            document["overrides"]["app3"]["ENVIRONMENT"]["backend"],
+            {
+                "Lab__Level": "@@$APP3_LAB_LEVEL@@",
+                "Lab__Literal": "SELECT @@@@VERSION; "
+                "@@@@secret:app3-api-secret/value@@@@ @@@@$APP3_LAB_LEVEL@@@@",
+            },
+        )
+        # Identity's registration of app3 is kept as it was.
+        self.assertEqual(
+            document["overrides"]["identity"],
+            yaml.safe_load(source.read_text())["overrides"]["identity"],
+        )
+
+    def test_the_variable_step_expects_the_products_rendering(self):
+        """The step's expected container text is what the product renders."""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from deployment import common, templates
+
+        text = "SELECT @@@@VERSION; @@@@secret:app3-api-secret/value@@@@ @@@@$APP3_LAB_LEVEL@@@@"
+        with mock.patch.object(common, "ENVIRON", {}):
+            rendered = templates.substitute(text, lambda *a: "never", "t")
+        body = shell_code(REMOTE, action="whoami-variables")
+        found = re.search(r"literal='Lab__Literal=([^']*)'", body)
+        assert found is not None
+        self.assertEqual(rendered, found[1])
+        # The dev step's origin line is the one config/dev.yaml.example has.
+        example = (
+            Path(__file__).resolve().parents[1] / "config/dev.yaml.example"
+        ).read_text()
+        self.assertIn("PUBLIC_ORIGIN: https://myproduct-proxy:8443\n", example)
+        self.assertIn("export DEV_PUBLIC_HOST=myproduct-proxy", REMOTE)
+
     def test_every_step_has_its_action(self):
         for name in ("plain", "records", "rotate", "pending"):
             self.assertRegex(REMOTE, r"(?m)^whoami-environment-" + name + r"\)$")
+        self.assertRegex(REMOTE, r"(?m)^whoami-variables\)$")
         compile(shell_code(REMOTE, heredoc="PENDING_INSTALL"), "pending", "exec")
 
     def test_the_installs_of_a_runtime_run_are_read_in_order(self):

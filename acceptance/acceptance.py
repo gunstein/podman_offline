@@ -1303,6 +1303,13 @@ class Run:
                     "10-environment-" + name + "-e2e",
                     lambda: self.guest("DEV", "whoami-e2e"),
                 )
+        # Backlogs 86 and 87: an exported variable and escaped text in app3's
+        # overrides, through the running container.
+        self.step(
+            "10-variables",
+            lambda: self.guest("PROD", "whoami-variables", bundle="app3"),
+        )
+        self.step("10-variables-e2e", lambda: self.guest("DEV", "whoami-e2e"))
         self.step("10-check-environment", lambda: self.guest("PROD", "check"))
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True
