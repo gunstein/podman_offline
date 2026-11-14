@@ -1,7 +1,11 @@
 """The normal scenario's dev-seed step (backlog 81) without lab access.
 
-The step runs against a stand-in seed-db.sh and podman that behave like the
-product, with one wrong behaviour at a time; each must fail the step.
+The step runs against a stand-in seed-db.sh and podman that act on what the
+step actually sends: the stand-in seed-db.sh runs the SQL file's statements
+as one transaction on $W/rows, and the stand-in podman answers the step's
+query for the names it asks about, in the container it names. One wrong
+behaviour at a time (FAULT) must fail the step, and nothing private
+(PRIVATE_MARKER) may reach the step's own output.
 """
 
 import subprocess
@@ -13,30 +17,72 @@ from test_acceptance import shell_code
 
 REMOTE = Path(__file__).with_name("remote.sh").read_text()
 
-# $W/rows holds demo_seed's dev-seed rows; $W/starts the container start.
-SEED_DB = r"""#!/bin/bash
-case $2 in
-*insert.sql)
-    if [[ $FAULT != norow ]] && { [[ $FAULT == duplicate ]] || ! grep -qx 'dev-seed|v1' "$W/rows"; }; then
-        echo 'dev-seed|v1' >> "$W/rows"
-    fi
-    [[ $FAULT != restart ]] || echo restarted > "$W/starts"
-    [[ $FAULT != credential ]] || echo changed > build/dev/app1/credentials/database/password
-    echo "[OK] seeded app1 from $2";;
-*failing.sql)
-    [[ $FAULT != partial ]] || echo 'dev-seed-partial|x' >> "$W/rows"
-    [[ $FAULT != succeed ]] || { echo "[OK] seeded app1 from $2"; exit 0; }
-    line=' at line 3'
-    [[ $FAULT != noline ]] || line=
-    echo "ERROR: seeding app1 from $2 failed: the SQL failed$line; fix the SQL; its changes were rolled back${MARKER:-}" >&2
-    exit 1;;
-esac
+SEED_DB = r"""#!/usr/bin/env python3
+import os, re, sys
+from pathlib import Path
+
+work, fault = Path(os.environ["W"]), os.environ["FAULT"]
+rows = (work / "rows").read_text().split()
+component, sql = sys.argv[1:]
+if component != "app1":
+    sys.exit("stand-in: wrong component")
+INSERT = re.compile(
+    r"INSERT INTO demo_seed \(name, value\) VALUES \('([^']*)', '([^']*)'\)"
+    r"( ON CONFLICT \(name\) DO NOTHING)?;"
+)
+
+
+def fail(line):
+    where = "" if fault == "noline" else f" at line {line}"
+    marker = " PRIVATE_MARKER" if fault == "marker" else ""
+    print(f"ERROR: seeding app1 from {sql} failed: the SQL failed{where}; "
+          f"fix the SQL; its changes were rolled back{marker}", file=sys.stderr)
+    sys.exit(1)
+
+
+pending = []
+for number, line in enumerate(Path(sql).read_text().splitlines(), 1):
+    found = INSERT.fullmatch(line)
+    if found:
+        name, value, ignore = found.groups()
+        if any(row.split("|")[0] == name for row in rows + pending):
+            if ignore and fault != "duplicate":
+                continue
+            if not ignore:
+                fail(number)
+        if fault != "norow":
+            pending.append(name + "|" + value)
+    elif line == "SELECT 1;":
+        pass
+    elif line == "SELECT 'PRIVATE_MARKER'::integer;":
+        if fault == "partial":
+            (work / "rows").write_text("\n".join(rows + pending) + "\n")
+        if fault != "succeed":
+            fail(number)
+    else:
+        sys.exit("stand-in: unexpected SQL")
+(work / "rows").write_text("\n".join(rows + pending) + "\n")
+if fault == "restart":
+    (work / "starts").write_text("restarted")
+if fault == "credential":
+    Path("build/dev/app1/credentials/database/password").write_text("changed\n")
+print(f"[OK] seeded app1 from {sql}")
 """
-PODMAN = r"""#!/bin/bash
-case $1 in
-ps) echo "c1 app1-postgres-db $(cat "$W/starts")";;
-exec) sort "$W/rows";;
-esac
+PODMAN = r"""#!/usr/bin/env python3
+import os, re, sys
+from pathlib import Path
+
+work = Path(os.environ["W"])
+if sys.argv[1] == "ps":
+    print("c1 app1-postgres-db " + (work / "starts").read_text())
+    sys.exit()
+# exec <container> sh -ec <script> sh <query>
+if sys.argv[1:3] != ["exec", "app1-postgres-db"]:
+    sys.exit(125)
+query = sys.argv[-1]
+names = re.findall(r"'([^']*)'", re.search(r"name IN \(([^)]*)\)", query)[1])
+rows = (work / "rows").read_text().split()
+print("\n".join(sorted(row for row in rows if row.split("|")[0] in names)))
 """
 
 
@@ -57,8 +103,7 @@ class DevSeedStepTests(unittest.TestCase):
             (work / name).chmod(0o755)
         script = (
             "set -euo pipefail\n"
-            + shell_code(REMOTE, function="expect_refusal")
-            + f"\nbase={work} src={src}\n"
+            + f"base={work} src={src}\n"
             + shell_code(REMOTE, action="dev-seed")
         )
         return subprocess.run(
@@ -72,7 +117,6 @@ class DevSeedStepTests(unittest.TestCase):
                 "PATH": f"{work / 'bin'}:/usr/bin:/bin",
                 "W": str(work),
                 "FAULT": fault,
-                "MARKER": " PRIVATE_MARKER" if fault == "marker" else "",
             },
         )
 
@@ -80,13 +124,14 @@ class DevSeedStepTests(unittest.TestCase):
         result = self.run_step()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS: seed-db inserted once", result.stdout)
+        self.assertNotIn("PRIVATE_MARKER", result.stdout + result.stderr)
 
     def test_the_step_fails_for_each_wrong_result(self):
         for fault, message in (
             ("norow", "after the first seed demo_seed lacks exactly one dev-seed row"),
             ("duplicate", "after the repeated seed demo_seed lacks exactly one"),
-            ("succeed", "succeeded"),
-            ("noline", "the SQL failure does not name line 3"),
+            ("succeed", "the failing seed succeeded"),
+            ("noline", "the SQL failure is not the fixed message naming line 3"),
             ("marker", "the failure shows SQL text"),
             ("partial", "the failed seed left a row"),
             ("restart", "seeding replaced or added a container"),
@@ -95,8 +140,9 @@ class DevSeedStepTests(unittest.TestCase):
             with self.subTest(fault):
                 result = self.run_step(fault)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("FAIL: ", result.stdout)
-                self.assertIn(message, result.stdout)
+                self.assertIn("FAIL: " + message, result.stdout)
+                # The step prints its verdicts, never the command's output.
+                self.assertNotIn("PRIVATE_MARKER", result.stdout + result.stderr)
 
     def test_the_step_has_its_action(self):
         self.assertRegex(REMOTE, r"(?m)^dev-seed\)$")

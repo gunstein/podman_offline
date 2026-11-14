@@ -1245,7 +1245,12 @@ and `424fab1`). `dev/seed-db.sh` and `dev/seed_db.py`; product tests in
 with harness tests in `acceptance/test_dev_seed.py`; usage in the README's
 "Seed a development database". Outstanding until the lab run: real
 Podman/PostgreSQL behavior (the `podman exec` user reading the password file,
-psql's `psql:<stdin>:N: ERROR:` prefix). Known gaps: only literal Pod names;
+psql's `psql:<stdin>:N: ERROR:` prefix). Review fixes (on `6cd8814`): a YAML
+or shape error in `build/install.yaml` or a source manifest names only the
+path; a Pod declared twice is refused by name; the checks follow the item's
+order (catalog, SQL file, prepared file, Pod names); the lab step keeps the
+command's output private until checked, and its harness stand-ins run the
+step's actual SQL and query. Known gaps: only literal Pod names;
 the demo's loopback accepts any password, so only the product test shows the
 password is delivered. This replaces the proposal
 of 2026-11-02 (a harmless production `populate.sql` selected through a

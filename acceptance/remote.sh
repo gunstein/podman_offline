@@ -1287,16 +1287,22 @@ dev-seed)
     }
     containers_before=$(dev_containers)
     credentials_before=$(dev_credentials)
+    # The command's output is kept private until checked: only the step's
+    # own verdicts are printed.
     for attempt in first repeated; do
-        output=$(./dev/seed-db.sh app1 "$seed_dir/insert.sql")
-        printf '%s\n' "$output"
-        [[ $output == "[OK] seeded app1 from $seed_dir/insert.sql" ]] || { echo "FAIL: the $attempt seed did not report success"; exit 1; }
+        status=0
+        output=$(./dev/seed-db.sh app1 "$seed_dir/insert.sql" 2>&1) || status=$?
+        [[ $status == 0 && $output == "[OK] seeded app1 from $seed_dir/insert.sql" ]] \
+            || { echo "FAIL: the $attempt seed did not report success (status $status)"; exit 1; }
         [[ $(seed_rows) == 'dev-seed|v1' ]] || { echo "FAIL: after the $attempt seed demo_seed lacks exactly one dev-seed row"; exit 1; }
+        echo "PASS: the $attempt seed inserted exactly one dev-seed row"
     done
-    expect_refusal ./dev/seed-db.sh app1 "$seed_dir/failing.sql"
-    grep -Fq "failed: the SQL failed at line 3; fix the SQL; its changes were rolled back" <<< "$refusal_output" \
-        || { echo 'FAIL: the SQL failure does not name line 3'; exit 1; }
-    if grep -Fq PRIVATE_MARKER <<< "$refusal_output"; then echo 'FAIL: the failure shows SQL text'; exit 1; fi
+    status=0
+    output=$(./dev/seed-db.sh app1 "$seed_dir/failing.sql" 2>&1) || status=$?
+    [[ $status != 0 ]] || { echo 'FAIL: the failing seed succeeded'; exit 1; }
+    if grep -Fq PRIVATE_MARKER <<< "$output"; then echo 'FAIL: the failure shows SQL text'; exit 1; fi
+    [[ $output == "ERROR: seeding app1 from $seed_dir/failing.sql failed: the SQL failed at line 3; fix the SQL; its changes were rolled back" ]] \
+        || { echo 'FAIL: the SQL failure is not the fixed message naming line 3'; exit 1; }
     [[ $(seed_rows) == 'dev-seed|v1' ]] || { echo 'FAIL: the failed seed left a row'; exit 1; }
     [[ $(dev_containers) == "$containers_before" ]] || { echo 'FAIL: seeding replaced or added a container'; exit 1; }
     [[ $(dev_credentials) == "$credentials_before" ]] || { echo 'FAIL: seeding changed a credential'; exit 1; }

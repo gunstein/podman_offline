@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from deployment import catalog, common, deploy
@@ -65,20 +67,35 @@ FAILURES = {
 }
 
 
-def component_pods(component):
-    """The literal Pod names of the component's source manifests."""
+def check_component(component):
+    """The component must be in the catalog's list; no component is read."""
     _, _, components = catalog.catalog_components(common.ROOT)
     if component not in components:
         raise common.DeployError(
             f"{component} is not a component in {common.ROOT / 'bundles.yaml'}"
         )
+
+
+def read_documents(path, remedy):
+    """All YAML documents of path; a parse error names only the path.
+
+    A parser's own message can quote the text, and build/install.yaml holds
+    Secret values.
+    """
+    try:
+        return [doc for doc in rendering.load_yaml_all(path) if doc is not None]
+    except (yaml.YAMLError, ValueError, TypeError):
+        raise common.DeployError(f"{path} is not valid YAML; {remedy}") from None
+
+
+def component_pods(component):
+    """The literal Pod names of the component's source manifests."""
     directory = common.ROOT / "components" / component / "manifests"
     pods = []
     for path in sorted(directory.glob("*.yaml")):
-        documents = rendering.load_yaml_all(path)
         found = [
             doc
-            for doc in documents
+            for doc in read_documents(path, "fix the manifest")
             if isinstance(doc, dict) and doc.get("kind") == "Pod"
         ]
         for doc in found:
@@ -92,19 +109,40 @@ def component_pods(component):
         # another component's name cannot select that component's database.
         rendering.check_component_names(found, component, path)
         pods += [doc["metadata"]["name"] for doc in found]
+    for pod in sorted(set(pods)):
+        if pods.count(pod) > 1:
+            raise common.DeployError(
+                f"Pod {pod} is declared {pods.count(pod)} times in {directory}; "
+                "give each Pod its own name"
+            )
     return pods
 
 
 def database_container(component):
     """The one running database container of the component: <pod>-<container>."""
-    pods = component_pods(component)
     install = common.BUILD / "install.yaml"
     if not install.is_file():
         raise common.DeployError(f"{install} is missing; {UP}")
-    documents = [doc for doc in rendering.load_yaml_all(install) if doc is not None]
+    pods = component_pods(component)
+    documents = read_documents(install, UP)
+    try:
+        return prepared_database(component, pods, documents, install)
+    except (KeyError, TypeError, AttributeError):
+        # A damaged prepared file; its values never reach the message.
+        raise common.DeployError(
+            f"{install} is not a valid prepared file; {UP}"
+        ) from None
+
+
+def prepared_database(component, pods, documents, install):
+    """The database among the prepared Pods named in the source manifests."""
+    try:
+        specs = rendering.pod_specs(documents, str(install))
+    except common.DeployError as error:
+        # Its messages name kinds and fields, never values.
+        raise common.DeployError(f"{error}; {UP}") from None
     prepared = {
-        (doc.get("metadata") or {}).get("name"): (doc, spec)
-        for doc, spec in rendering.pod_specs(documents, str(install))
+        (doc.get("metadata") or {}).get("name"): (doc, spec) for doc, spec in specs
     }
     # envFrom with a Secret: only the key names, as for ENVIRONMENT recipes.
     secret_keys = {
@@ -147,13 +185,18 @@ def failure(status, stderr, container):
 
 
 def seed(component, sql):
-    """Run the SQL file in the component's database; return the exit status."""
-    container = database_container(component)
+    """Run the SQL file in the component's database; return the exit status.
+
+    The order of item 81: the catalog, the SQL file, the prepared file, then
+    the source Pod names and the database.
+    """
+    check_component(component)
     try:
         source = sql.open("rb")
     except OSError:
         raise common.DeployError(f"Cannot read {sql}") from None
     with source:
+        container = database_container(component)
         try:
             result = subprocess.run(
                 ["podman", "exec", "-i", container, "sh", "-c", SCRIPT],

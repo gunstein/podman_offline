@@ -83,8 +83,11 @@ one row, found by a separate query. A script that inserts `dev-seed-partial`
 and fails on line 3 with `SELECT 'PRIVATE_MARKER'::integer` exits nonzero
 with "the SQL failed at line 3", without the marker, and leaves no row.
 Container IDs and start times and the checksums of `build/dev`'s credentials
-are unchanged. `test_dev_seed.py` runs the step against a stand-in with one
-wrong behaviour at a time and requires each to fail it.
+are unchanged. The command's output stays private until checked; the step
+prints only its own verdicts. `test_dev_seed.py` runs the step against
+stand-ins that run the step's actual SQL as one transaction and answer its
+actual query, with one wrong behaviour at a time, and requires each to fail
+it without the marker reaching the step's output.
 
 Backlog 69 WP6: the RPM delivery is verified by running the production
 manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd

@@ -172,10 +172,23 @@ class LookupTests(SeedFixture):
                     seed_db.database_container("orders")
                 self.rename_source_pod(new, "orders-web")
 
+    def test_a_pod_declared_twice_is_named(self):
+        product = copy.deepcopy(RENAMED)
+        extra = copy.deepcopy(product["orders"]["manifests"][1])
+        extra["spec"]["containers"][0]["name"] = "extra"
+        product["orders"]["manifests"].append(extra)
+        self.write_product(product)
+        common.BUILD.mkdir(exist_ok=True)
+        (common.BUILD / "install.yaml").write_text("")
+        with self.assertRaisesRegex(
+            common.DeployError, "Pod orders-postgres is declared 2 times in "
+        ):
+            seed_db.database_container("orders")
+
     def test_catalog_and_prepared_files(self):
         self.prepare()
         with self.assertRaisesRegex(common.DeployError, "shipping is not a component"):
-            seed_db.database_container("shipping")
+            seed_db.check_component("shipping")
         # Another component's files are never read.
         (self.source / "components/inventory/VERSION").write_text("not a version\n")
         self.assertEqual(seed_db.database_container("orders"), "orders-postgres-db")
@@ -343,6 +356,9 @@ class RunTests(SeedFixture):
         self.password.write_text("\n")
         self.container({})
         self.assert_failed("is missing, unreadable or empty", psql_started=False)
+        # A path cat cannot read, also when the tests run as root.
+        self.container({"POSTGRES_PASSWORD_FILE": str(self.work)})
+        self.assert_failed("is missing, unreadable or empty", psql_started=False)
 
     def test_missing_tools_are_not_a_credential_problem(self):
         for removed in ("psql", "cat"):
@@ -388,4 +404,30 @@ class RunTests(SeedFixture):
                 status, out, err = self.run_seed(sql)
                 self.assertEqual((status, out), (1, ""))
                 self.assertIn(f"ERROR: Cannot read {sql}", err)
+                self.assertFalse((self.record / "podman-args.json").exists())
+
+    def test_the_order_is_catalog_sql_then_prepared_files(self):
+        (common.BUILD / "install.yaml").unlink()
+        status, out, err = self.run_seed(self.work / "absent.sql")
+        self.assertEqual((status, out), (1, ""))
+        self.assertEqual(err, f"ERROR: Cannot read {self.work / 'absent.sql'}\n")
+
+    def test_a_damaged_prepared_file_shows_no_value(self):
+        """A parser message can quote a Secret value; only the path is named."""
+        install = common.BUILD / "install.yaml"
+        for text in (
+            "kind: Secret\nmetadata: {name: orders-x}\ndata: {k: !!int PRIVATE_MARKER}\n",
+            "kind: Secret\ndata: [PRIVATE_MARKER\n",
+            "kind: Pod\nmetadata: {name: orders-postgres}\nspec: {containers: [PRIVATE_MARKER]}\n",
+            "kind: Secret\nmetadata: PRIVATE_MARKER\n",
+        ):
+            with self.subTest(text):
+                install.write_text(text)
+                status, out, err = self.run_seed()
+                self.assertEqual((status, out), (1, ""))
+                self.assertRegex(
+                    err, r"^ERROR: .*install.yaml.*; run ./dev/dev.sh up\n$"
+                )
+                self.assertNotIn("PRIVATE_MARKER", err)
+                self.assertNotIn("Traceback", err)
                 self.assertFalse((self.record / "podman-args.json").exists())
