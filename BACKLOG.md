@@ -1236,93 +1236,175 @@ a password. Product tests in `test_database_preflight.py`; harness test
 `MOUNTS` secret file's reference instead of reading it as a file (missed in
 backlog 80, whose only user, app3, is not renamed).
 
-## 81. Use a harmless production SQL file with an existing dev source override
+## 81. Explicit development database seeding: `dev/seed-db.sh`
 
-Status: **planned** (2026-11-02, decided by the product owner).
+Status: **planned** (decided by the product owner, 2026-11-14). This replaces
+the proposal of 2026-11-02 (a harmless production `populate.sql` selected
+through a `VOLUME_FILES` dev override); that proposal is withdrawn.
 
-Need: the `migration` init container must receive `populate.sql` at the same
-path in DEV and PROD. DEV needs the real seed SQL; PROD must not receive or
-execute that development seed content. Keep the existing volume and single-file
-mount in both environments. A harmless SQL file in PROD is acceptable.
+Need: a developer occasionally loads local data into the development
+PostgreSQL database of one component, after its migrations have run:
 
-Decision: keep the harmless file in the release from the start, and select the
-real DEV file through the existing `config/dev.yaml` override. Do not empty,
-rewrite or conditionally replace SQL during bundling. This is a focused usage
-example and verification of the existing `VOLUME_FILES` mechanism from item 57,
-not a new deployment feature.
-
-Example for the owner's Identity layout:
-
-```sql
--- components/identity/files/populate.sql
--- No development seed data in production.
+```sh
+./dev/dev.sh up
+# after the component's migration init container has completed:
+./dev/seed-db.sh identity ~/dev-inputs/identity/populate.sql
 ```
 
-```yaml
-# components/identity/config.defaults.yaml
-VOLUME_FILES:
-  identity-seed-sql:
-  - component_file: populate.sql
+`identity` is the catalog component ID, not a container name.
+
+Decision:
+
+- The SQL runs through `podman exec` in the component's already running
+  database container. No other container, image, network setting or mount.
+- Development only for now. Not part of `dev/dev.sh up`, an init container,
+  bundle creation or a production installation. A later need on a target
+  may come; nothing is built for it now.
+- It runs every time it is invoked: no history, markers or "already seeded"
+  state. It does not check or wait for migrations; run too early, the SQL
+  fails (missing tables) and that is reported as a failure.
+- No new YAML files, settings, `DEV_MOUNTS`, empty production SQL files,
+  modes or general hook framework.
+- Release seeding stays as it is: data that must exist everywhere belongs in
+  the release (an init container, like app1's `seed-database`); local
+  development data is run with `./dev/seed-db.sh`.
+
+### Finding the database
+
+1. The component must exist in the source catalog
+   (`catalog.source_descriptors`), the SQL file must exist and be readable,
+   and `build/install.yaml` must exist (otherwise: run `./dev/dev.sh up`).
+2. The component's Pod names come from its source manifests
+   (`components/<id>/manifests/*.yaml`); only the names are taken from
+   there, everything else from the prepared `build/install.yaml`. A Pod name
+   that is a `@@...@@` placeholder stops the command (only literal Pod names
+   are supported); a Pod missing from `build/install.yaml` stops it with "run
+   `./dev/dev.sh up`".
+3. In those prepared Pods, `deploy.postgres_binding()` (with
+   `deploy.environment_entries()` for `POSTGRES_PASSWORD_FILE` through
+   `ENVIRONMENT`) finds the database containers. Exactly one is required;
+   zero or several stop the command, naming what was found. Its existing
+   refusals apply unchanged.
+4. The container is `<pod>-<container>`, as `podman kube play` names it. No
+   assumed names such as `<component>-postgres`, `db` or
+   `credentials/database`.
+
+Nothing is rendered, prepared or repaired. `config/dev.yaml` and
+`build/dev/<id>/config.yaml` are not read. Helpers are reused, not copied;
+a modest extension keeps its callers and its password safety checks.
+
+### Running the SQL
+
+```text
+podman exec -i <container> sh -c '<fixed script>' < <sql file>
 ```
 
-```yaml
-# Existing, local config/dev.yaml; never included in a production bundle.
-VOLUME_FILES:
-  identity-seed-sql:
-  - path: ~/dev-inputs/identity/populate.sql
+The argument list is passed directly (no host shell); the path and the
+component never become executable text; the SQL is streamed through stdin
+unchanged. The fixed script uses only the container's own environment, the
+values the database was started with:
+
+```sh
+: "${POSTGRES_USER:?}" "${POSTGRES_DB:?}" "${POSTGRES_PASSWORD_FILE:?}"
+PGPASSWORD=$(cat "$POSTGRES_PASSWORD_FILE") exec psql --no-psqlrc \
+  -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  --set ON_ERROR_STOP=1 --set VERBOSITY=terse --single-transaction \
+  --file=- >/dev/null
 ```
 
-The real seed SQL lives at that external path, outside the component's `files/`
-tree: the entire tree is bundled, even when an entry is not selected in PROD.
-Both sources have the basename `populate.sql`. The existing manifest keeps its
-`seed-sql` volume referring to `identity-seed-sql` and, in `migration`:
+- A finite `PGCONNECT_TIMEOUT`. psql takes `PGPORT` from the same
+  environment as the server (both default to 5432).
+- A missing variable or an empty or unreadable password file stops the
+  command, naming it and the container. The password never appears in
+  arguments, the host-side environment or output; no shell tracing.
+- The user is the database's `POSTGRES_USER`, the superuser the image
+  created: it can insert into any table and run administrative SQL. A
+  script that needs another object owner uses `SET ROLE` itself. No option
+  for another user.
+- `--single-transaction`: a failing script leaves the database unchanged.
+  Exceptions to document: statements that cannot run in a transaction
+  (`CREATE DATABASE`, `VACUUM`, `CREATE INDEX CONCURRENTLY`, `ALTER
+  SYSTEM`) fail, and a script must not contain its own `BEGIN`/`COMMIT`.
+  Scripts should still be safe to repeat (for example `ON CONFLICT DO
+  NOTHING`): a successful run applied again inserts again.
 
-```yaml
-volumeMounts:
-- name: seed-sql
-  mountPath: /migrations/runAfterOtherAnyTimeScripts/9999_Populate.sql
-  subPath: populate.sql
-  readOnly: true
-```
+### Output and errors
 
-Implementation scope:
+- psql's stdout is discarded; its stderr (terse: the script line number and
+  the primary message, no `DETAIL` and no echoed SQL line) is shown.
+- Success prints one line, for example `[OK] seeded identity from <file>`,
+  only after exit status 0.
+- Every failure returns a nonzero status with the next action, told apart by
+  exit status: podman cannot exec (container missing or not running: run
+  `./dev/dev.sh up`); `sh`, `cat` or `psql` missing in the image; a missing
+  variable or password file (restore the existing credential and run
+  `./dev/dev.sh up`; never generate one); a connection or authentication
+  failure (psql exit 2); an SQL failure (psql exit 3: nothing was saved).
+  Captured output never goes into exception messages.
+- No restarts, volumes, or changes to credentials, manifests, registrations
+  or `build/` files.
 
-- Document this complete example in the existing `docs/COMPONENTS.md`, including
-  which files the author/developer edits. Use existing example/test locations;
-  do not change the shipped Identity demo to impersonate an unavailable private
-  migration image. The container name and SQL execution path belong to the
-  consuming application.
-- Reuse the existing source-override and bundle logic. No new config files,
-  `DEV_MOUNTS`, per-component dev config, Jinja2, build switches, migration
-  framework or format changes. Component-file `MOUNTS` sources are not dev
-  overrides; this example deliberately uses `VOLUME_FILES`.
-- Verify that the actual migration tool accepts a comment-only SQL file. If
-  unavailable, leave that check explicitly outstanding; a successful `psql`
-  check does not establish another tool's behavior. If necessary, use a
-  harmless statement supported by that tool and document its exact behavior.
-- Explain existing limitations: a dev override replaces the declared ID's
-  entire source list, so retain any other required sources explicitly. Imported
-  volumes overwrite matching files but retain unlisted files; this pattern
-  does not clean a reused DEV database or remove other seed scripts. No new
-  cleanup or migration behavior is requested.
+### Implementation
 
-Done when:
+- `dev/seed-db.sh` is a short launcher for a small, readable Python helper
+  (arguments, the lookup above, one subprocess call), with ordinary
+  functions for (1) finding and validating the database container and (2)
+  running the SQL. No embedded Python program in the shell script.
+- Verify the referenced helpers against the current code before use.
+- `dev/seed-db.sh` and its helper never become release content (check the
+  bundle's file list; add a test if no existing one covers `dev/`).
 
-- Focused product tests prove that DEV delivers the external seed bytes as
-  `populate.sql`, while an isolated production bundle delivers the harmless
-  file with the same basename and mounting path. Check the archive contents:
-  neither `config/dev.yaml` nor the real external seed content is shipped, even
-  when bundling from a checkout used for DEV. Building leaves the source files
-  unchanged. Expected seed markers and contents must be independent of the
-  implementation under test.
-- Extend relevant existing SQL acceptance coverage from item 57: the init
-  container inserts a distinctive DEV marker on a fresh DEV database; a fresh
-  PROD installation completes successfully with the harmless file present and
-  without that marker. Assert both file delivery and database outcome, so a
-  missing file or skipped migration cannot masquerade as a successful no-op.
-  Keep existing production reference-data and retry checks. Record actual
-  Podman results separately from harness tests and identify the migration tool
-  tested; retain any private-image verification gap explicitly.
+### Done when
+
+Product tests (`tests/platform_tests/`), with a renamed component, Pod,
+container, Secret ID and password path:
+
+- The one database container is found from the component's manifests and
+  `build/install.yaml` and named `<pod>-<container>`, for a directory-mounted
+  password, a single-file `MOUNTS` password and `POSTGRES_PASSWORD_FILE`
+  through `ENVIRONMENT` (one test each; the binding rules are already
+  tested).
+- The command stops before podman is called for an unknown component, a
+  missing or unreadable SQL file, a missing `build/install.yaml`, zero or
+  several databases, a placeholder Pod name and a Pod missing from
+  `build/install.yaml`.
+- With a stub podman recording arguments and stdin: the argument list
+  `exec -i <container> sh -c <fixed script>`; the SQL bytes arrive
+  unchanged, also from a path with spaces; podman, connection and SQL
+  failures give a nonzero status with their messages; `[OK]` only on
+  success; psql's stderr shown, its stdout not.
+- The fixed script, run with real `sh` and a stub psql: `PGPASSWORD` equals
+  the file's content for a password with `$`, `'`, `;` and spaces; the
+  password is not in psql's arguments; the flags above are passed; a
+  missing variable or file stops the script, naming it.
+- `build/` is byte-for-byte unchanged after a success and after a failure.
+
+Acceptance (the normal scenario after `03-dev-up`, the real command against
+app1, whose `seed-database` init container creates `demo_seed (name,
+value)`; the test SQL lives under `acceptance/`, never under `components/`):
+
+1. `('dev-seed', 'v1')` is inserted; a separate psql query finds it.
+2. An `ON CONFLICT DO NOTHING` script run again leaves exactly one such row.
+3. A script that inserts `('dev-seed-partial', 'x')` and then fails exits
+   nonzero with a line number and without the SQL text, and
+   `dev-seed-partial` is absent.
+4. Container IDs and start times are unchanged; no new containers.
+5. The checksums of `build/dev/*/credentials` are unchanged.
+
+A successful connection alone never counts as proof that the SQL ran.
+
+Documentation: a short section in the existing development documentation
+(the two commands, the component argument, completed migrations, the
+superuser credential and `SET ROLE`, repetition and `--single-transaction`
+with its exceptions, the terse errors, and the sentence on release seeding
+above), and the contract in [the review guide](docs/REVIEW_GUIDE.md) where
+development flows are described. This item's status and known gaps are
+updated when it is implemented and again after the lab run.
+
+Delivery: commit and push to a working branch, not to `main`; the product
+owner runs the lab from that commit before the merge. Real
+Podman/PostgreSQL behavior, including psql's actual terse format, is
+outstanding until then.
 
 ## 80. Mount a declared secret file directly through MOUNTS
 
