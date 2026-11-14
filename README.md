@@ -303,6 +303,36 @@ components in dependency order, followed by `podman kube play`. Run
 `dev/dev.sh down` before removing a component from the catalog: it stops what
 the last prepare rendered.
 
+### Seed a development database
+
+To load local data into one component's dev database, run a SQL file after
+`./dev/dev.sh up`, once the component's migrations (its migration init
+container) have completed:
+
+```sh
+./dev/dev.sh up
+./dev/seed-db.sh identity ~/dev-inputs/identity/populate.sql
+```
+
+- `identity` is the catalog component ID. The command finds the component's
+  one PostgreSQL container in `build/install.yaml` and runs `psql` in it with
+  `podman exec`; it starts no other container and changes no file.
+- It connects as the database's `POSTGRES_USER` with the password the
+  container already has, the superuser the image created. A script that needs
+  another owner for what it creates uses `SET ROLE` itself.
+- The whole file is one transaction: if a statement fails, its row and schema
+  changes are rolled back (used sequence values stay used). Statements that
+  cannot run in a transaction (`CREATE DATABASE`, `VACUUM`, `CREATE INDEX
+  CONCURRENTLY`, `ALTER SYSTEM`) fail, and the file must not contain its own
+  `BEGIN`/`COMMIT`.
+- It runs every time you invoke it and does not check for migrations. Write
+  the SQL so that it can run again (for example `ON CONFLICT DO NOTHING`); a
+  script run too early fails on the missing tables.
+- A failure shows a fixed message with the next step; for an SQL error, the
+  line psql reports, never psql's own message, which can contain seed data.
+- Development only. Data that must exist in every installation belongs in
+  the release, run by an init container such as app1's `seed-database`.
+
 Manifest structure validation rejects these container-only fields directly under
 Pod `spec`: `env`, `envFrom`, `command`, `args`, `image`, `imagePullPolicy`,
 `volumeMounts`, `volumeDevices`, `ports`, `workingDir`,

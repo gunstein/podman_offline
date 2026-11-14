@@ -53,6 +53,8 @@ def export_platform(target):
         "pull-images.sh",
         "generate-certificates.sh",
         "dev.sh",
+        "seed-db.sh",
+        "seed_db.py",
     ):
         shutil.copy2(str(ROOT / "dev" / name), str(target / "dev" / name))
     fixture = TESTS / "fixtures/catalog"

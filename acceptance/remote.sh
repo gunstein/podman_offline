@@ -1268,6 +1268,40 @@ dev-e2e)
     cd "$src"
     for app in app1 app2; do APP_BASE_PATH=/$app .venv-smoke/bin/python dev/smoke-test.py; done
     ;;
+dev-seed)
+    # Backlog 81: ./dev/seed-db.sh in app1's running dev database, whose
+    # seed-database init container created demo_seed. A separate query
+    # checks each effect; containers and credentials stay as they were.
+    cd "$src"
+    seed_dir="$base/dev seed"
+    mkdir -p "$seed_dir"
+    printf '%s\n' "INSERT INTO demo_seed (name, value) VALUES ('dev-seed', 'v1') ON CONFLICT (name) DO NOTHING;" > "$seed_dir/insert.sql"
+    printf '%s\n' "INSERT INTO demo_seed (name, value) VALUES ('dev-seed-partial', 'x');" 'SELECT 1;' \
+        "SELECT 'PRIVATE_MARKER'::integer;" > "$seed_dir/failing.sql"
+    dev_containers() { podman ps --all --format '{{.ID}} {{.Names}} {{.StartedAt}}' | sort; }
+    dev_credentials() { find build/dev -path '*/credentials/*' -type f -print0 | sort -z | xargs -0 sha256sum; }
+    seed_rows() {
+        podman exec app1-postgres-db sh -ec 'export PGPASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"
+            exec psql -X -A -t -F "|" -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "$1"' \
+            sh "SELECT name, value FROM demo_seed WHERE name IN ('dev-seed', 'dev-seed-partial') ORDER BY name"
+    }
+    containers_before=$(dev_containers)
+    credentials_before=$(dev_credentials)
+    for attempt in first repeated; do
+        output=$(./dev/seed-db.sh app1 "$seed_dir/insert.sql")
+        printf '%s\n' "$output"
+        [[ $output == "[OK] seeded app1 from $seed_dir/insert.sql" ]] || { echo "FAIL: the $attempt seed did not report success"; exit 1; }
+        [[ $(seed_rows) == 'dev-seed|v1' ]] || { echo "FAIL: after the $attempt seed demo_seed lacks exactly one dev-seed row"; exit 1; }
+    done
+    expect_refusal ./dev/seed-db.sh app1 "$seed_dir/failing.sql"
+    grep -Fq "failed: the SQL failed at line 3; fix the SQL; its changes were rolled back" <<< "$refusal_output" \
+        || { echo 'FAIL: the SQL failure does not name line 3'; exit 1; }
+    if grep -Fq PRIVATE_MARKER <<< "$refusal_output"; then echo 'FAIL: the failure shows SQL text'; exit 1; fi
+    [[ $(seed_rows) == 'dev-seed|v1' ]] || { echo 'FAIL: the failed seed left a row'; exit 1; }
+    [[ $(dev_containers) == "$containers_before" ]] || { echo 'FAIL: seeding replaced or added a container'; exit 1; }
+    [[ $(dev_credentials) == "$credentials_before" ]] || { echo 'FAIL: seeding changed a credential'; exit 1; }
+    echo 'PASS: seed-db inserted once, repeated safely, rolled back a failure by line only; containers and credentials unchanged'
+    ;;
 dev-down) cd "$src"; ./dev/dev.sh down;;
 dev-whoami-e2e)
     cd "$src"

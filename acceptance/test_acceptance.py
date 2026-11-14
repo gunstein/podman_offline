@@ -788,7 +788,14 @@ echo '** WARNING: connection is not using a post-quantum key exchange algorithm.
 
     def test_only_the_normal_run_performs_the_dev_source_checks(self):
         """The scenario-independent DEV checks run once per commit, in normal."""
-        checks = {"host-path-safety", "unit", "database-runtime", "dev-up", "dev-e2e"}
+        checks = {
+            "host-path-safety",
+            "unit",
+            "database-runtime",
+            "dev-up",
+            "dev-e2e",
+            "dev-seed",
+        }
         normal = self.dev_steps_before_bundle()
         self.assertLessEqual(checks, set(normal))
         # Normal bundles after dev up: its PROD checks see no dev state.

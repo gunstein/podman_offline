@@ -873,6 +873,8 @@ class Run:
                 "dev-up",
                 "venv",
                 "dev-e2e",
+                # Backlog 81: the explicit dev seeding command.
+                "dev-seed",
                 "registry-test",
                 "dev-down",
             ]
