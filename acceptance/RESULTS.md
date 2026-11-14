@@ -30,7 +30,7 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--whoami` | `whoami-4c8a580` | 61 | CLEAN PASS |
-| normal | `normal-4c8a580` | 118 | CLEAN PASS |
+| normal | `normal-636997b` | 119 | CLEAN PASS |
 | `--first-app app2` | `app2-3da4d97` | 112 | CLEAN PASS |
 | `--identity-only` | `identity-3da4d97` | 52 | CLEAN PASS |
 | `--help-only` | `help-3da4d97` | 46 | CLEAN PASS |
@@ -51,9 +51,29 @@ changes only the harness and documentation (no product file differs from
 stricter, and `--whoami` adds four `MOUNTS` steps (61 steps; 57 on
 `3da4d97`). The other eight runs on `3da4d97` test the same product.
 
+normal ran again on `636997b` (2026-11-14, clean detached checkout, same OS
+and Podman, no failed or skipped step). That commit adds backlog 81's
+development command `dev/seed-db.sh` and its step `03-dev-seed` (119 steps;
+118 before); no file of the installed product differs from `4c8a580`, so
+`whoami-4c8a580` and the other runs still test the same product.
+
+Backlog 81 in this run (`03-dev-seed`, after `03-dev-e2e`): after `dev up`,
+`./dev/seed-db.sh app1` with files under a path with a space inserted
+`('dev-seed', 'v1')` into app1's `demo_seed`, found by a separate query; the
+same `ON CONFLICT DO NOTHING` script run again left exactly one row. A
+script that inserted `dev-seed-partial` and failed on line 3 exited nonzero
+with the fixed message "the SQL failed at line 3", the command's output did
+not contain the script's marker, and `dev-seed-partial` was absent
+(rolled back). Container IDs and start times and the checksums of
+`build/dev`'s credentials were unchanged. This also confirms on the demo
+image that the `podman exec` user reads the password file and that psql
+reports `psql:<stdin>:N: ERROR:` for `--file=-`. Not covered by the lab:
+the demo's loopback accepts any password, so only the product test shows
+that the right password is delivered.
+
 Backlogs 86 and 87 in these runs:
 
-- `03-dev-up` (normal and `--whoami`, on `4c8a580`): the lab's
+- `03-dev-up` (normal and `--whoami`, on `4c8a580`; normal again on `636997b`): the lab's
   `config/dev.yaml` had `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`.
   Without the variable, `dev/demo-credentials.sh` stopped with "environment
   variable DEV_PUBLIC_HOST is not set" before any certificate was issued.

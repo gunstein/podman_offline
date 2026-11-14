@@ -1238,14 +1238,17 @@ backlog 80, whose only user, app3, is not renamed).
 
 ## 81. Explicit development database seeding: `dev/seed-db.sh`
 
-Status: **implemented, not yet lab-verified** (decided by the product owner,
-2026-11-14; error output revised the same day after the reviews of `9bffe05`
-and `424fab1`). `dev/seed-db.sh` and `dev/seed_db.py`; product tests in
-`tests/platform_tests/test_seed_db.py`, the lab step `03-dev-seed` (normal)
-with harness tests in `acceptance/test_dev_seed.py`; usage in the README's
-"Seed a development database". Outstanding until the lab run: real
-Podman/PostgreSQL behavior (the `podman exec` user reading the password file,
-psql's `psql:<stdin>:N: ERROR:` prefix). Review fixes (on `6cd8814`): a YAML
+Status: **implemented, code review fixes applied, and lab-verified on
+`636997b`** (decided by the product owner, 2026-11-14; error output revised
+the same day after the reviews of `9bffe05` and `424fab1`). `dev/seed-db.sh`
+and `dev/seed_db.py`; product tests in `tests/platform_tests/test_seed_db.py`,
+the lab step `03-dev-seed` (normal) with harness tests in
+`acceptance/test_dev_seed.py`; usage in the README's "Seed a development
+database". `normal-636997b` was CLEAN PASS (119 steps,
+[RESULTS](acceptance/RESULTS.md)): insert, safe repeat, rollback of a failing
+script reported by line only, containers and credentials unchanged; it also
+confirmed the `podman exec` user reading the password file and psql's
+`psql:<stdin>:N: ERROR:` prefix. Review fixes (on `6cd8814`): a YAML
 or shape error in `build/install.yaml` or a source manifest names only the
 path; a Pod declared twice is refused by name; the checks follow the item's
 order (catalog, SQL file, prepared file, Pod names); the lab step keeps the
@@ -1255,9 +1258,8 @@ reading `bundles.yaml`, a source manifest or `build/install.yaml` (parser,
 encoding or shape) names only the path, checked through the launcher; every
 source document passes the component-name rule; the lab step first removes
 its own keys, and the stand-in answers only the step's exact queries. Known
-gaps: only literal Pod names;
-the demo's loopback accepts any password, so only the product test shows the
-password is delivered. This replaces the proposal
+gaps: only literal Pod names; the demo's loopback accepts any password, so
+only the product test shows the password is delivered. This replaces the proposal
 of 2026-11-02 (a harmless production `populate.sql` selected through a
 `VOLUME_FILES` dev override); that proposal is withdrawn.
 
