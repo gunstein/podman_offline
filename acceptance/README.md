@@ -77,7 +77,8 @@ uses `myproduct-proxy` (every DEV action exports it), as the dev smoke tests
 expect, and its config and web certificate use the exported name.
 
 `03-dev-seed` (normal, backlog 81) runs `./dev/seed-db.sh app1` with files
-written under `$base/dev seed/` (a path with a space). An insert of
+written under `$base/dev seed/` (a path with a space). It first removes the
+step's own keys, so an earlier attempt's rows never count. An insert of
 `('dev-seed', 'v1')` with `ON CONFLICT DO NOTHING`, run twice, leaves exactly
 one row, found by a separate query. A script that inserts `dev-seed-partial`
 and fails on line 3 with `SELECT 'PRIVATE_MARKER'::integer` exits nonzero

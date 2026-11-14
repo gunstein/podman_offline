@@ -79,22 +79,30 @@ if sys.argv[1] == "ps":
 # exec <container> sh -ec <script> sh <query>
 if sys.argv[1:3] != ["exec", "app1-postgres-db"]:
     sys.exit(125)
+# Only the step's two queries, for its two keys, are answered.
+KEYS = "name IN ('dev-seed', 'dev-seed-partial')"
 query = sys.argv[-1]
-names = re.findall(r"'([^']*)'", re.search(r"name IN \(([^)]*)\)", query)[1])
 rows = (work / "rows").read_text().split()
-print("\n".join(sorted(row for row in rows if row.split("|")[0] in names)))
+owned = [row for row in rows if row.split("|")[0] in ("dev-seed", "dev-seed-partial")]
+if query == "SELECT name, value FROM demo_seed WHERE " + KEYS + " ORDER BY name":
+    print("\n".join(sorted(owned)))
+elif query == "DELETE FROM demo_seed WHERE " + KEYS:
+    (work / "rows").write_text("\n".join(r for r in rows if r not in owned) + "\n")
+    print("DELETE", len(owned))
+else:
+    sys.exit("stand-in: unexpected query")
 """
 
 
 class DevSeedStepTests(unittest.TestCase):
-    def run_step(self, fault=""):
+    def run_step(self, fault="", rows=""):
         work = Path(self.enterContext(tempfile.TemporaryDirectory()))
         src = work / "src"
         for path, text in (
             ("src/dev/seed-db.sh", SEED_DB),
             ("bin/podman", PODMAN),
             ("src/build/dev/app1/credentials/database/password", "secret\n"),
-            ("rows", ""),
+            ("rows", rows),
             ("starts", "started"),
         ):
             (work / path).parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +151,14 @@ class DevSeedStepTests(unittest.TestCase):
                 self.assertIn("FAIL: " + message, result.stdout)
                 # The step prints its verdicts, never the command's output.
                 self.assertNotIn("PRIVATE_MARKER", result.stdout + result.stderr)
+
+    def test_rows_of_an_earlier_attempt_never_count(self):
+        earlier = "dev-seed|v1\ndev-seed-partial|x\nreference|release-v1\n"
+        result = self.run_step(rows=earlier)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_step("norow", rows=earlier)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("FAIL: after the first seed demo_seed lacks", result.stdout)
 
     def test_the_step_has_its_action(self):
         self.assertRegex(REMOTE, r"(?m)^dev-seed\)$")

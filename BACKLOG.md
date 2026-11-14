@@ -1250,7 +1250,12 @@ or shape error in `build/install.yaml` or a source manifest names only the
 path; a Pod declared twice is refused by name; the checks follow the item's
 order (catalog, SQL file, prepared file, Pod names); the lab step keeps the
 command's output private until checked, and its harness stand-ins run the
-step's actual SQL and query. Known gaps: only literal Pod names;
+step's actual SQL and query. Second review (on `736a4cb`): every failure
+reading `bundles.yaml`, a source manifest or `build/install.yaml` (parser,
+encoding or shape) names only the path, checked through the launcher; every
+source document passes the component-name rule; the lab step first removes
+its own keys, and the stand-in answers only the step's exact queries. Known
+gaps: only literal Pod names;
 the demo's loopback accepts any password, so only the product test shows the
 password is delivered. This replaces the proposal
 of 2026-11-02 (a harmless production `populate.sql` selected through a

@@ -19,8 +19,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from deployment import catalog, common, deploy
@@ -69,46 +67,55 @@ FAILURES = {
 
 def check_component(component):
     """The component must be in the catalog's list; no component is read."""
-    _, _, components = catalog.catalog_components(common.ROOT)
+    bundles = common.ROOT / "bundles.yaml"
+    try:
+        _, _, components = catalog.catalog_components(common.ROOT)
+    except common.DeployError:
+        raise
+    except Exception:  # noqa: BLE001 - a parser's message can quote the text
+        raise common.DeployError(f"{bundles} cannot be read; fix it") from None
     if component not in components:
-        raise common.DeployError(
-            f"{component} is not a component in {common.ROOT / 'bundles.yaml'}"
-        )
+        raise common.DeployError(f"{component} is not a component in {bundles}")
 
 
 def read_documents(path, remedy):
-    """All YAML documents of path; a parse error names only the path.
+    """All YAML documents of path; any failure names only the path.
 
     A parser's own message can quote the text, and build/install.yaml holds
     Secret values.
     """
     try:
         return [doc for doc in rendering.load_yaml_all(path) if doc is not None]
-    except (yaml.YAMLError, ValueError, TypeError):
-        raise common.DeployError(f"{path} is not valid YAML; {remedy}") from None
+    except Exception:  # noqa: BLE001 - see above; only the path is named
+        raise common.DeployError(f"{path} cannot be read as YAML; {remedy}") from None
 
 
 def component_pods(component):
-    """The literal Pod names of the component's source manifests."""
+    """The literal Pod names of the component's source manifests.
+
+    Every source document passes the component-name rule (render's
+    check_component_names: names start with "<component>-"), so a source
+    Pod renamed to another component's name cannot select that
+    component's database. A name with a placeholder is known only after
+    rendering: refused for a Pod, left unchecked for other kinds.
+    """
     directory = common.ROOT / "components" / component / "manifests"
     pods = []
     for path in sorted(directory.glob("*.yaml")):
-        found = [
-            doc
-            for doc in read_documents(path, "fix the manifest")
-            if isinstance(doc, dict) and doc.get("kind") == "Pod"
-        ]
-        for doc in found:
-            name = (doc.get("metadata") or {}).get("name")
-            if isinstance(name, str) and "@@" in name:
+        documents = read_documents(path, "fix the manifest")
+        rendering.check_kinds(documents, path)
+        literal = []
+        for doc in documents:
+            name = doc.get("metadata", {}).get("name")
+            if not (isinstance(name, str) and "@@" in name):
+                literal.append(doc)
+            elif doc["kind"] == "Pod":
                 raise common.DeployError(
                     f"{path}: the Pod name {name} is a placeholder; seed-db supports "
                     "only literal Pod names"
                 )
-        # Every name starts with "<component>-": a source Pod renamed to
-        # another component's name cannot select that component's database.
-        rendering.check_component_names(found, component, path)
-        pods += [doc["metadata"]["name"] for doc in found]
+        rendering.check_component_names(literal, component, path)
+        pods += [doc["metadata"]["name"] for doc in literal if doc["kind"] == "Pod"]
     for pod in sorted(set(pods)):
         if pods.count(pod) > 1:
             raise common.DeployError(
@@ -118,42 +125,40 @@ def component_pods(component):
     return pods
 
 
+def prepared_pods(install):
+    """build/install.yaml's documents, its Pods by name and its Secret key names.
+
+    Any failure names only the path: the file holds Secret values, and a
+    shape message can quote a field.
+    """
+    documents = read_documents(install, UP)
+    try:
+        pods = {}
+        for doc, spec in rendering.pod_specs(documents, str(install)):
+            rendering.containers(spec)  # every container entry is a map
+            pods[doc["metadata"]["name"]] = doc, spec
+        # envFrom with a Secret: only the key names, as for ENVIRONMENT recipes.
+        secret_keys = {
+            doc["metadata"]["name"]: sorted(
+                set(doc.get("data") or {}) | set(doc.get("stringData") or {})
+            )
+            for doc in documents
+            if doc["kind"] == "Secret"
+        }
+    except Exception:  # noqa: BLE001 - see the docstring
+        raise common.DeployError(
+            f"{install} is not a valid prepared file; {UP}"
+        ) from None
+    return documents, pods, {common.SECRET_TEMPLATES: secret_keys}
+
+
 def database_container(component):
     """The one running database container of the component: <pod>-<container>."""
     install = common.BUILD / "install.yaml"
     if not install.is_file():
         raise common.DeployError(f"{install} is missing; {UP}")
     pods = component_pods(component)
-    documents = read_documents(install, UP)
-    try:
-        return prepared_database(component, pods, documents, install)
-    except (KeyError, TypeError, AttributeError):
-        # A damaged prepared file; its values never reach the message.
-        raise common.DeployError(
-            f"{install} is not a valid prepared file; {UP}"
-        ) from None
-
-
-def prepared_database(component, pods, documents, install):
-    """The database among the prepared Pods named in the source manifests."""
-    try:
-        specs = rendering.pod_specs(documents, str(install))
-    except common.DeployError as error:
-        # Its messages name kinds and fields, never values.
-        raise common.DeployError(f"{error}; {UP}") from None
-    prepared = {
-        (doc.get("metadata") or {}).get("name"): (doc, spec) for doc, spec in specs
-    }
-    # envFrom with a Secret: only the key names, as for ENVIRONMENT recipes.
-    secret_keys = {
-        common.SECRET_TEMPLATES: {
-            doc["metadata"]["name"]: sorted(
-                set(doc.get("data") or {}) | set(doc.get("stringData") or {})
-            )
-            for doc in documents
-            if isinstance(doc, dict) and doc.get("kind") == "Secret"
-        }
-    }
+    documents, prepared, secret_keys = prepared_pods(install)
     found = []
     for pod in pods:
         if pod not in prepared:
@@ -164,7 +169,7 @@ def prepared_database(component, pods, documents, install):
         for container in spec.get("containers", []):
             environment = deploy.environment_entries(container, documents, secret_keys)
             if deploy.postgres_binding(doc, spec, "containers", container, environment):
-                found.append(pod + "-" + container["name"])
+                found.append(f"{pod}-{container.get('name')}")
     if len(found) != 1:
         raise common.DeployError(
             f"{component} has {len(found)} PostgreSQL database containers "

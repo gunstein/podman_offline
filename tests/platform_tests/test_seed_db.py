@@ -420,6 +420,8 @@ class RunTests(SeedFixture):
             "kind: Secret\ndata: [PRIVATE_MARKER\n",
             "kind: Pod\nmetadata: {name: orders-postgres}\nspec: {containers: [PRIVATE_MARKER]}\n",
             "kind: Secret\nmetadata: PRIVATE_MARKER\n",
+            "kind: Secret\nmetadata: {name: orders-x}\ndata: {k: !!bool PRIVATE_MARKER}\n",
+            "kind: {field: PRIVATE_MARKER}\n",
         ):
             with self.subTest(text):
                 install.write_text(text)
@@ -431,3 +433,71 @@ class RunTests(SeedFixture):
                 self.assertNotIn("PRIVATE_MARKER", err)
                 self.assertNotIn("Traceback", err)
                 self.assertFalse((self.record / "podman-args.json").exists())
+
+
+class LauncherTests(SeedFixture):
+    """dev/seed-db.sh itself: no traceback and nothing private, whatever it reads."""
+
+    def setUp(self):
+        super().setUp()
+        self.prepare()
+        (self.source / "dev").mkdir()
+        for name in ("seed-db.sh", "seed_db.py"):
+            (self.source / "dev" / name).write_bytes((REPO / "dev" / name).read_bytes())
+        self.sql = self.source / "seed.sql"
+        self.sql.write_text("SELECT 1;\n")
+
+    def launch(self):
+        launcher = self.source / "dev/seed-db.sh"
+        return REAL_RUN(
+            ["bash", str(launcher), "orders", str(self.sql)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+
+    def assert_refused(self, message):
+        result = self.launch()
+        output = (result.stdout + result.stderr).decode("utf-8", "replace")
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn(message, output)
+        self.assertNotIn("PRIVATE_MARKER", output)
+        self.assertNotIn("Traceback", output)
+
+    def test_a_damaged_prepared_file(self):
+        install = common.BUILD / "install.yaml"
+        for text, message in (
+            (
+                b"kind: Secret\nmetadata: {name: orders-x}\ndata: {k: !!bool PRIVATE_MARKER}\n",
+                "install.yaml cannot be read as YAML; run ./dev/dev.sh up",
+            ),
+            (
+                b"kind: {field: PRIVATE_MARKER}\n",
+                "install.yaml is not a valid prepared file; run ./dev/dev.sh up",
+            ),
+            (b"kind: Secret\ndata: {k: \xff PRIVATE_MARKER}\n", "run ./dev/dev.sh up"),
+        ):
+            with self.subTest(text):
+                install.write_bytes(text)
+                self.assert_refused(message)
+
+    def test_a_damaged_catalog(self):
+        bundles = self.source / "bundles.yaml"
+        bundles.write_text(bundles.read_text() + "extra: !!int PRIVATE_MARKER\n")
+        self.assert_refused("bundles.yaml cannot be read; fix it")
+
+    def test_every_source_document_is_checked(self):
+        manifest = self.source / "components/orders/manifests"
+        path = min(manifest.glob("*.yaml"))
+        original = path.read_text()
+        for extra, message in (
+            ("kind: Pod\nmetadata: PRIVATE_MARKER\n", "metadata must be a map"),
+            (
+                "kind: ConfigMap\nmetadata: {name: inventory-settings}\n",
+                "ConfigMap name must start with orders-",
+            ),
+        ):
+            with self.subTest(extra):
+                path.write_text(original + "---\n" + extra)
+                self.assert_refused(message)

@@ -1280,11 +1280,16 @@ dev-seed)
         "SELECT 'PRIVATE_MARKER'::integer;" > "$seed_dir/failing.sql"
     dev_containers() { podman ps --all --format '{{.ID}} {{.Names}} {{.StartedAt}}' | sort; }
     dev_credentials() { find build/dev -path '*/credentials/*' -type f -print0 | sort -z | xargs -0 sha256sum; }
-    seed_rows() {
+    # An independent query in app1's database, outside the command under test.
+    seed_query() {
         podman exec app1-postgres-db sh -ec 'export PGPASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"
             exec psql -X -A -t -F "|" -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "$1"' \
-            sh "SELECT name, value FROM demo_seed WHERE name IN ('dev-seed', 'dev-seed-partial') ORDER BY name"
+            sh "$1"
     }
+    seed_rows() { seed_query "SELECT name, value FROM demo_seed WHERE name IN ('dev-seed', 'dev-seed-partial') ORDER BY name"; }
+    # The step owns these two keys: an earlier attempt's rows never count.
+    seed_query "DELETE FROM demo_seed WHERE name IN ('dev-seed', 'dev-seed-partial')" > /dev/null
+    [[ -z $(seed_rows) ]] || { echo 'FAIL: demo_seed still holds dev-seed rows before the first seed'; exit 1; }
     containers_before=$(dev_containers)
     credentials_before=$(dev_credentials)
     # The command's output is kept private until checked: only the step's
