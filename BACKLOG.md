@@ -1239,7 +1239,7 @@ backlog 80, whose only user, app3, is not renamed).
 ## 81. Explicit development database seeding: `dev/seed-db.sh`
 
 Status: **planned** (decided by the product owner, 2026-11-14; error output
-revised the same day after review of `9bffe05`). This replaces the proposal
+revised the same day after the reviews of `9bffe05` and `424fab1`). This replaces the proposal
 of 2026-11-02 (a harmless production `populate.sql` selected through a
 `VOLUME_FILES` dev override); that proposal is withdrawn.
 
@@ -1285,8 +1285,13 @@ Decision:
    take the names of its Pods; only the names come from there, everything
    else from the prepared `build/install.yaml`. A Pod name that is a
    `@@...@@` placeholder stops the command (only literal Pod names are
-   supported; a dev override cannot add a Pod). A Pod missing from
-   `build/install.yaml` stops it with "run `./dev/dev.sh up`".
+   supported; a dev override cannot add a Pod). Before any lookup, the
+   source documents pass the existing component-name rule
+   (`render.check_component_names`: every resource starts with `<id>-`), so
+   a source Pod edited to another component's name after `up` (for example
+   `app1-postgres` in identity) stops the command instead of selecting that
+   component's running database. A Pod missing from `build/install.yaml`
+   stops it with "run `./dev/dev.sh up`".
 3. In those prepared Pods, count only ordinary `spec.containers` (never
    `initContainers`: a finished init container may carry the same binding).
    A container is a database when `deploy.postgres_binding()` returns a
@@ -1317,13 +1322,15 @@ values the database was started with, and gives each of its own checks a
 status of its own (none of psql's or podman's):
 
 ```sh
+command -v cat >/dev/null 2>&1 && command -v psql >/dev/null 2>&1 || exit 127
 [ -n "${POSTGRES_USER:-}" ] || exit 10
 [ -n "${POSTGRES_DB:-}" ] || exit 11
 [ -n "${POSTGRES_PASSWORD_FILE:-}" ] || exit 12
 password=$(cat -- "$POSTGRES_PASSWORD_FILE") || exit 13
 [ -n "$password" ] || exit 13
-PGPASSWORD=$password PGDATABASE=$POSTGRES_DB PGCONNECT_TIMEOUT=5
-export PGPASSWORD PGDATABASE PGCONNECT_TIMEOUT
+unset PGSERVICE
+PGPASSWORD=$password PGDATABASE=$POSTGRES_DB PGCONNECT_TIMEOUT=5 PGHOSTADDR=127.0.0.1
+export PGPASSWORD PGDATABASE PGCONNECT_TIMEOUT PGHOSTADDR
 exec psql --no-psqlrc -w -h 127.0.0.1 -U "$POSTGRES_USER" \
   --set ON_ERROR_STOP=1 --single-transaction --file=- >/dev/null
 ```
@@ -1334,7 +1341,13 @@ exec psql --no-psqlrc -w -h 127.0.0.1 -U "$POSTGRES_USER" \
 - `POSTGRES_DB` is a literal database name through `PGDATABASE`, never `-d`:
   psql reads a `-d` value with `=` as a connection string, which could
   override `-h 127.0.0.1` and reach another database (`DB_NAME` validation
-  allows such text). The connection stays on loopback.
+  allows such text).
+- The connection is pinned to loopback: `-h 127.0.0.1` alone is not enough,
+  because an inherited `PGHOSTADDR` decides the network address and
+  `PGSERVICE` can supply other parameters. The script clears `PGSERVICE` and
+  exports `PGHOSTADDR=127.0.0.1`, keeping `-h 127.0.0.1`.
+- A missing `cat` or `psql` gives 127 (the image lacks the tools), not 13
+  (a credential problem).
 - The password never appears in arguments, the host-side environment or
   output; no shell tracing.
 - The user is the database's `POSTGRES_USER`, the superuser the image
@@ -1353,9 +1366,13 @@ exec psql --no-psqlrc -w -h 127.0.0.1 -U "$POSTGRES_USER" \
 ### Output and errors
 
 - psql's stdout is discarded. Its stderr is captured by the helper and never
-  shown, logged or put into an exception. The only thing taken from it is
-  the line number of the first error: the `N` of a `psql:<stdin>:N:` prefix,
-  accepted only as digits.
+  shown, logged or put into an exception. The only thing taken from it, and
+  only on status 3, is a line number: the `N` of the first line that starts
+  with `psql:<stdin>:N: ERROR:`, where `N` is a positive ASCII number. A
+  NOTICE or WARNING with the same prefix is never used. If no such line is
+  recognized, the message has no line number. `N` is the line psql reports
+  (for a multi-line statement, psql's line for it). All messages are fixed
+  texts with the file and that number only.
 - Success prints one line, for example `[OK] seeded identity from <file>`,
   only after exit status 0.
 - Every failure returns a nonzero status, a fixed text and the next action:
@@ -1363,7 +1380,7 @@ exec psql --no-psqlrc -w -h 127.0.0.1 -U "$POSTGRES_USER" \
   | Status | Meaning | Next action in the message |
   | --- | --- | --- |
   | 125 | podman cannot exec (container missing or not running) | run `./dev/dev.sh up` |
-  | 126, 127 | the command cannot start in the container | the database image must provide `sh`, `cat` and `psql` |
+  | 126, 127 | the command cannot start in the container, or `cat` or `psql` is missing | the database image must provide `sh`, `cat` and `psql` |
   | 10, 11, 12 | `POSTGRES_USER`, `POSTGRES_DB` or `POSTGRES_PASSWORD_FILE` is not set in the container (named) | the database container must declare it |
   | 13 | the password file is missing, unreadable or empty | restore the existing credential, then run `./dev/dev.sh up`; never generate one |
   | 1 | psql failed on its own | the fixed text only |
@@ -1397,7 +1414,9 @@ container, Secret ID and password path:
   password, a single-file `MOUNTS` password and `POSTGRES_PASSWORD_FILE`
   through `ENVIRONMENT` (one test each; the binding rules are already
   tested). An init container with the same binding is not counted. A name
-  from a referenced Secret is seen by key only.
+  from a referenced Secret is seen by key only. A source Pod renamed to
+  another component's Pod that exists in `build/install.yaml` stops the
+  command before podman is called, as does one missing from it.
 - The command stops before podman is called for a component not in the
   catalog, a missing or unreadable SQL file, a missing `build/install.yaml`,
   zero or several databases, a placeholder Pod name and a Pod missing from
@@ -1408,16 +1427,20 @@ container, Secret ID and password path:
   its message and a nonzero status; `[OK]` only on success.
 - Output: a stub that fails with status 3 and writes
   `psql:<stdin>:7: ERROR: ... PRIVATE_MARKER ...` gives a message with line
-  7 and without the marker; a prefix that is not digits gives no line
-  number; no captured text reaches the output or an exception.
+  7 and without the marker. With a NOTICE on line 2 (also with a marker)
+  before that error, the message still names line 7; with only a NOTICE, or
+  a prefix that is not a positive number, it names no line. No captured text
+  reaches the output or an exception in any case.
 - The fixed script, run with real `sh` and a stub psql: `PGPASSWORD` equals
   the file's content for a password with `$`, `'`, `;` and spaces; the
   password is not in psql's arguments; `-w`, `--no-psqlrc`, `ON_ERROR_STOP`,
   `--single-transaction` and `--file=-` are passed, `-d` is not;
   `PGDATABASE` holds `POSTGRES_DB` literally, also a value like
-  `host=other dbname=x`; `PGCONNECT_TIMEOUT=5`. A missing variable, and a
+  `host=other dbname=x`; `PGCONNECT_TIMEOUT=5`. With inherited
+  `PGHOSTADDR=192.0.2.1` and `PGSERVICE=other`, psql gets
+  `PGHOSTADDR=127.0.0.1` and no `PGSERVICE`. A missing variable, and a
   missing, unreadable or empty password file, give their own status and the
-  stub psql never starts. (The demo's loopback accepts any password, so this
+  stub psql never starts; a missing `cat` or `psql` gives 127. (The demo's loopback accepts any password, so this
   test, not the lab, proves the password is delivered.)
 - `build/` is byte-for-byte unchanged after a success and after a failure.
 
