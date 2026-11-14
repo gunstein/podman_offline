@@ -333,7 +333,7 @@ Primary install/upgrade through operations must retain the established owner
 pending/acknowledgement ordering and selected-component isolation contracts.
 
 The first prototype must identify the minimal shared prepare/apply functions
-needed to avoid copying `install_component_plan()`. DR owns the alternate unit
+needed to avoid copying `apply_component_install()`. DR owns the alternate unit
 layout; ordinary deployment keeps its current writer. Use explicit arguments,
 not monkey-patched `common.ROOT`, callbacks scattered throughout the installer,
 or a new transaction framework. If a materially broader refactor is required,

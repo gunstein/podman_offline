@@ -1889,7 +1889,15 @@ with the convention and README where it shows output.
 
 ## 75. Make Python lifecycle code easier to follow, diagnose and change
 
-Status: **planned; not implemented**, requested 2026-10-29.
+Status: **two first improvements delivered (2026-11-14); the rest stays
+open**, requested 2026-10-29. Delivered with product tests only (simulated
+host commands, no Podman/systemd run): the interrupted API-owner rewrite in
+`test_api_registrations.py` is now retried in a new Python process
+(`tests/helpers/retry_driver.py`, running the same unpacked bundle's own code
+against the same home), so the retry is shown to finish from what is on disk;
+and row C's executor is renamed `deploy.apply_component_install` (signature
+and step order unchanged). Rows A, B, D and E, `registration_stage` and the
+global paths are not started.
 Static analysis is recorded below; implementation remains future work.
 This entry does not implement a refactor or establish a functional defect.
 It follows the completed item 1 (git history), rather
@@ -2082,7 +2090,7 @@ For a component bundle, `cli.main` parses/configures logging and audit, then
 `cli.run` dispatches `deploy.install` to
 `install_components`: `service_user`/`layout.select` establish paths;
 `install_checks` decides render eligibility; environment checks and temporary
-`registration_stage` precede checked manifests and `install_component_plan`.
+`registration_stage` precede checked manifests and `apply_component_install`.
 That executor materializes, verifies images, calls `begin_install`, publishes
 metadata and registration work, writes units/owner imports, restarts/checks
 services, writes the marker and clears pending. The API owns its source secret;

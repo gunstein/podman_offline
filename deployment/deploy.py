@@ -1055,7 +1055,7 @@ def install_preconditions(checked):
     return network, network_text, archive
 
 
-def install_component_plan(
+def apply_component_install(
     descriptor,
     checked,
     known,
@@ -1065,7 +1065,8 @@ def install_component_plan(
     env_overrides=None,
     environment_name=None,
 ):
-    """Apply a staged install in the established validation/write/restart order."""
+    """Execute a checked, staged install: load images, persist the install state,
+    restart services and mark the install complete, in that order."""
     name = descriptor["name"]
     components = list(checked)
     owners = catalog.role_owners(known, "registration owners")
@@ -1165,7 +1166,7 @@ def install_components(environment_name=None):
     read (target_environment), install_checks validates declarations (including
     both Quadlet templates), production_environment checks runtime and the
     user manager, then temporary registration staging, manifests and
-    database preflight, and install_component_plan.
+    database preflight, and apply_component_install.
     """
     # Pure declaration checks precede even the user-manager host query.
     service_user()
@@ -1204,7 +1205,7 @@ def install_components(environment_name=None):
             )
         }
         check_selected_keys(effective, config_path, checked[name][1], name)
-        install_component_plan(
+        apply_component_install(
             descriptor,
             checked,
             known,

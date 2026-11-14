@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from unittest import mock
 
 import yaml
@@ -23,6 +24,7 @@ from deployment import catalog, common, deploy, registrations, validation
 from deployment import render as rendering
 
 from helpers.product_fixture import ProductFixture
+from helpers.retry_fixture import DRIVER, REAL_RUN
 
 
 def api_pod(name, env=(), env_from=()):
@@ -463,6 +465,38 @@ class ApiRegistrationTests(ProductFixture):
 
         self.process.side_effect = host_command
 
+    def install_in_new_process(self, release, secret):
+        """./deploy.sh install of release in a new interpreter (retry_driver.py).
+
+        Only host commands are stubbed there; returns the recorded commands.
+        Failure output is shown with secret replaced, never the value itself.
+        """
+        record = self.root / "new-process.json"
+        result = REAL_RUN(
+            [sys.executable, "-B", str(DRIVER)],
+            input=json.dumps(
+                {
+                    "root": str(release),
+                    "home": str(common.STATE),
+                    "source": str(release / "deployment/deploy.py"),
+                    "record": str(record),
+                    "action": "install",
+                }
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            check=False,
+            timeout=120,
+        )
+        output = result.stdout + result.stderr
+        evidence = json.loads(record.read_text()) if record.exists() else {}
+        diagnosis = (output + json.dumps(evidence)).replace(secret, "<secret>")
+        self.assertNotIn(secret, output)
+        self.assertEqual(result.returncode, 0, diagnosis)
+        self.assertNotEqual(evidence["pid"], os.getpid())
+        return evidence["events"]
+
     def test_interrupted_owner_rewrite_keeps_the_old_yaml_and_retry_finishes(self):
         releases, _ = self.install_all(self.product())
         output = catalog.component_paths("accounts")[2]
@@ -483,10 +517,18 @@ class ApiRegistrationTests(ProductFixture):
         self.assertEqual(sorted(p.name for p in output.parent.glob(".install-*")), [])
         pending = json.loads((common.STATE / "pending-operation.json").read_text())
         self.assertEqual(pending["owners"], ["accounts"])
-        # A fresh process with the same bundle finishes the pending install.
-        self.process.reset_mock()
-        self.quiet(deploy.install)
-        self.assertEqual(self.restarts(), ["ledger", "accounts"])
+        # A new Python process runs the same unpacked bundle's own code against
+        # the same home: it reads what remains (the pending record, the old
+        # owner YAML) from disk, not from this process's memory.
+        events = self.install_in_new_process(releases["ledger"], secret="rotated")
+        self.assertEqual(
+            [
+                args[-1]
+                for args in events
+                if args[:3] == ["systemctl", "--user", "restart"]
+            ],
+            ["myproduct-ledger.service", "myproduct-accounts.service"],
+        )
         self.assertEqual(
             self.owner_secret()["ApiResources__0__ApiSecrets__0__Value"],
             "rotated",

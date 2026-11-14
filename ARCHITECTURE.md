@@ -81,7 +81,7 @@ finding per component. Its only earlier-than-lifecycle checks are declared file
 sources by existence and type and the database password declaration; each is
 commented with where install or prepare does the same. A new declaration check
 belongs in `validate_component()`, `install_checks()` or
-`install_preconditions()`, never inline in `install_component_plan()`. Install also checks the image
+`install_preconditions()`, never inline in `apply_component_install()`. Install also checks the image
 archive and that every image is fully qualified before step 4. General secret
 generation never performs database volume checks.
 
@@ -134,7 +134,7 @@ copies the selected component's installed route or client, and a role the
 release no longer declares becomes a removal. Absence for any other component
 never means removal.
 
-`install_component_plan()` then reads as explicit steps:
+`apply_component_install()` then reads as explicit steps:
 
 1. Check the existing shared network, the image archive and that every image
    is fully qualified, then materialize the validated manifests once
@@ -199,7 +199,7 @@ sequenceDiagram
     participant C as catalog
     participant R as render.py
     participant G as registrations.py
-    participant P as deploy.install_component_plan
+    participant P as deploy.apply_component_install
     participant H as Podman / systemd
     participant S as Installation root
 
@@ -218,7 +218,7 @@ sequenceDiagram
     D->>R: effective_config, effective_documents
     Note over R: kinds, placeholders, names, pull policy,<br/>mounts, duplicates, links - no writes
     D->>H: database_preflight: podman volume exists (configured name)
-    D->>P: install_component_plan
+    D->>P: apply_component_install
     P->>S: install_preconditions: shared network, image archive, find_images
     P->>R: materialize: generate missing secrets, read files, render YAML
     P->>H: podman load + podman image exists

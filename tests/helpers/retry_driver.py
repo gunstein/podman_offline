@@ -95,8 +95,16 @@ def main():
     vars(rendering)["write_file_archives"] = write_archives
     private = rendering.write_private
 
+    def relative(path):
+        """The path below the home, or None: staging lives in the runtime directory."""
+        try:
+            return str(Path(path).relative_to(home))
+        except ValueError:
+            return None
+
     def write_private(path, text):
-        if str(path.relative_to(home)) == parameters.get("write_failure"):
+        failure = parameters.get("write_failure")
+        if failure and relative(path) == failure:
             raise OSError("Injected registration failure")
         return private(path, text)
 
@@ -104,17 +112,17 @@ def main():
     replace = os.replace
 
     def replace_record(source, destination):
-        relative = str(Path(destination).relative_to(home))
-        if parameters.get("observe_completion") and relative.startswith("installed/"):
+        below = relative(destination) or ""
+        if parameters.get("observe_completion") and below.startswith("installed/"):
             record_event(
                 [
                     "before-marker",
                     json.loads((home / "pending-operation.json").read_text()),
                 ]
             )
-        if relative == parameters.get("record_failure"):
+        if below == parameters.get("record_failure"):
             raise OSError("Injected install record failure")
-        if relative == parameters.get("record_interrupt"):
+        if below == parameters.get("record_interrupt"):
             # Simulate a process dying with an incompletely written temporary file.
             Path(source).write_text("partial")
             os._exit(99)
