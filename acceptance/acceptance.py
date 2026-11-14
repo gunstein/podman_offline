@@ -1310,6 +1310,23 @@ class Run:
             lambda: self.guest("PROD", "whoami-variables", bundle="app3"),
         )
         self.step("10-variables-e2e", lambda: self.guest("DEV", "whoami-e2e"))
+        # The same through MOUNTS: a newer app3 that mounts such a file.
+        parts = self.meta["bundles_built"]["app3"].split(".")
+        mounts_version = ".".join(parts[:-1] + [str(int(parts[-1]) + 1)])
+        self.step(
+            "10-mounts-build",
+            lambda: self.guest(
+                "DEV", "app3-upgrade-bundle", mounts_version, bundle="app3"
+            ),
+        )
+        self.step(
+            "10-mounts-transfer", lambda: self.transfer(mounts_version, bundle="app3")
+        )
+        self.step(
+            "10-mounts",
+            lambda: self.guest("PROD", "whoami-mounts", mounts_version, bundle="app3"),
+        )
+        self.step("10-mounts-e2e", lambda: self.guest("DEV", "whoami-e2e"))
         self.step("10-check-environment", lambda: self.guest("PROD", "check"))
         self.step("10-home-unchanged", lambda: self.guest("PROD", "home-unchanged"))
         self.finished = True

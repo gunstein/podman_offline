@@ -1,5 +1,6 @@
 """The opt-in --whoami scenario (backlog 71) without lab access."""
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -44,6 +45,22 @@ state=/S prod_host=example.invalid port=8443 prod_ip=192.0.2.2
 """
 
 
+# whoami-variables' escaped override text, as the step writes it.
+VARIABLE_LITERAL = re.search(
+    r'backend\["Lab__Literal"\] = \(\n\s+"([^"]*)"\n\)', REMOTE
+)[1]
+
+
+def mount_file():
+    """The template text of the lab release's mounted file (app3-upgrade-bundle)."""
+    found = re.search(
+        r'\(component / "files/lab-variables.conf"\)\.write_text\((.*?)\n\s+\)\n',
+        REMOTE,
+        re.DOTALL,
+    )
+    return ast.literal_eval("(" + found[1] + ")")
+
+
 class ScenarioFixture(unittest.TestCase):
     """A runner whose lab, transfer and reboot calls are mocks."""
 
@@ -63,6 +80,8 @@ class ScenarioFixture(unittest.TestCase):
         self.harness.transfer_whoami_environment = mock.Mock()
         self.harness.reboot = mock.Mock()
         self.harness.guest = mock.Mock(side_effect=guest)
+        # What record_bundles would have read from DEV.
+        self.harness.meta["bundles_built"] = {"app3": "0.1.3"}
 
 
 class WhoamiScenarioTests(ScenarioFixture):
@@ -75,8 +94,18 @@ class WhoamiScenarioTests(ScenarioFixture):
         self.harness.reboot.assert_called_once()
         self.assertEqual(
             [call.kwargs["bundle"] for call in self.harness.transfer.call_args_list],
-            ["platform", "identity", "app3"],
+            ["platform", "identity", "app3", "app3"],
         )
+        # The MOUNTS release is app3's next version, built, sent and installed.
+        self.assertEqual(self.harness.transfer.call_args_list[-1].args, ("0.1.4",))
+        for role, action in (
+            ("DEV", "app3-upgrade-bundle"),
+            ("PROD", "whoami-mounts"),
+        ):
+            self.assertIn(
+                mock.call(role, action, "0.1.4", bundle="app3"),
+                self.harness.guest.call_args_list,
+            )
         installs = [
             call.kwargs["bundle"]
             for call in self.harness.guest.call_args_list
@@ -135,6 +164,11 @@ class WhoamiScenarioTests(ScenarioFixture):
             # Backlogs 86 and 87: a variable and escaped text in app3's overrides.
             "10-variables",
             "10-variables-e2e",
+            # The same through a MOUNTS file of a newer app3.
+            "10-mounts-build",
+            "10-mounts-transfer",
+            "10-mounts",
+            "10-mounts-e2e",
             "10-check-environment",
         ]
         self.assertEqual([step for step in records if step in ordered], ordered)
@@ -365,6 +399,190 @@ class EnvironmentStepTests(unittest.TestCase):
         secret(b"secret-bytes")
         result = self.run_python("WHOAMI_KEY_CHECK", state, identity, "value")
         self.assertIn("installed identity does not name", result.stderr)
+
+
+# A stand-in for app3 on PROD in whoami-variables and whoami-mounts. $W holds
+# what app3 was last installed with (installed), what its running backend
+# has (container) and the container starts (starts); FAULT injects one wrong
+# product behaviour, so each check of the steps is shown to catch it.
+VARIABLE_STUBS = r"""
+product_name=myproduct state=/S
+as_product() {
+    local level=none
+    case $1 in
+        cp|mv) ;;
+        python3) cat > /dev/null;;
+        myproduct)
+            echo "ERROR: ENVIRONMENT.backend: environment variable $VARIABLE is not set"
+            [[ $FAULT != refusal-writes ]] || echo 1 >> "$W/starts"
+            return 1;;
+        env)
+            shift
+            if [[ $1 == *=* ]]; then level=${1#*=}; fi
+            if [[ $level != "$(< "$W/installed")" || $FAULT == reinstall ]]; then
+                echo '[OK] app3 0.1.4 installed'
+                echo 1 >> "$W/starts"
+                printf %s "$level" > "$W/installed"
+                if [[ $FAULT == stale && $(< "$W/container") != none ]]; then :
+                elif [[ $FAULT == leftover && $level == none ]]; then :
+                else printf %s "$level" > "$W/container"; fi
+            elif [[ $FAULT == restart ]]; then
+                echo 1 >> "$W/starts"
+            fi
+            echo 'PASS: myproduct completed';;
+        podman)
+            if [[ $2 == exec ]]; then printf '%s\n' "$MOUNTED"; return; fi
+            echo PATH=/usr/bin
+            level=$(< "$W/container")
+            if [[ $level != none ]]; then printf 'Lab__Level=%s\n%s\n' "$level" "$LITERAL"; fi;;
+        *) echo "unexpected: $*"; return 1;;
+    esac
+}
+environment_fingerprint() { cat "$W/starts"; }
+prepare_release() { :; }
+healthy() { :; }
+"""
+
+
+class VariableCheckTests(unittest.TestCase):
+    """The checks of whoami-variables and whoami-mounts fail on wrong results."""
+
+    def render(self, text, **values):
+        """The product's own rendering of template text."""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from deployment import common, templates
+
+        with mock.patch.object(common, "ENVIRON", values):
+            return templates.config_text(text, {}, "lab")
+
+    def run_step(self, action, fault="", literal=None, mounted=None):
+        literal = literal or "Lab__Literal=" + self.render(VARIABLE_LITERAL)
+        mounted = mounted or self.render(mount_file(), APP3_LAB_MOUNT="mounted-value")
+        work = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (work / "installed").write_text("none")
+        (work / "container").write_text("none")
+        (work / "starts").write_text("")
+        script = (
+            "set -euo pipefail\n"
+            + "\n".join(
+                shell_code(REMOTE, function=name)
+                for name in (
+                    "expect_refusal",
+                    "runtime_completed",
+                    "environment_installs",
+                )
+            )
+            + "\nruntime_env=()\n"
+            + VARIABLE_STUBS
+            + shell_code(REMOTE, action=action)
+        )
+        return subprocess.run(
+            ["bash", "-c", script],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            env={
+                "PATH": os.path.dirname(sys.executable) + ":/usr/bin:/bin",
+                "W": str(work),
+                "FAULT": fault,
+                "LITERAL": literal,
+                "MOUNTED": mounted.rstrip("\n"),
+                "VARIABLE": "APP3_LAB_MOUNT"
+                if action == "whoami-mounts"
+                else "APP3_LAB_LEVEL",
+                "requested_version": "0.1.4",
+            },
+        )
+
+    def assert_fails(self, result, message):
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn(message, result.stdout + result.stderr)
+
+    def test_the_variable_step_passes_for_the_products_behaviour(self):
+        result = self.run_step("whoami-variables")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: exported values reached app3", result.stdout)
+
+    def test_the_variable_step_fails_for_a_wrong_container_or_install(self):
+        for fault, message in (
+            ("stale", "FAIL: app3's backend lacks Lab__Level=Debug"),
+            ("reinstall", "FAIL: installed ['app3'], expected []"),
+            ("restart", "FAIL: the same value changed state or restarted a container"),
+            ("leftover", "FAIL: the restored file left Lab__ variables"),
+        ):
+            with self.subTest(fault):
+                self.assert_fails(self.run_step("whoami-variables", fault), message)
+
+    def test_the_variable_step_fails_for_mishandled_escapes(self):
+        for literal in (
+            # Not unescaped.
+            "Lab__Literal=" + VARIABLE_LITERAL,
+            # The escaped variable read as a placeholder after all.
+            "Lab__Literal=SELECT @@VERSION; @@secret:app3-api-secret/value@@ Debug",
+        ):
+            with self.subTest(literal):
+                result = self.run_step("whoami-variables", literal=literal)
+                self.assert_fails(result, "FAIL: app3's backend lacks the literal text")
+
+    def test_the_mounts_step_passes_for_the_products_behaviour(self):
+        result = self.run_step("whoami-mounts")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "mounted file has the exported value and literal @@", result.stdout
+        )
+
+    def test_the_mounts_step_fails_for_a_wrong_file_or_refusal(self):
+        result = self.run_step("whoami-mounts", "refusal-writes")
+        self.assert_fails(result, "FAIL: the missing variable changed state")
+        for mounted in (
+            mount_file(),
+            self.render(mount_file(), APP3_LAB_MOUNT="other-value"),
+            self.render(mount_file(), APP3_LAB_MOUNT="mounted-value").replace(
+                "@@$APP3_LAB_MOUNT@@", "mounted-value"
+            ),
+        ):
+            with self.subTest(mounted):
+                result = self.run_step("whoami-mounts", mounted=mounted)
+                self.assert_fails(result, "FAIL: app3's backend reads")
+
+    def test_the_mounts_release_adds_one_backend_file(self):
+        """The lab release's MOUNTS line is valid for app3's backend."""
+        import yaml
+
+        body = shell_code(REMOTE, heredoc="HELP_BUILD")
+        self.assertIn(
+            'document["MOUNTS"]["backend"]["/etc/app3-lab/variables.conf"] = "lab-variables.conf"',
+            body,
+        )
+        defaults = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[1]
+                / "components/app3/config.defaults.yaml"
+            ).read_text()
+        )
+        self.assertIn("backend", defaults["MOUNTS"])
+        self.assertIn("app3-upgrade-bundle)", REMOTE)
+
+    def test_the_dev_certificate_check_uses_a_name_of_its_own(self):
+        root = Path(__file__).resolve().parents[1]
+        host = re.search(r"^dev_check_host=(\S+)$", REMOTE, re.MULTILINE)[1]
+        body = shell_code(REMOTE, action="dev-up")
+        self.assertIn("DEV_PUBLIC_HOST=$dev_check_host ./dev/demo-credentials.sh", body)
+        # Neither the example's name nor the certificate script's default.
+        for path in ("config/dev.yaml.example", "dev/generate-certificates.sh"):
+            self.assertNotIn(host, (root / path).read_text())
+        self.assertNotEqual(host, "myproduct-proxy")
+        # The checked certificate is removed before the dev run's own.
+        self.assertLess(
+            body.index("DEV_PUBLIC_HOST=$dev_check_host"),
+            body.index('rm -- "$web/web.crt" "$web/web.key"'),
+        )
+        self.assertLess(
+            body.index('rm -- "$web/web.crt" "$web/web.key"'),
+            body.index("./dev/demo-credentials.sh\n    # Every catalog"),
+        )
 
 
 class WhoamiRemoteTests(unittest.TestCase):

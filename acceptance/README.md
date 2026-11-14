@@ -48,16 +48,33 @@ being Identity's API through the file. Each step compares a fingerprint
   `@@@@VERSION`, `@@@@secret:...@@@@` and `@@@@$APP3_LAB_LEVEL@@@@`.
   Unexported, `myproduct --environment whoami` stops in its checks with
   nothing changed. With `Information`, then `Debug`, it installs app3 each
-  time; with `Debug` again, nothing. The running backend's environment
-  (`podman inspect`) has the value and exactly the literal text. The file
-  is then restored and app3 installed without the lines; `10-variables-e2e`
-  signs in again.
+  time; with `Debug` again, nothing, and the fingerprint is unchanged. The
+  running backend's environment (`podman inspect`) has the value and exactly
+  the literal text. The file is then restored and app3 installed without
+  the lines; `10-variables-e2e` signs in again.
+- `10-mounts-build`, `-transfer`, `10-mounts` (backlogs 86 and 87 through
+  `MOUNTS`): DEV builds app3's next version with one more backend file,
+  `/etc/app3-lab/variables.conf`, holding `@@$APP3_LAB_MOUNT@@` and the same
+  kind of escaped text (`app3-upgrade-bundle`). On PROD, unexported,
+  `myproduct --environment whoami` stops with the fingerprint unchanged;
+  exported, it installs app3, and the file read in the running backend
+  (`podman exec`) is exactly the rendered text. `10-mounts-e2e` signs in
+  again. app3 stays on this version for the rest of the run.
+
+`test_whoami.py` runs both steps against a stand-in product with one wrong
+behaviour at a time (an old value in the container, a reinstall or restart
+for the same value, left-over lines, an unrendered or re-read escape, a
+wrong file, a refusal that writes) and requires each to fail the step.
 
 `03-dev-up` (normal and `--whoami`, backlog 86) sets the lab's
 `config/dev.yaml` to `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`.
 Without the variable, `dev/demo-credentials.sh` stops before any
-certificate. With it (every DEV action exports `DEV_PUBLIC_HOST`), the dev
-config and the web certificate use the exported name.
+certificate. With `DEV_PUBLIC_HOST=exported-dev-host.test`, a name neither
+the example nor the certificate script's default uses, the web certificate
+covers that name and not `myproduct-proxy`; the step then removes the web
+pair (the documented remedy for another public host). The dev run itself
+uses `myproduct-proxy` (every DEV action exports it), as the dev smoke tests
+expect, and its config and web certificate use the exported name.
 
 Backlog 69 WP6: the RPM delivery is verified by running the production
 manual's own commands (`acceptance/manual_run.py`), on the default fapolicyd

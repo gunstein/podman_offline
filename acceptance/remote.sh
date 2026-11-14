@@ -29,6 +29,8 @@ as_root_env=(env PRODUCT_NAME="$product_name" SERVICE_USER="$service_user" PRODU
 # Backlog 86: the lab's config/dev.yaml takes the dev public host from this
 # exported variable (dev-up), so every DEV action exports it the same way.
 export DEV_PUBLIC_HOST=myproduct-proxy
+# dev-up's certificate check exports this name instead, once.
+dev_check_host=exported-dev-host.test
 base="$HOME/podman-offline-acceptance/$run"
 src="$base/src"
 # The renamed product generated from $src by acceptance/renamed_product.py.
@@ -1229,7 +1231,19 @@ dev-up)
     grep -Fqx "$origin" config/dev.yaml
     expect_refusal env -u DEV_PUBLIC_HOST ./dev/demo-credentials.sh
     grep -Fq "environment variable DEV_PUBLIC_HOST is not set" <<< "$refusal_output"
-    test ! -e build/dev/platform/credentials/web/web.crt
+    web=build/dev/platform/credentials/web
+    test ! -e "$web/web.crt"
+    # A name found nowhere else (not the example's, not the certificate
+    # script's default) shows that the certificate follows the variable.
+    DEV_PUBLIC_HOST=$dev_check_host ./dev/demo-credentials.sh
+    openssl x509 -in "$web/web.crt" -noout -checkhost "$dev_check_host" | grep -q ' does match certificate' \
+        || { echo "FAIL: the web certificate does not cover $dev_check_host"; exit 1; }
+    if openssl x509 -in "$web/web.crt" -noout -checkhost myproduct-proxy | grep -q ' does match certificate'; then
+        echo 'FAIL: the web certificate also covers the default myproduct-proxy'; exit 1
+    fi
+    echo "PASS: the web certificate uses the exported $dev_check_host"
+    # The documented remedy for another public host: remove the web pair.
+    rm -- "$web/web.crt" "$web/web.key"
     # The shipped demo provisions its credentials explicitly before generic dev up.
     ./dev/demo-credentials.sh
     # Every catalog component validates with its dev config before dev up (backlog 23).
@@ -1446,8 +1460,12 @@ LAB_LINES
         runtime_env=("APP3_LAB_LEVEL=$level")
         expected=app3
         [[ $level == "${previous:-}" ]] && expected=
+        before=$(environment_fingerprint)
         runtime_completed --environment whoami
         environment_installs "$output" "$expected"
+        if [[ -z $expected && $(environment_fingerprint) != "$before" ]]; then
+            echo 'FAIL: the same value changed state or restarted a container'; exit 1
+        fi
         container_env=$(as_product podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' app3-whoami-backend)
         grep -Fqx "Lab__Level=$level" <<< "$container_env" || { echo "FAIL: app3's backend lacks Lab__Level=$level"; exit 1; }
         grep -Fqx "$literal" <<< "$container_env" || { echo "FAIL: app3's backend lacks the literal text"; exit 1; }
@@ -1460,6 +1478,27 @@ LAB_LINES
     container_env=$(as_product podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' app3-whoami-backend)
     if grep -q '^Lab__' <<< "$container_env"; then echo 'FAIL: the restored file left Lab__ variables'; exit 1; fi
     echo 'PASS: exported values reached app3 once per change; escaped text stayed literal; restored'
+    ;;
+whoami-mounts)
+    # Backlogs 86 and 87 through MOUNTS on PROD: the lab's newer app3
+    # (app3-upgrade-bundle) mounts a file with an exported variable and
+    # escaped text into its backend. Unexported, the install stops with
+    # nothing changed; exported, the running container reads exactly the
+    # rendered file.
+    prepare_release
+    before=$(environment_fingerprint)
+    expect_refusal as_product "$product_name" --environment whoami
+    grep -Fq "environment variable APP3_LAB_MOUNT is not set" <<< "$refusal_output"
+    [[ $(environment_fingerprint) == "$before" ]] || { echo 'FAIL: the missing variable changed state'; exit 1; }
+    runtime_env=(APP3_LAB_MOUNT=mounted-value)
+    runtime_completed --environment whoami
+    runtime_env=()
+    environment_installs "$output" app3
+    healthy
+    mounted=$(as_product podman exec app3-whoami-backend cat /etc/app3-lab/variables.conf)
+    expected=$'value=mounted-value\nliteral=SELECT @@VERSION; @@secret:app3-api-secret/value@@ @@$APP3_LAB_MOUNT@@'
+    [[ $mounted == "$expected" ]] || { echo "FAIL: app3's backend reads ${mounted@Q}"; exit 1; }
+    echo "PASS: app3 $requested_version's mounted file has the exported value and literal @@"
     ;;
 whoami-api-registration)
     # Identity received app3's own secret through the platform (backlog 85):
@@ -1670,7 +1709,7 @@ upgrade-bundle)
     (cd dist && sha256sum -c "$product_name-app1-$requested_version-offline.tar.gz.sha256")
     cat "build/bundle/$product_name-app1-$requested_version/images/images.txt"
     ;;
-help-upgrade-bundle|platform-upgrade-bundle|identity-upgrade-bundle)
+help-upgrade-bundle|platform-upgrade-bundle|identity-upgrade-bundle|app3-upgrade-bundle)
     cd "$src"
     [[ $requested_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
     export HELP_RELEASE_VERSION="$requested_version" RELEASE_KIND="$bundle" SOURCE_REVISION="$revision"
@@ -1680,6 +1719,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 import bundle
+import yaml
 from deployment import catalog
 
 version = os.environ["HELP_RELEASE_VERSION"]
@@ -1690,8 +1730,8 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
     # The tested revision, not HEAD: the Identity scenario commits an older baseline on top.
     subprocess.run(["git", "-C", str(release), "checkout", "-q", "--detach", os.environ["SOURCE_REVISION"]], check=True)
     kind = os.environ["RELEASE_KIND"]
-    # Help and Identity tag their image @@COMPONENT_VERSION@@, so VERSION is the
-    # only release file that changes.
+    # Help and Identity tag their image @@COMPONENT_VERSION@@, so besides
+    # VERSION only the files changed below differ.
     (release / "components" / kind / "VERSION").write_text(version + "\n")
     if kind == "help":
         content = release / "apps/help/index.html"
@@ -1708,6 +1748,20 @@ with tempfile.TemporaryDirectory(prefix="demo-help-release-") as directory:
         program.write_text(program.read_text().replace(marker, 'new { status = "ok", release = "' + version + '" }'))
         subprocess.run(["podman", "build", "-t", "localhost/demo-identity:" + version,
                         "-f", str(release / "apps/identity/Containerfile"), str(release / "apps/identity")], check=True)
+    elif kind == "app3":
+        # Backlogs 86 and 87 through MOUNTS (whoami-mounts): one more file for
+        # app3's backend, with an exported variable and escaped text. The
+        # images are unchanged.
+        component = release / "components/app3"
+        (component / "files").mkdir(exist_ok=True)
+        (component / "files/lab-variables.conf").write_text(
+            "value=@@$APP3_LAB_MOUNT@@\n"
+            "literal=SELECT @@@@VERSION; @@@@secret:app3-api-secret/value@@@@ @@@@$APP3_LAB_MOUNT@@@@\n"
+        )
+        defaults = component / "config.defaults.yaml"
+        document = yaml.safe_load(defaults.read_text())
+        document["MOUNTS"]["backend"]["/etc/app3-lab/variables.conf"] = "lab-variables.conf"
+        defaults.write_text(yaml.safe_dump(document, sort_keys=False))
     bundle.ROOT = release
     bundle.STAGE = source / "build/help-upgrade"
     bundle.DIST = source / "dist"

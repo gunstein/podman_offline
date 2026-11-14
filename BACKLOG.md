@@ -60,8 +60,10 @@ Status: **implemented, code review approved, and lab-verified on `3da4d97`
 (`main`)** (requirement: product owner, 2026-11-12). All ten lab runs were
 CLEAN PASS ([RESULTS](acceptance/RESULTS.md)); `--whoami`'s `10-variables`
 found escaped text in an `ENVIRONMENT` override exactly as literal `@@` in
-the running container. Product tests only: a `MOUNTS` file, `ConfigMap` and
-manifest text, and bundles. Tests:
+the running container. Added after those runs, not yet run: `--whoami`'s
+`10-mounts` (a `MOUNTS` file of a newer app3, read in the running
+container) and negative harness tests for both steps' checks. Product tests
+only: `ConfigMap` and manifest text, and bundles. Tests:
 `tests/platform_tests/test_template_escapes.py`. Shares the parser with
 [item 86](#86-process-environment-variables-in-placeholders-name). Review
 fixes (on `1219bb1`): `check_unresolved` refuses any `@@` in a key (a key is
@@ -134,9 +136,13 @@ CLEAN PASS ([RESULTS](acceptance/RESULTS.md)): `03-dev-up` (an exported dev
 public host: refused unset, then the dev config and certificate) and
 `--whoami`'s `10-variables` (an override with an exported variable: refused
 unset, reinstalled once per new value, not for the same value, the value in
-the running container); see [acceptance/README.md](acceptance/README.md). Product tests
-only: build-host and target-host values in one bundle, `MOUNTS` and other
-places. Tests: `tests/platform_tests/test_process_environment.py` and the demo test
+the running container); see [acceptance/README.md](acceptance/README.md). Added
+after those runs, not yet run: `03-dev-up`'s certificate check with a name
+of its own (`exported-dev-host.test`), an unchanged fingerprint for the
+same value in `10-variables`, and `10-mounts` (an exported variable in a
+`MOUNTS` file of a newer app3, refused unset with nothing changed, then read
+in the running container). Product tests only: build-host and target-host
+values in one bundle, and other places. Tests: `tests/platform_tests/test_process_environment.py` and the demo test
 `test_certificates_and_deployment_resolve_one_exported_host_name`. Review
 fixes (on `1219bb1`): image errors show the image as written, never the
 resolved value (the fully-qualified check runs where that is known); the
