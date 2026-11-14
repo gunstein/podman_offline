@@ -1238,9 +1238,10 @@ backlog 80, whose only user, app3, is not renamed).
 
 ## 81. Explicit development database seeding: `dev/seed-db.sh`
 
-Status: **planned** (decided by the product owner, 2026-11-14). This replaces
-the proposal of 2026-11-02 (a harmless production `populate.sql` selected
-through a `VOLUME_FILES` dev override); that proposal is withdrawn.
+Status: **planned** (decided by the product owner, 2026-11-14; error output
+revised the same day after review of `9bffe05`). This replaces the proposal
+of 2026-11-02 (a harmless production `populate.sql` selected through a
+`VOLUME_FILES` dev override); that proposal is withdrawn.
 
 Need: a developer occasionally loads local data into the development
 PostgreSQL database of one component, after its migrations have run:
@@ -1268,30 +1269,40 @@ Decision:
 - Release seeding stays as it is: data that must exist everywhere belongs in
   the release (an init container, like app1's `seed-database`); local
   development data is run with `./dev/seed-db.sh`.
+- Errors never show psql's own messages: they can contain seed data, also in
+  PostgreSQL's primary message. The command shows a fixed text, the file and
+  the failing line number when it is available (below).
 
 ### Finding the database
 
-1. The component must exist in the source catalog
-   (`catalog.source_descriptors`), the SQL file must exist and be readable,
-   and `build/install.yaml` must exist (otherwise: run `./dev/dev.sh up`).
-2. The component's Pod names come from its source manifests
-   (`components/<id>/manifests/*.yaml`); only the names are taken from
-   there, everything else from the prepared `build/install.yaml`. A Pod name
-   that is a `@@...@@` placeholder stops the command (only literal Pod names
-   are supported); a Pod missing from `build/install.yaml` stops it with "run
-   `./dev/dev.sh up`".
-3. In those prepared Pods, `deploy.postgres_binding()` (with
-   `deploy.environment_entries()` for `POSTGRES_PASSWORD_FILE` through
-   `ENVIRONMENT`) finds the database containers. Exactly one is required;
-   zero or several stop the command, naming what was found. Its existing
-   refusals apply unchanged.
+1. The component must be in the catalog's component list
+   (`catalog.catalog_components`, which reads no component, so another
+   component's invalid files cannot block seeding). The SQL file must exist
+   and be readable, and `build/install.yaml` must exist (otherwise: run
+   `./dev/dev.sh up`).
+2. Read every YAML document of the component's source manifests
+   (`components/<id>/manifests/*.yaml`, with render's existing readers) and
+   take the names of its Pods; only the names come from there, everything
+   else from the prepared `build/install.yaml`. A Pod name that is a
+   `@@...@@` placeholder stops the command (only literal Pod names are
+   supported; a dev override cannot add a Pod). A Pod missing from
+   `build/install.yaml` stops it with "run `./dev/dev.sh up`".
+3. In those prepared Pods, count only ordinary `spec.containers` (never
+   `initContainers`: a finished init container may carry the same binding).
+   A container is a database when `deploy.postgres_binding()` returns a
+   binding for it. Its `envFrom` is resolved against all prepared documents:
+   ConfigMap values, and only the key names of referenced Secrets (a modest
+   extension of `deploy.environment_entries()` or an equivalent call;
+   `postgres_binding()`'s refusal of a Secret-based `POSTGRES_PASSWORD_FILE`
+   stays). Exactly one database container is required; zero or several stop
+   the command, naming what was found. Its other refusals apply unchanged.
 4. The container is `<pod>-<container>`, as `podman kube play` names it. No
    assumed names such as `<component>-postgres`, `db` or
    `credentials/database`.
 
 Nothing is rendered, prepared or repaired. `config/dev.yaml` and
 `build/dev/<id>/config.yaml` are not read. Helpers are reused, not copied;
-a modest extension keeps its callers and its password safety checks.
+an extension keeps its callers and its password safety checks.
 
 ### Running the SQL
 
@@ -1302,55 +1313,77 @@ podman exec -i <container> sh -c '<fixed script>' < <sql file>
 The argument list is passed directly (no host shell); the path and the
 component never become executable text; the SQL is streamed through stdin
 unchanged. The fixed script uses only the container's own environment, the
-values the database was started with:
+values the database was started with, and gives each of its own checks a
+status of its own (none of psql's or podman's):
 
 ```sh
-: "${POSTGRES_USER:?}" "${POSTGRES_DB:?}" "${POSTGRES_PASSWORD_FILE:?}"
-PGPASSWORD=$(cat "$POSTGRES_PASSWORD_FILE") exec psql --no-psqlrc \
-  -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  --set ON_ERROR_STOP=1 --set VERBOSITY=terse --single-transaction \
-  --file=- >/dev/null
+[ -n "${POSTGRES_USER:-}" ] || exit 10
+[ -n "${POSTGRES_DB:-}" ] || exit 11
+[ -n "${POSTGRES_PASSWORD_FILE:-}" ] || exit 12
+password=$(cat -- "$POSTGRES_PASSWORD_FILE") || exit 13
+[ -n "$password" ] || exit 13
+PGPASSWORD=$password PGDATABASE=$POSTGRES_DB PGCONNECT_TIMEOUT=5
+export PGPASSWORD PGDATABASE PGCONNECT_TIMEOUT
+exec psql --no-psqlrc -w -h 127.0.0.1 -U "$POSTGRES_USER" \
+  --set ON_ERROR_STOP=1 --single-transaction --file=- >/dev/null
 ```
 
-- A finite `PGCONNECT_TIMEOUT`. psql takes `PGPORT` from the same
-  environment as the server (both default to 5432).
-- A missing variable or an empty or unreadable password file stops the
-  command, naming it and the container. The password never appears in
-  arguments, the host-side environment or output; no shell tracing.
+- psql starts only after the password was read and is non-empty; `-w`
+  never prompts. psql takes `PGPORT` from the same environment as the server
+  (both default to 5432).
+- `POSTGRES_DB` is a literal database name through `PGDATABASE`, never `-d`:
+  psql reads a `-d` value with `=` as a connection string, which could
+  override `-h 127.0.0.1` and reach another database (`DB_NAME` validation
+  allows such text). The connection stays on loopback.
+- The password never appears in arguments, the host-side environment or
+  output; no shell tracing.
 - The user is the database's `POSTGRES_USER`, the superuser the image
   created: it can insert into any table and run administrative SQL. A
   script that needs another object owner uses `SET ROLE` itself. No option
   for another user.
-- `--single-transaction`: a failing script leaves the database unchanged.
-  Exceptions to document: statements that cannot run in a transaction
-  (`CREATE DATABASE`, `VACUUM`, `CREATE INDEX CONCURRENTLY`, `ALTER
-  SYSTEM`) fail, and a script must not contain its own `BEGIN`/`COMMIT`.
-  Scripts should still be safe to repeat (for example `ON CONFLICT DO
-  NOTHING`): a successful run applied again inserts again.
+- `--single-transaction`: for an ordinary script without its own
+  transaction control, a failure rolls back its row and schema changes;
+  sequence values it used stay used. Document the exceptions: statements
+  that cannot run in a transaction (`CREATE DATABASE`, `VACUUM`, `CREATE
+  INDEX CONCURRENTLY`, `ALTER SYSTEM`) fail, and a script must not contain
+  its own `BEGIN`/`COMMIT`. Scripts should still be safe to repeat (for
+  example `ON CONFLICT DO NOTHING`): a successful run applied again inserts
+  again.
 
 ### Output and errors
 
-- psql's stdout is discarded; its stderr (terse: the script line number and
-  the primary message, no `DETAIL` and no echoed SQL line) is shown.
+- psql's stdout is discarded. Its stderr is captured by the helper and never
+  shown, logged or put into an exception. The only thing taken from it is
+  the line number of the first error: the `N` of a `psql:<stdin>:N:` prefix,
+  accepted only as digits.
 - Success prints one line, for example `[OK] seeded identity from <file>`,
   only after exit status 0.
-- Every failure returns a nonzero status with the next action, told apart by
-  exit status: podman cannot exec (container missing or not running: run
-  `./dev/dev.sh up`); `sh`, `cat` or `psql` missing in the image; a missing
-  variable or password file (restore the existing credential and run
-  `./dev/dev.sh up`; never generate one); a connection or authentication
-  failure (psql exit 2); an SQL failure (psql exit 3: nothing was saved).
-  Captured output never goes into exception messages.
+- Every failure returns a nonzero status, a fixed text and the next action:
+
+  | Status | Meaning | Next action in the message |
+  | --- | --- | --- |
+  | 125 | podman cannot exec (container missing or not running) | run `./dev/dev.sh up` |
+  | 126, 127 | the command cannot start in the container | the database image must provide `sh`, `cat` and `psql` |
+  | 10, 11, 12 | `POSTGRES_USER`, `POSTGRES_DB` or `POSTGRES_PASSWORD_FILE` is not set in the container (named) | the database container must declare it |
+  | 13 | the password file is missing, unreadable or empty | restore the existing credential, then run `./dev/dev.sh up`; never generate one |
+  | 1 | psql failed on its own | the fixed text only |
+  | 2 | connection or authentication failed | check that the database is running and accepts the credential |
+  | 3 | the SQL failed, at line N of the file when known | fix the SQL; its changes were rolled back |
+  | other | unexpected status, named | the fixed text only |
+
 - No restarts, volumes, or changes to credentials, manifests, registrations
   or `build/` files.
 
 ### Implementation
 
 - `dev/seed-db.sh` is a short launcher for a small, readable Python helper
-  (arguments, the lookup above, one subprocess call), with ordinary
-  functions for (1) finding and validating the database container and (2)
-  running the SQL. No embedded Python program in the shell script.
+  under `dev/` (arguments, the lookup above, one subprocess call), with
+  ordinary functions for (1) finding and validating the database container
+  and (2) running the SQL and reporting the status. No embedded Python
+  program in the shell script.
 - Verify the referenced helpers against the current code before use.
+- Add the launcher and the helper to the dev tools `tests/run.py` copies for
+  isolated platform tests.
 - `dev/seed-db.sh` and its helper never become release content (check the
   bundle's file list; add a test if no existing one covers `dev/`).
 
@@ -1363,20 +1396,29 @@ container, Secret ID and password path:
   `build/install.yaml` and named `<pod>-<container>`, for a directory-mounted
   password, a single-file `MOUNTS` password and `POSTGRES_PASSWORD_FILE`
   through `ENVIRONMENT` (one test each; the binding rules are already
-  tested).
-- The command stops before podman is called for an unknown component, a
-  missing or unreadable SQL file, a missing `build/install.yaml`, zero or
-  several databases, a placeholder Pod name and a Pod missing from
-  `build/install.yaml`.
+  tested). An init container with the same binding is not counted. A name
+  from a referenced Secret is seen by key only.
+- The command stops before podman is called for a component not in the
+  catalog, a missing or unreadable SQL file, a missing `build/install.yaml`,
+  zero or several databases, a placeholder Pod name and a Pod missing from
+  `build/install.yaml`; another component's invalid files do not stop it.
 - With a stub podman recording arguments and stdin: the argument list
   `exec -i <container> sh -c <fixed script>`; the SQL bytes arrive
-  unchanged, also from a path with spaces; podman, connection and SQL
-  failures give a nonzero status with their messages; `[OK]` only on
-  success; psql's stderr shown, its stdout not.
+  unchanged, also from a path with spaces; each status of the table gives
+  its message and a nonzero status; `[OK]` only on success.
+- Output: a stub that fails with status 3 and writes
+  `psql:<stdin>:7: ERROR: ... PRIVATE_MARKER ...` gives a message with line
+  7 and without the marker; a prefix that is not digits gives no line
+  number; no captured text reaches the output or an exception.
 - The fixed script, run with real `sh` and a stub psql: `PGPASSWORD` equals
   the file's content for a password with `$`, `'`, `;` and spaces; the
-  password is not in psql's arguments; the flags above are passed; a
-  missing variable or file stops the script, naming it.
+  password is not in psql's arguments; `-w`, `--no-psqlrc`, `ON_ERROR_STOP`,
+  `--single-transaction` and `--file=-` are passed, `-d` is not;
+  `PGDATABASE` holds `POSTGRES_DB` literally, also a value like
+  `host=other dbname=x`; `PGCONNECT_TIMEOUT=5`. A missing variable, and a
+  missing, unreadable or empty password file, give their own status and the
+  stub psql never starts. (The demo's loopback accepts any password, so this
+  test, not the lab, proves the password is delivered.)
 - `build/` is byte-for-byte unchanged after a success and after a failure.
 
 Acceptance (the normal scenario after `03-dev-up`, the real command against
@@ -1385,26 +1427,29 @@ value)`; the test SQL lives under `acceptance/`, never under `components/`):
 
 1. `('dev-seed', 'v1')` is inserted; a separate psql query finds it.
 2. An `ON CONFLICT DO NOTHING` script run again leaves exactly one such row.
-3. A script that inserts `('dev-seed-partial', 'x')` and then fails exits
-   nonzero with a line number and without the SQL text, and
+3. A script that inserts `('dev-seed-partial', 'x')` and then fails on a
+   known line with `SELECT 'PRIVATE_MARKER'::integer` exits nonzero; the
+   message names that line and does not contain `PRIVATE_MARKER`;
    `dev-seed-partial` is absent.
 4. Container IDs and start times are unchanged; no new containers.
 5. The checksums of `build/dev/*/credentials` are unchanged.
 
 A successful connection alone never counts as proof that the SQL ran.
+Lab-only questions: the `podman exec` user can read the password file, and
+psql reports the line number with `--file=-` as expected.
 
 Documentation: a short section in the existing development documentation
 (the two commands, the component argument, completed migrations, the
 superuser credential and `SET ROLE`, repetition and `--single-transaction`
-with its exceptions, the terse errors, and the sentence on release seeding
-above), and the contract in [the review guide](docs/REVIEW_GUIDE.md) where
-development flows are described. This item's status and known gaps are
-updated when it is implemented and again after the lab run.
+with its exceptions, the fixed error texts with the line number, and the
+sentence on release seeding above), and the contract in
+[the review guide](docs/REVIEW_GUIDE.md) where development flows are
+described. This item's status and known gaps are updated when it is
+implemented and again after the lab run.
 
 Delivery: commit and push to a working branch, not to `main`; the product
 owner runs the lab from that commit before the merge. Real
-Podman/PostgreSQL behavior, including psql's actual terse format, is
-outstanding until then.
+Podman/PostgreSQL behavior is outstanding until then.
 
 ## 80. Mount a declared secret file directly through MOUNTS
 
