@@ -29,8 +29,8 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-3da4d97` | 57 | CLEAN PASS |
-| normal | `normal-3da4d97` | 118 | CLEAN PASS |
+| `--whoami` | `whoami-4c8a580` | 61 | CLEAN PASS |
+| normal | `normal-4c8a580` | 118 | CLEAN PASS |
 | `--first-app app2` | `app2-3da4d97` | 112 | CLEAN PASS |
 | `--identity-only` | `identity-3da4d97` | 52 | CLEAN PASS |
 | `--help-only` | `help-3da4d97` | 46 | CLEAN PASS |
@@ -42,27 +42,45 @@ All on `3da4d97` (`main`, 2026-11-13, one batch of ten runs with
 checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no
 failed or skipped step. This commit adds backlogs 86 (`@@$NAME@@`, process
 environment variables) and 87 (`@@@@`, a literal `@@`) with their review
-rounds and lab steps to backlog 85's target model. `--whoami` has 57 steps
-(two for backlogs 86/87); the other step counts are unchanged.
+rounds and lab steps to backlog 85's target model.
+
+`--whoami` and normal ran again on `4c8a580` (2026-11-14, clean detached
+checkout, same OS and Podman, no failed or skipped step). That commit
+changes only the harness and documentation (no product file differs from
+`3da4d97`): its `03-dev-up` (both runs) and `10-variables` checks are
+stricter, and `--whoami` adds four `MOUNTS` steps (61 steps; 57 on
+`3da4d97`). The other eight runs on `3da4d97` test the same product.
 
 Backlogs 86 and 87 in these runs:
 
-- `03-dev-up` (normal and `--whoami`): the lab's `config/dev.yaml` had
-  `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`. Without the
-  variable, `dev/demo-credentials.sh` stopped with "environment variable
-  DEV_PUBLIC_HOST is not set" before any certificate was issued. Exported,
-  `build/dev/platform/config.yaml` held the resolved origin and the web
-  certificate covered the exported host name.
+- `03-dev-up` (normal and `--whoami`, on `4c8a580`): the lab's
+  `config/dev.yaml` had `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`.
+  Without the variable, `dev/demo-credentials.sh` stopped with "environment
+  variable DEV_PUBLIC_HOST is not set" before any certificate was issued.
+  With `exported-dev-host.test`, a name neither the example nor the
+  certificate script's default uses, the web certificate covered that name
+  and not `myproduct-proxy`; the pair was removed. With `myproduct-proxy`
+  exported for the dev run, `build/dev/platform/config.yaml` held the
+  resolved origin and the web certificate covered it.
 - `--whoami` `10-variables`: app3's overrides in the environment file got
   `Lab__Level: '@@$APP3_LAB_LEVEL@@'` and escaped text
   (`@@@@VERSION`, `@@@@secret:app3-api-secret/value@@@@`,
   `@@@@$APP3_LAB_LEVEL@@@@`). Unexported, `myproduct --environment whoami`
   stopped in its checks with nothing changed. With `Information`, then
-  `Debug`, it installed app3 each time; with `Debug` again, nothing. The
-  running backend's environment (`podman inspect`) had the value and
+  `Debug`, it installed app3 each time; with `Debug` again, nothing, and
+  the fingerprint was unchanged (on `4c8a580`). The running backend's
+  environment (`podman inspect`) had the value and
   exactly `SELECT @@VERSION; @@secret:app3-api-secret/value@@
   @@$APP3_LAB_LEVEL@@`. The file was then restored and app3 installed
   without the lines; `10-variables-e2e` signed in again.
+- `--whoami` `10-mounts` (on `4c8a580`): DEV built app3 0.1.4, which mounts
+  `/etc/app3-lab/variables.conf` into its backend with
+  `@@$APP3_LAB_MOUNT@@` and the same escaped text. Unexported,
+  `myproduct --environment whoami` stopped naming the `MOUNTS` line and
+  "environment variable APP3_LAB_MOUNT is not set", with nothing changed.
+  Exported, it installed `['app3']`, and the file read in the running
+  backend (`podman exec`) was exactly the rendered text with literal `@@`.
+  `10-mounts-e2e` and `10-check-environment` passed.
 - Every other scenario ran the changed rendering paths (settings,
   `ENVIRONMENT`, `ConfigMap`, `MOUNTS`, image fields, the
   unfilled-placeholder check, `init-config`) and, in `--renamed-product`,
@@ -70,8 +88,8 @@ Backlogs 86 and 87 in these runs:
 
 Not covered by the lab (product and harness tests only): build-host and
 target-host values in one bundle (no demo manifest uses `@@$NAME@@`), and
-`@@@@` in a `MOUNTS` file, `ConfigMap` or other manifest text (the demo's
-release files have none).
+`@@@@` in `ConfigMap` or other manifest text (the demo's release files have
+none).
 
 Backlogs 84 and 85 in these runs:
 
