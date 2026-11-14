@@ -29,42 +29,51 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-5da79f9` | 55 | CLEAN PASS |
-| normal | `normal-5da79f9` | 118 | CLEAN PASS |
-| `--first-app app2` | `app2-9c00aca` | 112 | CLEAN PASS |
-| `--identity-only` | `identity-9c00aca` | 52 | CLEAN PASS |
-| `--help-only` | `help-9c00aca` | 46 | CLEAN PASS |
-| `--platform-help-only` | `platform-help-9c00aca` | 25 | CLEAN PASS |
-| `--renamed-product` | `renamed-5da79f9` | 56 | CLEAN PASS |
+| `--whoami` | `whoami-3da4d97` | 57 | CLEAN PASS |
+| normal | `normal-3da4d97` | 118 | CLEAN PASS |
+| `--first-app app2` | `app2-3da4d97` | 112 | CLEAN PASS |
+| `--identity-only` | `identity-3da4d97` | 52 | CLEAN PASS |
+| `--help-only` | `help-3da4d97` | 46 | CLEAN PASS |
+| `--platform-help-only` | `platform-help-3da4d97` | 25 | CLEAN PASS |
+| `--renamed-product` | `renamed-3da4d97` | 56 | CLEAN PASS |
 
-All on `9c00aca` (2026-11-10, one batch of ten runs with `--status-retry`
-and both `--rpm-manual` runs below), clean detached checkout of
-`claude/compassionate-wright-mzz19z`, Oracle Linux Server 9.8 and Podman
-5.8.2 on DEV and PROD, no failed or skipped step. This commit is backlog 85's
-revised model (component selection and `ENVIRONMENT` overrides applied on
-the target from `state/<environment>.yaml`; neutral bundles and RPMs; the
-product owner's option C) with its review rounds, on top of backlog 84.
-The other matrix step counts are unchanged. `--whoami` ran again on
-`fe99456` (2026-11-11, clean detached checkout, same OS and Podman), which
-adds backlog 85's four lab steps to the harness; the product is the same as
-on `9c00aca` (no product file differs). It has 55 steps: 45 before backlog 85,
-three for the environment file and seven for those steps.
+All on `3da4d97` (`main`, 2026-11-13, one batch of ten runs with
+`--status-retry` and both `--rpm-manual` runs below), clean detached
+checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no
+failed or skipped step. This commit adds backlogs 86 (`@@$NAME@@`, process
+environment variables) and 87 (`@@@@`, a literal `@@`) with their review
+rounds and lab steps to backlog 85's target model. `--whoami` has 57 steps
+(two for backlogs 86/87); the other step counts are unchanged.
 
-Backlogs 86 (`@@$NAME@@`) and 87 (`@@@@`): `--whoami`, normal,
-`--renamed-product` and `--rpm-manual` (P1) ran on `5da79f9` (2026-11-12,
-one batch, clean detached checkout, same OS and Podman), all CLEAN PASS
-with the same step counts as before. Their product changes touch every
-rendering path (settings, `ENVIRONMENT`, `ConfigMap`, `MOUNTS`, image
-fields, the unfilled-placeholder check, `init-config`) and the
-renamed-product generator. These runs are a regression check only: no
-demo file and no step uses `@@$NAME@@` or `@@@@`, so the two features
-themselves have product and harness tests only. The other six runs
-(`--first-app app2`, `--identity-only`, `--help-only`,
-`--platform-help-only`, `--status-retry`, `--rpm-manual
---strict-fapolicyd`) are still those on `9c00aca` and have not run on the
-backlog 86/87 code.
+Backlogs 86 and 87 in these runs:
 
-Backlog 84/85 in these runs:
+- `03-dev-up` (normal and `--whoami`): the lab's `config/dev.yaml` had
+  `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`. Without the
+  variable, `dev/demo-credentials.sh` stopped with "environment variable
+  DEV_PUBLIC_HOST is not set" before any certificate was issued. Exported,
+  `build/dev/platform/config.yaml` held the resolved origin and the web
+  certificate covered the exported host name.
+- `--whoami` `10-variables`: app3's overrides in the environment file got
+  `Lab__Level: '@@$APP3_LAB_LEVEL@@'` and escaped text
+  (`@@@@VERSION`, `@@@@secret:app3-api-secret/value@@@@`,
+  `@@@@$APP3_LAB_LEVEL@@@@`). Unexported, `myproduct --environment whoami`
+  stopped in its checks with nothing changed. With `Information`, then
+  `Debug`, it installed app3 each time; with `Debug` again, nothing. The
+  running backend's environment (`podman inspect`) had the value and
+  exactly `SELECT @@VERSION; @@secret:app3-api-secret/value@@
+  @@$APP3_LAB_LEVEL@@`. The file was then restored and app3 installed
+  without the lines; `10-variables-e2e` signed in again.
+- Every other scenario ran the changed rendering paths (settings,
+  `ENVIRONMENT`, `ConfigMap`, `MOUNTS`, image fields, the
+  unfilled-placeholder check, `init-config`) and, in `--renamed-product`,
+  the generator that now uses the product's template reader.
+
+Not covered by the lab (product and harness tests only): build-host and
+target-host values in one bundle (no demo manifest uses `@@$NAME@@`), and
+`@@@@` in a `MOUNTS` file, `ConfigMap` or other manifest text (the demo's
+release files have none).
+
+Backlogs 84 and 85 in these runs:
 
 - `--whoami`: the bundles were built without an environment. The demo's
   `config/whoami.yaml` (components platform, identity and app3, and
@@ -85,12 +94,11 @@ Backlog 84/85 in these runs:
   found config and credentials unchanged. Before it, and in the scenarios
   without it, `healthy()` found the release default `defaults`.
 - In normal, `03-database-runtime` ran `environment_update_test.py`: dev's
-  `config/dev.yaml` `overrides` block (unchanged by backlog 85) reached a
-  regular and an `always` init container with their exact values.
-
-- `--whoami` on `fe99456`, after the restore, app3 being Identity's API
-  through the file. Each step compared a fingerprint of every state and
-  Quadlet file's digest and each container's start time.
+  `config/dev.yaml` `overrides` block reached a regular and an `always`
+  init container with their exact values.
+- `--whoami`, after the restore, app3 being Identity's API through the
+  file. Each step compared a fingerprint of every state and Quadlet file's
+  digest and each container's start time.
   - `10-environment-plain`: `./deploy.sh install` and `myproduct app3`
     without `--environment` were refused with option C's message, nothing
     changed. The trigger was a named component, not an upgrade.
@@ -140,21 +148,21 @@ the earlier matrices are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `status-retry-9c00aca` | 113 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-5da79f9` | 63 | CLEAN PASS |
-| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-9c00aca` | 64 | CLEAN PASS |
+| `--status-retry` | `status-retry-3da4d97` | 113 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-3da4d97` | 63 | CLEAN PASS |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-3da4d97` | 64 | CLEAN PASS |
 
-Status/retry: on `9c00aca` (2026-11-10, in the same batch), clean detached
-checkout, OS and Podman as the matrix, no failed or skipped step. A same-version failure stays pending
+Status/retry: on `3da4d97` (in the same batch), clean detached checkout,
+OS and Podman as the matrix, no failed or skipped step. A same-version failure stays pending
 with the old container active, a plain retry completes, and the restore
 leaves protected code unchanged.
 The `--host-setup` scenario (the `release.py` manual) was removed in backlog
 69 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): P2 on `9c00aca` (2026-11-10), P1 again on
-`5da79f9` (2026-11-12, with the same 63 steps), same OS and Podman as the
-matrix. Five steps more than before, for backlog 85's manual
-steps 6, 7 and 9. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
+RPM manual (backlog 69 WP6): both on `3da4d97` (in the same batch), same
+OS and Podman as the matrix; backlogs 86 and 87 added no manual command
+block. The five steps for backlog 85's manual steps 6, 7 and 9 are
+included. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
 reset (`strict_fapolicyd: true`). In both runs every operator step ran the
 command block of `docs/PRODUCTION-INSTALL.md` literally (only its example
 values replaced), with the answers typed at the prompts and the runtime user

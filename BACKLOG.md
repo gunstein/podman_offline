@@ -56,11 +56,11 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 87. A literal `@@` in templates: `@@@@`
 
-Status: **implemented, code review approved on `5da79f9`; regression lab
-CLEAN PASS on `5da79f9` (as item 86); its own lab step added, not yet
-run** (requirement: product owner, 2026-11-12). Lab: `--whoami`'s
-`10-variables` checks escaped text in an `ENVIRONMENT` override in the
-running container. Product tests only: a `MOUNTS` file, `ConfigMap` and
+Status: **implemented, code review approved, and lab-verified on `3da4d97`
+(`main`)** (requirement: product owner, 2026-11-12). All ten lab runs were
+CLEAN PASS ([RESULTS](acceptance/RESULTS.md)); `--whoami`'s `10-variables`
+found escaped text in an `ENVIRONMENT` override exactly as literal `@@` in
+the running container. Product tests only: a `MOUNTS` file, `ConfigMap` and
 manifest text, and bundles. Tests:
 `tests/platform_tests/test_template_escapes.py`. Shares the parser with
 [item 86](#86-process-environment-variables-in-placeholders-name). Review
@@ -128,12 +128,13 @@ final, are added after the dependent's own settings are resolved
 
 ## 86. Process environment variables in placeholders (`@@$NAME@@`)
 
-Status: **implemented, code review approved on `5da79f9`; regression lab
-CLEAN PASS on `5da79f9` (`--whoami`, normal, `--renamed-product`,
-`--rpm-manual`); its own lab steps added, not yet run** (requirement: product owner, 2026-11-12). Lab:
-`03-dev-up` (an exported dev public host) and `--whoami`'s `10-variables`
-(an override with an exported variable, same-version reinstall, a missing
-variable); see [acceptance/README.md](acceptance/README.md). Product tests
+Status: **implemented, code review approved, and lab-verified on `3da4d97`
+(`main`)** (requirement: product owner, 2026-11-12). All ten lab runs were
+CLEAN PASS ([RESULTS](acceptance/RESULTS.md)): `03-dev-up` (an exported dev
+public host: refused unset, then the dev config and certificate) and
+`--whoami`'s `10-variables` (an override with an exported variable: refused
+unset, reinstalled once per new value, not for the same value, the value in
+the running container); see [acceptance/README.md](acceptance/README.md). Product tests
 only: build-host and target-host values in one bundle, `MOUNTS` and other
 places. Tests: `tests/platform_tests/test_process_environment.py` and the demo test
 `test_certificates_and_deployment_resolve_one_exported_host_name`. Review
@@ -257,14 +258,14 @@ planned in this item.
 
 ## 85. Select the components of a target environment
 
-Status: **implemented and lab-verified on `9c00aca`, revised model
-(2026-11-10)**; code review approved. All ten lab runs were CLEAN PASS: the
-matrix, `--status-retry` and both `--rpm-manual` runs; see
+Status: **implemented and lab-verified, revised model (2026-11-10)**; code
+review approved. All ten lab runs on `3da4d97` (`main`, which also carries
+items 86 and 87) were CLEAN PASS: the matrix, `--status-retry` and both
+`--rpm-manual` runs; see
 [RESULTS](acceptance/RESULTS.md). They cover the environment file on the
 target, the API registration through it (`--whoami`), the app1 upgrade with
 the `lab` file, and the manual's environment, uninstall and `dist/delivery/`
-steps. `whoami-fe99456` (CLEAN PASS, 55 steps; the same product) also ran the
-target-rule steps `10-environment-plain` (option C, with app3 as a named
+steps. `--whoami` also ran the target-rule steps `10-environment-plain` (option C, with app3 as a named
 component), `-records`, `-rotate` (another secret line for the same
 version) and `-pending` (a pending API with a changed file). Product tests
 only: an option C refusal triggered by a real upgrade, and a rotated secret
@@ -695,7 +696,7 @@ The merge, null, case, container and `envFrom` rules below stay in force;
 the sections "Build interface and artifact layout" and "Compile the
 overrides into the bundle", and the build parts of the validation and
 acceptance sections, are superseded. The target application is lab-verified on
-`9c00aca` (item 85). The contract is in
+`3da4d97` (item 85). The contract is in
 [COMPONENTS.md](docs/COMPONENTS.md#environment-overrides-the-targets-environment-file).
 The analysis below is based on `8b7161b`. Read the latest `main`, [AGENTS.md](AGENTS.md),
 [the review guide](docs/REVIEW_GUIDE.md), the relevant parts of
