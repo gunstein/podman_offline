@@ -60,7 +60,7 @@ Status: **implemented, code review approved, and lab-verified on `3da4d97`
 (`main`)** (requirement: product owner, 2026-11-12). All ten lab runs were
 CLEAN PASS ([RESULTS](acceptance/RESULTS.md)); `--whoami`'s `10-variables`
 found escaped text in an `ENVIRONMENT` override exactly as literal `@@` in
-the running container. `--whoami`'s `10-mounts` on `4c8a580` (CLEAN PASS)
+the running container. `--whoami`'s `10-mounts` on `4c8a580` and again on `5c64fd1` (CLEAN PASS)
 found escaped text in a `MOUNTS` file of a newer app3 as literal `@@` in the
 running container; harness tests show that both steps fail on wrong
 results. Product tests only: `ConfigMap` and manifest text, and bundles. Tests:
@@ -141,7 +141,8 @@ the running container); see [acceptance/README.md](acceptance/README.md). On
 followed a name of its own (`exported-dev-host.test`), the same value in
 `10-variables` left the fingerprint unchanged, and `10-mounts` (an exported
 variable in a `MOUNTS` file of a newer app3) was refused unset with nothing
-changed, then read in the running container. Product tests only: build-host and target-host
+changed, then read in the running container; both runs passed again on
+`5c64fd1`. Product tests only: build-host and target-host
 values in one bundle, and other places. Tests: `tests/platform_tests/test_process_environment.py` and the demo test
 `test_certificates_and_deployment_resolve_one_exported_host_name`. Review
 fixes (on `1219bb1`): image errors show the image as written, never the
@@ -1244,7 +1245,7 @@ the same day after the reviews of `9bffe05` and `424fab1`). `dev/seed-db.sh`
 and `dev/seed_db.py`; product tests in `tests/platform_tests/test_seed_db.py`,
 the lab step `03-dev-seed` (normal) with harness tests in
 `acceptance/test_dev_seed.py`; usage in the README's "Seed a development
-database". `normal-636997b` was CLEAN PASS (119 steps,
+database". `normal-636997b` was CLEAN PASS (119 steps; again `normal-5c64fd1`,
 [RESULTS](acceptance/RESULTS.md)): insert, safe repeat, rollback of a failing
 script reported by line only, containers and credentials unchanged; it also
 confirmed the `podman exec` user reading the password file and psql's
@@ -1896,7 +1897,10 @@ host commands, no Podman/systemd run): the interrupted API-owner rewrite in
 (`tests/helpers/retry_driver.py`, running the same unpacked bundle's own code
 against the same home), so the retry is shown to finish from what is on disk;
 and row C's executor is renamed `deploy.apply_component_install` (signature
-and step order unchanged). Rows A, B, D and E, `registration_stage` and the
+and step order unchanged). `normal-5c64fd1` and `whoami-5c64fd1` were CLEAN
+PASS on the renamed code ([RESULTS](acceptance/RESULTS.md)), including
+`--whoami`'s owner-YAML rewrite and resumed-install steps; the new-process
+owner-YAML retry itself has product tests only. Rows A, B, D and E, `registration_stage` and the
 global paths are not started.
 Static analysis is recorded below; implementation remains future work.
 This entry does not implement a refactor or establish a functional defect.

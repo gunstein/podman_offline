@@ -29,8 +29,8 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-4c8a580` | 61 | CLEAN PASS |
-| normal | `normal-636997b` | 119 | CLEAN PASS |
+| `--whoami` | `whoami-5c64fd1` | 61 | CLEAN PASS |
+| normal | `normal-5c64fd1` | 119 | CLEAN PASS |
 | `--first-app app2` | `app2-3da4d97` | 112 | CLEAN PASS |
 | `--identity-only` | `identity-3da4d97` | 52 | CLEAN PASS |
 | `--help-only` | `help-3da4d97` | 46 | CLEAN PASS |
@@ -44,18 +44,25 @@ failed or skipped step. This commit adds backlogs 86 (`@@$NAME@@`, process
 environment variables) and 87 (`@@@@`, a literal `@@`) with their review
 rounds and lab steps to backlog 85's target model.
 
-`--whoami` and normal ran again on `4c8a580` (2026-11-14, clean detached
-checkout, same OS and Podman, no failed or skipped step). That commit
-changes only the harness and documentation (no product file differs from
-`3da4d97`): its `03-dev-up` (both runs) and `10-variables` checks are
-stricter, and `--whoami` adds four `MOUNTS` steps (61 steps; 57 on
-`3da4d97`). The other eight runs on `3da4d97` test the same product.
+`--whoami` and normal ran again on `5c64fd1` (2026-11-15, one batch, clean
+detached checkout, same OS and Podman, no failed or skipped step). Since
+`3da4d97` the installed product differs only by backlog 75's rename of
+`deploy.install_component_plan` to `apply_component_install` (same
+signature and steps); no log of either run contains `NameError` or the old
+name. The harness adds, besides the stricter `03-dev-up` and `10-variables`
+checks, four `MOUNTS` steps in `--whoami` (61 steps; 57 on `3da4d97`) and
+backlog 81's `03-dev-seed` in normal (119 steps; 118 before). The other
+eight runs on `3da4d97` cover scenarios these changes do not touch; they
+call the renamed function under its old name, so they have not run this
+exact code.
 
-normal ran again on `636997b` (2026-11-14, clean detached checkout, same OS
-and Podman, no failed or skipped step). That commit adds backlog 81's
-development command `dev/seed-db.sh` and its step `03-dev-seed` (119 steps;
-118 before); no file of the installed product differs from `4c8a580`, so
-`whoami-4c8a580` and the other runs still test the same product.
+Backlog 75 in these runs: every install, upgrade and uninstall went
+through `apply_component_install`. `--whoami`'s `10-environment-rotate`
+(Identity's owner YAML rewritten for another API secret line, then app3)
+and `10-environment-pending` (an interrupted app3 install finished by a
+later run, then decided again after Identity) passed. The interrupted
+owner-YAML rewrite retried in a new process has product tests only
+(`test_api_registrations.py`).
 
 Backlog 81 in this run (`03-dev-seed`, after `03-dev-e2e`): after `dev up`,
 `./dev/seed-db.sh app1` with files under a path with a space inserted
@@ -73,7 +80,7 @@ that the right password is delivered.
 
 Backlogs 86 and 87 in these runs:
 
-- `03-dev-up` (normal and `--whoami`, on `4c8a580`; normal again on `636997b`): the lab's
+- `03-dev-up` (normal and `--whoami`): the lab's
   `config/dev.yaml` had `PUBLIC_ORIGIN: "https://@@$DEV_PUBLIC_HOST@@:8443"`.
   Without the variable, `dev/demo-credentials.sh` stopped with "environment
   variable DEV_PUBLIC_HOST is not set" before any certificate was issued.
@@ -88,12 +95,12 @@ Backlogs 86 and 87 in these runs:
   `@@@@$APP3_LAB_LEVEL@@@@`). Unexported, `myproduct --environment whoami`
   stopped in its checks with nothing changed. With `Information`, then
   `Debug`, it installed app3 each time; with `Debug` again, nothing, and
-  the fingerprint was unchanged (on `4c8a580`). The running backend's
+  the fingerprint was unchanged. The running backend's
   environment (`podman inspect`) had the value and
   exactly `SELECT @@VERSION; @@secret:app3-api-secret/value@@
   @@$APP3_LAB_LEVEL@@`. The file was then restored and app3 installed
   without the lines; `10-variables-e2e` signed in again.
-- `--whoami` `10-mounts` (on `4c8a580`): DEV built app3 0.1.4, which mounts
+- `--whoami` `10-mounts`: DEV built app3 0.1.4, which mounts
   `/etc/app3-lab/variables.conf` into its backend with
   `@@$APP3_LAB_MOUNT@@` and the same escaped text. Unexported,
   `myproduct --environment whoami` stopped naming the `MOUNTS` line and
