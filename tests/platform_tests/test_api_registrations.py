@@ -466,10 +466,12 @@ class ApiRegistrationTests(ProductFixture):
         self.process.side_effect = host_command
 
     def install_in_new_process(self, release, secret):
-        """./deploy.sh install of release in a new interpreter (retry_driver.py).
+        """deploy.install() of release in a new interpreter (retry_driver.py).
 
-        Only host commands are stubbed there; returns the recorded commands.
-        Failure output is shown with secret replaced, never the value itself.
+        The driver runs the release's own deployment/ code against this home;
+        it substitutes the paths, identity and layout checks, health checks
+        and host commands. Returns the recorded commands. A failure message
+        is fixed text: the child's output and events can hold the secret.
         """
         record = self.root / "new-process.json"
         result = REAL_RUN(
@@ -489,13 +491,60 @@ class ApiRegistrationTests(ProductFixture):
             check=False,
             timeout=120,
         )
-        output = result.stdout + result.stderr
         evidence = json.loads(record.read_text()) if record.exists() else {}
-        diagnosis = (output + json.dumps(evidence)).replace(secret, "<secret>")
-        self.assertNotIn(secret, output)
-        self.assertEqual(result.returncode, 0, diagnosis)
+        events = evidence.get("events", [])
+        if any(
+            secret in text
+            for text in (result.stdout, result.stderr, json.dumps(events))
+        ):
+            self.fail("the new process showed the secret value (output withheld)")
+        if result.returncode:
+            errors = [event[1] for event in events if event[:1] == ["error"]]
+            self.fail(
+                f"the new process exited {result.returncode} after "
+                f"{len(events)} recorded events; errors: {errors or 'none'}"
+            )
         self.assertNotEqual(evidence["pid"], os.getpid())
-        return evidence["events"]
+        return events
+
+    def test_new_process_diagnostics_never_show_the_secret(self):
+        """A failing or leaking child is reported with fixed text only."""
+        driver = self.root / "leaking-driver.py"
+        driver.write_text(
+            "import json, os, sys\n"
+            "parameters = json.loads(sys.stdin.read())\n"
+            "mode = os.environ['LEAK']\n"
+            "events = [['podman', 'load', 'PRIVATE-VALUE' if mode == 'event' else 'x']]\n"
+            "if mode == 'failure':\n"
+            "    events.append(['error', 'OSError', 'PRIVATE-VALUE'])\n"
+            "with open(parameters['record'], 'w') as record:\n"
+            "    json.dump({'pid': os.getpid(), 'events': events}, record)\n"
+            "stream = sys.stderr if mode in ('stderr', 'failure') else sys.stdout\n"
+            "stream.write('PRIVATE-VALUE\\n' if mode != 'event' else 'ok\\n')\n"
+            "sys.exit(1 if mode == 'failure' else 0)\n"
+        )
+
+        def failure(mode, secret="PRIVATE-VALUE"):
+            """The failure message install_in_new_process gives for one mode."""
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch(__name__ + ".DRIVER", driver))
+                stack.enter_context(mock.patch.dict(os.environ, {"LEAK": mode}))
+                failed = stack.enter_context(self.assertRaises(self.failureException))
+                self.install_in_new_process(self.root, secret=secret)
+            return str(failed.exception)
+
+        for mode in ("stdout", "stderr", "event"):
+            with self.subTest(mode):
+                self.assertEqual(
+                    failure(mode),
+                    "the new process showed the secret value (output withheld)",
+                )
+        message = failure("failure", secret="OTHER-VALUE")
+        self.assertEqual(
+            message,
+            "the new process exited 1 after 2 recorded events; errors: ['OSError']",
+        )
+        self.assertNotIn("PRIVATE-VALUE", message)
 
     def test_interrupted_owner_rewrite_keeps_the_old_yaml_and_retry_finishes(self):
         releases, _ = self.install_all(self.product())

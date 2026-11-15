@@ -452,7 +452,8 @@ class LauncherTests(SeedFixture):
         return REAL_RUN(
             ["bash", str(launcher), "orders", str(self.sql)],
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             check=False,
             timeout=60,
         )
