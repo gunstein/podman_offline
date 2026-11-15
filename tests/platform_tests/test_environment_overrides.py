@@ -15,7 +15,7 @@ import subprocess
 from contextlib import redirect_stderr, redirect_stdout
 
 import yaml
-from deployment import catalog, common, deploy, environment, validation
+from deployment import catalog, cli, common, deploy, environment, validation
 
 from helpers.product_fixture import RENAMED, ProductFixture, pod
 
@@ -684,3 +684,59 @@ class OverridePasswordTests(OverrideFixture):
                 self.commands(), [["podman", "volume", "exists", "orders-data"]]
             )
             self.assertEqual(self.files_under(common.STATE), before)
+
+
+# A YAML sequence used as a key: TextLoader's duplicate check cannot hash it.
+LIST_KEY = "    ? [one, two]\n    : PRIVATE_TEST_MARKER\n"
+
+
+class ListKeyTests(OverrideFixture):
+    """A list as a YAML key is an ordinary YAML refusal, never a traceback."""
+
+    def test_validate_names_the_component_file(self):
+        self.write_product(shop())
+        defaults = self.source / "components/shop/config.defaults.yaml"
+        text = defaults.read_text()
+        self.assertEqual(text.count("ENVIRONMENT:\n  main:\n"), 1)
+        defaults.write_text(
+            text.replace(
+                "ENVIRONMENT:\n  main:\n", "ENVIRONMENT:\n  main:\n" + LIST_KEY
+            )
+        )
+        output, errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(errors):
+            code = cli.main(["validate"])
+        shown = output.getvalue() + errors.getvalue()
+        self.assertEqual(code, 1, shown)
+        self.assertIn(f"{defaults} at line ", shown)
+        self.assertIn(f"invalid YAML; {environment.DEFAULTS_HINT}", shown)
+        for private in ("PRIVATE_TEST_MARKER", "unhashable", "Traceback"):
+            self.assertNotIn(private, shown)
+        self.process.assert_not_called()
+        self.assertFalse(common.BUILD.exists())
+
+    def test_an_environment_file_is_refused_before_any_change(self):
+        self.write_product(shop())
+        release = self.build_and_unpack()["shop"]
+        shutil.rmtree(self.source)
+        path = self.place_environment(
+            "prod3",
+            "components: [shop]\noverrides:\n  shop:\n    ENVIRONMENT:\n"
+            "      main:\n" + LIST_KEY.replace("    ", "        "),
+        )
+        self.process.reset_mock()
+        with self.environment():
+            self.use_root(release)
+            for check in (deploy.install, deploy.check_environment):
+                with self.subTest(check.__name__):
+                    with self.assertRaises(common.DeployError) as raised:
+                        check("prod3")
+                    message = str(raised.exception)
+                    self.assertRegex(
+                        message,
+                        f"^{path} at line [0-9]+: invalid YAML; "
+                        f"{environment.OVERRIDES_HINT}$",
+                    )
+                    self.assertNotIn("PRIVATE_TEST_MARKER", message)
+        self.process.assert_not_called()
+        self.assertFalse((common.STATE / "installed").exists())

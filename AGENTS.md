@@ -13,11 +13,13 @@ demo-specific assumptions with focused fixtures. Complete the guide's
 understandability review before declaring implementation complete. Keep work
 scoped: unrelated known gaps belong in the backlog, not incidental refactoring.
 
-In the final report identify contracts checked, actual test results, verification
-gaps and the understandability review outcome. Separate product/unit tests,
-acceptance-harness tests and real Podman/systemd verification. Never substitute
-older lab results for verification of the current change. `acceptance/RESULTS.md`
-holds only the latest real results; older evidence stays in the git history.
+In the final report state: contracts checked; actual test results, separating
+product/unit tests, acceptance-harness tests and real Podman/systemd
+verification; verification gaps; the understandability review outcome; what
+became simpler; and what complexity was added and why it is necessary. Never
+substitute older lab results for verification of the current change.
+`acceptance/RESULTS.md` holds only the latest real results; older evidence stays
+in the git history.
 
 Keep the guide's contracts and known-gap references current when behavior changes.
 Add meaningful regression coverage for fixed gaps; documentation alone is not a
@@ -43,6 +45,11 @@ ordinary use or maintenance requires unnecessary concepts or steps.
 - Prefer explicit data and ordinary control flow. Introduce an abstraction
   when it makes the current code easier to understand or change, not merely
   to prepare for future reuse.
+- Use `argparse` for Python commands with options or subcommands. Reuse the
+  project's existing argument conventions (`deployment/arguments.py`) where
+  they apply. Keep substantial Python logic in `.py` files so developers can
+  find and test it directly. When a delivery requirement calls for embedded
+  code, identify the workflow that requires it in the review.
 - Validate at the boundary where information becomes trusted. Reuse shared
   checks; additional checks must protect a distinct failure boundary.
 - Preserve required security, data retention and interruption/retry behavior.
@@ -56,14 +63,10 @@ it serves and why a simpler existing mechanism is insufficient. Answer the
 question "What concretely stops working if we do not build this now?" with a
 need the product owner has decided, and name where that decision is recorded.
 
-Before declaring completion, review one ordinary operator task and one likely
-developer change. Identify unnecessary steps, files, concepts and indirection.
-Remove unnecessary additions within scope; report unrelated cleanup separately.
-
-The final report must briefly state:
-- what became simpler;
-- what complexity was added and why it is necessary;
-- what relevant behavior was verified.
+Before declaring completion, in addition to the guide's understandability
+review, review one ordinary operator task and one likely developer change.
+Identify unnecessary steps, files, concepts and indirection. Remove unnecessary
+additions within scope.
 
 Do not optimize for minimum line count or minimum diff at the expense of
 clarity. Do not introduce a framework or a new review document to satisfy
