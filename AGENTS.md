@@ -43,6 +43,11 @@ ordinary use or maintenance requires unnecessary concepts or steps.
 - Prefer explicit data and ordinary control flow. Introduce an abstraction
   when it makes the current code easier to understand or change, not merely
   to prepare for future reuse.
+- Use `argparse` for Python commands with options or subcommands. Reuse the
+  project's existing argument conventions (`deployment/arguments.py`) where
+  they apply. Keep substantial Python logic in `.py` files so developers can
+  find and test it directly. When a delivery requirement calls for embedded
+  code, identify the workflow that requires it in the review.
 - Validate at the boundary where information becomes trusted. Reuse shared
   checks; additional checks must protect a distinct failure boundary.
 - Preserve required security, data retention and interruption/retry behavior.
