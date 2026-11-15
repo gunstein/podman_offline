@@ -293,7 +293,9 @@ an unhandled error that could show the value. It now reads the file as text,
 as the releases do (`yaml.BaseLoader`); product tests through `runtime.main`
 in `test_runtime.py`; tools `VERSION` 0.3.7, which also covers the earlier
 item-85 tools changes after 0.3.6. `whoami-9ba644b` and `rpm-manual-9ba644b`
-were CLEAN PASS with tools 0.3.7 ([RESULTS](acceptance/RESULTS.md)).
+were CLEAN PASS with tools 0.3.7, and so was the full matrix on `443b571`,
+including `rpm-manual-p2` with strict fapolicyd
+([RESULTS](acceptance/RESULTS.md)).
 Review fixes (2026-11-10, on `04151a7`): a changed override or API role
 in the same version is installed again (each install records its own
 overrides in `state/environment/<id>.json`; `check-environment --json`
@@ -1913,8 +1915,9 @@ against the same home), so the retry is shown to finish from what is on disk;
 and row C's executor is renamed `deploy.apply_component_install` (signature
 and step order unchanged). `normal-5c64fd1` and `whoami-5c64fd1` were CLEAN
 PASS on the renamed code ([RESULTS](acceptance/RESULTS.md)), including
-`--whoami`'s owner-YAML rewrite and resumed-install steps; the new-process
-owner-YAML retry itself has product tests only. Rows A, B, D and E, `registration_stage` and the
+`--whoami`'s owner-YAML rewrite and resumed-install steps, and so was the
+full matrix on `443b571`; the new-process owner-YAML retry itself has
+product tests only. Rows A, B, D and E, `registration_stage` and the
 global paths are not started.
 Static analysis is recorded below; implementation remains future work.
 This entry does not implement a refactor or establish a functional defect.

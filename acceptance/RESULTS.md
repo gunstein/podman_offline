@@ -29,45 +29,32 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-9ba644b` | 61 | CLEAN PASS |
-| normal | `normal-5c64fd1` | 119 | CLEAN PASS |
-| `--first-app app2` | `app2-3da4d97` | 112 | CLEAN PASS |
-| `--identity-only` | `identity-3da4d97` | 52 | CLEAN PASS |
-| `--help-only` | `help-3da4d97` | 46 | CLEAN PASS |
-| `--platform-help-only` | `platform-help-3da4d97` | 25 | CLEAN PASS |
-| `--renamed-product` | `renamed-3da4d97` | 56 | CLEAN PASS |
+| `--whoami` | `whoami-443b571` | 61 | CLEAN PASS |
+| normal | `normal-443b571` | 119 | CLEAN PASS |
+| `--first-app app2` | `app2-443b571` | 112 | CLEAN PASS |
+| `--identity-only` | `identity-443b571` | 52 | CLEAN PASS |
+| `--help-only` | `help-443b571` | 46 | CLEAN PASS |
+| `--platform-help-only` | `platform-help-443b571` | 25 | CLEAN PASS |
+| `--renamed-product` | `renamed-443b571` | 56 | CLEAN PASS |
 
-All on `3da4d97` (`main`, 2026-11-13, one batch of ten runs with
+All on `443b571` (`main`, 2026-11-15, one batch of ten runs with
 `--status-retry` and both `--rpm-manual` runs below), clean detached
 checkout, Oracle Linux Server 9.8 and Podman 5.8.2 on DEV and PROD, no
-failed or skipped step. This commit adds backlogs 86 (`@@$NAME@@`, process
-environment variables) and 87 (`@@@@`, a literal `@@`) with their review
-rounds and lab steps to backlog 85's target model.
-
-`--whoami` and normal ran again on `5c64fd1` (2026-11-15, one batch, clean
-detached checkout, same OS and Podman, no failed or skipped step). Since
-`3da4d97` the installed product differs only by backlog 75's rename of
+failed or skipped step. Since the previous full batch (`3da4d97`, backlogs
+86 and 87) this commit adds backlog 75's rename of
 `deploy.install_component_plan` to `apply_component_install` (same
-signature and steps); no log of either run contains `NameError` or the old
-name. The harness adds, besides the stricter `03-dev-up` and `10-variables`
-checks, four `MOUNTS` steps in `--whoami` (61 steps; 57 on `3da4d97`) and
-backlog 81's `03-dev-seed` in normal (119 steps; 118 before). The other
-eight runs on `3da4d97` cover scenarios these changes do not touch; they
-call the renamed function under its old name, so they have not run this
-exact code.
+signature and steps), the refusal of a YAML list or mapping key in
+`deployment/environment.py` (product tests only; every run reads its files
+through it), tools 0.3.7, whose runtime command reads the environment file
+as text (backlog 85 fix), and backlog 81's `dev/seed-db.sh`. The harness
+adds, besides stricter `03-dev-up` and `10-variables` checks, four `MOUNTS`
+steps in `--whoami` (61 steps; 57 before) and `03-dev-seed` in normal (119
+steps; 118 before); the other step counts are unchanged. In `03-dev-up` the
+expected refusal of `dev/demo-credentials.sh` without `DEV_PUBLIC_HOST`
+prints a Python traceback around the right message (a known gap of the demo
+script, backlog 86).
 
-`--whoami` and `--rpm-manual` (P1) ran again on `9ba644b` (2026-11-15, one
-batch, clean detached checkout, same OS and Podman, no failed or skipped
-step), with tools 0.3.7, whose runtime command reads the environment file as
-text (backlog 85 fix). Since `5c64fd1` the release code differs only by
-the refusal of a YAML list or mapping key in `deployment/environment.py`;
-these runs read every environment file through it, while the refusal itself
-has product tests only. In `03-dev-up` the expected refusal of
-`dev/demo-credentials.sh` without `DEV_PUBLIC_HOST` printed a Python
-traceback around the right message (a known gap of the demo script, backlog
-86).
-
-Backlog 75 in these runs: every install and upgrade went through
+Backlog 75 in these runs: every install and upgrade in every scenario went through
 `apply_component_install` (uninstall has its own flow, `deploy.uninstall`). `--whoami`'s `10-environment-rotate`
 (Identity's owner YAML rewritten for another API secret line, then app3)
 and `10-environment-pending` (an interrupted app3 install finished by a
@@ -204,21 +191,21 @@ the earlier matrices are listed in
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--status-retry` | `status-retry-3da4d97` | 113 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-9ba644b` | 63 | CLEAN PASS |
-| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-3da4d97` | 64 | CLEAN PASS |
+| `--status-retry` | `status-retry-443b571` | 113 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-443b571` | 63 | CLEAN PASS |
+| `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-443b571` | 64 | CLEAN PASS |
 
-Status/retry: on `3da4d97` (in the same batch), clean detached checkout,
+Status/retry: on `443b571` (in the same batch), clean detached checkout,
 OS and Podman as the matrix, no failed or skipped step. A same-version failure stays pending
 with the old container active, a plain retry completes, and the restore
 leaves protected code unchanged.
 The `--host-setup` scenario (the `release.py` manual) was removed in backlog
 69 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): P2 on `3da4d97` (in the same batch as the
-matrix), P1 again on `9ba644b` with tools 0.3.7 (its manual steps
-`09-manual-runtime-environment`, `-uninstalled` and `-help` ran
-`myproduct --environment` and passed); same OS and Podman as the matrix;
+RPM manual (backlog 69 WP6): both on `443b571` (in the same batch as the
+matrix) with tools 0.3.7, P2 with `strict_fapolicyd: true`; in both, the
+manual steps `09-manual-runtime-environment`, `-uninstalled` and `-help` ran
+`myproduct --environment` and passed; same OS and Podman as the matrix;
 backlogs 86 and 87 added no manual command block. The five steps for backlog 85's manual steps 6, 7 and 9 are
 included. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
 reset (`strict_fapolicyd: true`). In both runs every operator step ran the
