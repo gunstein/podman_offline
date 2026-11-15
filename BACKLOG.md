@@ -280,6 +280,13 @@ line with other bytes. Product tests:
 `tests/platform_tests/test_environment_components.py`,
 `test_environment_overrides.py`, `test_runtime.py` and the demo tests. It builds on
 [item 84](#84-environment-specific-container-environment-overrides).
+Fix (2026-11-15, after review of `3937851`): the runtime command read the
+environment file with `yaml.safe_load`, so a value only the releases check
+(a date that does not exist, an explicit tag such as `!!int`) stopped it with
+an unhandled error that could show the value. It now reads the file as text,
+as the releases do (`yaml.BaseLoader`); product tests through `runtime.main`
+in `test_runtime.py`; tools `VERSION` 0.3.7, which also covers the earlier
+item-85 tools changes after 0.3.6.
 Review fixes (2026-11-10, on `04151a7`): a changed override or API role
 in the same version is installed again (each install records its own
 overrides in `state/environment/<id>.json`; `check-environment --json`

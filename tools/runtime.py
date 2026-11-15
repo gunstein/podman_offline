@@ -442,7 +442,10 @@ def environment_components(product, name):
             'runtime user, see "Place the environment file" in the manual'
         )
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        # Every value as written text, as the releases read the file: no
+        # date, number or tag is converted, so a value only a release checks
+        # cannot stop this command or reach its message.
+        document = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     except (OSError, UnicodeError, yaml.YAMLError):
         raise ToolError(f"{path} is not valid YAML; correct it and run again") from None
     components = document.get("components") if isinstance(document, dict) else None

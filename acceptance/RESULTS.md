@@ -56,8 +56,8 @@ eight runs on `3da4d97` cover scenarios these changes do not touch; they
 call the renamed function under its old name, so they have not run this
 exact code.
 
-Backlog 75 in these runs: every install, upgrade and uninstall went
-through `apply_component_install`. `--whoami`'s `10-environment-rotate`
+Backlog 75 in these runs: every install and upgrade went through
+`apply_component_install` (uninstall has its own flow, `deploy.uninstall`). `--whoami`'s `10-environment-rotate`
 (Identity's owner YAML rewritten for another API secret line, then app3)
 and `10-environment-pending` (an interrupted app3 install finished by a
 later run, then decided again after Identity) passed. The interrupted

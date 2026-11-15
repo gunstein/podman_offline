@@ -504,6 +504,43 @@ class EnvironmentTests(RuntimeTests):
         self.assertNotIn("worker", [name for name, _ in self.releases.calls])
         self.assertEqual(sorted(self.releases.installed), ["api", "web"])
 
+    def test_override_values_are_read_as_the_releases_read_them(self):
+        """Only components: is read here; values stay text for the releases.
+
+        safe_load typed them: a date that does not exist or an explicit tag
+        stopped the command with an unhandled error showing the value.
+        """
+        for value in ("2026-02-30", "!!int PRIVATE_MARKER", "!!timestamp x"):
+            with self.subTest(value):
+                self.releases.calls.clear()
+                self.place(
+                    "prod1",
+                    "components: [web, api]\noverrides:\n  web:\n    ENVIRONMENT:\n"
+                    f"      main:\n        RELEASE_LABEL: {value}\n",
+                )
+                self.assertEqual(self.environment_run(), 0, self.stderr.getvalue())
+                self.assertEqual(
+                    self.releases.commands()[:2],
+                    ["check-environment prod1", "check-environment prod1"],
+                )
+                self.assertNotIn("PRIVATE_MARKER", self.stderr.getvalue())
+
+    def test_a_file_runtime_cannot_read_is_named_without_its_text(self):
+        for text in (
+            "components: [web]\nkey: [PRIVATE_MARKER\n",
+            "components: [web]\n? [PRIVATE_MARKER, x]\n: y\n",
+        ):
+            with self.subTest(text):
+                self.releases.calls.clear()
+                path = self.place("prod1", text)
+                self.assertEqual(self.environment_run(), 1)
+                self.assertIn(
+                    f"{path} is not valid YAML; correct it and run again",
+                    self.stderr.getvalue(),
+                )
+                self.assertNotIn("PRIVATE_MARKER", self.stderr.getvalue())
+                self.assertEqual(self.releases.calls, [])
+
     def test_missing_packages_and_dependencies_change_nothing(self):
         self.releases.add("web", "2.0.0")
         for label, text, pattern in (
