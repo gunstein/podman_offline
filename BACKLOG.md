@@ -157,6 +157,12 @@ the substitution of [item 63](#63-parameterise-image-versions-with-build-time-va
 [item 85](#85-select-the-components-of-a-target-environment) (target
 environments, same-version reinstall).
 
+Known gap (found in `whoami-9ba644b`, 2026-11-15): `dev/demo-credentials.sh`
+runs `deploy.dev_settings()` without catching `DeployError`, so a missing
+variable (the lab's `03-dev-up` refusal without `DEV_PUBLIC_HOST`) prints a
+Python traceback around the right message instead of `ERROR: <message>`. The
+message names the variable, never its value; the step greps it and passes.
+
 **Decision (product owner, 2026-11-12).** A third placeholder source next to
 `@@NAME@@` (a setting, or an image variable in an image field) and
 `@@secret:<id>/<key>@@` (a Secret): `@@$NAME@@` is the variable `NAME` of
@@ -286,7 +292,8 @@ environment file with `yaml.safe_load`, so a value only the releases check
 an unhandled error that could show the value. It now reads the file as text,
 as the releases do (`yaml.BaseLoader`); product tests through `runtime.main`
 in `test_runtime.py`; tools `VERSION` 0.3.7, which also covers the earlier
-item-85 tools changes after 0.3.6.
+item-85 tools changes after 0.3.6. `whoami-9ba644b` and `rpm-manual-9ba644b`
+were CLEAN PASS with tools 0.3.7 ([RESULTS](acceptance/RESULTS.md)).
 Review fixes (2026-11-10, on `04151a7`): a changed override or API role
 in the same version is installed again (each install records its own
 overrides in `state/environment/<id>.json`; `check-environment --json`

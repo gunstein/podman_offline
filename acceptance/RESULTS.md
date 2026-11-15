@@ -29,7 +29,7 @@ python3 acceptance/acceptance.py --run "renamed-$rev" --renamed-product run
 
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
-| `--whoami` | `whoami-5c64fd1` | 61 | CLEAN PASS |
+| `--whoami` | `whoami-9ba644b` | 61 | CLEAN PASS |
 | normal | `normal-5c64fd1` | 119 | CLEAN PASS |
 | `--first-app app2` | `app2-3da4d97` | 112 | CLEAN PASS |
 | `--identity-only` | `identity-3da4d97` | 52 | CLEAN PASS |
@@ -55,6 +55,17 @@ backlog 81's `03-dev-seed` in normal (119 steps; 118 before). The other
 eight runs on `3da4d97` cover scenarios these changes do not touch; they
 call the renamed function under its old name, so they have not run this
 exact code.
+
+`--whoami` and `--rpm-manual` (P1) ran again on `9ba644b` (2026-11-15, one
+batch, clean detached checkout, same OS and Podman, no failed or skipped
+step), with tools 0.3.7, whose runtime command reads the environment file as
+text (backlog 85 fix). Since `5c64fd1` the release code differs only by
+the refusal of a YAML list or mapping key in `deployment/environment.py`;
+these runs read every environment file through it, while the refusal itself
+has product tests only. In `03-dev-up` the expected refusal of
+`dev/demo-credentials.sh` without `DEV_PUBLIC_HOST` printed a Python
+traceback around the right message (a known gap of the demo script, backlog
+86).
 
 Backlog 75 in these runs: every install and upgrade went through
 `apply_component_install` (uninstall has its own flow, `deploy.uninstall`). `--whoami`'s `10-environment-rotate`
@@ -194,7 +205,7 @@ the earlier matrices are listed in
 | Scenario | Latest run | Steps | Result |
 | --- | --- | --- | --- |
 | `--status-retry` | `status-retry-3da4d97` | 113 | CLEAN PASS |
-| `--rpm-manual` (fapolicyd P1) | `rpm-manual-3da4d97` | 63 | CLEAN PASS |
+| `--rpm-manual` (fapolicyd P1) | `rpm-manual-9ba644b` | 63 | CLEAN PASS |
 | `--rpm-manual --strict-fapolicyd` (P2) | `rpm-manual-p2-3da4d97` | 64 | CLEAN PASS |
 
 Status/retry: on `3da4d97` (in the same batch), clean detached checkout,
@@ -204,9 +215,11 @@ leaves protected code unchanged.
 The `--host-setup` scenario (the `release.py` manual) was removed in backlog
 69 WP6; its last run is in the git history.
 
-RPM manual (backlog 69 WP6): both on `3da4d97` (in the same batch), same
-OS and Podman as the matrix; backlogs 86 and 87 added no manual command
-block. The five steps for backlog 85's manual steps 6, 7 and 9 are
+RPM manual (backlog 69 WP6): P2 on `3da4d97` (in the same batch as the
+matrix), P1 again on `9ba644b` with tools 0.3.7 (its manual steps
+`09-manual-runtime-environment`, `-uninstalled` and `-help` ran
+`myproduct --environment` and passed); same OS and Podman as the matrix;
+backlogs 86 and 87 added no manual command block. The five steps for backlog 85's manual steps 6, 7 and 9 are
 included. P1 is `clean-agent`, P2 the strict WP0 profile applied after the
 reset (`strict_fapolicyd: true`). In both runs every operator step ran the
 command block of `docs/PRODUCTION-INSTALL.md` literally (only its example
