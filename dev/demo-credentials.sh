@@ -6,11 +6,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 hostname=$(python3 -B - <<'DEMO_HOST'
 from urllib.parse import urlsplit
-from deployment import deploy
 
-known, settings, env_overrides = deploy.dev_settings()
-# Check manifests and database state before certificates, config output or secrets.
-deploy.check_dev_components(known, settings, env_overrides)
+import yaml
+from deployment import common, deploy
+
+try:
+    known, settings, env_overrides = deploy.dev_settings()
+    # Check manifests and database state before certificates, config output or secrets.
+    deploy.check_dev_components(known, settings, env_overrides)
+except (OSError, common.DeployError, yaml.YAMLError) as error:
+    # The refusals deploy.sh reports the same way; nothing has been issued.
+    raise SystemExit(f"ERROR: {error}") from None
 print(urlsplit(settings["platform"]["PUBLIC_ORIGIN"]).hostname)
 DEMO_HOST
 )

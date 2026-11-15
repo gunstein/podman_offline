@@ -51,8 +51,8 @@ adds, besides stricter `03-dev-up` and `10-variables` checks, four `MOUNTS`
 steps in `--whoami` (61 steps; 57 before) and `03-dev-seed` in normal (119
 steps; 118 before); the other step counts are unchanged. In `03-dev-up` the
 expected refusal of `dev/demo-credentials.sh` without `DEV_PUBLIC_HOST`
-prints a Python traceback around the right message (a known gap of the demo
-script, backlog 86).
+printed a Python traceback around the right message (a gap of the demo
+script, fixed after these runs; see backlog 86).
 
 Backlog 75 in these runs: every install and upgrade in every scenario went through
 `apply_component_install` (uninstall has its own flow, `deploy.uninstall`). `--whoami`'s `10-environment-rotate`

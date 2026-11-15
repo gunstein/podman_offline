@@ -157,11 +157,14 @@ the substitution of [item 63](#63-parameterise-image-versions-with-build-time-va
 [item 85](#85-select-the-components-of-a-target-environment) (target
 environments, same-version reinstall).
 
-Known gap (found in `whoami-9ba644b`, 2026-11-15): `dev/demo-credentials.sh`
-runs `deploy.dev_settings()` without catching `DeployError`, so a missing
-variable (the lab's `03-dev-up` refusal without `DEV_PUBLIC_HOST`) prints a
-Python traceback around the right message instead of `ERROR: <message>`. The
-message names the variable, never its value; the step greps it and passes.
+Fixed gap (found in `whoami-9ba644b`, fixed 2026-11-15):
+`dev/demo-credentials.sh` ran `deploy.dev_settings()` without catching
+`DeployError`, so a missing variable (the lab's `03-dev-up` refusal without
+`DEV_PUBLIC_HOST`) printed a Python traceback around the right message. It
+now reports the refusals `deploy.sh` reports (`DeployError`, `YAMLError`,
+`OSError`) as `ERROR: <message>` and exits 1 before any certificate; demo
+test `test_demo_credentials_report_a_refusal_without_a_traceback` runs the
+real script. Not yet run in the lab.
 
 **Decision (product owner, 2026-11-12).** A third placeholder source next to
 `@@NAME@@` (a setting, or an image variable in an image field) and

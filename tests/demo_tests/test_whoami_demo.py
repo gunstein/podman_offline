@@ -70,6 +70,7 @@ class WhoamiCredentialTests(CertificateFixture):
         package = self.project / "deployment"
         package.mkdir()
         (package / "__init__.py").write_text("")
+        (package / "common.py").write_text("class DeployError(Exception):\n    pass\n")
         (package / "deploy.py").write_text(
             "def dev_settings():\n"
             "    return {}, {'platform': {'PUBLIC_ORIGIN': 'https://example.test:8443'}}, None\n"
@@ -96,6 +97,39 @@ class WhoamiCredentialTests(CertificateFixture):
             snapshots.append(self.fingerprints(self.project / "build/dev"))
         # A repeat keeps every key and the CA; only the copies are rewritten.
         self.assertEqual(snapshots[0], snapshots[1])
+
+    def test_demo_credentials_report_a_refusal_without_a_traceback(self):
+        """Backlog 86 gap: a missing variable is ERROR: <message>, nothing issued.
+
+        The dev settings lookup raises the product's own refusal, as it does
+        for an unexported @@$NAME@@; the rest of the script is real.
+        """
+        script = self.project / "dev/demo-credentials.sh"
+        script.write_bytes((ROOT / "dev/demo-credentials.sh").read_bytes())
+        package = self.project / "deployment"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "common.py").write_text("class DeployError(Exception):\n    pass\n")
+        message = (
+            "config/dev.yaml: PUBLIC_ORIGIN: environment variable DEV_PUBLIC_HOST "
+            "is not set; export it, then run the command again"
+        )
+        (package / "deploy.py").write_text(
+            "from . import common\n"
+            "def dev_settings():\n"
+            f"    raise common.DeployError({message!r})\n"
+        )
+        result = subprocess.run(
+            ["bash", str(script)],
+            env=self.environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(result.stdout, "ERROR: " + message + "\n")
+        self.assertFalse((self.project / "build/dev").exists())
 
 
 class WhoamiSourceTests(unittest.TestCase):

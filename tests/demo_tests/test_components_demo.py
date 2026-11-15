@@ -75,10 +75,10 @@ class DemoComponentTests(ComponentFixture):
                 self.assertEqual(
                     config["PUBLIC_ORIGIN"], "https://dev.example:8443", component
                 )
-        # Unexported: the helper stops before any certificate is issued.
+        # Unexported: the helper stops with ERROR: before any certificate.
         with mock.patch.object(common, "ENVIRON", {}):
             with self.assertRaisesRegex(
-                common.DeployError, "environment variable HOSTNAME is not set"
+                SystemExit, "^ERROR: .*environment variable HOSTNAME is not set"
             ):
                 exec(compile(helper, "dev/demo-credentials.sh:DEMO_HOST", "exec"), {})  # noqa: S102 - repository helper under test
         self.assertFalse((common.BUILD / "dev").exists())
