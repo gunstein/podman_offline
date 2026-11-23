@@ -738,9 +738,9 @@ ENVIRONMENT:
   consumer depends on Identity. In dev both go through the same `prepare`.
   `validate` in the source checkout counts a file an earlier component will
   publish as present, with its file name as key, when the consumer names it
-  in the form shown (`../<owner>/` and plain names, no link it climbs out
-  of); a misspelled key or the same file name twice in one Secret is still
-  refused. `validate` of a consumer's
+  in the form shown: one `..` to the owner's directory, then plain names,
+  from the consumer's own directory (not a link); a misspelled key or the
+  same file name twice in one Secret is still refused. `validate` of a consumer's
   bundle alone requires the file.
 - The consumer's install and retry read only the published file. If it is
   missing, install stops with `Missing ... (SECRET_FILES.<id>)` and the next

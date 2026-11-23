@@ -347,6 +347,61 @@ class DigestWriteTests(DigestFixture):
         os.close(opener(str(self.base / "config.yaml"), os.O_RDONLY | os.O_CREAT))
         self.assertEqual(len(seen), 1)
 
+    def test_a_retry_finishes_a_failed_directory_sync(self):
+        self.write_key()
+        synced = []
+        real_fsync = os.fsync
+
+        def fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                synced.append(descriptor)
+                if len(synced) == 1:
+                    raise OSError("injected directory sync failure")
+            real_fsync(descriptor)
+
+        with mock.patch.object(rendering.os, "fsync", side_effect=fsync):
+            with self.assertRaisesRegex(OSError, "injected"):
+                self.render()
+            self.assertEqual(self.digest.read_bytes(), DIGEST)
+            before = self.digest.stat()
+            self.render()
+        self.assertEqual(len(synced), 2)  # the retry synced the directory again
+        after = self.digest.stat()
+        self.assertEqual(
+            (before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns)
+        )
+
+    def test_a_failed_directory_rename_leaves_no_temporary_directory(self):
+        self.write_key()
+        with mock.patch.object(
+            rendering.os, "rename", side_effect=OSError("injected")
+        ), self.assertRaises(OSError):
+            self.render()
+        self.assertEqual(
+            sorted(p.name for p in (self.base / "credentials").iterdir()), ["key"]
+        )
+
+    def test_the_temporary_file_descriptor_is_closed_on_every_path(self):
+        self.write_key()
+        opened = []
+        real_open = os.open
+
+        def tracked(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened.append(descriptor)
+            return descriptor
+
+        with mock.patch.object(
+            rendering.os, "open", side_effect=tracked
+        ), mock.patch.object(
+            rendering.os, "fdopen", side_effect=KeyboardInterrupt
+        ), self.assertRaises(KeyboardInterrupt):
+            self.render()
+        for descriptor in opened:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+        self.assertEqual(list(self.digest.parent.iterdir()), [])
+
     def test_existing_directory_with_another_mode_is_refused(self):
         self.write_key()
         self.digest.parent.mkdir(mode=0o750)
@@ -656,17 +711,14 @@ class PromisedFileTests(unittest.TestCase):
         )
 
     def test_only_the_documented_form_is_promised(self):
-        """../<producer>/... with plain names and no link; anything else is ordinary.
+        """One .. to a sibling, then plain names, from a usable directory.
 
-        Each refused form is one validation and delivery could disagree on
-        (a link, a .. after a name); validate then asks for the file as for
-        any other source.
+        Each refused form is one validation and delivery could disagree on;
+        validate then asks for the file as for any other source.
         """
         producer = self.root / "producer/credentials/key-sha256"
         producer.mkdir(parents=True)
         (self.root / "existing").mkdir()
-        (self.root / "unsearchable").mkdir(mode=0o000)
-        self.addCleanup((self.root / "unsearchable").chmod, 0o700)
         (self.path.parent / "alias").symlink_to(producer / "token")
         (self.root / "producer-link").symlink_to(
             "producer/credentials/key-sha256/token/"
@@ -674,9 +726,9 @@ class PromisedFileTests(unittest.TestCase):
         for path in (
             "alias",
             "../existing/../producer/credentials/key-sha256/token",
-            "../unsearchable/../producer/credentials/key-sha256/token",
             "../producer-link",
             "../producer/credentials/./key-sha256/../key-sha256/token",
+            "../../" + self.root.name + "/producer/credentials/key-sha256/token",
         ):
             config = dict(self.config)
             config[common.SECRET_FILES] = {"consumer-digest": [{"path": path}]}
@@ -684,14 +736,40 @@ class PromisedFileTests(unittest.TestCase):
                 common.DeployError, "Missing"
             ):
                 self.check(config)
-        # A consumer directory that is itself a link: .. would leave its target.
+        # The consumer's directory a link, or a file: not promised.
         os.rename(str(self.path.parent), str(self.root / "real-consumer"))
         self.path.parent.symlink_to("real-consumer")
         with self.assertRaisesRegex(common.DeployError, "Missing"):
             self.check()
         self.path.parent.unlink()
+        self.path.parent.write_text("not a directory")
+        with self.assertRaisesRegex(common.DeployError, "Missing"):
+            self.check()
+        self.path.parent.unlink()
         # The documented form with the consumer's own directory still absent.
         self.check()
+
+    def test_a_consumer_directory_it_cannot_enter_is_not_promised(self):
+        """Also as the runtime account (no root): refused, never promised."""
+        source = self.path.parent / "../producer/credentials/key-sha256/token"
+        entry = self.config[common.SECRET_FILES]["consumer-digest"][0]
+        self.assertTrue(
+            rendering.matches_promise(entry, source, self.path.parent, self.promised)
+        )
+        with mock.patch.object(rendering.os, "access", return_value=False):
+            self.assertFalse(
+                rendering.matches_promise(
+                    entry, source, self.path.parent, self.promised
+                )
+            )
+            with self.assertRaisesRegex(common.DeployError, "Missing"):
+                self.check()
+        # Really unsearchable for the runtime account (root can enter it).
+        if os.geteuid() != 0:
+            self.path.parent.chmod(0o000)
+            self.addCleanup(self.path.parent.chmod, 0o700)
+            with self.assertRaises((common.DeployError, OSError)):
+                self.check()
 
     def test_validation_opens_no_credential_file(self):
         with mock.patch.object(

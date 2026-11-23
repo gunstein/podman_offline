@@ -871,36 +871,48 @@ def write_digests(config, base_dir, file_secrets):
         check_digest_destination(where, base_dir, directory, target)
         make_private_directories(directory)
         if digest_is_current(target, digest, where):
+            # A retry after a failed directory sync finishes it here.
+            sync_directory(directory)
             continue
         publish_private_file(where, base_dir, directory, target, digest)
         log.info(f"[OK] Wrote SHA-256 file {target}")
 
 
+def sync_directory(directory):
+    """Make the directory's entries (a rename into it) durable."""
+    handle = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
 def make_private_directories(directory):
     """Create the missing directories, each exactly 0700, whatever the umask.
 
-    Intermediate directories are created and then set to 0700 (clearing a
-    set-group-ID bit inherited from the parent). The digest directory itself
-    is prepared under a temporary name and renamed into place, so an
-    interruption never leaves it with another mode. Existing directories are
-    not changed. Like every lifecycle command, one run at a time (README).
+    Each one is prepared under a temporary name (mode 0700, a set-group-ID
+    bit inherited from the parent cleared) and renamed into place, so an
+    interruption never leaves one with another mode; a handled failure
+    removes the temporary directory. Existing directories are not changed.
+    Like every lifecycle command, one run at a time (README).
     """
     missing = []
     current = directory
     while not (current.exists() or current.is_symlink()):
         missing.append(current)
         current = current.parent
-    if not missing:
-        return
     previous = os.umask(0o077)
     try:
-        for path in reversed(missing[1:]):
-            os.mkdir(str(path), 0o700)
-            os.chmod(str(path), 0o700)
-        temporary = directory.with_name(".sha256-" + secrets.token_hex(8))
-        os.mkdir(str(temporary), 0o700)
-        os.chmod(str(temporary), 0o700)
-        os.rename(str(temporary), str(directory))
+        for path in reversed(missing):
+            temporary = path.with_name(".sha256-" + secrets.token_hex(8))
+            os.mkdir(str(temporary), 0o700)
+            try:
+                os.chmod(str(temporary), 0o700)
+                os.rename(str(temporary), str(path))
+            except BaseException:
+                if temporary.is_dir():
+                    temporary.rmdir()
+                raise
     finally:
         os.umask(previous)
 
@@ -942,11 +954,14 @@ def publish_private_file(where, base_dir, directory, target, content):
             dir_fd=handle,
         )
         try:
-            with os.fdopen(descriptor, "wb") as stream:
-                os.fchmod(stream.fileno(), 0o600)  # the umask reduces the open mode
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
+            try:
+                with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                    os.fchmod(descriptor, 0o600)  # the umask reduces the open mode
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
             check_digest_destination(where, base_dir, directory, target)
             current = directory.lstat()
             if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
@@ -1131,30 +1146,24 @@ def load_file_group(config, group, base_dir=None, component=None):
 def matches_promise(entry, source, base_dir, promised):
     """A path source naming a digest file an earlier catalog component publishes.
 
-    Only the documented form counts (backlog 88): leading .. steps out of this
-    component's directory, then plain names, as in
-    ../identity/credentials/audit-sha256/audit_key, and no link it climbs out
-    of. prepare creates this
-    component's directory and publication the rest, so such a path opens once
-    the file is published.
-    Any other form is judged as an ordinary source.
+    Only the documented form counts (backlog 88): one .. out of this
+    component's directory to a sibling component, then plain names, as in
+    ../<producer>/credentials/<directory>/<key>. This component's directory
+    must be absent (prepare creates it) or a real directory it can enter;
+    below the producer's directory, the producer itself refuses links
+    (check_digest_destination). Any other form is an ordinary source.
     """
     if not (promised and isinstance(entry.get("path"), str)):
         return False
     parts = PurePosixPath(entry["path"]).parts
-    climbs = 0
-    while climbs < len(parts) and parts[climbs] == "..":
-        climbs += 1
-    names = parts[climbs:]
-    if not climbs or not names or ".." in names:
+    if len(parts) < 2 or parts[0] != ".." or ".." in parts[1:]:
         return False
     if lexical(source) not in promised:
         return False
-    # A .. out of a link would go elsewhere than its name says. Below, the
-    # producer itself refuses a link (check_digest_destination).
-    for level in range(climbs):
-        if lexical(base_dir.joinpath(*parts[:level])).is_symlink():
-            return False
+    if base_dir.is_symlink():
+        return False  # .. out of a link would go elsewhere than its name says
+    if base_dir.exists():
+        return base_dir.is_dir() and os.access(str(base_dir), os.X_OK)
     return True
 
 
