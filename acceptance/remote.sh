@@ -660,6 +660,64 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: component config layer check (details withheld)")
 CONFIG_LAYERS
 }
+# The audit key handoff: a running Identity has a nonempty Audit__Key, and the
+# running app1 backend's AUDIT_KEY_SHA256 is the SHA-256 of exactly those
+# bytes, as 64 lowercase hexadecimal characters. Reads what the containers got
+# at their ordinary start (podman exec printenv), prints only a verdict, never
+# a value. Separate action (audit-digest), not yet part of the standard run:
+# the component declarations that deliver both variables are not on main.
+audit_digest() {
+    local mode=$1
+    local -a run_python=(python3)
+    if [[ $mode == prod ]]; then run_python=(as_product python3); fi
+    "${run_python[@]}" - "$mode" <<'AUDIT_DIGEST'
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def value(container, name):
+    """The variable as the running container has it; printenv adds one newline."""
+    result = subprocess.run(["podman", "exec", container, "printenv", name],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            check=False, timeout=15)
+    if result.returncode == 1:  # printenv: the variable is not set
+        raise RuntimeError(name + " is not set in " + container
+                           + "; this revision's components do not deliver it")
+    if result.returncode:
+        raise RuntimeError("Cannot read " + name + " in " + container
+                           + " (exit " + str(result.returncode) + ")")
+    return result.stdout[:-1] if result.stdout.endswith(b"\n") else result.stdout
+
+
+def main():
+    mode = sys.argv[1]
+    identity, app = (("login-service", "orders") if os.environ["PRODUCT_NAME"] == "shop"
+                     else ("identity", "app1"))
+    if mode == "prod":
+        installed = {path.name for path in (Path(os.environ["PRODUCT_STATE"]) / "installed").glob("*")}
+        if app not in installed:
+            print("PASS: audit key digest not applicable; " + app + " is not installed")
+            return
+    key = value(identity + "-server-app", "Audit__Key")
+    if not key:
+        raise RuntimeError(identity + "'s Audit__Key is empty")
+    digest = value(app + "-todo-backend", "AUDIT_KEY_SHA256")
+    if digest != hashlib.sha256(key).hexdigest().encode("ascii"):
+        raise RuntimeError(app + "'s AUDIT_KEY_SHA256 is not the lowercase SHA-256 of "
+                           + identity + "'s Audit__Key")
+    print("PASS: " + app + " has the SHA-256 of " + identity + "'s audit key (" + mode + ")")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+AUDIT_DIGEST
+}
 seed_content() {
     local mode=$1
     local -a run_python=(python3)
@@ -2314,6 +2372,10 @@ if __name__ == "__main__":
 DATABASE_JOURNAL
     ;;
 health) healthy;;
+audit-digest)
+    # Separate check (see audit_digest); the role picks dev or prod.
+    audit_digest "${role,,}"
+    ;;
 whoami-chain-mounts)
     # Backlog 70's lab check in the running backend: both single-file subPath
     # mounts hold the environment's CA and the image's own CA files remain.

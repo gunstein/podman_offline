@@ -713,6 +713,34 @@ Rules that keep them in step with the product (backlog 78):
   loopback) with a real container when `LOCAL_PODMAN=1` and Podman is
   installed; it is skipped otherwise and never replaces the lab.
 
+## Audit key handoff check (separate)
+
+`audit-digest` checks the running containers: Identity has a nonempty
+`Audit__Key`, and app1's backend has `AUDIT_KEY_SHA256` equal to the SHA-256
+of exactly those bytes, as 64 lowercase hexadecimal characters (any key
+length). It reads what the applications got at their ordinary start
+(`podman exec ... printenv`) and prints only `PASS:` or `FAIL:` with the
+container and variable names, never a value. A missing variable is named as
+such. The components on `main` do not deliver either variable yet, so no
+scenario runs it; it becomes part of the standard run once the credential
+preparation and the component declarations are in place. Run it by hand on a
+running dev installation, from its checkout (`DEV`, or `PROD` as the runtime
+account's installation):
+
+```sh
+bash acceptance/remote.sh audit-digest manual - - - - - DEV -
+```
+
+`remote.sh` takes the product name from its 13th argument (default
+`myproduct`) and sets `PRODUCT_NAME` itself; an exported `PRODUCT_NAME` is
+ignored. For the renamed product:
+
+```sh
+bash acceptance/remote.sh audit-digest manual - - - - - DEV - "" "" app1 shop
+```
+
+`test_audit_digest.py` covers it with Podman stubbed.
+
 ## Host preparation boundary (backlog 46)
 
 `03-host-path-safety` runs on DEV in the normal scenario. With
