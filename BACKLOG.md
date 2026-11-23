@@ -54,6 +54,26 @@ Open items follow, newest first. Finished and superseded items were removed on
 | 72 | Register API resource secrets with Identity | done |
 | 76 | Reach the public origin from containers when the host maps it to loopback | done |
 
+## 89. Generate secrets under a restrictive umask
+
+Status: **open** (product-owner decision of 2026-11-23, split from backlog
+88). Not started.
+
+Need: under umask 0222 a fresh component cannot create a generated secret.
+`render.generate_secrets` creates the missing directories with
+`mkdir(mode=0o700)`, which the umask reduces to 0500, so the next directory
+or the secret file cannot be created and the command stops with
+`PermissionError` as the runtime account (root is not affected). Verified
+on `cdf24f1` as a non-root account. This concerns every generated secret,
+not only backlog 88's audit key; backlog 88's digest publication already
+creates its directories 0700 whatever the umask.
+
+Done when: a missing generated secret and its directories are created with
+modes 0700/0600 under umask 0022 and 0222 as a non-root account, an
+existing secret stays byte for byte as today, and a regression test runs
+as a non-root account. Implementation choice (for example the same
+temporary-umask creation as `render.make_private_directories`) is open.
+
 ## 88. Give app1 the SHA-256 of Identity's audit key automatically
 
 Status: **implemented; real Podman/systemd lab not yet run** (scope approved
@@ -79,17 +99,28 @@ every write and again when a correct file is found (power loss, retry),
 those directories checked for read and enter access before generation, the
 write reported only after the sync, and
 the journal datagrams checked for the key and digest. The product tests also pass as a non-root account.
-Product-owner decision needed: the approved text accepts any path that
-resolves to a promised file in the first `validate`; the implementation
-accepts only that documented form and validates other forms as ordinary
-sources.
-Concurrent producer runs are outside the contract, as for every lifecycle
-command ("Run one lifecycle command at a time", README); the attempt to
-guard against them in `cb78847` was removed again. Open, outside the approved
-functions: under umask 0222 a fresh producer cannot create its raw key,
-because `generate_secrets` (unchanged) creates `credentials/` without write
-permission for its owner; it is not specific to this item and awaits a
-product-owner decision.
+
+Product-owner decisions (2026-11-23), recorded for this item:
+
+1. The first `validate` may accept a digest that is not yet published only
+   when the consumer's path has the form `../<producer>/<plain names>`, with
+   exactly one `..` to a sibling component. Other path forms are ordinary
+   file sources and must already exist. This narrows the approved text,
+   which described any path resolving to a promised file.
+2. One lifecycle command at a time, as README states. Concurrent producer
+   runs are out of scope, and this item adds no locking. The attempt to
+   guard against them in `cb78847` was removed again.
+3. `generate_secrets` under umask 0222 is backlog 89, not part of this item,
+   and does not block its merge. This item's requirement stands: when the
+   raw key exists, publishing the digest works under umask 0222 too
+   (`test_new_directories_are_0700_from_creation_on_an_empty_tree`).
+
+Before merge the product owner required the last two review findings of
+`db84bab` closed; both are in `cdf24f1`: `validate` (and prepare and
+install, through `validate_component_config`) refuses a directory of the
+sync chain the runtime account cannot read and enter before any key or
+digest is written, and `[OK] Wrote SHA-256 file` is logged only after the
+directory sync has succeeded.
 
 Need: Identity uses the raw `audit_key`; app1 expects `audit_key_sha256`.
 Today's Helm chart computes `{{ $auditKey | b64dec | sha256sum | b64enc | quote }}`,
