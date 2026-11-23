@@ -764,10 +764,7 @@ def digest_outputs(config, base_dir):
 
 def promised_files(config, base_dir):
     """The digest files a component publishes, resolved, for validate's promises."""
-    return {
-        Path(os.path.realpath(str(target)))
-        for _, _, _, target in digest_outputs(config, base_dir)
-    }
+    return {lexical(target) for _, _, _, target in digest_outputs(config, base_dir)}
 
 
 def check_digest_destination(where, base_dir, directory, target):
@@ -873,76 +870,66 @@ def write_digests(config, base_dir, file_secrets):
         digest = hashlib.sha256(raw).hexdigest().encode("ascii")
         check_digest_destination(where, base_dir, directory, target)
         make_private_directories(directory)
-        current, observed = digest_is_current(target, digest, where)
-        if current:
+        if digest_is_current(target, digest, where):
             continue
-        if publish_private_file(where, base_dir, directory, target, digest, observed):
-            log.info(f"[OK] Wrote SHA-256 file {target}")
+        publish_private_file(where, base_dir, directory, target, digest)
+        log.info(f"[OK] Wrote SHA-256 file {target}")
 
 
 def make_private_directories(directory):
     """Create the missing directories, each exactly 0700, whatever the umask.
 
-    The umask keeps them private from creation; the explicit chmod clears
-    what the mode cannot (a set-group-ID bit inherited from the parent).
-    Directories that already exist are not changed.
+    Intermediate directories are created and then set to 0700 (clearing a
+    set-group-ID bit inherited from the parent). The digest directory itself
+    is prepared under a temporary name and renamed into place, so an
+    interruption never leaves it with another mode. Existing directories are
+    not changed. Like every lifecycle command, one run at a time (README).
     """
     missing = []
     current = directory
     while not (current.exists() or current.is_symlink()):
         missing.append(current)
         current = current.parent
+    if not missing:
+        return
     previous = os.umask(0o077)
     try:
-        for path in reversed(missing):
+        for path in reversed(missing[1:]):
             os.mkdir(str(path), 0o700)
             os.chmod(str(path), 0o700)
+        temporary = directory.with_name(".sha256-" + secrets.token_hex(8))
+        os.mkdir(str(temporary), 0o700)
+        os.chmod(str(temporary), 0o700)
+        os.rename(str(temporary), str(directory))
     finally:
         os.umask(previous)
 
 
-def file_identity(status):
-    """What tells one state of a file from another: device, inode, mode, size, time."""
-    return (
-        status.st_dev,
-        status.st_ino,
-        status.st_mode,
-        status.st_size,
-        status.st_mtime_ns,
-    )
-
-
 def digest_is_current(target, digest, where):
-    """(True when target is the private file with exactly these bytes, its state).
-
-    The state (file_identity, or None when absent) lets publication notice a
-    file that changed after this comparison.
-    """
+    """True when target is the private file with exactly these bytes."""
     try:
-        status = target.lstat()
+        mode = stat.S_IMODE(target.lstat().st_mode)
     except FileNotFoundError:
-        return False, None
-    mode = stat.S_IMODE(status.st_mode)
+        return False
     if mode != 0o600:
         raise common.DeployError(
             f"{where}: {target} has mode {mode:04o}; set it to 0600 "
             "(chmod 600), then run the same command again"
         )
     try:
-        return target.read_bytes() == digest, file_identity(status)
+        return target.read_bytes() == digest
     except OSError:
         raise common.DeployError(f"{where}: cannot read {target}") from None
 
 
-def publish_private_file(where, base_dir, directory, target, content, observed):
+def publish_private_file(where, base_dir, directory, target, content):
     """Write content through a private temporary file and an atomic rename.
 
     Everything happens in the directory opened (without following a link)
-    after the checks. Just before the rename the checks run again: the path
-    must still name that directory, and the target must be as observed when
-    it was compared (observed). A target that changed meanwhile and already
-    holds content is left as it is; any other change is refused, not
-    replaced. Returns True when the file was written.
+    after the checks; just before the rename the destination is checked
+    again and must still be that directory, so a redirected one is refused,
+    not written to. Like every lifecycle command, one run at a time
+    (README): this is no lock against a second producer run.
     """
     handle = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -968,29 +955,15 @@ def publish_private_file(where, base_dir, directory, target, content, observed):
                     "command again"
                 )
             try:
-                status = os.stat(target.name, dir_fd=handle, follow_symlinks=False)
+                existing = os.stat(target.name, dir_fd=handle, follow_symlinks=False)
             except FileNotFoundError:
-                status = None
-            now = None if status is None else file_identity(status)
-            if now != observed:
-                if status is None:
-                    raise common.DeployError(
-                        f"{where}: {target} was removed during the write; run the "
-                        "same command again"
-                    )
-                if stat.S_IMODE(status.st_mode) != 0o600:
-                    raise common.DeployError(
-                        f"{where}: {target} has mode "
-                        f"{stat.S_IMODE(status.st_mode):04o}; set it to 0600 "
-                        "(chmod 600), then run the same command again"
-                    )
-                if read_in(handle, target.name) != content:
-                    raise common.DeployError(
-                        f"{where}: {target} changed during the write; run the "
-                        "same command again"
-                    )
-                os.unlink(temporary, dir_fd=handle)  # already the right file
-                return False
+                existing = None
+            if existing is not None and stat.S_IMODE(existing.st_mode) != 0o600:
+                raise common.DeployError(
+                    f"{where}: {target} has mode "
+                    f"{stat.S_IMODE(existing.st_mode):04o}; set it to 0600 "
+                    "(chmod 600), then run the same command again"
+                )
             os.replace(temporary, target.name, src_dir_fd=handle, dst_dir_fd=handle)
         except BaseException:
             try:
@@ -999,16 +972,8 @@ def publish_private_file(where, base_dir, directory, target, content, observed):
                 pass
             raise
         os.fsync(handle)
-        return True
     finally:
         os.close(handle)
-
-
-def read_in(directory, name):
-    """The bytes of a regular file name in an open directory, not following a link."""
-    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
-    with os.fdopen(descriptor, "rb") as stream:
-        return stream.read()
 
 
 def replace(value, config):
@@ -1166,43 +1131,36 @@ def load_file_group(config, group, base_dir=None, component=None):
 def matches_promise(entry, source, base_dir, promised):
     """A path source naming a digest file an earlier catalog component publishes.
 
-    The path is followed as opening it will be: component by component,
-    links included. A missing component is allowed only where prepare or
-    publication creates it (this component's own directory, the directories
-    above a promised file, the file itself), and .. only out of a directory
-    that exists or is created that way (backlog 88).
+    Only the documented form counts (backlog 88): leading .. steps out of this
+    component's directory, then plain names, as in
+    ../identity/credentials/audit-sha256/audit_key, and no link it climbs out
+    of. prepare creates this
+    component's directory and publication the rest, so such a path opens once
+    the file is published.
+    Any other form is judged as an ordinary source.
     """
-    if not (promised and "path" in entry):
+    if not (promised and isinstance(entry.get("path"), str)):
         return False
-    created = {Path(os.path.realpath(str(base_dir)))}
-    for target in promised:
-        created.update(target.parents)
-    parts = list(source.absolute().parts)
-    current = Path(parts.pop(0))
-    links = 0
-    while parts:
-        part = parts.pop(0)
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if not (current.is_dir() or current in created):
-                return False
-            current = current.parent
-            continue
-        following = current / part
-        if following.is_symlink():
-            links += 1
-            if links > 40:  # the kernel's limit for one path
-                return False
-            link = Path(os.readlink(str(following)))
-            parts = list(link.parts) + parts
-            if link.is_absolute():
-                current = Path(parts.pop(0))
-            continue
-        if not (following.exists() or following in created or following in promised):
+    parts = PurePosixPath(entry["path"]).parts
+    climbs = 0
+    while climbs < len(parts) and parts[climbs] == "..":
+        climbs += 1
+    names = parts[climbs:]
+    if not climbs or not names or ".." in names:
+        return False
+    if lexical(source) not in promised:
+        return False
+    # A .. out of a link would go elsewhere than its name says. Below, the
+    # producer itself refuses a link (check_digest_destination).
+    for level in range(climbs):
+        if lexical(base_dir.joinpath(*parts[:level])).is_symlink():
             return False
-        current = following
-    return current in promised
+    return True
+
+
+def lexical(path):
+    """path with . and .. resolved by name only, as a promise compares paths."""
+    return Path(os.path.normpath(str(path)))
 
 
 def is_promised(entry, source, base_dir, promised):

@@ -731,14 +731,16 @@ ENVIRONMENT:
   trailing newline (generated keys are). A correct file (mode 0600, in a
   0700 directory) is left untouched; a missing or different one is written
   again through a private temporary file and a rename, so a reader never
-  sees a partial file; a correct file that another run wrote meanwhile is
-  kept; the key is never changed. A file or directory with
+  sees a partial file; the key is never changed. As for every lifecycle
+  command, run one at a time. A file or directory with
   another mode is refused with the `chmod` to run.
 - The owner must be installed (prepared) before the consumer: here the
   consumer depends on Identity. In dev both go through the same `prepare`.
   `validate` in the source checkout counts a file an earlier component will
-  publish as present, with its file name as key; a misspelled key or the same
-  file name twice in one Secret is still refused. `validate` of a consumer's
+  publish as present, with its file name as key, when the consumer names it
+  in the form shown (`../<owner>/` and plain names, no link it climbs out
+  of); a misspelled key or the same file name twice in one Secret is still
+  refused. `validate` of a consumer's
   bundle alone requires the file.
 - The consumer's install and retry read only the published file. If it is
   missing, install stops with `Missing ... (SECRET_FILES.<id>)` and the next

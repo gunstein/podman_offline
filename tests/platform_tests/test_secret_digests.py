@@ -293,52 +293,21 @@ class DigestWriteTests(DigestFixture):
                     self.digest.write_bytes(DIGEST)
                 self.digest.chmod(0o600)
 
-    def test_a_digest_published_meanwhile_is_kept_and_another_change_refused(self):
-        """Two runs at once: the second finds the right file and keeps it."""
-        self.write_key()
-        for content, refused in ((DIGEST, False), (b"other content", True)):
-            with self.subTest(refused=refused):
-                if self.digest.exists():
-                    self.digest.unlink()
-                published = []
-                real_fsync = os.fsync
-
-                def fsync(
-                    descriptor,
-                    real_fsync=real_fsync,
-                    published=published,
-                    content=content,
-                ):
-                    real_fsync(descriptor)
-                    if not published:  # another run publishes while this one writes
-                        other = self.digest.with_name("other-run")
-                        other.write_bytes(content)
-                        other.chmod(0o600)
-                        other.rename(self.digest)
-                        published.append(self.digest.stat())
-
-                with mock.patch.object(rendering.os, "fsync", side_effect=fsync):
-                    if refused:
-                        with self.assertRaisesRegex(
-                            common.DeployError, "changed during the write"
-                        ):
-                            self.render()
-                    else:
-                        self.render()
-                after = self.digest.stat()
-                self.assertEqual(
-                    (after.st_ino, after.st_mtime_ns),
-                    (published[0].st_ino, published[0].st_mtime_ns),
-                )
-                self.assertEqual(self.digest.read_bytes(), content)
-                self.assertEqual(
-                    [p.name for p in self.digest.parent.iterdir()], ["token"]
-                )
-
     def test_a_set_group_id_parent_does_not_make_the_new_directory_refused(self):
         self.write_key()
         credentials = self.base / "credentials"
         credentials.chmod(0o2700)
+        self.render()
+        self.assertEqual(stat.S_IMODE(self.digest.parent.stat().st_mode), 0o700)
+        self.assertEqual(self.digest.read_bytes(), DIGEST)
+        # Interrupted right after creating the directory: the retry works,
+        # because the final name only ever appears with mode 0700.
+        shutil.rmtree(str(self.digest.parent))
+        with mock.patch.object(
+            rendering.os, "chmod", side_effect=KeyboardInterrupt
+        ), self.assertRaises(KeyboardInterrupt):
+            self.render()
+        self.assertFalse(self.digest.parent.exists())
         self.render()
         self.assertEqual(stat.S_IMODE(self.digest.parent.stat().st_mode), 0o700)
         self.assertEqual(self.digest.read_bytes(), DIGEST)
@@ -350,9 +319,11 @@ class DigestWriteTests(DigestFixture):
             self.render()
 
     def test_a_dot_spelled_generate_name_is_its_file_name(self):
-        config = producer_config(generate=["./token"])
-        config[common.SECRET_TEMPLATES] = {
-            "producer-main-env-secret": {"KEY": "@@secret:producer-key/token@@"}
+        config = {
+            **producer_config(generate=["./token"]),
+            common.SECRET_TEMPLATES: {
+                "producer-main-env-secret": {"KEY": "@@secret:producer-key/token@@"}
+            },
         }
         keys = rendering.secret_keys(config, self.path, [])
         self.assertEqual(keys["producer-key"], {"token"})
@@ -684,30 +655,43 @@ class PromisedFileTests(unittest.TestCase):
             ]
         )
 
-    def test_a_promise_follows_links_and_future_directories_as_opening_would(self):
+    def test_only_the_documented_form_is_promised(self):
+        """../<producer>/... with plain names and no link; anything else is ordinary.
+
+        Each refused form is one validation and delivery could disagree on
+        (a link, a .. after a name); validate then asks for the file as for
+        any other source.
+        """
         producer = self.root / "producer/credentials/key-sha256"
-        # An alias of the consumer's directory through a missing directory:
-        # the path cannot be opened, even once the digest is published.
-        os.rename(str(self.path.parent), str(self.root / "real-consumer"))
-        self.path.parent.symlink_to("old-location/../real-consumer")
-        config = dict(self.config)
-        with self.assertRaisesRegex(common.DeployError, "Missing"):
-            self.check(config)
         producer.mkdir(parents=True)
-        (producer / "token").write_bytes(DIGEST)
-        with self.assertRaises(OSError):
-            (self.path.parent / "../producer/credentials/key-sha256/token").read_bytes()
-        (producer / "token").unlink()
-        self.path.parent.unlink()
-        # The consumer's own directory still absent, through an existing
-        # directory: opening works once prepare creates the consumer's directory.
         (self.root / "existing").mkdir()
-        config[common.SECRET_FILES] = {
-            "consumer-digest": [
-                {"path": "../existing/../producer/credentials/key-sha256/token"}
-            ]
-        }
-        self.check(config)
+        (self.root / "unsearchable").mkdir(mode=0o000)
+        self.addCleanup((self.root / "unsearchable").chmod, 0o700)
+        (self.path.parent / "alias").symlink_to(producer / "token")
+        (self.root / "producer-link").symlink_to(
+            "producer/credentials/key-sha256/token/"
+        )
+        for path in (
+            "alias",
+            "../existing/../producer/credentials/key-sha256/token",
+            "../unsearchable/../producer/credentials/key-sha256/token",
+            "../producer-link",
+            "../producer/credentials/./key-sha256/../key-sha256/token",
+        ):
+            config = dict(self.config)
+            config[common.SECRET_FILES] = {"consumer-digest": [{"path": path}]}
+            with self.subTest(path=path), self.assertRaisesRegex(
+                common.DeployError, "Missing"
+            ):
+                self.check(config)
+        # A consumer directory that is itself a link: .. would leave its target.
+        os.rename(str(self.path.parent), str(self.root / "real-consumer"))
+        self.path.parent.symlink_to("real-consumer")
+        with self.assertRaisesRegex(common.DeployError, "Missing"):
+            self.check()
+        self.path.parent.unlink()
+        # The documented form with the consumer's own directory still absent.
+        self.check()
 
     def test_validation_opens_no_credential_file(self):
         with mock.patch.object(
@@ -771,14 +755,24 @@ class DigestBundleLifecycleTests(ProductFixture):
         # it would be sent: a success and a failed reinstall.
         journal = []
 
-        def collect(handler, record):
-            journal.append(handler.PRIORITY + handler.ident + handler.format(record))
+        class Socket:
+            """Stands in for the journal socket; keeps each datagram sent."""
+
+            def __init__(self, *args):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def sendto(self, data, address):
+                journal.append(data.decode("utf-8"))
 
         login = self.releases_by_name["login-service"]
         self.use_root(login)
-        with mock.patch.object(
-            output.JournalHandler, "emit", autospec=True, side_effect=collect
-        ):
+        with mock.patch.object(output.socket, "socket", Socket):
             self.assertEqual(cli.main(["init-config", "login-service"]), 0)
             self.assertEqual(cli.main(["install"]), 0)
             self.digest.parent.chmod(0o755)
