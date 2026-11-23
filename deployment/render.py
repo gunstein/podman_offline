@@ -772,26 +772,48 @@ def check_digest_destination(where, base_dir, directory, target):
 
     Missing parts are fine (they are created). Every existing directory from
     the component's config directory down to the digest directory must be a
-    real directory, the digest directory itself mode 0700, and the digest file
-    absent or a regular file.
+    real directory the runtime account can read and enter (publication
+    opens each one to sync it), the deepest existing one also writable (a
+    directory or the file is created in it), the digest directory itself
+    mode 0700, and the digest file absent or a regular file.
     """
     directories = [base_dir]
     for part in directory.relative_to(base_dir).parts:
         directories.append(directories[-1] / part)
     try:
+        existing = []
         for path in directories:
             if not (path.exists() or path.is_symlink()):
-                return  # the rest is created later, as directories
+                break  # the rest is created later, as directories
             if path.is_symlink() or not path.is_dir():
                 raise common.DeployError(
                     f"{where}: {path} must be a directory, not a link or file"
                 )
-        mode = stat.S_IMODE(directory.lstat().st_mode)
-        if mode != 0o700:
-            raise common.DeployError(
-                f"{where}: {directory} has mode {mode:04o}; set it to 0700 "
-                "(chmod 700), then run the same command again"
-            )
+            existing.append(path)
+        if not existing:
+            return  # the component's directory itself is created later
+        # The digest directory's own mode first: its message is the precise one.
+        if existing[-1] == directory:
+            mode = stat.S_IMODE(directory.lstat().st_mode)
+            if mode != 0o700:
+                raise common.DeployError(
+                    f"{where}: {directory} has mode {mode:04o}; set it to 0700 "
+                    "(chmod 700), then run the same command again"
+                )
+        for path in existing:
+            needed = os.R_OK | os.X_OK
+            if path == existing[-1]:
+                needed |= os.W_OK
+            if not os.access(str(path), needed):
+                access = (
+                    "read, write and enter" if needed & os.W_OK else "read and enter"
+                )
+                raise common.DeployError(
+                    f"{where}: the runtime account must be able to {access} "
+                    f"{path}; fix its owner or mode, then run the same command again"
+                )
+        if existing[-1] != directory:
+            return
         if target.is_symlink() or (target.exists() and not target.is_file()):
             raise common.DeployError(
                 f"{where}: {target} must be a regular file, not a link or directory"
@@ -870,12 +892,14 @@ def write_digests(config, base_dir, file_secrets):
         digest = hashlib.sha256(raw).hexdigest().encode("ascii")
         check_digest_destination(where, base_dir, directory, target)
         make_private_directories(directory)
-        if not digest_is_current(target, digest, where):
+        written = not digest_is_current(target, digest, where)
+        if written:
             publish_private_file(where, base_dir, directory, target, digest)
-            log.info(f"[OK] Wrote SHA-256 file {target}")
         # Also when the file was already right: a retry finishes a sync that
         # failed or was interrupted after the rename.
         sync_directories(directory, base_dir)
+        if written:
+            log.info(f"[OK] Wrote SHA-256 file {target}")
 
 
 def sync_directories(directory, base_dir):

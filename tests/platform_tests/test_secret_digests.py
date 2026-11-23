@@ -385,6 +385,63 @@ class DigestWriteTests(DigestFixture):
             (before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns)
         )
 
+    def test_an_ancestor_it_cannot_read_stops_before_anything_is_generated(self):
+        """Publication opens every directory to sync it: checked before generation."""
+        config = producer_config(sha256="credentials/first/published")
+        first = self.base / "credentials/first"
+        first.mkdir(parents=True)
+
+        def refuse(path, flag):
+            return lambda name, mode: not (name == str(path) and mode & flag)
+
+        # first is the deepest existing directory: it must also be writable.
+        with mock.patch.object(
+            rendering.os, "access", side_effect=refuse(first, os.W_OK)
+        ), self.assertRaisesRegex(
+            common.DeployError, "able to read, write and enter .*credentials/first;"
+        ):
+            self.render(config)
+        self.assertFalse(self.key.exists())
+        # With published/ in place, first only has to be readable for the sync.
+        (first / "published").mkdir(mode=0o700)
+        (first / "published").chmod(0o700)
+        with mock.patch.object(
+            rendering.os, "access", side_effect=refuse(first, os.R_OK)
+        ), self.assertRaisesRegex(
+            common.DeployError, "able to read and enter .*credentials/first;"
+        ):
+            self.render(config)
+        self.assertFalse(self.key.exists())
+        self.assertEqual(list((first / "published").iterdir()), [])
+        (first / "published").rmdir()
+        if os.geteuid() != 0:  # the real permission, as the runtime account
+            first.chmod(0o300)
+            self.addCleanup(first.chmod, 0o700)
+            with self.assertRaisesRegex(common.DeployError, "read, write and enter"):
+                self.render(config)
+            self.assertFalse(self.key.exists())
+
+    def test_the_write_is_reported_only_once_it_is_durable(self):
+        self.write_key()
+        real_fsync = os.fsync
+        failed = []
+
+        def fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode) and not failed:
+                failed.append(True)
+                raise OSError("injected directory sync failure")
+            real_fsync(descriptor)
+
+        with mock.patch.object(rendering.os, "fsync", side_effect=fsync):
+            with self.assertRaises(OSError):
+                self.render()
+        self.assertNotIn("Wrote SHA-256", self.output.getvalue())
+        self.render()  # the retry finds the file right and stays quiet
+        self.assertNotIn("Wrote SHA-256", self.output.getvalue())
+        self.digest.unlink()
+        self.render()
+        self.assertIn("Wrote SHA-256 file", self.output.getvalue())
+
     def test_a_failed_directory_rename_leaves_no_temporary_directory(self):
         self.write_key()
         with mock.patch.object(

@@ -67,14 +67,17 @@ acceptance-harness tests (`acceptance/test_audit_digest.py`,
 remains to be verified there. Only the five production files listed below
 were changed. Earlier revisions of this item and their reviews are in git
 history (last proposal `32d8578`). The reviews of `23d6636`, `f46ef8c`,
-`cb78847`, `df9e80c` and `a69114b` are addressed in the same files: one owner per `sha256:` directory, the destination checked again
+`cb78847`, `df9e80c`, `a69114b` and `db84bab` are addressed in the same
+files: one owner per `sha256:` directory, the destination checked again
 in the opened directory just before the rename, directories created 0700
 from the start, the duplicate-name check whether the digest exists or not,
 promises only for the documented form (one `..` to a sibling producer,
 plain names, from a consumer directory that is absent or a real directory),
 every new directory renamed into place with mode 0700, the digest
 directory and each directory above it up to the component's synced after
-every write and again when a correct file is found (power loss, retry), and
+every write and again when a correct file is found (power loss, retry),
+those directories checked for read and enter access before generation, the
+write reported only after the sync, and
 the journal datagrams checked for the key and digest. The product tests also pass as a non-root account.
 Product-owner decision needed: the approved text accepts any path that
 resolves to a promised file in the first `validate`; the implementation
