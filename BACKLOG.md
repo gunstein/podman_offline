@@ -59,7 +59,8 @@ Open items follow, newest first. Finished and superseded items were removed on
 Status: **open; simplified scope proposal awaiting product-owner approval**
 (requested 2026-11-23; simplified after the product-owner decision of
 2026-11-23 below; earlier revisions and their reviews are in git history,
-last `9144b8f`; this text also takes in the review of `4fa0780`). Nothing is implemented. If implementation shows that more
+last `9144b8f`; this text also takes in the reviews of `4fa0780` and
+`c6f0f67`). Nothing is implemented. If implementation shows that more
 production files or functions must change, the reason is explained and
 agreed with the product owner first.
 
@@ -166,7 +167,9 @@ Behavior:
   the value. Its `hashlib.sha256(...).hexdigest()` is compared with
   `<sha256 dir>/<name>`; if the file is missing or differs, it is written
   through a private temporary file (mode 0600 from creation) in that
-  directory, synced, renamed over the target, and the directory synced (the
+  directory; the writer creates a missing output directory with mode 0700
+  (independent of the umask) before creating the temporary file. The file is
+  synced, renamed over the target, and the directory synced (the
   existing sequence in `deploy.py`); a handled failure removes the temporary
   file, and app1 never sees a partial final file. The Secret entry is
   Base64-decoded and checked before hashing the original bytes; the raw file
@@ -210,8 +213,9 @@ Behavior:
   `validate_component` runs without promises), and the same map is used for
   the `MOUNTS` and manifest key checks, so a misspelled key is still refused.
   A promised file name also counts in the duplicate-file check of its
-  Secret, so a promised `audit_key` beside a delivered `audit_key` is refused
-  in `validate`, not first at `up`. Validation reads neither audit file and
+  Secret, by name only: within one Secret ID it conflicts with a delivered
+  file of the same name and with the same name in another source's
+  `generate:`, so both are refused in `validate`, not first at `up`. Validation reads neither audit file and
   writes no persistent state. An empty promise set keeps today's behavior
   for every other caller (`MOUNTS` keep their key map, registrations the
   empty default); `validate_bundle` of a standalone app1 bundle stays
@@ -225,8 +229,14 @@ Behavior:
   run `myproduct --environment prod1 identity` (or `myproduct identity`
   without an environment file; a plain `myproduct` can skip a completed
   Identity), then repeat the app1 command that failed. If a raw key that was
-  already in use is missing, restore it from backup first. A future rotation
-  job must prepare Identity before app1.
+  already in use is missing, restore it from backup first. Two exceptions:
+  if app1's install is pending (the Identity command stops with `Pending
+  install for app1`), restore the published digest file from a trusted backup
+  or escalate to the supplier; if Identity completes but the file is still
+  missing, check that Identity's release and its effective source list (an
+  operator `config.yaml` that defines the source list replaces the release's)
+  declare `sha256:` with the expected directory. A future rotation job must
+  prepare Identity before app1.
 
 Pending install and retry rules are unchanged.
 
@@ -274,12 +284,13 @@ delivery rule). The demo names stand in until the real names are known.
     untouched (same content and modification time); a missing or wrong
     digest is written again and the raw key bytes are unchanged; equal bytes
     with mode 0644 (file) or a non-0700 directory are refused with a
-    path-only message; a link, a directory or an unreadable file at the
+    message naming the path and the mode to set, never the value; a link, a directory or an unreadable file at the
     target is refused before comparison.
   - Atomic write: a failure injected immediately before the rename leaves
     the previous complete digest (or no final file on first creation) and no
     temporary file after the handled failure; temporary files are created
-    0600.
+    0600; on first creation under umask 0022 the output directory is 0700 and
+    the next render leaves the file untouched.
   - Byte source: materialize with key A while the raw file is replaced by B
     after `secret_documents` read it; the digest is that of A.
   - Byte rule: invalid UTF-8, empty, CRLF and trailing LF refused; sentinel
@@ -293,7 +304,8 @@ delivery rule). The demo names stand in until the real names are known.
   - `validate`: first run with the digest absent passes with the right key,
     refuses a misspelled key in a recipe, in `MOUNTS` and in a manifest
     selection, refuses a promised file name beside a delivered file of the
-    same name, an unrelated missing source and a promise from a later
+    same name and beside the same name in another source's `generate:` (in
+    the same Secret ID), an unrelated missing source and a promise from a later
     component; reads neither audit file and writes no persistent state;
     `validate_bundle` of app1 alone refuses the missing digest.
 - Dev flow: `demo-credentials` preflight, `validate`, `prepare` with no audit
