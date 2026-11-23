@@ -221,7 +221,7 @@ Behavior:
   source: `if another component publishes this file, install that component
   again first; otherwise deliver it; then run the same command again`.
 - **Operator recovery** (one row in the shipped manual's stop table, keyed on
-  `Missing …/audit-sha256/audit_key (SECRET_FILES.<app1-id>-audit-key-sha256)`):
+  `Missing …/audit-sha256/audit_key (SECRET_FILES.app1-audit-key-sha256)`):
   run `myproduct --environment prod1 identity` (or `myproduct identity`
   without an environment file; a plain `myproduct` can skip a completed
   Identity), then repeat the app1 command that failed. If a raw key that was
