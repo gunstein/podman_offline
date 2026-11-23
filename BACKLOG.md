@@ -57,8 +57,10 @@ Open items follow, newest first. Finished and superseded items were removed on
 ## 88. Give app1 the SHA-256 of Identity's audit key automatically
 
 Status: **open, analysis only; awaiting product-owner decisions** (requested
-2026-11-23). Nothing is implemented. The syntax and the cross-component read
-below are proposals, not decided behavior.
+2026-11-23; revised 2026-11-23 after an independent review of `31c286e`).
+Nothing is implemented. The need is clear; how the digest is produced and
+who may receive it are open decisions, listed at the end. Mechanisms below are
+proposals, not decided behavior.
 
 Need: Identity uses the raw `audit_key`; app1 expects `audit_key_sha256`.
 Today's Helm chart computes `{{ $auditKey | b64dec | sha256sum | b64enc | quote }}`,
@@ -69,84 +71,107 @@ without a newline. The product owner will first try today's generator
 
 Required outcome:
 
-- With an empty `build/`, an ordinary `./dev/dev.sh up` generates the key and
-  gives app1 the right hash, without a manual script or a second `prepare`.
-- In production, a separate install of app1 uses Identity's existing key. A
-  new install or a retry of app1 keeps the raw key unchanged. app1 receives
-  only the hash, never the raw key.
-- If the key is missing in production, the operator gets a concrete next
-  step. Neither the key nor the hash appears in messages or logs.
+- With no audit files in `build/` (and the demo's other credentials provided
+  as today by `dev/demo-credentials.sh`), an ordinary `./dev/dev.sh up`
+  generates the key and gives app1 the right digest, without a manual script
+  or a second `prepare`. Removing the existing credential prerequisite is not
+  part of this item.
+- In production, a standalone app1 release installed on its own gets the
+  digest of the key that Identity's last completed install uses, also when
+  that key was introduced by Identity release defaults that are absent from
+  Identity's persistent `config.yaml`. A new install or retry of app1 never
+  changes the raw key. app1 receives only the digest, never the raw key.
+- Only the approved audit key's digest reaches the approved consumer. A
+  dependency on Identity or an environment override alone does not authorize
+  another source or consumer.
+- A missing or unusable key gives the operator a concrete next step. Neither
+  key nor digest appears on stdout, stderr or in the journal.
 - Not requested: automatic rotation, a general mechanism for sharing
-  arbitrary secrets between components, new config files, CLI flags or
-  special logic in `dev/dev.sh`.
+  arbitrary secrets or digests between components, new config files, CLI
+  flags or special logic in `dev/dev.sh`.
 
 ### What the current code does (checked on this revision)
 
 - `render.generate_secrets` (`deployment/render.py`) creates each missing
   `generate:` file once, mode 0600, as 32 characters of `[A-Za-z0-9]` without
-  a newline, and never rewrites an existing file. This already meets
-  "retry keeps the raw key". It runs per component in `render.materialize`,
-  so a component's files are generated only when that component is rendered.
-- Secret values reach containers only through `ENVIRONMENT` lines and `MOUNTS`
-  files, as internal `SECRET_TEMPLATES` recipes that are recomputed from the
-  retained source files at every render and never persisted on their own
-  (review guide, "Secret values" and "Credential retention").
-- Crossing a component boundary is allowed in exactly two places: the
-  gateway's public `PUBLIC_ORIGIN`/`HTTPS_PORT` (`catalog.gateway_settings`,
-  read from the gateway's `config.yaml`) and Identity's API secret line
-  `ApiResources__<n>__ApiSecrets__0__Value`, which receives an API's own secret
-  through the private registration `apis/<id>/value`. That is the opposite
-  direction (an API owns the secret, Identity receives it), and both sides get
-  the same bytes, without hashing. Every other line that names another
-  component's secret is refused (`environment.foreign_secrets`, the check in
-  `deployment/environment.py`).
-- Dev `prepare` (`deploy.prepare_components`) generates API secrets before it
-  renders any component (`registrations.api_updates`), so Identity can
-  receive them in the same run. The production runtime command installs
-  Identity first (`install_order`); a separate `./deploy.sh install` of app1
-  reads Identity's installed state only as registrations today.
+  a newline. An existing nonempty file is accepted as it is, so a restored or
+  hand-written key may differ in form (for example a trailing newline).
+- `@@secret:<id>/<key>@@` in an `ENVIRONMENT` recipe decodes the file as UTF-8
+  and strips every trailing LF before `templates.check_text`
+  (`deployment/templates.py`). `b"key\n"` therefore reaches Identity as `key`.
+  `registrations.api_registration` already refuses such input for API secrets,
+  so that both sides see the same value; this item needs the same rule.
+- Dev `prepare` (`deploy.prepare_components`) materializes components in
+  dependency order. On this revision `dev_settings()` gives `platform,
+  identity, app1, app2, app3, help`, and app1 requires Identity through its
+  `client.yaml`, so Identity's own key is generated before app1 is rendered.
+  No extra generation pass is needed for app1. (`registrations.api_updates`
+  generates early only for API secrets that Identity receives.)
+- In production, an app1 bundle ships only app1's component directory
+  (`bundle.py`). `catalog.operator_config` fills missing `SECRET_FILES` IDs
+  from the release defaults under the running command's root and resolves all
+  of a component's settings, including `@@$NAME@@`. Run for Identity from an
+  app1 release, it would not see Identity's defaults and could need variables
+  only Identity uses. `catalog.gateway_settings` differs: it reads only the
+  gateway's persistent file for two public settings.
+- Values cross component boundaries today through the gateway's public
+  settings, route and client registrations, and Identity's API secret line
+  `ApiResources__<n>__ApiSecrets__0__Value`, where the caller
+  (`catalog.api_secret_mapping`) checks owner, exact variable and whole
+  reference; `environment.foreign_secrets` only identifies foreign IDs. No
+  path gives a component a digest of another component's secret.
+- `tools/runtime.py` `install_order` puts Identity after its own prerequisites
+  and before every other component. Its install step may already have run
+  `init-layout`, `init-config` and moved incoming credentials before it calls
+  `deploy.sh install`.
 
-So no existing item or mechanism covers this need: app1 cannot name
-Identity's secret, and nothing produces a hash.
+### Rules that hold whichever option is chosen
 
-### Recommended minimal change
+- **One raw key, owned by Identity:** declared in Identity's own
+  `SECRET_FILES` with `generate:`, passed to Identity with the existing
+  `@@secret:` form. One authoritative credential file; the raw value also
+  appears, as today, in Identity's protected rendered Secret.
+- **Byte rule:** a key is accepted only when Identity can consume its exact
+  bytes unchanged (the `api_registration` check: valid UTF-8, no trailing LF,
+  nothing `check_text` refuses). Otherwise refuse without showing it. The
+  digest is `sha256(accepted bytes)` as lowercase hex, which then equals both
+  Helm's result and the key Identity uses.
+- **Narrow authorization:** exactly the audit key, exactly the approved
+  consumer. The source is resolved through Identity's trusted declaration; a
+  redirected source (absolute path, link, path outside Identity's credential
+  directory) is refused before it is read.
+- **Refusal boundary:** `validate` checks declarations only and opens no
+  credential file (`check_selected_keys` and `render.secret_keys` count a
+  `generate:` declaration and cannot prove a key exists). The install-only
+  check that the digest is available runs in app1's component install before
+  persistent component writes, generation, image loading or restart, that is
+  before `apply_component_install` materializes; temporary staging is allowed.
+  The runtime command's earlier `init-layout`, `init-config` and credential
+  move are outside this guarantee. `check-environment` on a fresh host, before
+  Identity is installed, must still pass.
+- **Recovery messages** (no value, no digest):
+  - Identity never installed: install Identity first, then run the same app1
+    install again.
+  - Identity installed but its key file is missing or unusable: restore the
+    retained key from backup and run the app1 install again. Do not reinstall
+    Identity to create a new one; that is a deliberate rotation.
+  - A pending app1 install: finish it first, as today (switching to an
+    Identity install is already refused). Retained files alone never count as
+    an installed Identity; uninstalling Identity while app1 is installed is
+    already refused through the recorded dependency.
+- **Rotation (manual):** finish any pending operation; replace the key file;
+  run `<product> --environment <env> <identity-id>`, then
+  `<product> --environment <env> <app-id>` (without `--environment` where no
+  environment file is used). Name both components: a whole-product or
+  environment run can skip a completed component, because the key bytes are
+  not part of the version, descriptor or environment effect it compares. No
+  digest goes into `state/environment/`.
 
-- **Owner of the raw key:** Identity. It declares the key in its own
-  `SECRET_FILES` with `generate:`, and its own `ENVIRONMENT` passes it with
-  the existing `@@secret:` form. Today's generator, retention and permissions
-  apply unchanged. The key exists in one place only: Identity's credentials
-  directory (`build/dev/identity/...` in dev, `state/identity/...` in
-  production).
-- **When the hash is computed:** each time app1 is rendered (dev `prepare`,
-  production `install` and its retry), in memory, from the exact bytes of
-  Identity's retained key file, as `hashlib.sha256(raw).hexdigest()`. The
-  hash is written only into app1's existing `<component>-<container>-env-secret`
-  in the 0600 install YAML, like every other recipe value; it is not
-  persisted anywhere else (one authoritative source: the raw key).
-- **How app1 gets it at a separate install:** app1's install reads
-  Identity's installed `config.yaml` (through `catalog.operator_config`, the
-  same reading that `gateway_settings` uses for the gateway) to resolve where
-  the declared key file lives, then reads that one file. Only the hash leaves
-  Identity's directory. No registration, copy or new state record.
-- **Dev:** `prepare` generates Identity's secrets before it renders app1, in
-  the same way it already generates API secrets before Identity's render.
-  `dev/dev.sh` is unchanged.
-- **Missing key in production:** refused before the first write (same point
-  as `deploy.check_selected_keys`), with a message naming the line, the
-  secret ID and the next step, for example:
-  `ERROR: app1: AUDIT_KEY_SHA256 needs identity's secret
-  identity-audit-key/audit_key, which is not installed; install identity first,
-  then run this install again`. `validate` checks only the declaration (Identity
-  declares the ID and the key) and reads no secret bytes.
-- **Rotation:** if the raw key file is replaced, reinstall Identity, then
-  reinstall app1. Since every install renders again, an ordinary reinstall
-  of app1 (same version too) is enough to update the hash. Installing
-  Identity does not restart or re-render app1. Nothing automates this.
+### Options for producing the digest (decision 2)
 
-Example, **Proposal – requires product-owner approval** (new placeholder form
-and a new read of Identity's secret from another component). The secret ID,
-key name and Identity's variable name are placeholders until the real
-application names are known:
+**A. app1's install computes it from Identity's key.** Proposal – requires
+product-owner approval (new placeholder and a read across the component
+boundary):
 
 ```yaml
 # components/identity/config.defaults.yaml
@@ -165,49 +190,66 @@ ENVIRONMENT:
     AUDIT_KEY_SHA256: '@@sha256:identity-audit-key/audit_key@@'  # proposal
 ```
 
-Proposed limits of `@@sha256:<id>/<key>@@`, so that it stays narrow and is
-not a general sharing mechanism: only as the whole value of an
-`ENVIRONMENT` line (not in `MOUNTS` files or manifests), and only for a
-secret declared in the `SECRET_FILES` of the catalog's `identity` component.
-A component's own secret, another component's secret or any other text in
-the value is refused before writes, as `environment.foreign_secrets` does
-today. The line does not make Identity a dependency on its own; app1 already
-depends on it through `client.yaml`, and a component without that dependency
-is refused.
+The digest is computed in memory at every app1 render and stored only in
+app1's env Secret. Open problem (review finding 1): app1's release cannot
+reconstruct Identity's effective config; it would have to read the defaults
+of Identity's *installed* release, not of its own root, and only the one
+declaration, without resolving Identity's other settings. Even then, a key
+file or path changed after Identity's last install gives app1 a digest that
+Identity has not loaded. The placeholder alone does not express Identity's
+consent; the allowed `<id>/<key>` and consumer must be fixed.
 
-Rejected alternatives: pointing a `path` in app1's `SECRET_FILES` at
-Identity's credentials directory would put the raw key into app1's Secret,
-needs a hash step anyway, and is not generated in the right order in dev; a
-new hash registration (as `apis/<id>/value`, in the other direction) adds a
-persisted copy and a new state record, which the raw key already makes
-unnecessary; a pre-step script or a second `prepare` is what the outcome
-excludes.
+**B. Identity's install publishes the digest.** After generating its key and
+applying the byte rule, Identity's install writes a private, digest-only
+registration (the opposite direction of `apis/<id>/value`), and app1's render
+reads that registration, never Identity's raw credentials. This matches
+"Identity's last completed install" by construction and keeps the consent on
+Identity's side, but it adds a persisted derived value, and its publication,
+retry, uninstall cleanup and how app1's line names it need an explicit owner
+and design. It is not decided whether this fits an existing registration
+role or needs a new one.
+
+Still rejected: pointing a `path` in app1's `SECRET_FILES` at Identity's
+credentials directory (the raw key would enter app1's Secret), and a manual
+pre-step or second `prepare`.
 
 ### To decide before implementation
 
-1. Approve the new placeholder `@@sha256:<id>/<key>@@`, or name another
-   spelling (review guide "Format decision", backlog 77).
-2. Approve that app1's install reads Identity's installed key file to compute
-   the hash, limited to Identity's `SECRET_FILES` and `ENVIRONMENT` lines.
-3. The real names: Identity's variable for the raw key, the `SECRET_FILES` ID
-   and file name, and app1's container and variable.
-4. Accept manual rotation as described: replace the file, reinstall Identity,
-   then reinstall app1.
+1. **Who may receive which digest?** Recommended: one audit key and one
+   consumer. Requiring an existing Identity dependency is an acceptable extra
+   limit if the real consumer already has one (the demo's app1 does through
+   `client.yaml`); a deployment should not need a dummy OIDC client only to
+   get the ordering. How that one relationship is written is part of this
+   decision.
+2. **Who produces the digest?** Option A (consumer-side computation, needs
+   access to Identity's installed release defaults) or option B (owner-side
+   publication, needs a persisted derived value).
+3. **The real names:** Identity's variable for the raw key, the
+   `SECRET_FILES` ID and file name, and the consumer's container and variable.
+4. **Manual rotation** with the named commands above.
 
 ### Verification when implemented
 
-- Product tests: a known key file gives the known lowercase hex digest
-  without a newline in app1's env Secret, and the same digest as
-  `printf %s <key> | sha256sum`; dev `prepare` on an empty `build/` produces
-  key and hash in one run; a second `prepare` and an install retry keep the
-  key bytes; a missing Identity key is refused before any write, with no key
-  or hash in output; `validate` opens no credential file; foreign use, own
-  secret, text around the reference and use in `MOUNTS` are refused.
-- Acceptance and real Podman/systemd: app1's container sees the digest of
-  the key that Identity's container sees, in dev and after a separate
-  production install of app1; the review guide's "Secret values" contract and
-  the [component contract](docs/COMPONENTS.md) are updated with the decided
-  form.
+- Product tests with a non-secret synthetic key: the decoded app1 Secret
+  holds an independently known digest (not compared only with Identity's
+  container); a retained key with a trailing LF, CRLF or invalid UTF-8 is
+  refused without output of its value; dev `prepare` with no audit files
+  produces key and digest in one run, and a second run keeps the key bytes;
+  an isolated app1 release after an Identity upgrade that added the key
+  through release defaults; `check-environment` on a fresh host; a named
+  same-version reinstall after rotation; a fresh-process retry of a pending
+  app1 install; refusal of an unrelated Identity secret (for example
+  `identity-database-password/password`), a redirected source and an
+  override that tries to add a source or consumer; app1's whole rendered
+  output contains neither the raw key nor its Base64 form; on every failure,
+  stdout, stderr and the journal output (`deployment/cli.py`,
+  `deployment/output.py`) contain neither key nor digest; `validate` opens no
+  credential file.
+- Acceptance and real Podman/systemd: inside the containers, app1's value
+  equals the digest of the key Identity's container uses, in dev and after a
+  separate production install of app1; the harness prints only a verdict.
+  The review guide's "Secret values" contract and the
+  [component contract](docs/COMPONENTS.md) are updated with the decided form.
 
 ## 87. A literal `@@` in templates: `@@@@`
 
