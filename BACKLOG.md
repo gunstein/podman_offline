@@ -59,8 +59,8 @@ Open items follow, newest first. Finished and superseded items were removed on
 Status: **open; simplified scope proposal awaiting product-owner approval**
 (requested 2026-11-23; simplified after the product-owner decision of
 2026-11-23 below; earlier revisions and their reviews are in git history,
-last `9144b8f`; this text also takes in the reviews of `4fa0780` and
-`c6f0f67`). Nothing is implemented. If implementation shows that more
+last `9144b8f`; this text also takes in the reviews of `4fa0780`, `c6f0f67` and
+`9528412`). Nothing is implemented. If implementation shows that more
 production files or functions must change, the reason is explained and
 agreed with the product owner first.
 
@@ -167,8 +167,9 @@ Behavior:
   the value. Its `hashlib.sha256(...).hexdigest()` is compared with
   `<sha256 dir>/<name>`; if the file is missing or differs, it is written
   through a private temporary file (mode 0600 from creation) in that
-  directory; the writer creates a missing output directory with mode 0700
-  (independent of the umask) before creating the temporary file. The file is
+  directory; the writer sets mode 0700 on an output directory it creates in
+  this run, independent of the umask, before creating the temporary file (an
+  existing directory with another mode gets the agreed refusal). The file is
   synced, renamed over the target, and the directory synced (the
   existing sequence in `deploy.py`); a handled failure removes the temporary
   file, and app1 never sees a partial final file. The Secret entry is
@@ -224,19 +225,27 @@ Behavior:
   `Missing <path> (SECRET_FILES.<id>)` gains a hint for a missing `path`
   source: `if another component publishes this file, install that component
   again first; otherwise deliver it; then run the same command again`.
-- **Operator recovery** (one row in the shipped manual's stop table, keyed on
-  `Missing …/audit-sha256/audit_key (SECRET_FILES.app1-audit-key-sha256)`):
+- **Operator recovery** (production only; in dev Identity and app1 go
+  through the same `prepare`). One row in the shipped manual's stop table,
+  keyed on
+  `Missing …/audit-sha256/audit_key (SECRET_FILES.app1-audit-key-sha256)`:
   run `myproduct --environment prod1 identity` (or `myproduct identity`
   without an environment file; a plain `myproduct` can skip a completed
-  Identity), then repeat the app1 command that failed. If a raw key that was
-  already in use is missing, restore it from backup first. Two exceptions:
-  if app1's install is pending (the Identity command stops with `Pending
-  install for app1`), restore the published digest file from a trusted backup
-  or escalate to the supplier; if Identity completes but the file is still
-  missing, check that Identity's release and its effective source list (an
-  operator `config.yaml` that defines the source list replaces the release's)
-  declare `sha256:` with the expected directory. A future rotation job must
-  prepare Identity before app1.
+  Identity), then repeat the app1 command that failed. Directly below the
+  table, two short exceptions:
+  - If app1's install is pending (the Identity command stops with `Pending
+    install for app1`): restore Identity's previously published digest file
+    for the key in use, with mode 0600; contact the supplier if no such copy
+    exists. app1 reads it as an ordinary Secret source and cannot check it
+    against the raw key.
+  - If Identity completes but the file is still missing: check that
+    Identity's release and its effective source list (an operator
+    `config.yaml` that defines the source list replaces the release's)
+    declare `sha256:` with the expected directory.
+
+  If a raw key that was already in use is missing, restore it from backup
+  first. A future rotation job must prepare Identity before app1 (backlog
+  text only, not the manual).
 
 Pending install and retry rules are unchanged.
 
@@ -289,8 +298,9 @@ delivery rule). The demo names stand in until the real names are known.
   - Atomic write: a failure injected immediately before the rename leaves
     the previous complete digest (or no final file on first creation) and no
     temporary file after the handled failure; temporary files are created
-    0600; on first creation under umask 0022 the output directory is 0700 and
-    the next render leaves the file untouched.
+    0600; on first creation under umask 0022 and under umask 0222 the output
+    directory is 0700, the digest is written and the next render leaves the
+    file untouched; an existing directory with another mode is refused.
   - Byte source: materialize with key A while the raw file is replaced by B
     after `secret_documents` read it; the digest is that of A.
   - Byte rule: invalid UTF-8, empty, CRLF and trailing LF refused; sentinel
@@ -328,7 +338,8 @@ delivery rule). The demo names stand in until the real names are known.
 
 ### Documentation (separate)
 
-- `docs/PRODUCTION-INSTALL.md` (ships in every bundle): the recovery row.
+- `docs/PRODUCTION-INSTALL.md` (ships in every bundle): the recovery row and
+  the two exceptions directly below the stop table.
 - `docs/COMPONENTS.md`: the `sha256` field, its path rules, the reserved
   output file names and the consumer example.
 - `docs/REVIEW_GUIDE.md`: "Secret values", "Credential retention",
