@@ -116,16 +116,37 @@ def demo_secret_keys(component):
     return keys
 
 
+# A synthetic SHA-256 file as Identity publishes it (backlog 88); the
+# producer's own render replaces it with the real digest.
+PUBLISHED_DIGEST = b"0" * 64
+
+
+def write_published_file(path, data=PUBLISHED_DIGEST):
+    """Play the producer: one private file in private directories (0600/0700)."""
+    path = Path(path)
+    missing = [p for p in reversed(path.parents) if not p.exists()]
+    for directory in missing:
+        directory.mkdir()
+        directory.chmod(0o700)
+    path.write_bytes(data)
+    path.chmod(0o600)
+
+
 def write_secret_fixtures(base, config, component, data=b"dummy"):
     """Write one file per selected key into each Secret's first source directory.
 
     Generated keys are left to generation. Synthetic bytes only; tests that need
-    a real certificate overwrite that file afterwards.
+    a real certificate overwrite that file afterwards. A source in another
+    component's directory (app1's published audit digest, backlog 88) gets the
+    file that component would publish.
     """
     keys = demo_secret_keys(component)
     for name, sources in config.get("SECRET_FILES", {}).items():
         source = sources[0]
         target = Path(base) / source["path"]
+        if source["path"].startswith("../"):
+            write_published_file(target)
+            continue
         target.mkdir(parents=True, exist_ok=True)
         for key in sorted(keys.get(name, ())):
             if key not in source.get("generate", []):

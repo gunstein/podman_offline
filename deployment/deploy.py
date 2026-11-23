@@ -501,19 +501,21 @@ def check_manifests(
     return documents
 
 
-def check_selected_keys(config, config_path, documents, component=None):
+def check_selected_keys(config, config_path, documents, component=None, promised=()):
     """Every Secret key a pod selects must be one its sources provide; no file is read.
 
     Run by validate and by prepare and install before their first write, once
     every credential must be delivered; not by init-config or the dev
     preflight of dev/demo-credentials.sh, which run before credentials exist.
     A MOUNTS secret file is checked first, so its error names the MOUNTS line.
+    promised: digest files an earlier catalog component publishes (validate).
     """
     if component:
         mounts.check_keys(
-            component, rendering.secret_keys(config, config_path, documents, component)
+            component,
+            rendering.secret_keys(config, config_path, documents, component, promised),
         )
-    rendering.check_secret_keys(config, config_path, documents, component)
+    rendering.check_secret_keys(config, config_path, documents, component, promised)
 
 
 def image_archive():

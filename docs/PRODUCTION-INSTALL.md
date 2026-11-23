@@ -340,6 +340,7 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `status reports an incomplete or inactive component` (step 7) | runtime user | Run the same command again a minute later (with `--environment prod1` if you used it); a service may still be starting. If it stays, ask for help (see below). |
 | `deploy.sh ... stopped; fix what it names` (step 7) | runtime user | The `ERROR:` line above it names the cause. Repeat the same command (with `--environment prod1` if you used it); it resumes the unfinished component first. |
 | `Missing /var/lib/myproduct/state/prod1.yaml` (step 7) | runtime user | Step 6. |
+| `Missing .../audit-sha256/audit_key (SECRET_FILES.app1-audit-key-sha256)` (step 7) | runtime user | Identity has not published app1's audit digest. Run `myproduct --environment prod1 identity` (without an environment file, `myproduct identity`; a plain `myproduct` can skip a completed Identity), then the app1 command that stopped. Exceptions below the table. |
 | `environment variable <NAME> is not set` (step 7) | runtime user | Export it in this shell (`export <NAME>=...`, the value the supplier names), then run the same command again. |
 | `<component> was installed with --environment prod1 ...; nothing was changed` (step 7) | runtime user | Run the command it names, `myproduct --environment prod1`, with the component after it when it names one (`myproduct --environment prod1 <component>`). |
 | `no release package of ...` or `... needs ... installed: ...`, then `Nothing was changed` (step 7) | administrator | Install the delivery with the missing or matching release packages (step 3). |
@@ -350,6 +351,21 @@ The message starts with `ERROR:` and says what to do. The common ones:
 | `WARNING: older releases kept ...` | administrator | Normal before the runtime user's first `myproduct`; a later step 3 removes them. If it repeats afterwards, ask for help with the reason it names; the releases are kept. |
 | `WARNING: ... holds delivered files that <component> does not use yet` | runtime user | Run the command it names, `myproduct <component>` (with an environment file, `myproduct --environment prod1 <component>`). |
 | `... is left after removing ...` or `... has no installed release package` | administrator, supplier | Files that no package owns remain in a release folder; every later step 3 stops here until it is resolved. Ask the supplier before deleting anything. |
+
+If app1's audit digest is missing (the `audit-sha256/audit_key` row above):
+
+- The Identity command stops with `Pending install for app1`: restore
+  Identity's previously published file `audit-sha256/audit_key` for the key in
+  use from your backup, with mode 0600, then run the app1 command again. app1
+  reads that file as it is and cannot check it against Identity's key. If you
+  have no such copy, contact the supplier.
+- Identity completes but the file is still missing: check that Identity's
+  release and its `SECRET_FILES` list declare `sha256: credentials/audit-sha256`
+  (a list in Identity's `config.yaml` replaces the release's whole list).
+
+If Identity's audit key itself (`credentials/audit/audit_key`) is missing
+after it was in use, restore it from backup first; a new key would not match
+what is already in use.
 
 ### Repair the tools
 

@@ -165,6 +165,27 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("@@secret:orders-report-password/password@@", text)
         self.assertNotIn("app1", text)
 
+    def test_published_digest_path_follows_the_renamed_producer(self):
+        """Backlog 88: orders reads login-service's file, not identity's."""
+        orders = yaml.safe_load(
+            (self.target / "components/orders/config.defaults.yaml").read_text()
+        )
+        self.assertEqual(
+            orders["SECRET_FILES"]["orders-audit-key-sha256"],
+            [{"path": "../login-service/credentials/audit-sha256/audit_key"}],
+        )
+        self.assertEqual(
+            orders["ENVIRONMENT"]["backend"]["AUDIT_KEY_SHA256"],
+            "@@secret:orders-audit-key-sha256/audit_key@@",
+        )
+        producer = yaml.safe_load(
+            (self.target / "components/login-service/config.defaults.yaml").read_text()
+        )
+        self.assertEqual(
+            producer["SECRET_FILES"]["login-service-audit-key"][0]["sha256"],
+            "credentials/audit-sha256",
+        )
+
     def test_images_and_generic_files_are_unchanged(self):
         self.assertEqual(images(self.target), images(ROOT, renamed_product.NAMES))
         for name in ("deployment", "dev", "scripts", "quadlet", "apps"):

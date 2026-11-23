@@ -660,6 +660,52 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: component config layer check (details withheld)")
 CONFIG_LAYERS
 }
+# Backlog 88: app1's AUDIT_KEY_SHA256 is the SHA-256 of Identity's Audit__Key, as
+# both containers see them. Prints only a verdict, never a value.
+audit_digest() {
+    local mode=$1
+    local -a run_python=(python3)
+    if [[ $mode == prod ]]; then run_python=(as_product python3); fi
+    "${run_python[@]}" - "$mode" <<'AUDIT_DIGEST'
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def value(container, name):
+    result = subprocess.run(["podman", "exec", container, "printenv", name],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            check=False, timeout=15)
+    if result.returncode:
+        raise RuntimeError("Cannot read " + name + " in " + container)
+    return result.stdout[:-1] if result.stdout.endswith(b"\n") else result.stdout
+
+
+def main():
+    mode = sys.argv[1]
+    identity, app = (("login-service", "orders") if os.environ["PRODUCT_NAME"] == "shop"
+                     else ("identity", "app1"))
+    if mode == "prod":
+        installed = {path.name for path in (Path(os.environ["PRODUCT_STATE"]) / "installed").glob("*")}
+        if app not in installed:
+            print("PASS: audit key digest not applicable; " + app + " is not installed")
+            return
+    key = value(identity + "-server-app", "Audit__Key")
+    digest = value(app + "-todo-backend", "AUDIT_KEY_SHA256")
+    if len(key) != 32 or digest != hashlib.sha256(key).hexdigest().encode():
+        raise RuntimeError(app + "'s AUDIT_KEY_SHA256 is not the SHA-256 of " + identity + "'s Audit__Key")
+    print("PASS: " + app + " has the SHA-256 of " + identity + "'s audit key (" + mode + ")")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
+        raise SystemExit("FAIL: " + str(error))
+AUDIT_DIGEST
+}
 seed_content() {
     local mode=$1
     local -a run_python=(python3)
@@ -939,6 +985,7 @@ if __name__ == "__main__":
         raise SystemExit("FAIL: " + str(error))
 HEALTHY
     config_layers prod
+    audit_digest prod
     seed_content prod
 }
 # The bundle's installed YAML names this image for one of its app containers.
@@ -1253,6 +1300,7 @@ dev-up)
     [[ $output == *"[OK] validated platform, identity, app1, app2, app3, help;"* ]]
     ./dev/dev.sh up
     config_layers dev
+    audit_digest dev
     seed_content dev
     # The certificate and the deployment resolved the same exported name.
     grep -Fqx "PUBLIC_ORIGIN: https://$DEV_PUBLIC_HOST:8443" build/dev/platform/config.yaml
@@ -1348,6 +1396,7 @@ RENAMED_HOST
     [[ $output == *"[OK] validated gateway, login-service, orders, inventory, manual;"* ]]
     ./dev/dev.sh up
     config_layers dev
+    audit_digest dev
     seed_content dev
     pods=$(podman pod ps --format '{{.Name}}' | sort | tr '\n' ' ')
     test "$pods" = 'gateway-proxy inventory-postgres inventory-todo login-service-postgres login-service-server manual-web orders-postgres orders-todo '

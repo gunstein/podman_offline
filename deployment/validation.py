@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from . import catalog, common, deploy, environment, mounts, registrations
+from . import catalog, common, deploy, environment, mounts, registrations, templates
 from . import render as rendering
 from .output import log
 
@@ -68,13 +68,19 @@ def validate_catalog():
     for line in catalog.derived_lines(entries) + api_secret_summary(entries):
         log.info("[OK] " + line)
     findings = []
+    # Digest files (sha256, backlog 88) that components earlier in prepare's
+    # dependency order will publish; prepare writes them before it renders a
+    # later component. lifecycle: materialize (write_digests).
+    promised = set()
     for component, component_settings in settings.items():
         path = state / component / "config.yaml"
         imported = catalog.imported_volumes(known[component])
+        published = set()
         try:
             config = rendering.effective_config(
                 component_settings, path, component, env_overrides
             )
+            published = rendering.promised_files(config, path.parent)
             documents = deploy.validate_component(
                 config,
                 path,
@@ -85,13 +91,14 @@ def validate_catalog():
                 env_overrides,
             )
             check_images(documents)
-            check_sources(config, path, documents, imported, component)
+            check_sources(config, path, documents, imported, component, promised)
             for line in environment.summary(
                 component, config, env_overrides
             ) + mounts.summary(component, config):
                 log.info("[OK] " + line)
         except ERRORS as error:
             findings.append((component, str(error)))
+        promised |= published
     try:
         with tempfile.TemporaryDirectory(
             prefix=catalog.product_name(common.ROOT) + "-validate-"
@@ -167,14 +174,24 @@ def check_images(documents):
         rendering.find_images(documents)
 
 
-def check_sources(config, config_path, documents, imported=(), component=None):
+def check_sources(
+    config, config_path, documents, imported=(), component=None, promised=()
+):
     """Declared files and the database password; reads no file contents.
 
     lifecycle: check_manifests (check_selected_keys), materialize
     (load_file_group after generation), and database_preflight, which first asks Podman whether the volume exists.
     Without that query a missing password can mean either case, so the
-    message names both remedies.
+    message names both remedies. promised (catalog only) are digest files an
+    earlier component publishes: they count as present with their file name
+    as key, so the recipes are checked again with those keys (the earlier
+    check in validate_component saw them as unknown).
     """
+    if promised:
+        templates.validate(
+            rendering.with_derived(config, config_path),
+            rendering.secret_keys(config, config_path, [], component, promised),
+        )
     # The password first: its message is more specific than a missing source.
     for _, password in deploy.database_bindings(config, config_path, documents):
         if not (password.exists() or password.is_symlink()):
@@ -186,5 +203,5 @@ def check_sources(config, config_path, documents, imported=(), component=None):
                     "database volume already exists"
                 ) from None
     # Same order as prepare and install: selected Secret keys, then the sources.
-    deploy.check_selected_keys(config, config_path, documents, component)
-    rendering.check_file_sources(config, config_path, imported, component)
+    deploy.check_selected_keys(config, config_path, documents, component, promised)
+    rendering.check_file_sources(config, config_path, imported, component, promised)

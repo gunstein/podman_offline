@@ -59,7 +59,8 @@ class InitDatabaseTests(unittest.TestCase):
 
     def test_rendered_app1_has_separate_earlier_database_and_same_secret_for_init(self):
         with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
+            # app1's own directory, so ../identity stays inside the test root.
+            base = Path(directory) / "app1"
             (base / "credentials/todo").mkdir(parents=True)
             (base / "credentials/todo/fixture").write_text("synthetic certificate")
             config = rendering.merge_config(

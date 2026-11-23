@@ -688,6 +688,65 @@ installing an API release built while identity had no line for it, removes
 its value from `<identity>-apis`; identity's name and scopes for it stay and
 the resource is inactive.
 
+### A published SHA-256 of a generated secret
+
+A component that needs only the SHA-256 of another component's generated
+secret reads a file the owner publishes; it never sees the secret itself.
+The owner adds `sha256:` to the generating source, the consumer names the one
+published file with an ordinary `path` (the demo: Identity's audit key and
+app1, backlog 88):
+
+```yaml
+# components/identity/config.defaults.yaml
+SECRET_FILES:
+  identity-audit-key:
+  - path: credentials/audit
+    generate: [audit_key]
+    sha256: credentials/audit-sha256   # publishes credentials/audit-sha256/audit_key
+ENVIRONMENT:
+  app:
+    Audit__Key: '@@secret:identity-audit-key/audit_key@@'
+
+# components/orders/config.defaults.yaml
+SECRET_FILES:
+  orders-audit-key-sha256:
+  - path: ../identity/credentials/audit-sha256/audit_key   # one file
+ENVIRONMENT:
+  backend:
+    AUDIT_KEY_SHA256: '@@secret:orders-audit-key-sha256/audit_key@@'
+```
+
+- `sha256:` is allowed only on a `SECRET_FILES` `path` source with `generate:`,
+  as a relative directory strictly below `credentials/` (no `~`, `..` or
+  absolute path). The directory belongs to the owner: it must not be, contain
+  or lie inside another source, generation target or `sha256:` directory of
+  the component, and nothing else may be delivered there. A link anywhere
+  from the component's directory down to the file is refused, before any
+  secret is generated or dev config is written.
+- Every render of the owner (dev `prepare`, `install`, retry) writes, for each
+  `generate` file, `<sha256 directory>/<file name>`: 64 lowercase hexadecimal
+  characters without a newline, the SHA-256 of exactly the bytes the owner's
+  Secret holds. The secret must be one nonempty line of UTF-8 text without a
+  trailing newline (generated keys are). A correct file (mode 0600, in a
+  0700 directory) is left untouched; a missing or different one is written
+  again through a private temporary file and a rename, so a reader never
+  sees a partial file; the key is never changed. A file or directory with
+  another mode is refused with the `chmod` to run.
+- The owner must be installed (prepared) before the consumer: here the
+  consumer depends on Identity. In dev both go through the same `prepare`.
+  `validate` in the source checkout counts a file an earlier component will
+  publish as present, with its file name as key; a misspelled key or the same
+  file name twice in one Secret is still refused. `validate` of a consumer's
+  bundle alone requires the file.
+- The consumer's install and retry read only the published file. If it is
+  missing, install stops with `Missing ... (SECRET_FILES.<id>)` and the next
+  step; the production manual's stop table has the recovery for the demo.
+- The published file is derived; never deliver an independently computed one.
+  If `sha256:` is removed or its directory moved, delete the old file (and
+  change or remove the consumer's `path`); nothing cleans it up. Replacing
+  the secret is a future rotation job's task; it must prepare the owner
+  before the consumer.
+
 ## Converting a service
 
 1. Add the component's ID to the list in `bundles.yaml` and create

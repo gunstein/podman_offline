@@ -134,12 +134,24 @@ def rename_env(values):
     return result
 
 
+def rename_source(source):
+    """A path into another component's directory (backlog 88) follows its rename."""
+    path = source.get("path") if isinstance(source, dict) else None
+    if not isinstance(path, str) or not path.startswith("../"):
+        return source
+    owner, _, rest = path[3:].partition("/")
+    return dict(source, path=f"../{rename(owner)}/{rest}")
+
+
 def rename_defaults(config):
     """Rename prefixed file-source IDs and the database host."""
     result = dict(config)
     for group in ("SECRET_FILES", "VOLUME_FILES"):
         if group in result:
-            result[group] = {rename(key): value for key, value in result[group].items()}
+            result[group] = {
+                rename(key): [rename_source(source) for source in value]
+                for key, value in result[group].items()
+            }
     if "ENVIRONMENT" in result:
         result["ENVIRONMENT"] = {
             container: rename_env(values)

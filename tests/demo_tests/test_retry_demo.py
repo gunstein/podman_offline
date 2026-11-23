@@ -7,12 +7,18 @@ from pathlib import Path
 import yaml
 from deployment import catalog, common
 
+from demo_tests.demo_fixture import PUBLISHED_DIGEST, write_published_file
 from helpers.retry_fixture import service
 from helpers.retry_lifecycle import RetryFixture
 
 
 class DemoRetryTests(RetryFixture):
     def actual_app_credentials(self, source=None):
+        # Identity is installed before app1 and has published its audit digest,
+        # which the demo app1 reads (backlog 88).
+        write_published_file(
+            common.STATE / "identity/credentials/audit-sha256/audit_key"
+        )
         return super().actual_app_credentials(
             source or Path(__file__).resolve().parents[2]
         )
@@ -80,3 +86,49 @@ class DemoRetryTests(RetryFixture):
                 if name.startswith("app2/")
             },
         )
+
+    def app1_env_secret(self):
+        documents = yaml.safe_load_all(catalog.component_paths("app1")[2].read_text())
+        return next(
+            doc
+            for doc in documents
+            if doc["metadata"]["name"] == "app1-backend-env-secret"
+        )
+
+    def test_separate_app1_install_and_retry_use_the_published_digest(self):
+        """Backlog 88: app1's own install reads only Identity's published file."""
+        digest = common.STATE / "identity/credentials/audit-sha256/audit_key"
+        self.actual_app_credentials()
+        self.assertEqual(
+            base64.b64decode(self.app1_env_secret()["data"]["AUDIT_KEY_SHA256"]),
+            PUBLISHED_DIGEST,
+        )
+        # A fresh-process retry after a failed upgrade uses it again.
+        self.write("components/app1/VERSION", "1.2.4\n")
+        self.changed()
+        self.attempt(expected=1, failure=service("app1"))
+        self.attempt()
+        self.assertEqual(
+            base64.b64decode(self.app1_env_secret()["data"]["AUDIT_KEY_SHA256"]),
+            PUBLISHED_DIGEST,
+        )
+        # app1 never generates or opens Identity's raw key, nor changes the file.
+        self.assertFalse((common.STATE / "identity/credentials/audit").exists())
+        self.assertEqual(digest.read_bytes(), PUBLISHED_DIGEST)
+        self.assertEqual(digest.stat().st_mode & 0o777, 0o600)
+
+    def test_missing_digest_stops_app1_with_the_next_step(self):
+        self.actual_app_credentials()
+        (common.STATE / "identity/credentials/audit-sha256/audit_key").unlink()
+        self.write("components/app1/VERSION", "1.2.4\n")
+        events = self.attempt(expected=1)
+        message = events[-1][2]
+        self.assertRegex(
+            message,
+            r"^Missing .*/identity/credentials/audit-sha256/audit_key "
+            r"\(SECRET_FILES.app1-audit-key-sha256\); if another component "
+            r"publishes this file, install that component again first",
+        )
+        self.assertNotIn(PUBLISHED_DIGEST.decode(), json.dumps(events))
+        # Stopped in materialization: nothing of the new version was published.
+        self.assertNotIn("1.2.4", (common.STATE / "installed/app1").read_text())

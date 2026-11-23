@@ -19,6 +19,10 @@ SECRET_FILES:
   - path: credentials/report
     generate:
     - password
+  # The SHA-256 Identity publishes of its audit key (backlog 88); app1 never
+  # reads the key itself.
+  app1-audit-key-sha256:
+  - path: ../identity/credentials/audit-sha256/audit_key
 
 # The environment of each container. It comes with the release and is never
 # copied to config.yaml. APP_ID and BASE_PATH come from client.yaml.
@@ -29,6 +33,7 @@ ENVIRONMENT:
     PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
     HTTPS_PORT: '@@HTTPS_PORT@@'
     DEMO_CONFIG_LAYER: '@@DEMO_CONFIG_LAYER@@'
+    AUDIT_KEY_SHA256: '@@secret:app1-audit-key-sha256/audit_key@@'
 
 # Files mounted into each container. They come with the release; @@...@@ is
 # filled in at install. Never copied to config.yaml.

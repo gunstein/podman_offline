@@ -46,7 +46,10 @@ class DemoRenderTests(DeployFixture):
             for group in ("SECRET_FILES", "VOLUME_FILES"):
                 for paths in config.get(group, {}).values():
                     for source in paths:
-                        if "component_file" in source:
+                        # Another component's published file: write_secret_fixtures.
+                        if "component_file" in source or source["path"].startswith(
+                            "../"
+                        ):
                             continue
                         target = base / source["path"]
                         target.mkdir(parents=True, exist_ok=True)
@@ -84,8 +87,10 @@ class DemoRenderTests(DeployFixture):
         self.assertEqual(kinds.count("Pod"), 9)
         # app3's API secret and recipe and app1's report password with the
         # MOUNTS file Secret built from it. Identity's registration Secret (72)
-        # exists only in environments with app3's lines (backlog 85).
-        self.assertEqual(kinds.count("Secret"), 15)
+        # exists only in environments with app3's lines (backlog 85). Identity's
+        # audit key, app1's published SHA-256 of it and the backend environment
+        # Secret that carries it (backlog 88).
+        self.assertEqual(kinds.count("Secret"), 18)
         sql = next(
             doc for doc in docs if doc["metadata"]["name"] == "app1-seed-database-files"
         )

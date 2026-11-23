@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 from deployment import render as rendering
 
-from demo_tests.demo_fixture import DEMO_PUBLIC
+from demo_tests.demo_fixture import DEMO_PUBLIC, write_published_file
 from helpers.deploy_fixture import DeployFixture
 from helpers.render_helper import materialize_and_render
 
@@ -42,6 +42,10 @@ class CredentialDeliveryTests(DeployFixture):
             path = self.write(prefix + "config.yaml", yaml.safe_dump(config), 0o600)
             for name in ("todo-client.key", "todo-client.crt", "ca.crt"):
                 self.write(prefix + "credentials/todo/" + name, component + name, 0o600)
+            # Identity's published audit digest, which app1 reads (backlog 88).
+            write_published_file(
+                self.root / "home/identity/credentials/audit-sha256/audit_key"
+            )
             files = path.parent / "files"
 
             def render(files=files, path=path, component=component):
@@ -142,11 +146,16 @@ class CredentialDeliveryTests(DeployFixture):
                 str(path.relative_to(self.root))
                 for path in rendering.generated_secret_paths(config, self.root)
             ],
-            ["credentials/identity-db/password"],
+            ["credentials/identity-db/password", "credentials/audit/audit_key"],
         )
         self.assertEqual(
             set(config["SECRET_FILES"]),
-            {"identity-signing", "identity-database-password", "identity-demo-users"},
+            {
+                "identity-signing",
+                "identity-database-password",
+                "identity-demo-users",
+                "identity-audit-key",
+            },
         )
         path = self.write("home/identity/config.yaml", yaml.safe_dump(config), 0o600)
         rendering.generate_secrets(config, path.parent)

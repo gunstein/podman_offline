@@ -56,13 +56,17 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 88. Give app1 the SHA-256 of Identity's audit key automatically
 
-Status: **open; simplified scope proposal awaiting product-owner approval**
-(requested 2026-11-23; simplified after the product-owner decision of
-2026-11-23 below; earlier revisions and their reviews are in git history,
-last `9144b8f`; this text also takes in the reviews of `4fa0780`, `c6f0f67` and
-`9528412`). Nothing is implemented. If implementation shows that more
-production files or functions must change, the reason is explained and
-agreed with the product owner first.
+Status: **implemented; real Podman/systemd lab not yet run** (scope approved
+by the product owner on 2026-11-23 as written in `32d8578`; the demo uses the
+example names below). Product and demo tests
+(`tests/platform_tests/test_secret_digests.py`,
+`tests/demo_tests/test_audit_digest_demo.py`, `test_retry_demo.py`) and the
+acceptance-harness tests (`acceptance/test_audit_digest.py`,
+`test_renamed.py`) pass; the in-container comparison `audit_digest` in
+`acceptance/remote.sh` runs after each `config_layers` check in the lab and
+remains to be verified there. Only the five production files listed below
+were changed. Earlier revisions of this item and their reviews are in git
+history (last proposal `32d8578`).
 
 Need: Identity uses the raw `audit_key`; app1 expects `audit_key_sha256`.
 Today's Helm chart computes `{{ $auditKey | b64dec | sha256sum | b64enc | quote }}`,

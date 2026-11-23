@@ -12,6 +12,12 @@ SECRET_FILES:
     - password
   identity-demo-users:
   - path: credentials/users
+  # Generated once and kept; its SHA-256 is published for app1 (backlog 88).
+  identity-audit-key:
+  - path: credentials/audit
+    generate:
+    - audit_key
+    sha256: credentials/audit-sha256
 
 # The environment of each container. It comes with the release and is never
 # copied to config.yaml.
@@ -20,6 +26,7 @@ ENVIRONMENT:
     PUBLIC_ORIGIN: '@@PUBLIC_ORIGIN@@'
     HTTPS_PORT: '@@HTTPS_PORT@@'
     ConnectionStrings__Default: 'Host=@@DB_HOST@@;Port=@@DB_PORT@@;Database=@@DB_NAME@@;Username=@@DB_USER@@;Password=@@secret:identity-database-password/password@@;Timeout=5;Include Error Detail=false'
+    Audit__Key: '@@secret:identity-audit-key/audit_key@@'
     # app3 is an optional API (backlog 85): its ApiResources__0__* lines are in
     # the environments that include app3 (config/whoami.yaml) and, for dev, in
     # config/dev.yaml's overrides (config/dev.yaml.example).
