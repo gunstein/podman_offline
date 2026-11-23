@@ -56,98 +56,84 @@ Open items follow, newest first. Finished and superseded items were removed on
 
 ## 88. Give app1 the SHA-256 of Identity's audit key automatically
 
-Status: **open; revised scope proposal awaiting product-owner approval**
-(requested 2026-11-23; revised after independent reviews of `31c286e`,
-`de0fd74`, `0541009`, `df19a2c` and `997447f`). Nothing is implemented. The new source
-field below is a proposal. If implementation shows that more production
-files or functions must change, the reason is explained and agreed with the
-product owner first.
+Status: **open; simplified scope proposal awaiting product-owner approval**
+(requested 2026-11-23; simplified after the product-owner decision of
+2026-11-23 below; earlier revisions and their reviews are in git history,
+last `9144b8f`). Nothing is implemented. If implementation shows that more
+production files or functions must change, the reason is explained and
+agreed with the product owner first.
 
 Need: Identity uses the raw `audit_key`; app1 expects `audit_key_sha256`.
 Today's Helm chart computes `{{ $auditKey | b64dec | sha256sum | b64enc | quote }}`,
-so what app1 actually receives after Kubernetes decodes the Secret is the
-SHA-256 of the raw key's exact bytes, as 64 lowercase hexadecimal characters
-without a newline. The key comes from today's generator (32 characters);
-changing its length is out of scope.
+so app1 receives the SHA-256 of the raw key's exact bytes, as 64 lowercase
+hexadecimal characters without a newline. The key comes from today's
+generator (32 characters); changing its length is out of scope.
+
+Product-owner decision (2026-11-23): `audit_key` is never replaced by hand.
+Ordinary install, reinstall and retry keep the existing key. A future,
+separate rotation job will coordinate replacing secrets and preparing the
+affected components again. `audit_key_sha256` is derived from `audit_key` and
+is never rotated on its own. The digest file may therefore be written when
+Identity is prepared or installed; it need not wait for restart, health check
+or the installed marker, and it need not represent the last Identity install
+that passed its health check. A separate app1 install uses the published
+digest.
 
 Required outcome:
 
-- The existing first-run procedure works unchanged with no audit files in
-  `build/`: `./dev/demo-credentials.sh`, `./deploy.sh validate`,
-  `./dev/dev.sh up` (README "Run locally"; `acceptance/remote.sh` runs the
-  same order). One `up` generates the key and gives app1 the right digest.
-- In production, a standalone app1 release installed on its own gets the
-  digest of the key used by Identity's last successfully activated install
-  (restarted and healthy), also when the key was introduced by Identity
-  release defaults absent from Identity's persistent `config.yaml`. A new
-  install or retry of app1 never changes the raw key. app1's Secret holds only
-  the digest.
-- Only a digest that Identity declares is published. The producer
-  exclusively owns its declared output file names; operators must not deliver
-  files there. Publication rechecks the destination and replaces only those
-  reserved file names, so it never writes over another declared credential,
-  source or state file. (A regular file an operator misplaces at a reserved
-  name cannot be told from an earlier digest and is replaced; detecting that
-  would be a stronger requirement, decision 2.)
-- A missing digest gives the operator a concrete next step. Neither key nor
-  digest appears on stdout, stderr, in the journal, in arguments, file names
-  or exception text.
-- Not requested: automatic rotation, a general mechanism for sharing
-  arbitrary secrets between components, exclusive access control between
-  components run by the same service account, new config files, CLI flags or
-  changes to Bash.
+1. Identity uses today's `generate: [audit_key]`: a missing key is generated
+   by today's 32-character generator, an existing key is kept.
+2. One optional field `sha256:` on that source; ordinary `@@secret:` in both
+   Identity and app1; explicit paths; app1 names one file.
+3. The digest is computed from the same raw bytes used for Identity's Secret,
+   also when the key already existed, after the byte rule below; 64 lowercase
+   hex characters without a newline. The digest file is written if it is
+   missing or holds another value; a correct file is left untouched.
+4. `./dev/demo-credentials.sh`, `./deploy.sh validate`, `./dev/dev.sh up`
+   works with no audit files present (README "Run locally"). In production,
+   app1 can be installed from its own bundle after Identity. Installing or
+   retrying app1 never generates, changes or reads the raw key.
+5. Private, atomic writing; protection against paths and symlinks that could
+   overwrite other files; neither key nor digest in messages, logs, the
+   journal, arguments or file names. `validate` checks the declared digest
+   file and key name on the first dev run without reading or creating either
+   file.
 
-### What the current code gives (checked on `df19a2c`)
+Not requested: manual rotation, a general mechanism for sharing secrets, new
+config files, CLI flags or Bash changes.
 
-- `render.generate_secrets` creates each missing `generate:` file once (0600,
-  32 characters of `[A-Za-z0-9]`, no newline) and accepts an existing
-  nonempty file unchanged. `render.materialize` then reads the source files
-  once into the Secret documents of the rendered install YAML, and
-  `templates.documents` builds Identity's environment Secret from those
-  in-memory bytes (decoded UTF-8, trailing LF stripped, `check_text`).
-  `generated_secret_paths` lists random-generation targets only; `deploy.py`
-  uses membership in it for database passwords, so digest outputs stay out of
-  it.
-- `render.validate_component_config` checks a component's config before the
-  first write: through `render.py`'s effective config in dev `prepare` and
-  `validate`, and in `deploy.py` before an install stages anything.
-- A `SECRET_FILES` `path` is resolved from the component's config directory
-  (`build/dev/<id>/` in dev, `state/<id>/` in production, also during
-  registration staging and `materialize_component_manifests`), and may name
-  one file. A missing delivered source makes `render.secret_keys` report the
-  Secret's keys as unknown (`None`), so `templates.validate` cannot catch a
-  misspelled key; `validation.check_sources` (`render.check_file_sources`)
-  refuses the missing file.
+### What the current code gives (checked on `9144b8f`)
+
+- `render.materialize` is the one place where both dev `prepare`
+  (`deploy.prepare_components`) and production install
+  (`deploy.materialize_component_manifests`) render a component. It runs
+  `generate_secrets` (create missing, keep existing), then `load_file_group`
+  and `secret_documents`, which read each source file once into the Secret
+  documents; `templates.documents` builds Identity's environment value from
+  those in-memory bytes (UTF-8, trailing LF stripped, `check_text`). Nothing
+  else reads the raw key afterwards.
 - Dev `prepare` materializes in dependency order (`platform, identity, app1,
-  …`).
-- In `deploy.apply_component_install` the order is: materialize, image
-  loading (`load_and_verify_images`), `begin_install` (the pending record),
-  registrations and units, `restart_component_services` (systemd activity,
-  running containers and, where defined, healthy: `deploy.restart_service`,
-  `health.py`), the installed marker, `clear_pending`. There is one pending
-  record per product (`registrations.check_pending`): while it exists, a
-  direct or named install of another component is refused; an unnamed
-  runtime run finishes the pending install first and reads the status again.
-  Before Identity's first marker exists, app1's dependency check stops it.
-- Downgrade refusal comes before materialization; `check-environment`,
-  `init-config` and `status` read no credential contents; ordinary uninstall
-  keeps credentials, uninstalling Identity with installed dependents is
-  refused, and `--delete-data` removes `state/identity/`, a digest below it
-  included.
-- `bundle.generated_secret_guard` keeps each component's `credentials/`
-  (and `build/dev/<id>/credentials/`) out of bundles, including symlink
-  aliases.
+  …`); a production component install materializes before any image loading
+  or restart. app1 depends on Identity through `client.yaml`, so Identity is
+  installed first.
+- A `SECRET_FILES` `path` is resolved from the component's config directory
+  (`build/dev/<id>/`, `state/<id>/`) and may name one file; `../identity/...`
+  reaches Identity's directory in both contexts.
+- A missing delivered source makes `render.secret_keys` report the Secret's
+  keys as unknown, so a misspelled key passes the recipe, `MOUNTS`
+  (`deploy.check_selected_keys`) and manifest (`render.check_secret_keys`)
+  checks; `validation.check_sources` (`render.check_file_sources`) refuses the
+  missing file. This is why first-run `validate` needs to know the promised
+  file.
+- `bundle.generated_secret_guard` keeps each component's `credentials/` out
+  of bundles.
 
-No existing declarative operation hashes a value: `generate` produces
-independent random values and `@@secret:` selects or composes values without
-hashing. That is the one requirement that fails without new syntax: "app1
-receives only the digest, automatically". The consumer needs no new syntax.
+No existing declarative operation hashes a value, so the one new field is
+needed for "app1 receives only the digest, automatically".
 
-### Proposed minimal change
+### Proposed change
 
-Proposal – requires product-owner approval (one new optional field on
-Identity's source, and an exact-file `path` from app1 into Identity's
-credentials directory):
+Proposal – requires product-owner approval:
 
 ```yaml
 # components/identity/config.defaults.yaml
@@ -156,7 +142,7 @@ SECRET_FILES:
   - path: credentials/audit
     generate:
     - audit_key
-    sha256: credentials/audit-sha256        # new: publish the digest here
+    sha256: credentials/audit-sha256        # new: write the digest here
 ENVIRONMENT:
   app:
     Audit__Key: '@@secret:identity-audit-key/audit_key@@'
@@ -172,245 +158,135 @@ ENVIRONMENT:
 
 Behavior:
 
-- **Raw key:** owned and generated by Identity as today, in one
-  authoritative file.
-- **Digest from the rendered bytes:** after Identity's materialization, the
-  digest is computed from the Secret entry `<id>/<name>` in the rendered
-  install YAML, the bytes Identity's environment value is built from. The raw
-  file is never reopened for this. Those bytes must pass the API secret rule
-  (valid UTF-8, nonempty, no trailing LF, nothing `check_text` refuses);
-  otherwise the command stops without naming the value. The result is
-  `hashlib.sha256(bytes).hexdigest()` without a newline, kept in memory.
-- **Published at activation:** production writes `<sha256 dir>/<name>` after
-  `restart_component_services` succeeded and before the installed marker,
-  while Identity's install is pending. Dev publishes in `prepare` right after
-  Identity's successful materialization and before app1's; a failed Identity
-  render publishes nothing, and a rerun reuses the retained raw key. Neither
-  `registrations.api_updates` nor the `dev/demo-credentials.sh` preflight
-  publishes.
-- **Failure windows** (all follow from the existing order):
-  - Image loading fails: no pending record is created; the previous digest
-    stays and Identity keeps running with its previous key. A separate app1
-    install still succeeds with that digest, which is correct under "last
-    activated". On Identity's first install there is no marker, so app1's
-    dependency check stops it.
-  - Restart or health check fails, or an interruption after a successful
-    restart but before publication: the pending record exists, the previous
-    digest (or none on a first install) stays, and a separate app1 install
-    is refused until Identity's retry. A fresh-process retry renders again
-    from the retained key and publishes.
-  - Interruption after publication but before the marker: the digest is
-    complete and new; app1 is still refused until Identity's retry
-    completes.
-- **Output rules, checked before any write** (called from
-  `validate_component_config`, so in `validate`, `prepare` and `install`, on
-  the effective config after dev and operator overrides) and again at
-  publication: `sha256:` only on a `SECRET_FILES` `path` source with
-  `generate:`; a relative path strictly below the component's real
-  `credentials/`, without `~`, `..` or an absolute path; no symlinked
-  ancestor (including `credentials/` itself) and no symlink or non-regular
-  final target; resolved, it must not equal, contain or lie inside any
-  `SECRET_FILES`/`VOLUME_FILES` path, generation target or other `sha256:`
-  directory of the component; not in `VOLUME_FILES`. The directory is
-  reserved for published digests: the documentation says nothing else may be
-  delivered there, and publication replaces only the reserved `<dir>/<name>`. The file is
-  written 0600 in a 0700 directory through a private temporary file in that
-  directory and a rename.
-- **Why a stored digest:** a standalone app1 release cannot reconstruct
-  Identity's effective config (its bundle does not ship Identity's defaults).
-  The published file records what Identity last activated; the raw key stays
-  authoritative. No state record.
-- **Consumer:** app1 names one exact file; the published regular file is the
-  only content of its Secret.
-- **First-run validate:** in the source catalog's `validate`, each
-  component's effective digest outputs (in dependency order) are collected.
-  A missing `SECRET_FILES` file whose resolved path is exactly such an output
-  counts as present, and its file name counts as a known key in every
-  catalog key check: `ENVIRONMENT` recipes, `MOUNTS`
-  (`deploy.check_selected_keys`) and manifest `secretKeyRef`/`items`
-  (`render.check_secret_keys`). A misspelled key is therefore still refused
-  wherever it is used. Only producers already visited in prepare's
-  dependency order can promise a file; an empty promise set keeps today's
-  behavior for every other caller. Every other missing source is refused as
-  today. `validate` opens neither the raw key nor the digest and writes no
-  persistent state (it already stages registrations temporarily and reads the
-  public OIDC certificate). `validate_bundle` of a standalone app1 bundle
-  stays strict.
-- **Missing digest at app1's install:** stops in materialization with the
-  existing `Missing <path> (SECRET_FILES.<id>)`, extended with a hint for a
-  missing `path` source (`SECRET_FILES` or `VOLUME_FILES`): `if another
-  component publishes this file, install that component again first; otherwise
-  deliver it; then run the same command again`. A missing shipped
-  `component_file` fails earlier with its own diagnostic (correct the
-  release) and is unchanged. By then app1 may have generated its own missing secrets (kept by a
-  retry), and the runtime may have run `init-layout`, `init-config` or moved
-  incoming files; app1 has not loaded images, restarted or completed.
-- **Operator recovery for the audit digest** (one row in the shipped
-  production manual's stop table; format details in `docs/COMPONENTS.md`):
-  - Only the digest is missing (raw key intact, Identity's release declares
-    `sha256:`): reinstall Identity by name with its original environment
-    option, then retry app1.
-  - Raw key lost: restore it from backup first; reinstalling Identity without
-    it generates a new key, which is a rotation.
-  - Identity's installed release lacks the field: upgrade Identity first. If
-    the operator's `config.yaml` pins its own source list for
-    `identity-audit-key`, that list replaces the release's whole list, so add
-    `sha256:` there too.
-  - Never deliver an independently computed digest.
-  - A moved `sha256:` output: delete the old file and give app1 the new
-    `path`. A removed output: remove or replace app1's declaration and its
-    `@@secret:` reference, and delete the old file. There is no cleanup code
-    or state record.
-- **Rotation (manual):** finish any pending operation; replace the key
-  file; run `<product> --environment <env> <identity-id>`, then
-  `<product> --environment <env> <app-id>` (without `--environment` where no
-  environment file is used). Both must be named: a whole-product run can skip
-  a completed component because the key bytes are not part of what it
-  compares.
+- **One place:** inside `render.materialize`, after `secret_documents` and
+  `templates.documents` have succeeded, for each `generate:` name of a source
+  with `sha256:`, the Secret entry `<id>/<name>` (already in memory) must pass
+  the byte rule: valid UTF-8, nonempty, no trailing LF, nothing
+  `templates.check_text` refuses; otherwise the render stops without naming
+  the value. Its `hashlib.sha256(...).hexdigest()` is compared with
+  `<sha256 dir>/<name>`; if the file is missing or differs, it is written
+  0600 in a 0700 directory through a private temporary file in that
+  directory and a rename. The raw file is not reopened. Because dev `prepare`
+  and production install both go through `materialize`, no other call site
+  is needed, and the digest exists before app1 is rendered in the same
+  `prepare`.
+- **Path safety:** `sha256:` only on a `SECRET_FILES` `path` source with
+  `generate:`; a relative path strictly below the component's `credentials/`,
+  without `~`, `..` or an absolute path (checked in `file_group_sources`, so
+  `validate` reports it). Before writing, the resolved directory must not
+  equal, contain or lie inside any `SECRET_FILES`/`VOLUME_FILES` path,
+  generation target or other `sha256:` directory of the component, and no
+  ancestor (including `credentials/`) may be a symlink and the target must be
+  a regular file or absent. The producer exclusively owns its declared
+  output file names; operators must not deliver files there.
+- **app1:** reads the one published file with today's `path` and
+  `@@secret:`; it never generates, changes or reads the raw key. Its Secret
+  holds only the digest.
+- **First-run validate:** in the source catalog's `validate`, the digest
+  outputs of components already visited in dependency order are promised
+  files. A missing `SECRET_FILES` file whose resolved path is a promised file
+  counts as present and its file name as a known key in the recipe, `MOUNTS`
+  and manifest key checks, so a misspelled key is still refused. Nothing is
+  read or written. An empty promise set keeps today's behavior for every
+  other caller; `validate_bundle` of a standalone app1 bundle stays strict.
+- **Missing digest at app1's install:** the existing
+  `Missing <path> (SECRET_FILES.<id>)` gains a hint for a missing `path`
+  source: `if another component publishes this file, install that component
+  again first; otherwise deliver it; then run the same command again`.
+- **Operator recovery** (one row in the shipped manual's stop table): if only
+  the digest is missing, prepare or install Identity again with the same
+  environment option, then retry app1. If a raw key that was already in use
+  is lost, restore it from backup. A future rotation job must prepare
+  Identity before app1.
 
-### What "only the digest" guarantees
-
-app1's Secret and container receive only the digest. Other components run by
-the same service account can still read any file by `path`, as today;
-general path confinement is a separate item. The real consumer must already
-depend on Identity, as the demo's app1 does through `client.yaml`.
+Pending install and retry rules are unchanged.
 
 ### Production files and functions to change
 
 1. `deployment/render.py`
-   - `file_group_sources`: accept `sha256`; without it the field is refused
-     as unknown.
-   - New `digest_outputs(config, base_dir)` next to `generated_secret_paths`
-     (not inside it), called from `validate_component_config`: resolve and
-     check the output rules before any write; without it a digest could
-     overwrite a password, another source or a delivered file.
-   - New `secret_digests(config, base_dir, text)`: digests from the Secret
-     entries of the rendered install YAML, with the byte rule, parsing nothing
-     when the component declares no output; without it the digest could
-     differ from the key Identity uses.
-   - New `publish_digests(digests)`: re-check and write safely; without it
-     nothing publishes the digest.
-   - `secret_keys`, `check_secret_keys` and `check_file_sources`: an
-     optional set of promised files counted as present with their file names
-     as keys (empty by default); without it the first-run `validate` either
-     refuses app1 or misses a misspelled recipe, `MOUNTS` or manifest key.
-   - `load_file_group`: the generic next-step hint; without it the operator
-     sees only a path.
-2. `deployment/deploy.py`
-   - `check_selected_keys`: pass the promised files on to the `MOUNTS` and
-     manifest key checks (empty by default); without it a misspelled `MOUNTS`
-     or manifest key passes catalog validation and fails only at `up`.
-   - `prepare_components`: compute and publish each component's digests
-     right after its materialization; without it app1 is rendered before any
-     digest exists in dev.
-   - `apply_component_install`: compute after materialization, publish after
-     `restart_component_services` and before the marker; without it a failed
-     activation could publish a digest for a key Identity never used.
-3. `deployment/validation.py`
-   - `validate_catalog` and `check_sources`: collect the digest outputs of
-     the components already visited in dependency order and pass them to the
-     recipe, `MOUNTS`, manifest and file-existence checks;
-     without it the documented `validate` before `up` fails.
-4. `components/identity/config.defaults.yaml`: the key, its digest
-   directory and Identity's variable; without it nothing is generated or
-   published.
-5. `components/app1/config.defaults.yaml`: the exact digest file and app1's
+   - `file_group_sources`: accept `sha256` and check its path syntax;
+     without it the field is refused or an unsafe path is accepted.
+   - `materialize`, with one new helper `write_digests` it calls: byte rule,
+     compare and atomic write, with the resolved-path checks; without it
+     nothing produces the digest, or it could overwrite another file.
+   - `secret_keys`, `check_secret_keys`, `check_file_sources`: an optional
+     set of promised files (empty by default); without it first-run
+     `validate` refuses app1 or misses a misspelled key.
+   - `load_file_group`: the hint; without it the operator sees only a path.
+2. `deployment/deploy.py` `check_selected_keys`: pass the promised files on
+   to the `MOUNTS` and manifest key checks; without it a misspelled key
+   passes `validate` and fails at `up`.
+3. `deployment/validation.py` `validate_catalog` and `check_sources`:
+   collect the promised files in dependency order and pass them on; without
+   it the documented `validate` before `up` fails.
+4. `components/identity/config.defaults.yaml`: the key, `sha256:` and
+   Identity's variable; without it nothing is generated or published.
+5. `components/app1/config.defaults.yaml`: the one digest file and app1's
    variable; without it app1 receives nothing.
 
-No change to Bash, `bundle.py`, `rpms.py`, templates, API registrations,
-catalog merging, `init-config`, `status` or the runtime CLI. Release
-preparation: the shared `deployment/` change needs a new `VERSION` for every
-component delivered with it (docs/COMPONENTS.md, delivery rule), made when
-the release is prepared. The demo names stand in until the real names are
-known.
+No change to `prepare_components`, `apply_component_install`, Bash,
+`bundle.py`, `rpms.py`, templates, API registrations, catalog merging or the
+runtime CLI. The shared `deployment/` change needs a new `VERSION` for every
+component delivered with it, at release preparation (docs/COMPONENTS.md
+delivery rule). The demo names stand in until the real names are known.
 
-### Tests (separate from production files)
+### Tests (separate)
 
-- Product tests (`tests/platform_tests/`, existing fixtures or one focused
-  file):
-  - Field rules: a collision with another source's raw directory (its bytes
-    survive), `~`, `..`, absolute, outside `credentials/`, a symlinked
-    `credentials/` or ancestor, a symlinked or non-regular target, a
-    redirected dev component directory (the other component's bytes
-    survive), and a dev override of the source list.
-  - Digest: a synthetic key gives an independently known digest, no newline,
-    0600/0700; materialize with raw key A, replace the raw file with B
-    before calling `secret_digests`, and assert the independently known
-    digest of A; invalid
-    UTF-8, an empty key, CRLF and trailing LF are refused; a retry keeps the
-    raw key; an interrupted rename leaves the previous complete digest.
-  - Leakage: synthetic sentinel key and digest absent from stdout, stderr and
-    the journal on success and on failure.
-  - `validate`: opens neither the raw key nor the digest and writes no
-    persistent state; first run with the digest absent passes with the right
-    key, refuses a misspelled key in a recipe, in `MOUNTS` and in a manifest
-    selection, and an unrelated missing source beside it; a promise from a
-    component later in dependency order is not accepted; `validate_bundle` of
-    app1 alone refuses the missing digest.
-- Install windows (existing install tests): image loading fails after a key
-  change (no pending record; old digest unchanged; a separate app1 install
-  succeeds with the old digest), restart or health failure, interruption
-  after health but before publication, and after publication but before the
-  marker (the digest is inspected while Identity is still pending, before a
-  retry can repair it; the pending record refuses a direct or named app1
-  install; a fresh-process Identity retry finishes from the retained key; an
-  unnamed runtime run finishes Identity first); Identity's first install (app1
-  stopped by the dependency check); an isolated app1 release after an
-  Identity upgrade that adds the whole ID through release defaults; an older
-  Identity without the field; a pinned operator source list without
-  `sha256:`; `check-environment` on a fresh host; the missing-digest message;
-  named reinstalls with `--environment`.
+- Product tests (`tests/platform_tests/`):
+  - A synthetic key gives an independently known digest, no newline,
+    0600/0700.
+  - Existing key: kept; a correct digest file is left untouched (same
+    content and modification time); a missing or wrong digest is written
+    again and the raw key bytes are unchanged.
+  - Byte source: materialize with key A while the raw file is replaced by B
+    after `secret_documents` read it; the digest is that of A.
+  - Byte rule: invalid UTF-8, empty, CRLF and trailing LF refused; sentinel
+    key and digest absent from stdout, stderr and the journal on success and
+    failure.
+  - Path safety: `~`, `..`, absolute, outside `credentials/`, collision with
+    another source's raw directory (its bytes survive), a symlinked
+    `credentials/` or ancestor, a symlinked or non-regular target.
+  - `validate`: first run with the digest absent passes with the right key,
+    refuses a misspelled key in a recipe, in `MOUNTS` and in a manifest
+    selection, refuses an unrelated missing source and a promise from a later
+    component; reads and writes no credential file; `validate_bundle` of app1
+    alone refuses the missing digest.
 - Dev flow: `demo-credentials` preflight, `validate`, `prepare` with no audit
   files; app1's decoded `AUDIT_KEY_SHA256` equals the known digest; app1's
   whole rendered output contains neither the raw key nor its Base64 form.
+- Production flow: an isolated app1 release installed after Identity gets
+  the digest; Identity reinstalled with an unchanged key leaves key and
+  digest as they were; app1's install and retry open no file under Identity's
+  raw key directory; the missing-digest message.
 - Existing tests and fixtures to update: `tests/demo_tests/demo_fixture.py`
-  (`write_secret_fixtures` creates a directory for every `SECRET_FILES`
-  path; with an exact-file source it must create the file, with producer and
-  consumer as siblings under one test root),
-  `tests/demo_tests/test_init_database.py` (uses a temporary directory as
-  app1's base, so `../identity` escapes it), `tests/demo_tests/test_render_demo.py`
-  (own dummy directories and the exact Secret count),
-  `tests/demo_tests/test_credential_delivery.py` (Identity's generated paths
-  and Secret IDs).
+  (exact-file sources; producer and consumer as siblings under one test
+  root), `tests/demo_tests/test_init_database.py`,
+  `tests/demo_tests/test_render_demo.py`,
+  `tests/demo_tests/test_credential_delivery.py`.
 - Acceptance harness (separate): `acceptance/renamed_product.py` renames the
-  `../identity/` path when the producer is renamed; the dev and production
-  scenarios compare inside the containers that app1's value is the digest of
-  Identity's `Audit__Key`, printing only a verdict, with the existing order
-  demo-credentials, validate, up, and again after a named same-version
-  rotation of Identity and app1. Then a real Podman/systemd lab run,
+  `../identity/` path with the producer; the dev and production scenarios
+  check inside the containers that app1's value is the digest of Identity's
+  `Audit__Key`, printing only a verdict. Then a real Podman/systemd lab run,
   recorded in `acceptance/RESULTS.md`.
 
 ### Documentation (separate)
 
-- `docs/PRODUCTION-INSTALL.md` (ships in every bundle): one row in "If a
-  command stops": if only the published digest is missing, reinstall Identity
-  by name with its original environment option, then retry app1; if the raw
-  key is missing, restore it from backup first.
-- `docs/COMPONENTS.md`: the `sha256` field and its rules, the reserved file
-  names, the consumer example, the other recovery cases, moved and removed
-  outputs, and manual rotation.
+- `docs/PRODUCTION-INSTALL.md` (ships in every bundle): the recovery row.
+- `docs/COMPONENTS.md`: the `sha256` field, its path rules, the reserved
+  output file names and the consumer example.
 - `docs/REVIEW_GUIDE.md`: "Secret values", "Credential retention",
   "Validation" and "Operator messages".
 - This item's status after implementation and lab verification.
 
 ### To decide
 
-1. app1 trusts Identity's last successfully activated install (the reason
-   `deploy.py` is in scope).
-2. Output in a dedicated directory below Identity's `credentials/`; the
-   producer exclusively owns its declared output file names and operators
-   must not deliver files there, with the consumer naming the exact file.
-   Detecting a regular file misplaced at a reserved name is not provided.
-3. Stale outputs are cleaned up by the operator, as documented, without code
-   or a state record.
-4. "Only the digest" means app1's Secret and container; exclusive access
-   against other components of the same service account is out of scope.
-5. The real names (Identity's variable, the `SECRET_FILES` ID and file name,
+1. Approve the `sha256:` field and app1's exact-file `path` into Identity's
+   `credentials/`, with the producer owning its output file names.
+2. The real names (Identity's variable, the `SECRET_FILES` ID and file name,
    the consumer's container and variable), and that the real consumer
    depends on Identity.
-6. `VERSION` bumps left to release preparation.
-7. Manual rotation as described, and the production file and function list
-   above as the approved scope.
+3. `VERSION` bumps left to release preparation.
+4. The production file and function list above as the approved scope.
 
 ## 87. A literal `@@` in templates: `@@@@`
 
