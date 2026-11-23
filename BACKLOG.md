@@ -59,7 +59,7 @@ Open items follow, newest first. Finished and superseded items were removed on
 Status: **open; simplified scope proposal awaiting product-owner approval**
 (requested 2026-11-23; simplified after the product-owner decision of
 2026-11-23 below; earlier revisions and their reviews are in git history,
-last `9144b8f`). Nothing is implemented. If implementation shows that more
+last `9144b8f`; this text also takes in the review of `4fa0780`). Nothing is implemented. If implementation shows that more
 production files or functions must change, the reason is explained and
 agreed with the product owner first.
 
@@ -165,39 +165,68 @@ Behavior:
   `templates.check_text` refuses; otherwise the render stops without naming
   the value. Its `hashlib.sha256(...).hexdigest()` is compared with
   `<sha256 dir>/<name>`; if the file is missing or differs, it is written
-  0600 in a 0700 directory through a private temporary file in that
-  directory and a rename. The raw file is not reopened. Because dev `prepare`
+  through a private temporary file (mode 0600 from creation) in that
+  directory, synced, renamed over the target, and the directory synced (the
+  existing sequence in `deploy.py`); a handled failure removes the temporary
+  file, and app1 never sees a partial final file. The Secret entry is
+  Base64-decoded and checked before hashing the original bytes; the raw file
+  is not reopened. A correct file, left untouched, is a readable regular
+  file with mode 0600, the expected bytes, in a 0700 directory. A link, a
+  non-regular target or an unreadable file is refused before comparison; a
+  file or directory with other permissions is refused with a message naming
+  only the path and the mode to set. Errors name the declaration or path,
+  never a value. Because dev `prepare`
   and production install both go through `materialize`, no other call site
   is needed, and the digest exists before app1 is rendered in the same
   `prepare`.
 - **Path safety:** `sha256:` only on a `SECRET_FILES` `path` source with
   `generate:`; a relative path strictly below the component's `credentials/`,
-  without `~`, `..` or an absolute path (checked in `file_group_sources`, so
-  `validate` reports it). Before writing, the resolved directory must not
+  without `~`, `..` or an absolute path (syntax checked in
+  `file_group_sources`, so `validate` reports it). For a component with a
+  `sha256:` source, `validate_component_config` (which receives the merged
+  dev or operator config and runs before dev config writes, `init-config`
+  writes and install staging) checks the effective component base, every
+  ancestor including `credentials/` (no symlink), the destination (absent or
+  a regular file, not a link) and collisions: the resolved directory must not
   equal, contain or lie inside any `SECRET_FILES`/`VOLUME_FILES` path,
-  generation target or other `sha256:` directory of the component, and no
-  ancestor (including `credentials/`) may be a symlink and the target must be
-  a regular file or absent. The producer exclusively owns its declared
-  output file names; operators must not deliver files there.
+  generation target or other `sha256:` directory of the component. This runs
+  before `generate_secrets` could follow a redirected `credentials/`. The
+  writer rechecks the destination immediately before comparison and
+  replacement. The producer exclusively owns its declared output file names;
+  operators must not deliver files there.
 - **app1:** reads the one published file with today's `path` and
   `@@secret:`; it never generates, changes or reads the raw key. Its Secret
-  holds only the digest.
+  holds only the digest. Trust assumption: an ordinary `SECRET_FILES` `path`
+  follows filesystem links, so if someone replaced the published file with a
+  link to the raw key between runs, app1 would read the raw key. The scope
+  assumes the producer exclusively controls that path between runs;
+  protecting against such a substitution is a separate decision (decision 2).
 - **First-run validate:** in the source catalog's `validate`, the digest
   outputs of components already visited in dependency order are promised
   files. A missing `SECRET_FILES` file whose resolved path is a promised file
-  counts as present and its file name as a known key in the recipe, `MOUNTS`
-  and manifest key checks, so a misspelled key is still refused. Nothing is
-  read or written. An empty promise set keeps today's behavior for every
-  other caller; `validate_bundle` of a standalone app1 bundle stays strict.
+  counts as present and its file name as a known key. When promises exist,
+  `validation.check_sources` checks the component's effective `ENVIRONMENT`
+  recipes again with the promise-aware key map (the earlier recipe check in
+  `validate_component` runs without promises), and the same map is used for
+  the `MOUNTS` and manifest key checks, so a misspelled key is still refused.
+  A promised file name also counts in the duplicate-file check of its
+  Secret, so a promised `audit_key` beside a delivered `audit_key` is refused
+  in `validate`, not first at `up`. Validation reads neither audit file and
+  writes no persistent state. An empty promise set keeps today's behavior
+  for every other caller (`MOUNTS` keep their key map, registrations the
+  empty default); `validate_bundle` of a standalone app1 bundle stays
+  strict.
 - **Missing digest at app1's install:** the existing
   `Missing <path> (SECRET_FILES.<id>)` gains a hint for a missing `path`
   source: `if another component publishes this file, install that component
   again first; otherwise deliver it; then run the same command again`.
-- **Operator recovery** (one row in the shipped manual's stop table): if only
-  the digest is missing, prepare or install Identity again with the same
-  environment option, then retry app1. If a raw key that was already in use
-  is lost, restore it from backup. A future rotation job must prepare
-  Identity before app1.
+- **Operator recovery** (one row in the shipped manual's stop table, keyed on
+  `Missing …/audit-sha256/audit_key (SECRET_FILES.<app1-id>-audit-key-sha256)`):
+  run `myproduct --environment prod1 identity` (or `myproduct identity`
+  without an environment file; a plain `myproduct` can skip a completed
+  Identity), then repeat the app1 command that failed. If a raw key that was
+  already in use is missing, restore it from backup first. A future rotation
+  job must prepare Identity before app1.
 
 Pending install and retry rules are unchanged.
 
@@ -206,19 +235,25 @@ Pending install and retry rules are unchanged.
 1. `deployment/render.py`
    - `file_group_sources`: accept `sha256` and check its path syntax;
      without it the field is refused or an unsafe path is accepted.
+   - `validate_component_config`: call a new `check_digest_outputs` (resolved
+     base, ancestors, destination, collisions) for a component with a
+     `sha256:` source; without it `generate_secrets` or dev config writes
+     could already follow a redirected `credentials/` before any refusal.
    - `materialize`, with one new helper `write_digests` it calls: byte rule,
-     compare and atomic write, with the resolved-path checks; without it
-     nothing produces the digest, or it could overwrite another file.
-   - `secret_keys`, `check_secret_keys`, `check_file_sources`: an optional
-     set of promised files (empty by default); without it first-run
-     `validate` refuses app1 or misses a misspelled key.
+     the destination recheck, the private-file comparison and the atomic
+     write; without it nothing produces the digest.
+   - `secret_keys`, `check_secret_keys`, `check_file_sources` (with its
+     duplicate-file check through `load_file_group`): an optional set of
+     promised files (empty by default); without it first-run `validate`
+     refuses app1, misses a misspelled key or misses a duplicate file name.
    - `load_file_group`: the hint; without it the operator sees only a path.
 2. `deployment/deploy.py` `check_selected_keys`: pass the promised files on
    to the `MOUNTS` and manifest key checks; without it a misspelled key
    passes `validate` and fails at `up`.
 3. `deployment/validation.py` `validate_catalog` and `check_sources`:
-   collect the promised files in dependency order and pass them on; without
-   it the documented `validate` before `up` fails.
+   collect the promised files in dependency order, pass them on, and recheck
+   the effective recipes with the promise-aware key map; without it the
+   documented `validate` before `up` fails or misses a misspelled recipe key.
 4. `components/identity/config.defaults.yaml`: the key, `sha256:` and
    Identity's variable; without it nothing is generated or published.
 5. `components/app1/config.defaults.yaml`: the one digest file and app1's
@@ -235,22 +270,32 @@ delivery rule). The demo names stand in until the real names are known.
 - Product tests (`tests/platform_tests/`):
   - A synthetic key gives an independently known digest, no newline,
     0600/0700.
-  - Existing key: kept; a correct digest file is left untouched (same
-    content and modification time); a missing or wrong digest is written
-    again and the raw key bytes are unchanged.
+  - Existing key: kept; a correct digest file (0600, 0700 directory) is left
+    untouched (same content and modification time); a missing or wrong
+    digest is written again and the raw key bytes are unchanged; equal bytes
+    with mode 0644 (file) or a non-0700 directory are refused with a
+    path-only message; a link, a directory or an unreadable file at the
+    target is refused before comparison.
+  - Atomic write: a failure injected immediately before the rename leaves
+    the previous complete digest (or no final file on first creation) and no
+    temporary file after the handled failure; temporary files are created
+    0600.
   - Byte source: materialize with key A while the raw file is replaced by B
     after `secret_documents` read it; the digest is that of A.
   - Byte rule: invalid UTF-8, empty, CRLF and trailing LF refused; sentinel
     key and digest absent from stdout, stderr and the journal on success and
     failure.
   - Path safety: `~`, `..`, absolute, outside `credentials/`, collision with
-    another source's raw directory (its bytes survive), a symlinked
-    `credentials/` or ancestor, a symlinked or non-regular target.
+    another source's raw directory (its bytes survive), a symlinked or
+    non-regular target; a redirected component directory or `credentials/`
+    is refused before generation and before dev config writes, and the
+    files and permissions at the link's destination are unchanged.
   - `validate`: first run with the digest absent passes with the right key,
     refuses a misspelled key in a recipe, in `MOUNTS` and in a manifest
-    selection, refuses an unrelated missing source and a promise from a later
-    component; reads and writes no credential file; `validate_bundle` of app1
-    alone refuses the missing digest.
+    selection, refuses a promised file name beside a delivered file of the
+    same name, an unrelated missing source and a promise from a later
+    component; reads neither audit file and writes no persistent state;
+    `validate_bundle` of app1 alone refuses the missing digest.
 - Dev flow: `demo-credentials` preflight, `validate`, `prepare` with no audit
   files; app1's decoded `AUDIT_KEY_SHA256` equals the known digest; app1's
   whole rendered output contains neither the raw key nor its Base64 form.
@@ -282,11 +327,14 @@ delivery rule). The demo names stand in until the real names are known.
 
 1. Approve the `sha256:` field and app1's exact-file `path` into Identity's
    `credentials/`, with the producer owning its output file names.
-2. The real names (Identity's variable, the `SECRET_FILES` ID and file name,
+2. Accept the trust assumption that the producer exclusively controls the
+   published path between runs (a link substituted there is not detected by
+   app1's ordinary `path` source).
+3. The real names (Identity's variable, the `SECRET_FILES` ID and file name,
    the consumer's container and variable), and that the real consumer
    depends on Identity.
-3. `VERSION` bumps left to release preparation.
-4. The production file and function list above as the approved scope.
+4. `VERSION` bumps left to release preparation.
+5. The production file and function list above as the approved scope.
 
 ## 87. A literal `@@` in templates: `@@@@`
 
