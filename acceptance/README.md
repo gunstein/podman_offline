@@ -731,6 +731,14 @@ account's installation):
 bash acceptance/remote.sh audit-digest manual - - - - - DEV -
 ```
 
+`remote.sh` takes the product name from its 13th argument (default
+`myproduct`) and sets `PRODUCT_NAME` itself; an exported `PRODUCT_NAME` is
+ignored. For the renamed product:
+
+```sh
+bash acceptance/remote.sh audit-digest manual - - - - - DEV - "" "" app1 shop
+```
+
 `test_audit_digest.py` covers it with Podman stubbed.
 
 ## Host preparation boundary (backlog 46)
