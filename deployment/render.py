@@ -873,45 +873,76 @@ def write_digests(config, base_dir, file_secrets):
         digest = hashlib.sha256(raw).hexdigest().encode("ascii")
         check_digest_destination(where, base_dir, directory, target)
         make_private_directories(directory)
-        if digest_is_current(target, digest, where):
+        current, observed = digest_is_current(target, digest, where)
+        if current:
             continue
-        publish_private_file(where, base_dir, directory, target, digest)
-        log.info(f"[OK] Wrote SHA-256 file {target}")
+        if publish_private_file(where, base_dir, directory, target, digest, observed):
+            log.info(f"[OK] Wrote SHA-256 file {target}")
 
 
 def make_private_directories(directory):
-    """Create the missing directories with mode 0700 from the start, any umask."""
+    """Create the missing directories, each exactly 0700, whatever the umask.
+
+    The umask keeps them private from creation; the explicit chmod clears
+    what the mode cannot (a set-group-ID bit inherited from the parent).
+    Directories that already exist are not changed.
+    """
+    missing = []
+    current = directory
+    while not (current.exists() or current.is_symlink()):
+        missing.append(current)
+        current = current.parent
     previous = os.umask(0o077)
     try:
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for path in reversed(missing):
+            os.mkdir(str(path), 0o700)
+            os.chmod(str(path), 0o700)
     finally:
         os.umask(previous)
 
 
+def file_identity(status):
+    """What tells one state of a file from another: device, inode, mode, size, time."""
+    return (
+        status.st_dev,
+        status.st_ino,
+        status.st_mode,
+        status.st_size,
+        status.st_mtime_ns,
+    )
+
+
 def digest_is_current(target, digest, where):
-    """True when target is the private file with exactly these bytes."""
+    """(True when target is the private file with exactly these bytes, its state).
+
+    The state (file_identity, or None when absent) lets publication notice a
+    file that changed after this comparison.
+    """
     try:
-        mode = stat.S_IMODE(target.lstat().st_mode)
+        status = target.lstat()
     except FileNotFoundError:
-        return False
+        return False, None
+    mode = stat.S_IMODE(status.st_mode)
     if mode != 0o600:
         raise common.DeployError(
             f"{where}: {target} has mode {mode:04o}; set it to 0600 "
             "(chmod 600), then run the same command again"
         )
     try:
-        return target.read_bytes() == digest
+        return target.read_bytes() == digest, file_identity(status)
     except OSError:
         raise common.DeployError(f"{where}: cannot read {target}") from None
 
 
-def publish_private_file(where, base_dir, directory, target, content):
+def publish_private_file(where, base_dir, directory, target, content, observed):
     """Write content through a private temporary file and an atomic rename.
 
     Everything happens in the directory opened (without following a link)
-    after the checks; just before the rename the checks run again and the
-    path must still name that directory and an absent or private regular
-    file, so a destination changed meanwhile is refused, not replaced.
+    after the checks. Just before the rename the checks run again: the path
+    must still name that directory, and the target must be as observed when
+    it was compared (observed). A target that changed meanwhile and already
+    holds content is left as it is; any other change is refused, not
+    replaced. Returns True when the file was written.
     """
     handle = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -937,15 +968,29 @@ def publish_private_file(where, base_dir, directory, target, content):
                     "command again"
                 )
             try:
-                existing = os.stat(target.name, dir_fd=handle, follow_symlinks=False)
+                status = os.stat(target.name, dir_fd=handle, follow_symlinks=False)
             except FileNotFoundError:
-                existing = None
-            if existing is not None and stat.S_IMODE(existing.st_mode) != 0o600:
-                raise common.DeployError(
-                    f"{where}: {target} has mode "
-                    f"{stat.S_IMODE(existing.st_mode):04o}; set it to 0600 "
-                    "(chmod 600), then run the same command again"
-                )
+                status = None
+            now = None if status is None else file_identity(status)
+            if now != observed:
+                if status is None:
+                    raise common.DeployError(
+                        f"{where}: {target} was removed during the write; run the "
+                        "same command again"
+                    )
+                if stat.S_IMODE(status.st_mode) != 0o600:
+                    raise common.DeployError(
+                        f"{where}: {target} has mode "
+                        f"{stat.S_IMODE(status.st_mode):04o}; set it to 0600 "
+                        "(chmod 600), then run the same command again"
+                    )
+                if read_in(handle, target.name) != content:
+                    raise common.DeployError(
+                        f"{where}: {target} changed during the write; run the "
+                        "same command again"
+                    )
+                os.unlink(temporary, dir_fd=handle)  # already the right file
+                return False
             os.replace(temporary, target.name, src_dir_fd=handle, dst_dir_fd=handle)
         except BaseException:
             try:
@@ -954,8 +999,16 @@ def publish_private_file(where, base_dir, directory, target, content):
                 pass
             raise
         os.fsync(handle)
+        return True
     finally:
         os.close(handle)
+
+
+def read_in(directory, name):
+    """The bytes of a regular file name in an open directory, not following a link."""
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+    with os.fdopen(descriptor, "rb") as stream:
+        return stream.read()
 
 
 def replace(value, config):
@@ -1113,25 +1166,43 @@ def load_file_group(config, group, base_dir=None, component=None):
 def matches_promise(entry, source, base_dir, promised):
     """A path source naming a digest file an earlier catalog component publishes.
 
-    The path must lead there as the file system will resolve it: every
-    directory a .. steps out of must exist, unless it is this component's own
-    directory or one publication creates (backlog 88).
+    The path is followed as opening it will be: component by component,
+    links included. A missing component is allowed only where prepare or
+    publication creates it (this component's own directory, the directories
+    above a promised file, the file itself), and .. only out of a directory
+    that exists or is created that way (backlog 88).
     """
     if not (promised and "path" in entry):
-        return False
-    if Path(os.path.realpath(str(source))) not in promised:
         return False
     created = {Path(os.path.realpath(str(base_dir)))}
     for target in promised:
         created.update(target.parents)
-    current = Path(source.parts[0])
-    for part in source.parts[1:]:
-        if part == ".." and not (
-            current.is_dir() or Path(os.path.realpath(str(current))) in created
-        ):
+    parts = list(source.absolute().parts)
+    current = Path(parts.pop(0))
+    links = 0
+    while parts:
+        part = parts.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not (current.is_dir() or current in created):
+                return False
+            current = current.parent
+            continue
+        following = current / part
+        if following.is_symlink():
+            links += 1
+            if links > 40:  # the kernel's limit for one path
+                return False
+            link = Path(os.readlink(str(following)))
+            parts = list(link.parts) + parts
+            if link.is_absolute():
+                current = Path(parts.pop(0))
+            continue
+        if not (following.exists() or following in created or following in promised):
             return False
-        current = current / part
-    return True
+        current = following
+    return current in promised
 
 
 def is_promised(entry, source, base_dir, promised):
@@ -1222,7 +1293,8 @@ def secret_keys(config, path, documents, component=None, promised=()):
         found = set()
         for entry in entries:
             source = resolve_file_source(entry, path.parent, component)
-            found.update(entry.get("generate", []))
+            # Generated files are delivered by file name (./token is token).
+            found.update(Path(name).name for name in entry.get("generate", []))
             if source.is_dir():
                 found.update(item.name for item in source.iterdir())
             elif source.exists() or is_promised(entry, source, path.parent, promised):

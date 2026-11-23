@@ -66,11 +66,14 @@ acceptance-harness tests (`acceptance/test_audit_digest.py`,
 `acceptance/remote.sh` runs after each `config_layers` check in the lab and
 remains to be verified there. Only the five production files listed below
 were changed. Earlier revisions of this item and their reviews are in git
-history (last proposal `32d8578`). The review of `23d6636` is fixed in the
-same files: one owner per `sha256:` directory, the destination checked again
+history (last proposal `32d8578`). The reviews of `23d6636` and `f46ef8c`
+are addressed in the same files: one owner per `sha256:` directory, the destination checked again
 in the opened directory just before the rename, directories created 0700
 from the start, the duplicate-name check whether the digest exists or not,
-and promises only along paths that resolve. Open, outside the approved
+promises only along paths that open (followed component by component,
+links included), a correct file published meanwhile kept instead of
+replaced, new directories exactly 0700 below a set-group-ID parent, and the
+journal checked for the key and digest. Open, outside the approved
 functions: under umask 0222 a fresh producer cannot create its raw key,
 because `generate_secrets` (unchanged) creates `credentials/` without write
 permission for its owner; it is not specific to this item and awaits a

@@ -18,10 +18,11 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from deployment import common, deploy, templates, validation
+from deployment import cli, common, deploy, output, templates, validation
 from deployment import render as rendering
 
 from helpers.product_fixture import RENAMED, ProductFixture
+from helpers.read_guard import guard
 
 KEY = b"Synthetic0Key1For2Digest3Tests45"
 # Independently computed: printf %s "$KEY" | sha256sum
@@ -291,6 +292,89 @@ class DigestWriteTests(DigestFixture):
                     self.digest.unlink()
                     self.digest.write_bytes(DIGEST)
                 self.digest.chmod(0o600)
+
+    def test_a_digest_published_meanwhile_is_kept_and_another_change_refused(self):
+        """Two runs at once: the second finds the right file and keeps it."""
+        self.write_key()
+        for content, refused in ((DIGEST, False), (b"other content", True)):
+            with self.subTest(refused=refused):
+                if self.digest.exists():
+                    self.digest.unlink()
+                published = []
+                real_fsync = os.fsync
+
+                def fsync(
+                    descriptor,
+                    real_fsync=real_fsync,
+                    published=published,
+                    content=content,
+                ):
+                    real_fsync(descriptor)
+                    if not published:  # another run publishes while this one writes
+                        other = self.digest.with_name("other-run")
+                        other.write_bytes(content)
+                        other.chmod(0o600)
+                        other.rename(self.digest)
+                        published.append(self.digest.stat())
+
+                with mock.patch.object(rendering.os, "fsync", side_effect=fsync):
+                    if refused:
+                        with self.assertRaisesRegex(
+                            common.DeployError, "changed during the write"
+                        ):
+                            self.render()
+                    else:
+                        self.render()
+                after = self.digest.stat()
+                self.assertEqual(
+                    (after.st_ino, after.st_mtime_ns),
+                    (published[0].st_ino, published[0].st_mtime_ns),
+                )
+                self.assertEqual(self.digest.read_bytes(), content)
+                self.assertEqual(
+                    [p.name for p in self.digest.parent.iterdir()], ["token"]
+                )
+
+    def test_a_set_group_id_parent_does_not_make_the_new_directory_refused(self):
+        self.write_key()
+        credentials = self.base / "credentials"
+        credentials.chmod(0o2700)
+        self.render()
+        self.assertEqual(stat.S_IMODE(self.digest.parent.stat().st_mode), 0o700)
+        self.assertEqual(self.digest.read_bytes(), DIGEST)
+        # An existing output directory with that bit is the operator's: refused.
+        self.digest.parent.chmod(0o2700)
+        with self.assertRaisesRegex(
+            common.DeployError, "has mode 2700; set it to 0700"
+        ):
+            self.render()
+
+    def test_a_dot_spelled_generate_name_is_its_file_name(self):
+        config = producer_config(generate=["./token"])
+        config[common.SECRET_TEMPLATES] = {
+            "producer-main-env-secret": {"KEY": "@@secret:producer-key/token@@"}
+        }
+        keys = rendering.secret_keys(config, self.path, [])
+        self.assertEqual(keys["producer-key"], {"token"})
+        templates.validate(config, keys)
+        self.render(config)
+        self.assertEqual(
+            self.digest.read_bytes(),
+            hashlib.sha256(self.key.read_bytes()).hexdigest().encode(),
+        )
+
+    def test_the_read_guard_resolves_names_relative_to_a_directory(self):
+        self.write_key()
+        seen = []
+        opener = guard(os.open, str(self.key.parent), seen.append)
+        directory = os.open(str(self.base / "credentials"), os.O_RDONLY)
+        try:
+            os.close(opener("key/token", os.O_RDONLY, dir_fd=directory))
+        finally:
+            os.close(directory)
+        self.assertEqual(seen, [str(self.key)])
+        os.close(opener(str(self.base / "config.yaml"), os.O_RDONLY | os.O_CREAT))
+        self.assertEqual(len(seen), 1)
 
     def test_existing_directory_with_another_mode_is_refused(self):
         self.write_key()
@@ -600,6 +684,31 @@ class PromisedFileTests(unittest.TestCase):
             ]
         )
 
+    def test_a_promise_follows_links_and_future_directories_as_opening_would(self):
+        producer = self.root / "producer/credentials/key-sha256"
+        # An alias of the consumer's directory through a missing directory:
+        # the path cannot be opened, even once the digest is published.
+        os.rename(str(self.path.parent), str(self.root / "real-consumer"))
+        self.path.parent.symlink_to("old-location/../real-consumer")
+        config = dict(self.config)
+        with self.assertRaisesRegex(common.DeployError, "Missing"):
+            self.check(config)
+        producer.mkdir(parents=True)
+        (producer / "token").write_bytes(DIGEST)
+        with self.assertRaises(OSError):
+            (self.path.parent / "../producer/credentials/key-sha256/token").read_bytes()
+        (producer / "token").unlink()
+        self.path.parent.unlink()
+        # The consumer's own directory still absent, through an existing
+        # directory: opening works once prepare creates the consumer's directory.
+        (self.root / "existing").mkdir()
+        config[common.SECRET_FILES] = {
+            "consumer-digest": [
+                {"path": "../existing/../producer/credentials/key-sha256/token"}
+            ]
+        }
+        self.check(config)
+
     def test_validation_opens_no_credential_file(self):
         with mock.patch.object(
             Path, "read_bytes", side_effect=AssertionError("read")
@@ -610,10 +719,6 @@ class PromisedFileTests(unittest.TestCase):
         keys = rendering.secret_keys(self.config, self.path, [], None)
         self.assertIsNone(keys["consumer-digest"])
         templates.validate(self.config, keys)  # unknown keys are not judged
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class DigestBundleLifecycleTests(ProductFixture):
@@ -661,9 +766,44 @@ class DigestBundleLifecycleTests(ProductFixture):
         }
 
     def test_producer_install_reinstall_then_separate_consumer_install(self):
-        for name in ("gateway", "login-service"):
-            self.install(self.releases_by_name[name])
+        self.install(self.releases_by_name["gateway"])
+        # The producer through the CLI, with every journal line kept before
+        # it would be sent: a success and a failed reinstall.
+        journal = []
+
+        def collect(handler, record):
+            journal.append(handler.PRIORITY + handler.ident + handler.format(record))
+
+        login = self.releases_by_name["login-service"]
+        self.use_root(login)
+        with mock.patch.object(
+            output.JournalHandler, "emit", autospec=True, side_effect=collect
+        ):
+            self.assertEqual(cli.main(["init-config", "login-service"]), 0)
+            self.assertEqual(cli.main(["install"]), 0)
+            self.digest.parent.chmod(0o755)
+            self.assertEqual(cli.main(["install"]), 1)
+            self.digest.parent.chmod(0o700)
+        self.assertEqual(
+            [line.split(": ", 1)[1] for line in journal],
+            [
+                "init-config login-service (bundle 1.0.0): started",
+                "init-config login-service (bundle 1.0.0): completed",
+                "install login-service (bundle 1.0.0): started",
+                "install login-service (bundle 1.0.0): completed",
+                "install login-service (bundle 1.0.0): started",
+                "install login-service (bundle 1.0.0): failed (exit 1)",
+            ],
+        )
+        self.assertIn("audit-sha256 has mode 0755", self.stderr.getvalue())
         key = self.raw.read_bytes()
+        for text in (
+            "".join(journal),
+            self.stdout.getvalue(),
+            self.stderr.getvalue(),
+        ):
+            self.assertNotIn(key.decode(), text)
+            self.assertNotIn(hashlib.sha256(key).hexdigest(), text)
         self.assertEqual(len(key), 32)
         self.assertEqual(
             self.digest.read_bytes(), hashlib.sha256(key).hexdigest().encode()
@@ -686,20 +826,16 @@ class DigestBundleLifecycleTests(ProductFixture):
         self.digest.with_name("kept").rename(self.digest)
         validation.validate()
         # Install and same-version retry open nothing below the raw key's directory.
-        forbidden = str(self.raw.parent.resolve())
+        forbidden = str(self.raw.parent)
 
-        def guard(original):
-            def checked(file, *args, **kwargs):
-                path = "" if isinstance(file, int) else os.path.realpath(file)
-                if path == forbidden or path.startswith(forbidden + os.sep):
-                    raise AssertionError("the consumer opened the raw key")
-                return original(file, *args, **kwargs)
+        def violation(path):
+            raise AssertionError("the consumer opened the raw key")
 
-            return checked
-
-        with mock.patch("builtins.open", guard(open)), mock.patch.object(
-            io, "open", guard(io.open)
-        ), mock.patch.object(os, "open", guard(os.open)):
+        with mock.patch(
+            "builtins.open", guard(open, forbidden, violation)
+        ), mock.patch.object(
+            io, "open", guard(io.open, forbidden, violation)
+        ), mock.patch.object(os, "open", guard(os.open, forbidden, violation)):
             self.install(orders)
             self.install(orders)
         rendered = yaml.safe_load_all(
@@ -715,6 +851,10 @@ class DigestBundleLifecycleTests(ProductFixture):
             hashlib.sha256(key).hexdigest().encode(),
         )
         self.assertEqual(self.files(), before)
-        output = self.stdout.getvalue() + self.stderr.getvalue()
-        self.assertNotIn(key.decode(), output)
-        self.assertNotIn(hashlib.sha256(key).hexdigest(), output)
+        printed = self.stdout.getvalue() + self.stderr.getvalue()
+        self.assertNotIn(key.decode(), printed)
+        self.assertNotIn(hashlib.sha256(key).hexdigest(), printed)
+
+
+if __name__ == "__main__":
+    unittest.main()

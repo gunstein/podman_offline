@@ -731,7 +731,8 @@ ENVIRONMENT:
   trailing newline (generated keys are). A correct file (mode 0600, in a
   0700 directory) is left untouched; a missing or different one is written
   again through a private temporary file and a rename, so a reader never
-  sees a partial file; the key is never changed. A file or directory with
+  sees a partial file; a correct file that another run wrote meanwhile is
+  kept; the key is never changed. A file or directory with
   another mode is refused with the `chmod` to run.
 - The owner must be installed (prepared) before the consumer: here the
   consumer depends on Identity. In dev both go through the same `prepare`.

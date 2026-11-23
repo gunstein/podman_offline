@@ -160,22 +160,16 @@ def main():
     if guarded:
         # Any open below this directory of the home ends the run (backlog 88:
         # a consumer's install must not open its producer's raw key).
-        forbidden = os.path.realpath(str(home / guarded))
+        from read_guard import guard
 
-        def guard(original):
-            def checked(file, *args, **kwargs):
-                if not isinstance(file, int) and "dir_fd" not in kwargs:
-                    path = os.path.realpath(os.fspath(file))
-                    if path == forbidden or path.startswith(forbidden + os.sep):
-                        record_event(["guarded-read", path])
-                        os._exit(97)
-                return original(file, *args, **kwargs)
+        def violation(path):
+            record_event(["guarded-read", path])
+            os._exit(97)
 
-            return checked
-
-        builtins.open = guard(builtins.open)
-        io.open = guard(io.open)
-        os.open = guard(os.open)
+        forbidden = str(home / guarded)
+        builtins.open = guard(builtins.open, forbidden, violation)
+        io.open = guard(io.open, forbidden, violation)
+        os.open = guard(os.open, forbidden, violation)
     try:
         if parameters["action"] == "install":
             state["install"]()
