@@ -619,8 +619,8 @@ def file_group_sources(config, group):
 def check_digest_declaration(group, where, source):
     """sha256: a directory strictly below credentials/ for a generating SECRET_FILES path.
 
-    Syntax only (backlog 88); digest_destination_checks inspects the
-    filesystem. The digests of the source's generate files are written there.
+    Syntax only (backlog 88); check_digest_outputs and check_digest_destination
+    inspect the filesystem. The digests of the source's generate files are written there.
     """
     value = source["sha256"]
     if (
@@ -870,21 +870,31 @@ def write_digests(config, base_dir, file_secrets):
         digest = hashlib.sha256(raw).hexdigest().encode("ascii")
         check_digest_destination(where, base_dir, directory, target)
         make_private_directories(directory)
-        if digest_is_current(target, digest, where):
-            # A retry after a failed directory sync finishes it here.
-            sync_directory(directory)
-            continue
-        publish_private_file(where, base_dir, directory, target, digest)
-        log.info(f"[OK] Wrote SHA-256 file {target}")
+        if not digest_is_current(target, digest, where):
+            publish_private_file(where, base_dir, directory, target, digest)
+            log.info(f"[OK] Wrote SHA-256 file {target}")
+        # Also when the file was already right: a retry finishes a sync that
+        # failed or was interrupted after the rename.
+        sync_directories(directory, base_dir)
 
 
-def sync_directory(directory):
-    """Make the directory's entries (a rename into it) durable."""
-    handle = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        os.fsync(handle)
-    finally:
-        os.close(handle)
+def sync_directories(directory, base_dir):
+    """Make the file's name and each new directory's name durable (power loss).
+
+    Syncs the digest directory and every directory above it up to the
+    component's directory, since a directory's sync does not persist its
+    own name in its parent.
+    """
+    current = directory
+    while True:
+        handle = os.open(str(current), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(handle)
+        finally:
+            os.close(handle)
+        if current == base_dir or current == current.parent:
+            return
+        current = current.parent
 
 
 def make_private_directories(directory):
@@ -986,7 +996,6 @@ def publish_private_file(where, base_dir, directory, target, content):
             except FileNotFoundError:
                 pass
             raise
-        os.fsync(handle)
     finally:
         os.close(handle)
 

@@ -347,26 +347,40 @@ class DigestWriteTests(DigestFixture):
         os.close(opener(str(self.base / "config.yaml"), os.O_RDONLY | os.O_CREAT))
         self.assertEqual(len(seen), 1)
 
-    def test_a_retry_finishes_a_failed_directory_sync(self):
+    def test_every_new_name_is_synced_and_a_retry_finishes_a_failed_sync(self):
+        """The file's directory and each directory above it, up to the component's."""
         self.write_key()
+        config = producer_config(sha256="credentials/first/published")
+        digest = self.base / "credentials/first/published/token"
+        expected = [
+            str(self.base / "credentials/first/published"),
+            str(self.base / "credentials/first"),
+            str(self.base / "credentials"),
+            str(self.base),
+        ]
         synced = []
+        failed = []
         real_fsync = os.fsync
 
         def fsync(descriptor):
             if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-                synced.append(descriptor)
-                if len(synced) == 1:
+                synced.append(os.readlink(f"/proc/self/fd/{descriptor}"))
+                if len(synced) == 3 and not failed:  # once, at credentials/
+                    failed.append(True)
                     raise OSError("injected directory sync failure")
             real_fsync(descriptor)
 
         with mock.patch.object(rendering.os, "fsync", side_effect=fsync):
             with self.assertRaisesRegex(OSError, "injected"):
-                self.render()
-            self.assertEqual(self.digest.read_bytes(), DIGEST)
-            before = self.digest.stat()
-            self.render()
-        self.assertEqual(len(synced), 2)  # the retry synced the directory again
-        after = self.digest.stat()
+                self.render(config)
+            self.assertEqual(digest.read_bytes(), DIGEST)
+            self.assertEqual(synced, expected[:3])
+            before = digest.stat()
+            synced.clear()
+            self.render(config)
+        # The retry, finding the right file, syncs the whole chain again.
+        self.assertEqual(synced, expected)
+        after = digest.stat()
         self.assertEqual(
             (before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns)
         )
@@ -756,7 +770,11 @@ class PromisedFileTests(unittest.TestCase):
         self.assertTrue(
             rendering.matches_promise(entry, source, self.path.parent, self.promised)
         )
-        with mock.patch.object(rendering.os, "access", return_value=False):
+
+        def access(path, mode):
+            return mode != os.X_OK  # the directory can be seen but not entered
+
+        with mock.patch.object(rendering.os, "access", side_effect=access):
             self.assertFalse(
                 rendering.matches_promise(
                     entry, source, self.path.parent, self.promised
@@ -768,6 +786,11 @@ class PromisedFileTests(unittest.TestCase):
         if os.geteuid() != 0:
             self.path.parent.chmod(0o000)
             self.addCleanup(self.path.parent.chmod, 0o700)
+            self.assertFalse(
+                rendering.matches_promise(
+                    entry, source, self.path.parent, self.promised
+                )
+            )
             with self.assertRaises((common.DeployError, OSError)):
                 self.check()
 
