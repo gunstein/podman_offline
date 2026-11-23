@@ -694,7 +694,7 @@ def main():
             return
     key = value(identity + "-server-app", "Audit__Key")
     digest = value(app + "-todo-backend", "AUDIT_KEY_SHA256")
-    if len(key) != 32 or digest != hashlib.sha256(key).hexdigest().encode():
+    if digest != hashlib.sha256(key).hexdigest().encode():
         raise RuntimeError(app + "'s AUDIT_KEY_SHA256 is not the SHA-256 of " + identity + "'s Audit__Key")
     print("PASS: " + app + " has the SHA-256 of " + identity + "'s audit key (" + mode + ")")
 

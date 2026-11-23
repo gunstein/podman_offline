@@ -156,6 +156,26 @@ def main():
         return registrations(updates, directory, removals)
 
     registration_state["write_registrations"] = write_registrations
+    guarded = parameters.get("guard_reads")
+    if guarded:
+        # Any open below this directory of the home ends the run (backlog 88:
+        # a consumer's install must not open its producer's raw key).
+        forbidden = os.path.realpath(str(home / guarded))
+
+        def guard(original):
+            def checked(file, *args, **kwargs):
+                if not isinstance(file, int) and "dir_fd" not in kwargs:
+                    path = os.path.realpath(os.fspath(file))
+                    if path == forbidden or path.startswith(forbidden + os.sep):
+                        record_event(["guarded-read", path])
+                        os._exit(97)
+                return original(file, *args, **kwargs)
+
+            return checked
+
+        builtins.open = guard(builtins.open)
+        io.open = guard(io.open)
+        os.open = guard(os.open)
     try:
         if parameters["action"] == "install":
             state["install"]()

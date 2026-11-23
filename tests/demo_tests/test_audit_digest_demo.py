@@ -59,8 +59,8 @@ class AuditDigestDemoTests(DeployFixture):
                     "build/dev/" + component + "/" + certificate,
                     "-----BEGIN CERTIFICATE-----\nY2VydA==\n-----END CERTIFICATE-----\n",
                 )
-        # First run: no audit files (the fixture plays Identity for app1's file).
-        shutil.rmtree(self.dev / "identity/credentials/audit-sha256")
+        # First run: no audit files.
+        self.assertFalse((self.dev / DIGEST).exists())
         self.assertFalse((self.dev / KEY).exists())
 
     def findings(self):

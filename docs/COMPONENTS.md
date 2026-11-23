@@ -718,9 +718,10 @@ ENVIRONMENT:
 
 - `sha256:` is allowed only on a `SECRET_FILES` `path` source with `generate:`,
   as a relative directory strictly below `credentials/` (no `~`, `..` or
-  absolute path). The directory belongs to the owner: it must not be, contain
-  or lie inside another source, generation target or `sha256:` directory of
-  the component, and nothing else may be delivered there. A link anywhere
+  absolute path). The directory belongs to that one source: it must not be,
+  contain or lie inside another source, generation target or another source's
+  `sha256:` directory of the component, and nothing else may be delivered
+  there. A link anywhere
   from the component's directory down to the file is refused, before any
   secret is generated or dev config is written.
 - Every render of the owner (dev `prepare`, `install`, retry) writes, for each

@@ -6,9 +6,11 @@ are covered in demo_tests/test_audit_digest_demo.py.
 
 import base64
 import contextlib
+import copy
 import hashlib
 import io
 import os
+import shutil
 import stat
 import tempfile
 import unittest
@@ -16,8 +18,10 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from deployment import common, templates, validation
+from deployment import common, deploy, templates, validation
 from deployment import render as rendering
+
+from helpers.product_fixture import RENAMED, ProductFixture
 
 KEY = b"Synthetic0Key1For2Digest3Tests45"
 # Independently computed: printf %s "$KEY" | sha256sum
@@ -182,9 +186,11 @@ class DigestWriteTests(DigestFixture):
         modes = []
         real_replace = os.replace
 
-        def replace(source, target):
-            modes.append(stat.S_IMODE(os.stat(source).st_mode))
-            real_replace(source, target)
+        def replace(source, target, **directories):
+            modes.append(
+                stat.S_IMODE(os.stat(source, dir_fd=directories["src_dir_fd"]).st_mode)
+            )
+            real_replace(source, target, **directories)
 
         with mock.patch.object(rendering.os, "replace", side_effect=replace):
             self.render()
@@ -207,6 +213,84 @@ class DigestWriteTests(DigestFixture):
                 before = self.digest.stat().st_mtime_ns
                 self.render()
                 self.assertEqual(self.digest.stat().st_mtime_ns, before)
+
+    def test_new_directories_are_0700_from_creation_on_an_empty_tree(self):
+        """Created with 0700 directly: an interruption never leaves 0755 behind."""
+        for umask in (0o022, 0o222):
+            with self.subTest(umask=oct(umask)):
+                tree = self.root / ("tree-" + oct(umask))
+                created = []
+                real_mkdir = os.mkdir
+
+                def mkdir(
+                    path, mode=0o777, real_mkdir=real_mkdir, created=created, **kwargs
+                ):
+                    real_mkdir(path, mode, **kwargs)
+                    created.append(stat.S_IMODE(os.stat(path).st_mode))
+
+                previous = os.umask(umask)
+                try:
+                    with mock.patch.object(os, "mkdir", side_effect=mkdir):
+                        rendering.make_private_directories(tree / "credentials/a/b")
+                finally:
+                    os.umask(previous)
+                self.assertEqual(created, [0o700] * 4)
+        self.write_key()
+        previous = os.umask(0o222)
+        try:
+            self.render(producer_config(sha256="credentials/a/b"))
+        finally:
+            os.umask(previous)
+        self.assertEqual((self.base / "credentials/a/b/token").read_bytes(), DIGEST)
+        for path in (self.base / "credentials/a", self.base / "credentials/a/b"):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
+
+    def test_unsearchable_output_directory_gets_the_chmod_message(self):
+        self.write_key()
+        self.render()
+        self.digest.parent.chmod(0o600)
+        self.addCleanup(self.digest.parent.chmod, 0o700)
+        with self.assertRaisesRegex(
+            common.DeployError, "key-sha256 has mode 0600; set it to 0700"
+        ):
+            self.render()
+
+    def test_a_destination_changed_before_the_rename_is_refused_not_replaced(self):
+        self.write_key()
+        self.render()
+        self.write_key(OTHER_KEY)
+        for change, message in (
+            (lambda: self.digest.chmod(0o644), "has mode 0644; set it to 0600"),
+            (
+                lambda: (self.digest.unlink(), self.digest.symlink_to(self.key)),
+                "must be a regular file",
+            ),
+        ):
+            with self.subTest(message=message):
+                real_fsync = os.fsync
+                calls = []
+
+                def fsync(
+                    descriptor, real_fsync=real_fsync, calls=calls, change=change
+                ):
+                    real_fsync(descriptor)
+                    if not calls:  # the temporary file is written: now change it
+                        calls.append(descriptor)
+                        change()
+
+                with mock.patch.object(
+                    rendering.os, "fsync", side_effect=fsync
+                ), self.assertRaisesRegex(common.DeployError, message):
+                    self.render()
+                self.assertEqual(
+                    [p.name for p in self.digest.parent.iterdir()], ["token"]
+                )
+                self.assertEqual(self.key.read_bytes(), OTHER_KEY)
+                if self.digest.is_symlink():
+                    self.assertEqual(self.key.read_bytes(), OTHER_KEY)
+                    self.digest.unlink()
+                    self.digest.write_bytes(DIGEST)
+                self.digest.chmod(0o600)
 
     def test_existing_directory_with_another_mode_is_refused(self):
         self.write_key()
@@ -351,6 +435,30 @@ class DigestPathTests(DigestFixture):
                 self.assertEqual(stat.S_IMODE(elsewhere.stat().st_mode), 0o755)
                 link.unlink()
 
+    def test_two_sources_cannot_publish_into_one_directory(self):
+        config = producer_config()
+        config[common.SECRET_FILES]["producer-other"] = [
+            {
+                "path": "credentials/other",
+                "generate": ["token"],
+                "sha256": "credentials/key-sha256",
+            }
+        ]
+        with self.assertRaisesRegex(common.DeployError, "overlaps"):
+            rendering.check_digest_outputs(config, self.base)
+        self.assertFalse(self.digest.exists())
+
+    def test_one_source_publishes_several_keys(self):
+        config = producer_config(generate=["token", "second"])
+        (self.base / "credentials/key").mkdir(parents=True)
+        (self.base / "credentials/key/second").write_bytes(OTHER_KEY)
+        self.write_key()
+        self.render(config)
+        self.assertEqual(self.digest.read_bytes(), DIGEST)
+        self.assertEqual(
+            (self.base / "credentials/key-sha256/second").read_bytes(), OTHER_DIGEST
+        )
+
     def test_a_component_without_sha256_is_not_inspected(self):
         config = {common.SECRET_FILES: {"plain": [{"path": "credentials/x"}]}}
         with mock.patch.object(rendering, "check_digest_destination") as check:
@@ -366,6 +474,7 @@ class PromisedFileTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.path = self.root / "consumer/config.yaml"
+        self.path.parent.mkdir()  # the consumer's own directory, as in dev and state
         self.promised = rendering.promised_files(
             producer_config(), self.root / "producer"
         )
@@ -451,6 +560,46 @@ class PromisedFileTests(unittest.TestCase):
             ):
                 self.check(config)
 
+    def test_published_digest_beside_a_generated_name_is_refused(self):
+        """The same check whether the digest is published yet or not."""
+        published = self.root / "producer/credentials/key-sha256/token"
+        for exists in (False, True):
+            if exists:
+                published.parent.mkdir(parents=True)
+                published.write_bytes(DIGEST)
+            for generate in ("token", "./token"):
+                config = dict(self.config)
+                config[common.SECRET_FILES] = {
+                    "consumer-digest": self.config[common.SECRET_FILES][
+                        "consumer-digest"
+                    ]
+                    + [{"path": "credentials/local", "generate": [generate]}]
+                }
+                with self.subTest(
+                    exists=exists, generate=generate
+                ), self.assertRaisesRegex(
+                    common.DeployError,
+                    r"several files with the same name: \['token'\]",
+                ):
+                    self.check(config)
+
+    def test_a_path_through_a_missing_directory_is_not_promised(self):
+        config = dict(self.config)
+        config[common.SECRET_FILES] = {
+            "consumer-digest": [
+                {"path": "../missing/../producer/credentials/key-sha256/token"}
+            ]
+        }
+        with self.assertRaisesRegex(
+            common.DeployError, "Missing .*missing/\\.\\./producer"
+        ):
+            self.check(config)
+        self.assertIsNone(
+            rendering.secret_keys(config, self.path, [], None, self.promised)[
+                "consumer-digest"
+            ]
+        )
+
     def test_validation_opens_no_credential_file(self):
         with mock.patch.object(
             Path, "read_bytes", side_effect=AssertionError("read")
@@ -465,3 +614,107 @@ class PromisedFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DigestBundleLifecycleTests(ProductFixture):
+    """Real bundles: the producer installs, the consumer installs on its own."""
+
+    def setUp(self):
+        super().setUp()
+        product = copy.deepcopy(
+            {name: RENAMED[name] for name in ("gateway", "login-service", "orders")}
+        )
+        product["login-service"]["defaults"] = {
+            common.SECRET_FILES: {
+                "login-service-audit": [
+                    {
+                        "path": "credentials/audit",
+                        "generate": ["token"],
+                        "sha256": "credentials/audit-sha256",
+                    }
+                ]
+            }
+        }
+        product["login-service"]["env"] = {
+            "main": {"AUDIT": "@@secret:login-service-audit/token@@"}
+        }
+        product["orders"]["defaults"][common.SECRET_FILES]["orders-audit-digest"] = [
+            {"path": "../login-service/credentials/audit-sha256/token"}
+        ]
+        product["orders"]["env"] = {
+            "main": dict(
+                product["orders"]["env"]["main"],
+                AUDIT_SHA256="@@secret:orders-audit-digest/token@@",
+            )
+        }
+        self.write_product(product)
+        self.releases_by_name = self.build_and_unpack()
+        shutil.rmtree(self.source)
+        self.provide_credentials(product, common.STATE)
+        self.raw = common.STATE / "login-service/credentials/audit/token"
+        self.digest = common.STATE / "login-service/credentials/audit-sha256/token"
+
+    def files(self):
+        return {
+            path: (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
+            for path in (self.raw, self.digest)
+        }
+
+    def test_producer_install_reinstall_then_separate_consumer_install(self):
+        for name in ("gateway", "login-service"):
+            self.install(self.releases_by_name[name])
+        key = self.raw.read_bytes()
+        self.assertEqual(len(key), 32)
+        self.assertEqual(
+            self.digest.read_bytes(), hashlib.sha256(key).hexdigest().encode()
+        )
+        before = self.files()
+        # Same-version reinstall: both files stay as they are.
+        self.install(self.releases_by_name["login-service"])
+        self.assertEqual(self.files(), before)
+        # The consumer's bundle alone: validate requires the published file.
+        orders = self.releases_by_name["orders"]
+        self.use_root(orders)
+        deploy.init_config("orders")
+        self.digest.rename(self.digest.with_name("kept"))
+        with self.assertRaisesRegex(
+            common.DeployError,
+            r"Missing .*audit-sha256/token \(SECRET_FILES.orders-audit-digest\); "
+            r"if another component publishes this file",
+        ):
+            validation.validate()
+        self.digest.with_name("kept").rename(self.digest)
+        validation.validate()
+        # Install and same-version retry open nothing below the raw key's directory.
+        forbidden = str(self.raw.parent.resolve())
+
+        def guard(original):
+            def checked(file, *args, **kwargs):
+                path = "" if isinstance(file, int) else os.path.realpath(file)
+                if path == forbidden or path.startswith(forbidden + os.sep):
+                    raise AssertionError("the consumer opened the raw key")
+                return original(file, *args, **kwargs)
+
+            return checked
+
+        with mock.patch("builtins.open", guard(open)), mock.patch.object(
+            io, "open", guard(io.open)
+        ), mock.patch.object(os, "open", guard(os.open)):
+            self.install(orders)
+            self.install(orders)
+        rendered = yaml.safe_load_all(
+            (common.QUADLET_DIR / "myproduct-orders.yaml").read_text()
+        )
+        secret = next(
+            doc
+            for doc in rendered
+            if doc["metadata"]["name"] == "orders-main-env-secret"
+        )
+        self.assertEqual(
+            base64.b64decode(secret["data"]["AUDIT_SHA256"]),
+            hashlib.sha256(key).hexdigest().encode(),
+        )
+        self.assertEqual(self.files(), before)
+        output = self.stdout.getvalue() + self.stderr.getvalue()
+        self.assertNotIn(key.decode(), output)
+        self.assertNotIn(hashlib.sha256(key).hexdigest(), output)

@@ -66,7 +66,8 @@ class InitDatabaseTests(unittest.TestCase):
             config = rendering.merge_config(
                 ROOT / "components/app1/config.defaults.yaml", overrides=DEMO_PUBLIC
             )
-            write_secret_fixtures(base, config, "app1")
+            # app1 alone: Identity's published audit digest is synthetic here.
+            write_secret_fixtures(base, config, "app1", published=True)
             path = base / "config.yaml"
             path.write_text(yaml.safe_dump(config))
             text = materialize_and_render(

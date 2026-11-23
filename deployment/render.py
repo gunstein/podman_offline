@@ -14,7 +14,6 @@ import secrets
 import stat
 import string
 import tarfile
-import tempfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -734,23 +733,33 @@ def generate_secrets(config, base_dir):
         log.info(f"[OK] Generated secret file {path}")
 
 
-def digest_outputs(config, base_dir):
-    """[(secret ID, key, digest directory, digest file)] declared with sha256.
+def digest_sources(config, base_dir):
+    """[(secret ID, digest directory, [file names])], one per source with sha256.
 
-    Backlog 88: the digest of each generate file of a source with sha256 is
-    published as <sha256 directory>/<file name>. Paths only; nothing is read.
+    Backlog 88: the digest of each generate file of such a source is published
+    as <sha256 directory>/<file name>. Paths only; nothing is read.
     """
-    outputs = []
+    declared = []
     for name, sources in file_group_sources(config, common.SECRET_FILES).items():
         for source in sources:
-            if "sha256" not in source:
-                continue
-            directory = base_dir / source["sha256"]
-            for filename in source["generate"]:
-                outputs.append(
-                    (name, Path(filename).name, directory, directory / filename)
+            if "sha256" in source:
+                declared.append(
+                    (
+                        name,
+                        base_dir / source["sha256"],
+                        [Path(filename).name for filename in source["generate"]],
+                    )
                 )
-    return outputs
+    return declared
+
+
+def digest_outputs(config, base_dir):
+    """[(secret ID, key, digest directory, digest file)] for every published digest."""
+    return [
+        (name, key, directory, directory / key)
+        for name, directory, keys in digest_sources(config, base_dir)
+        for key in keys
+    ]
 
 
 def promised_files(config, base_dir):
@@ -766,34 +775,45 @@ def check_digest_destination(where, base_dir, directory, target):
 
     Missing parts are fine (they are created). Every existing directory from
     the component's config directory down to the digest directory must be a
-    real directory, and the digest file absent or a regular file.
+    real directory, the digest directory itself mode 0700, and the digest file
+    absent or a regular file.
     """
     directories = [base_dir]
     for part in directory.relative_to(base_dir).parts:
         directories.append(directories[-1] / part)
-    for path in directories:
-        if not (path.exists() or path.is_symlink()):
-            return  # the rest is created later, as directories
-        if path.is_symlink() or not path.is_dir():
+    try:
+        for path in directories:
+            if not (path.exists() or path.is_symlink()):
+                return  # the rest is created later, as directories
+            if path.is_symlink() or not path.is_dir():
+                raise common.DeployError(
+                    f"{where}: {path} must be a directory, not a link or file"
+                )
+        mode = stat.S_IMODE(directory.lstat().st_mode)
+        if mode != 0o700:
             raise common.DeployError(
-                f"{where}: {path} must be a directory, not a link or file"
+                f"{where}: {directory} has mode {mode:04o}; set it to 0700 "
+                "(chmod 700), then run the same command again"
             )
-    if target.is_symlink() or (target.exists() and not target.is_file()):
-        raise common.DeployError(
-            f"{where}: {target} must be a regular file, not a link or directory"
-        )
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise common.DeployError(
+                f"{where}: {target} must be a regular file, not a link or directory"
+            )
+    except OSError:
+        raise common.DeployError(f"{where}: cannot inspect {directory}") from None
 
 
 def check_digest_outputs(config, base_dir):
     """Refuse an unsafe or colliding sha256 destination before any write.
 
     Called from validate_component_config, so validate, prepare, init-config
-    and install check it before generation. The digest directory must not be,
-    contain or lie inside another declared source, generation target or
-    sha256 directory of the component. Reads no file contents.
+    and install check it before generation. Each source's digest directory is
+    its own: it must not be, contain or lie inside another declared source,
+    generation target or another source's sha256 directory. Reads no file
+    contents.
     """
-    outputs = digest_outputs(config, base_dir)
-    if not outputs:
+    declared = digest_sources(config, base_dir)
+    if not declared:
         return
 
     def real(path):
@@ -805,14 +825,10 @@ def check_digest_outputs(config, base_dir):
             for source in sources:
                 if "path" in source:
                     taken.append(real(resolve_path(source["path"], base_dir)))
-    directories = []
-    for secret_id, _, directory, target in outputs:
-        where = f"{common.SECRET_FILES}.{secret_id}"
-        check_digest_destination(where, base_dir, directory, target)
-        resolved = real(directory)
-        if resolved not in directories:
-            directories.append(resolved)
+    directories = [real(directory) for _, directory, _ in declared]
     for index, resolved in enumerate(directories):
+        # One entry per source: a second source naming the same directory is
+        # another owner, never a share.
         others = taken + directories[:index] + directories[index + 1 :]
         for other in others:
             if (
@@ -822,8 +838,12 @@ def check_digest_outputs(config, base_dir):
             ):
                 raise common.DeployError(
                     f"{common.SECRET_FILES}: the sha256 directory {resolved} overlaps "
-                    f"{other}; give the digests a directory of their own"
+                    f"{other}; give each source's digests a directory of its own"
                 )
+    for secret_id, directory, keys in declared:
+        where = f"{common.SECRET_FILES}.{secret_id}"
+        for key in keys:
+            check_digest_destination(where, base_dir, directory, directory / key)
 
 
 def write_digests(config, base_dir, file_secrets):
@@ -852,29 +872,20 @@ def write_digests(config, base_dir, file_secrets):
             ) from None
         digest = hashlib.sha256(raw).hexdigest().encode("ascii")
         check_digest_destination(where, base_dir, directory, target)
-        make_private_directory(directory, where)
+        make_private_directories(directory)
         if digest_is_current(target, digest, where):
             continue
-        replace_private_file(target, digest)
+        publish_private_file(where, base_dir, directory, target, digest)
         log.info(f"[OK] Wrote SHA-256 file {target}")
 
 
-def make_private_directory(directory, where):
-    """Create missing directories 0700 whatever the umask; refuse another mode."""
-    missing = []
-    current = directory
-    while not (current.exists() or current.is_symlink()):
-        missing.append(current)
-        current = current.parent
-    for path in reversed(missing):
-        path.mkdir()
-        os.chmod(str(path), 0o700)
-    mode = stat.S_IMODE(directory.lstat().st_mode)
-    if mode != 0o700:
-        raise common.DeployError(
-            f"{where}: {directory} has mode {mode:04o}; set it to 0700 "
-            "(chmod 700), then run the same command again"
-        )
+def make_private_directories(directory):
+    """Create the missing directories with mode 0700 from the start, any umask."""
+    previous = os.umask(0o077)
+    try:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    finally:
+        os.umask(previous)
 
 
 def digest_is_current(target, digest, where):
@@ -894,25 +905,57 @@ def digest_is_current(target, digest, where):
         raise common.DeployError(f"{where}: cannot read {target}") from None
 
 
-def replace_private_file(target, content):
-    """Write content through a private temporary file and an atomic rename."""
-    descriptor, temporary = tempfile.mkstemp(prefix=".sha256-", dir=str(target.parent))
+def publish_private_file(where, base_dir, directory, target, content):
+    """Write content through a private temporary file and an atomic rename.
+
+    Everything happens in the directory opened (without following a link)
+    after the checks; just before the rename the checks run again and the
+    path must still name that directory and an absent or private regular
+    file, so a destination changed meanwhile is refused, not replaced.
+    """
+    handle = os.open(str(directory), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        os.fchmod(descriptor, 0o600)  # mkstemp's mode is reduced by the umask
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, str(target))
-    except BaseException:
-        if os.path.lexists(temporary):
-            os.unlink(temporary)
-        raise
-    directory = os.open(str(target.parent), os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
+        opened = os.fstat(handle)
+        temporary = ".sha256-" + secrets.token_hex(8)
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=handle,
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                os.fchmod(stream.fileno(), 0o600)  # the umask reduces the open mode
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            check_digest_destination(where, base_dir, directory, target)
+            current = directory.lstat()
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise common.DeployError(
+                    f"{where}: {directory} changed during the write; run the same "
+                    "command again"
+                )
+            try:
+                existing = os.stat(target.name, dir_fd=handle, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None and stat.S_IMODE(existing.st_mode) != 0o600:
+                raise common.DeployError(
+                    f"{where}: {target} has mode "
+                    f"{stat.S_IMODE(existing.st_mode):04o}; set it to 0600 "
+                    "(chmod 600), then run the same command again"
+                )
+            os.replace(temporary, target.name, src_dir_fd=handle, dst_dir_fd=handle)
+        except BaseException:
+            try:
+                os.unlink(temporary, dir_fd=handle)
+            except FileNotFoundError:
+                pass
+            raise
+        os.fsync(handle)
     finally:
-        os.close(directory)
+        os.close(handle)
 
 
 def replace(value, config):
@@ -1067,13 +1110,34 @@ def load_file_group(config, group, base_dir=None, component=None):
     return groups
 
 
-def is_promised(entry, source, promised):
-    """A missing path source that another catalog component publishes (backlog 88)."""
-    return bool(
-        promised
-        and "path" in entry
-        and not (source.exists() or source.is_symlink())
-        and Path(os.path.realpath(str(source))) in promised
+def matches_promise(entry, source, base_dir, promised):
+    """A path source naming a digest file an earlier catalog component publishes.
+
+    The path must lead there as the file system will resolve it: every
+    directory a .. steps out of must exist, unless it is this component's own
+    directory or one publication creates (backlog 88).
+    """
+    if not (promised and "path" in entry):
+        return False
+    if Path(os.path.realpath(str(source))) not in promised:
+        return False
+    created = {Path(os.path.realpath(str(base_dir)))}
+    for target in promised:
+        created.update(target.parents)
+    current = Path(source.parts[0])
+    for part in source.parts[1:]:
+        if part == ".." and not (
+            current.is_dir() or Path(os.path.realpath(str(current))) in created
+        ):
+            return False
+        current = current / part
+    return True
+
+
+def is_promised(entry, source, base_dir, promised):
+    """A missing path source that an earlier component will publish."""
+    return not (source.exists() or source.is_symlink()) and matches_promise(
+        entry, source, base_dir, promised
     )
 
 
@@ -1083,9 +1147,10 @@ def check_file_sources(config, path, imported=(), component=None, promised=()):
     A source with generate may still be missing: generation creates it. Imported
     registration volumes replace a same-named VOLUME_FILES entry and are skipped.
     promised (catalog validate only) holds digest files an earlier component
-    publishes: such a missing file counts as present, and its name takes part
-    in its Secret's duplicate-name check. Only names and types are inspected,
-    so this is safe for private files.
+    publishes: such a missing file counts as present, and every Secret with
+    a promised source, published yet or not, gets a duplicate-name check over
+    the names delivery will use. Only names and types are inspected, so this
+    is safe for private files.
     """
     imported = set(imported)
     for group in (common.SECRET_FILES, common.VOLUME_FILES):
@@ -1097,11 +1162,14 @@ def check_file_sources(config, path, imported=(), component=None, promised=()):
             kept = []
             for entry in entries:
                 source = resolve_file_source(entry, path.parent, component)
-                if group == common.SECRET_FILES and is_promised(
-                    entry, source, promised
-                ):
+                promise = group == common.SECRET_FILES and matches_promise(
+                    entry, source, path.parent, promised
+                )
+                if promise and group_id not in with_promise:
                     with_promise.append(group_id)
-                elif "generate" not in entry or source.exists():
+                if promise and not (source.exists() or source.is_symlink()):
+                    continue  # published later, by an earlier component
+                if "generate" not in entry or source.exists():
                     kept.append(entry)
             if kept:
                 present[group_id] = kept
@@ -1116,15 +1184,16 @@ def check_file_sources(config, path, imported=(), component=None, promised=()):
 
 
 def check_promised_names(group_id, entries, base_dir, component):
-    """Within one Secret, a promised file name may come from one source only.
+    """Within one Secret, each file name may come from one source only.
 
-    Each source contributes its generate names and its present file names
-    once; names only, no contents.
+    Each source contributes, once, the names delivery gives its files: its
+    generate names (as file names) and the names of its present files, or the
+    file it names; names only, no contents.
     """
     names = []
     for entry in entries:
         source = resolve_file_source(entry, base_dir, component)
-        found = set(entry.get("generate", []))
+        found = {Path(name).name for name in entry.get("generate", [])}
         if source.is_dir():
             found.update(item.name for item in source.iterdir())
         elif "generate" not in entry:
@@ -1156,7 +1225,7 @@ def secret_keys(config, path, documents, component=None, promised=()):
             found.update(entry.get("generate", []))
             if source.is_dir():
                 found.update(item.name for item in source.iterdir())
-            elif source.exists() or is_promised(entry, source, promised):
+            elif source.exists() or is_promised(entry, source, path.parent, promised):
                 found.add(source.name)
             elif "generate" not in entry:
                 found = None

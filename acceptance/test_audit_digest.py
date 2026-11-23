@@ -86,6 +86,14 @@ class AuditDigestHarnessTests(unittest.TestCase):
             self.assertNotIn(KEY.decode(), str(failure.exception))
             self.assertNotIn(DIGEST.decode(), str(failure.exception))
 
+    def test_a_retained_key_of_another_length_is_compared_by_its_bytes(self):
+        key = b"retained-key-of-another-length"
+        digest = hashlib.sha256(key).hexdigest().encode()
+        output, _ = self.run_check(
+            "dev", "myproduct", [done(key + b"\n"), done(digest + b"\n")]
+        )
+        self.assertIn("PASS: app1 has the SHA-256", output)
+
     def test_prod_without_the_app_installed_is_not_applicable(self):
         output, run = self.run_check("prod", "myproduct", [], installed=("platform",))
         self.assertIn("not applicable; app1 is not installed", output)
